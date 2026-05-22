@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Bootstrap script for ai-trader agent runner
+# - Installs docker
+# - Pulls latest image from ECR
+# - Starts agent container with systemd unit
+
+dnf -y install docker amazon-ecr-credential-helper
+systemctl enable --now docker
+
+mkdir -p /root/.docker
+cat > /root/.docker/config.json <<'JSON'
+{ "credsStore": "ecr-login" }
+JSON
+
+cat > /etc/systemd/system/ai-trader-agent.service <<EOF
+[Unit]
+Description=AI Trader Agent
+After=docker.service
+Requires=docker.service
+
+[Service]
+Restart=always
+RestartSec=10
+ExecStartPre=-/usr/bin/docker stop ai-trader-agent
+ExecStartPre=-/usr/bin/docker rm ai-trader-agent
+ExecStart=/usr/bin/docker run --rm --name ai-trader-agent \
+  --env-file /etc/ai-trader/env \
+  -p 8000:8000 \
+  ${ecr_repo_url}:${image_tag}
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+mkdir -p /etc/ai-trader
+cat > /etc/ai-trader/env <<EOF
+ENVIRONMENT=${env}
+AWS_REGION=eu-west-1
+EOF
+
+systemctl daemon-reload
+systemctl enable --now ai-trader-agent.service

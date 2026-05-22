@@ -1,0 +1,24 @@
+{
+  "auth": {
+    "signIn": "Giriş yap",
+    "email": "E-posta",
+    "password": "Şifre"
+  },
+  "portfolio": {
+    "totalEquity": "Toplam varlık",
+    "positions": "Pozisyonlar",
+    "dailyPnl": "Günlük K/Z"
+  },
+  "agents": {
+    "heading": "Ajan Konseyi",
+    "subheading": "Her karar için 7 LLM ajanı tartışır"
+  },
+  "trade": {
+    "approve": "Onayla",
+    "reject": "Reddet",
+    "expiresIn": "{{seconds}}sn içinde sona erecek"
+  },
+  "disclaimer": {
+    "short": "Yatırım tavsiyesi değildir. Geçmiş performans gelecekteki getirileri garanti etmez."
+  }
+}

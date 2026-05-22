@@ -1,0 +1,76 @@
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+.uv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node / React Native
+node_modules/
+.expo/
+.expo-shared/
+dist/
+web-build/
+*.tsbuildinfo
+.eas/
+ios/
+android/
+!mobile/app/ios/
+!mobile/app/android/
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+*.tfvars
+!*.example.tfvars
+crash.log
+crash.*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Data
+data/
+*.parquet
+*.csv
+!agent/tests/fixtures/*.csv
+
+# Memory / state
+agent/.tradingagents/
+.checkpoints/
+*.db
+*.sqlite
+
+# OS
+.DS_Store
+Thumbs.db

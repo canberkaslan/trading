@@ -1,0 +1,43 @@
+name: infra-ci
+
+on:
+  pull_request:
+    paths:
+      - 'infra/**'
+      - '.github/workflows/infra-ci.yml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env: [dev]  # Add paper when ready
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.0
+
+      - name: Format check
+        working-directory: infra
+        run: terraform fmt -recursive -check
+
+      - name: Init
+        working-directory: infra/envs/${{ matrix.env }}
+        run: terraform init -backend=false
+
+      - name: Validate
+        working-directory: infra/envs/${{ matrix.env }}
+        run: terraform validate
+
+  trivy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: config
+          scan-ref: infra
+          severity: HIGH,CRITICAL
+          exit-code: '0'  # report but don't fail until baseline established

@@ -1,0 +1,8 @@
+# Copy to dev.tfvars and fill in.
+# dev.tfvars is gitignored — never commit secrets or env-specific configuration.
+
+# Slack alerting webhook (encrypted at rest in Secrets Manager once wired)
+slack_webhook_url = ""
+
+# Allowed CIDR for ALB inbound (during dev — restrict to office/VPN)
+alb_allowed_cidrs = ["0.0.0.0/0"]

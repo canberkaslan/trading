@@ -1,0 +1,24 @@
+{
+  "auth": {
+    "signIn": "Sign in",
+    "email": "Email",
+    "password": "Password"
+  },
+  "portfolio": {
+    "totalEquity": "Total equity",
+    "positions": "Positions",
+    "dailyPnl": "Today's P&L"
+  },
+  "agents": {
+    "heading": "Agent Council",
+    "subheading": "7 LLM agents debate every decision"
+  },
+  "trade": {
+    "approve": "Approve",
+    "reject": "Reject",
+    "expiresIn": "Expires in {{seconds}}s"
+  },
+  "disclaimer": {
+    "short": "Not investment advice. Past performance does not guarantee future results."
+  }
+}

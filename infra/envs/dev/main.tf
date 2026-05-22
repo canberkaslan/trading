@@ -46,8 +46,7 @@ module "secrets" {
     "finnhub",
     "alpaca-paper",
     "reddit",
-    "x-api",
-    "matriks",
+    "fred",
   ]
 }
 

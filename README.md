@@ -29,7 +29,7 @@ Mobile (React Native + Expo)
 
 | Path | Purpose |
 |---|---|
-| `agent/` | Python — TradingAgents fork (`tradingagents_tr/`) + FastAPI mobile backend |
+| `agent/` | Python — TradingAgents fork (`tradingagents_us/`) + FastAPI mobile backend |
 | `infra/` | Terraform — VPC, EC2, RDS Aurora, ElastiCache, ALB, API Gateway WebSocket |
 | `mobile/` | React Native + Expo app (iOS + Android) |
 | `docs/` | Architecture, ADRs, research synthesis |
@@ -64,7 +64,7 @@ Mobile (React Native + Expo)
 # Agent (local dev)
 cd agent && uv venv && uv pip install -e .
 cp .env.example .env  # Fill in API keys
-uv run python -m tradingagents_tr.graph.tr_setup --ticker AAPL --paper
+uv run python -m tradingagents_us.graph.tr_setup --ticker AAPL --paper
 
 # Infra (dev environment)
 cd infra/envs/dev

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from tradingagents_tr.schemas import AgentDecision
+from tradingagents_us.schemas import AgentDecision
 
 router = APIRouter()
 

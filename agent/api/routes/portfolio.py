@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from tradingagents_tr.schemas import PortfolioSnapshot
+from tradingagents_us.schemas import PortfolioSnapshot
 
 router = APIRouter()
 

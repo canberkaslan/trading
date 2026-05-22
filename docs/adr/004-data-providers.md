@@ -1,6 +1,6 @@
 # ADR-004: Data providers
 
-**Status:** Accepted
+**Status:** Accepted (BIST section superseded by [ADR-008](008-scope-us-only.md))
 **Date:** 2026-05-22
 
 ## Context

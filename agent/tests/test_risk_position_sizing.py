@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tradingagents_tr.risk.position_sizing import (
+from tradingagents_us.risk.position_sizing import (
     apply_portfolio_caps,
     atr_position_size,
     kelly_fraction,

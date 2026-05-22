@@ -126,12 +126,12 @@ Agent polls every 5 seconds. Mobile app writes via authenticated REST endpoint.
 
 | Component | File |
 |---|---|
-| Position sizing | `agent/tradingagents_tr/risk/position_sizing.py` |
-| Stop-loss | `agent/tradingagents_tr/risk/stop_loss.py` |
-| Circuit breaker | `agent/tradingagents_tr/risk/circuit_breaker.py` |
-| Kill switch | `agent/tradingagents_tr/risk/kill_switch.py` |
-| Portfolio limits enforcement | `agent/tradingagents_tr/risk/portfolio_limits.py` |
-| Risk metrics | `agent/tradingagents_tr/risk/metrics.py` |
+| Position sizing | `agent/tradingagents_us/risk/position_sizing.py` |
+| Stop-loss | `agent/tradingagents_us/risk/stop_loss.py` |
+| Circuit breaker | `agent/tradingagents_us/risk/circuit_breaker.py` |
+| Kill switch | `agent/tradingagents_us/risk/kill_switch.py` |
+| Portfolio limits enforcement | `agent/tradingagents_us/risk/portfolio_limits.py` |
+| Risk metrics | `agent/tradingagents_us/risk/metrics.py` |
 
 ## Sources
 

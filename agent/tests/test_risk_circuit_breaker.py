@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from tradingagents_tr.risk.circuit_breaker import CircuitBreaker
-from tradingagents_tr.risk.kill_switch import StaticKillSwitchReader
+from tradingagents_us.risk.circuit_breaker import CircuitBreaker
+from tradingagents_us.risk.kill_switch import StaticKillSwitchReader
 
 
 def make_breaker(ks_state: str = "RUN") -> CircuitBreaker:

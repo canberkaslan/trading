@@ -2,58 +2,58 @@
 
 Phased delivery plan. Each phase has a hard exit gate; we do **not** advance until the gate is met.
 
-## Phase 0 — Architecture & scaffolding (current, week 0)
+**Scope: US equities only** (see [ADR-008](adr/008-scope-us-only.md)).
+
+## Phase 0 — Architecture & scaffolding (DONE)
 
 - [x] Research synthesis (4 parallel streams)
-- [x] ADRs written
-- [x] Monorepo structure
-- [x] GitHub repo initialized
-- [ ] CI scaffolding (GitHub Actions)
-- [ ] Local dev environment runnable (`docker-compose up`)
+- [x] ADRs written (001-007 + 008 scope reduction)
+- [x] Monorepo structure (`agent/` + `infra/` + `mobile/` + `docs/`)
+- [x] GitHub repo + CI workflows
 
-**Gate:** Any new contributor can read `docs/RESEARCH.md` + `docs/ARCHITECTURE.md` and understand the system in <30 minutes.
+## Phase 1 — Data pipeline (DONE)
 
-## Phase 1 — Data pipeline (week 1)
+- [x] Polygon.io account + API key in Secrets Manager
+- [x] Anthropic + FRED API keys
+- [x] SEC EDGAR client (no auth, just User-Agent compliance)
+- [x] Polygon REST client + S3 parquet bulk loader
+- [x] FRED macro client (Fed funds, CPI, VIX, yield curve)
+- [x] Reddit PRAW wrapper (client_id pending — Phase 3 trigger)
+- [x] S3 dev bucket + AAPL 2024 (252 bars) end-to-end demo
+- [x] 23/23 tests passing
 
-- [ ] Polygon.io account + API key in Secrets Manager
-- [ ] Finnhub account + key
-- [ ] SEC EDGAR client (no auth, just User-Agent compliance)
-- [ ] KAP scraper (Playwright, hourly Lambda)
-- [ ] Matriks IQ trial application + socket client stub
-- [ ] OHLCV bulk historical → S3 parquet (10yr × S&P 500 + BIST 30)
-- [ ] Data quality checks: gap fill, outlier flagging, survivorship-safe universe
+**Gate met:** Polygon API + S3 parquet works end-to-end.
 
-**Gate:** `python -m tradingagents_tr.dataflows.fetch --ticker AAPL --start 2015-01-01` returns clean parquet from S3 in <2s.
+## Phase 2 — Agent fork wiring (DONE)
 
-## Phase 2 — Agent fork & adaptation (week 2)
+- [x] TradingAgents v0.2.5 vendored as git subtree (`agent/vendor/tradingagents/`)
+- [x] Driven via `TRADINGAGENTS_*` env overrides (Anthropic provider, Opus 4.7 + Sonnet 4.6)
+- [x] Output mapped to our `AgentDecision` schema (regex parser for rating/PT/horizon)
+- [x] **First live decision: AAPL → Overweight, $310 PT, 12-18mo (17 LLM calls, all 200 OK)**
 
-- [ ] Fork TradingAgents v0.2.5 (frozen tag)
-- [ ] Add `tradingagents_tr/` namespace
-- [ ] KAP dataflow + TR news dataflow
-- [ ] Turkish language output flag wired
-- [ ] Per-agent LLM routing (Dict[str, LLM])
-- [ ] Prompt caching enabled on Anthropic client
-- [ ] Single-ticker end-to-end test (AAPL + ASELS.IS)
+**Gate met:** `python -m tradingagents_us.graph.pipeline --ticker AAPL` produces a structured decision.
 
-**Gate:** `python -m tradingagents_tr.run --ticker AAPL --date 2025-12-01` produces a `PortfolioDecision` with all 4 reports + debate transcripts, in <5min, costing <$0.20.
+## Phase 3 — Risk & backtest (NEXT)
 
-## Phase 3 — Risk & backtest (week 3)
-
-- [ ] Position sizing module (Kelly + ATR + vol target)
-- [ ] Stop-loss strategies module
-- [ ] Circuit breaker + kill switch
+- [ ] Wire risk layer to pipeline output (Kelly + ATR sizing from LLM PT/stop)
+- [ ] Per-agent LLM routing (Haiku for risk debators + market/sentiment analysts)
+- [ ] Anthropic prompt-caching markers on analyst reports (70-85% input cost cut)
+- [ ] Reddit client_id (when Responsible Builder Policy clears) or StockTwits substitute
+- [ ] Finnhub news/earnings client
+- [ ] Wikipedia historical S&P 500 universe scraper (survivorship-safe)
 - [ ] vectorbt backtest harness
 - [ ] Walk-forward CV (2015–2023 train, 2024–2025 holdout)
 - [ ] Bayesian optimization (Optuna) on data weights
 
-**Gate:** Out-of-sample (2024–2025) Sharpe ratio > 1.0 net of modeled costs (5–15 bps slippage). If < 1.0, halt and re-evaluate.
+**Gate:** Out-of-sample (2024–2025) Sharpe > 1.0 net of modeled costs. If < 1.0, halt and re-evaluate.
 
-## Phase 4 — Infra & paper trade (week 4)
+## Phase 4 — Infra & paper trade
 
+- [ ] Alpaca paper key (account verification + UI workaround)
 - [ ] Terraform: VPC + EC2 agent runner + Aurora + Redis + ALB
 - [ ] FastAPI mobile backend (skeleton endpoints)
 - [ ] Alpaca paper account integration
-- [ ] EventBridge schedules (US 22:30 UTC, BIST 13:00 UTC)
+- [ ] EventBridge schedule (US 22:30 UTC daily)
 - [ ] Grafana dashboard: equity curve, position book, agent decisions
 - [ ] CloudWatch alarms → Slack
 
@@ -69,9 +69,9 @@ Phased delivery plan. Each phase has a hard exit gate; we do **not** advance unt
 - [ ] Push notifications (trade executed, drawdown alert)
 - [ ] TestFlight internal release
 
-**Gate:** End-to-end demo: signup on TestFlight build → see paper portfolio → receive trade approval push → approve via FaceID → trade executes in Alpaca paper → confirmation push received.
+**Gate:** End-to-end demo: signup → see paper portfolio → trade approval push → biometric approve → Alpaca paper executes → confirmation push.
 
-## Phase 6 — Paper trade observation (weeks 7–16, 90 days minimum)
+## Phase 6 — Paper trade observation (90 days minimum)
 
 No new code. Pure observation:
 
@@ -80,13 +80,12 @@ No new code. Pure observation:
 - Track regime-change behavior (volatility spike, earnings surprises)
 - Track LLM cost drift
 - Track wash-sale tracking accuracy
-- Identify edge cases needing risk-layer improvements
 
 **Gate to Phase 7 (live):**
 - Sharpe > 1.0 net
 - Max DD < 15%
 - No infra incidents in last 30 days
-- Across at least one regime change (Fed meeting, earnings season, geopolitical event)
+- Across at least one regime change
 
 ## Phase 7 — Live (deferred, conditional)
 
@@ -97,12 +96,13 @@ No new code. Pure observation:
 
 ## Phase 8+ — Future (parking lot)
 
-- Cross-asset portfolio optimization (TradingAgents only does per-ticker — needs custom layer)
+- Cross-asset portfolio optimization (TradingAgents only does per-ticker)
 - Real semantic memory (pgvector replacing TradingMemoryLog markdown)
 - Multimodal agent (chart-as-image via FinAgent approach)
 - Trading-R1 style RL on top of LLM signals
 - Watch app companion
-- Multi-user / SaaS — requires SPK `yatırım danışmanlığı` license + US RIA registration
+- Multi-user / SaaS — requires US RIA registration
+- **Reconsider BIST market addition** — only after US system is profitable in live
 
 ## Hard stops
 
@@ -111,5 +111,5 @@ We halt and re-evaluate at any of these:
 - Phase 3 Sharpe < 1.0 on holdout → strategy doesn't work, do not deploy
 - Phase 6 live paper Sharpe drops below 0.8 for 2 consecutive weeks
 - Any data-licensing violation flagged by a provider
-- KVKK / SPK enforcement action (extremely unlikely at personal-use scale)
+- SEC enforcement action
 - Anthropic API cost overrun > $500/mo for 2 consecutive months

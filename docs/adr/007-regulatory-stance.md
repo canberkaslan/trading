@@ -1,6 +1,6 @@
 # ADR-007: Regulatory stance — personal use, defer commercial
 
-**Status:** Accepted
+**Status:** Accepted (Turkey/SPK section superseded by [ADR-008](008-scope-us-only.md) — US/SEC analysis remains live)
 **Date:** 2026-05-22
 
 ## Context
@@ -123,7 +123,7 @@ Q: Will we monetize?
 
 - [x] Document regulatory posture (this ADR)
 - [ ] Add disclaimer to mobile app splash + every trade screen footer
-- [ ] Implement wash-sale tracking in `agent/tradingagents_tr/risk/wash_sale.py`
+- [ ] Implement wash-sale tracking in `agent/tradingagents_us/risk/wash_sale.py`
 - [ ] Implement KVKK aydınlatma metni in mobile signup flow (Phase 5)
 
 ## Action items (future, before Phase 8)

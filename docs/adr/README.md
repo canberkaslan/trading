@@ -9,10 +9,11 @@ ADRs capture the reasoning behind significant architectural choices. Each one na
 
 | # | Title | Status |
 |---|---|---|
-| [001](001-multi-agent-fork.md) | Fork TradingAgents v0.2.5 as the agent core | Accepted |
+| [001](001-multi-agent-fork.md) | Fork TradingAgents v0.2.5 as the agent core | Accepted (BIST adaptation section superseded by ADR-008) |
 | [002](002-aws-ec2-deployment.md) | Deploy on AWS EC2 (rootingo / eu-west-1) with EKS reuse as future path | Accepted |
 | [003](003-mobile-react-native.md) | React Native + Expo for mobile, .NET MAUI rejected | Accepted |
-| [004](004-data-providers.md) | Polygon + Finnhub + SEC EDGAR (US), Matriks IQ + KAP (BIST) | Accepted |
+| [004](004-data-providers.md) | Polygon + Finnhub + SEC EDGAR + FRED for US equities | Accepted (BIST section superseded by ADR-008) |
 | [005](005-risk-management.md) | Fractional Kelly (0.25x) + ATR sizing + remote kill switch | Accepted |
 | [006](006-llm-cost-optimization.md) | Per-agent LLM routing + prompt caching + Batch API | Accepted |
-| [007](007-regulatory-stance.md) | Personal use only initially; commercial path requires licensing | Accepted |
+| [007](007-regulatory-stance.md) | Personal use only initially; commercial path requires licensing | Accepted (Turkey section superseded by ADR-008) |
+| [008](008-scope-us-only.md) | **Scope reduced to US equities only — BIST removed** | **Accepted** |

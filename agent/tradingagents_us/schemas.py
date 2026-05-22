@@ -9,9 +9,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-Market = Literal["US", "BIST"]
+Market = Literal["US"]
 Side = Literal["BUY", "SELL"]
-Currency = Literal["USD", "TRY"]
+Currency = Literal["USD"]
 Rating = Literal["Buy", "Overweight", "Hold", "Underweight", "Sell"]
 OrderType = Literal["MARKET", "LIMIT"]
 OrderStatus = Literal["PENDING", "ACCEPTED", "PARTIAL", "FILLED", "REJECTED", "CANCELLED"]
@@ -103,7 +103,6 @@ class PortfolioSnapshot(BaseModel):
 
     user_id: str
     cash_usd: float
-    cash_try: float
     positions: list[Position]
     total_equity_usd: float
     daily_pnl_usd: float

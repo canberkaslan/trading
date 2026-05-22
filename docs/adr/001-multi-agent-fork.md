@@ -1,6 +1,6 @@
 # ADR-001: Fork TradingAgents v0.2.5 as the agent core
 
-**Status:** Accepted
+**Status:** Accepted (BIST adaptation section superseded by [ADR-008](008-scope-us-only.md))
 **Date:** 2026-05-22
 
 ## Context
@@ -19,7 +19,7 @@ Options surveyed:
 
 ## Decision
 
-**Fork TradingAgents v0.2.5** (Apache-2.0, ~78k stars), namespaced as `tradingagents_tr/` for our TR additions. Vendored fork model: keep upstream `tradingagents/` lightly patched, add TR-specific layer in a sibling package, merge upstream quarterly.
+**Fork TradingAgents v0.2.5** (Apache-2.0, ~78k stars), namespaced as `tradingagents_us/` for our TR additions. Vendored fork model: keep upstream `tradingagents/` lightly patched, add TR-specific layer in a sibling package, merge upstream quarterly.
 
 ## Alternatives considered
 
@@ -49,7 +49,7 @@ Options surveyed:
 - **Per-agent LLM routing patch:** ~50 LOC in `graph/trading_graph.py` to accept `Dict[str, LLM]` keyed by agent name
 - **Prompt caching:** Anthropic 5-min TTL applied to `instrument_context` + analyst reports → 70–85% input cost reduction
 - **Honest backtest:** use a Claude snapshot dated before our test window's start, never the latest model
-- **Portfolio layer:** new `tradingagents_tr/portfolio/aggregator.py` runs after per-ticker decisions, applies portfolio-level limits
+- **Portfolio layer:** new `tradingagents_us/portfolio/aggregator.py` runs after per-ticker decisions, applies portfolio-level limits
 
 ### Critical finding propagated to risk layer
 
@@ -61,11 +61,11 @@ Paper claims Sharpe 8.21; Trading-R1's 2.72 on held-out NVDA is the realistic up
 |---|---|---|
 | Ticker suffix `XU100.IS` | `dataflows/interface.py`, `default_config.py` | Low |
 | FX / currency rendering | `agents/utils/agent_utils.py`, `schemas.py` | Medium |
-| KAP disclosure | new `tradingagents_tr/dataflows/kap.py` (wrap `pykap`) | Medium |
-| TR news/sentiment | new `tradingagents_tr/dataflows/tr_news.py` | High |
+| KAP disclosure | new `tradingagents_us/dataflows/kap.py` (wrap `pykap`) | Medium |
+| TR news/sentiment | new `tradingagents_us/dataflows/tr_news.py` | High |
 | Turkish output | `output_language="Turkish"` config (already supported) | Low |
 | Trading calendar | `graph/propagation.py` patch for `Asia/Istanbul` | Low |
-| BIST lot sizes | new `tradingagents_tr/dataflows/tr_utils.py` | Medium |
+| BIST lot sizes | new `tradingagents_us/dataflows/tr_utils.py` | Medium |
 
 ## Sources
 

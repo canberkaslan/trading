@@ -40,7 +40,7 @@ Requires:
 
 ## Security guardrails
 
-**Broker API keys NEVER live on device.** Mobile authenticates as a user via Cognito JWT; the backend (AWS Secrets Manager) holds Alpaca/Matriks keys and proxies all order placement. This is the single most important architectural decision.
+**Broker API keys NEVER live on device.** Mobile authenticates as a user via Cognito JWT; the backend (AWS Secrets Manager) holds Alpaca keys and proxies all order placement. This is the single most important architectural decision.
 
 Other invariants:
 - Auto-execute toggle gated behind biometric + 24h cooldown before first auto-trade

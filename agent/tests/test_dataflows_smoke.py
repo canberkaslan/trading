@@ -34,7 +34,7 @@ _load_env_at_import()
 
 @pytest.mark.skipif(not os.environ.get("POLYGON_API_KEY"), reason="POLYGON_API_KEY not set")
 def test_polygon_prev_close_aapl() -> None:
-    from tradingagents_tr.dataflows.polygon import PolygonClient
+    from tradingagents_us.dataflows.polygon import PolygonClient
 
     with PolygonClient() as poly:
         resp = poly.previous_close("AAPL")
@@ -44,7 +44,7 @@ def test_polygon_prev_close_aapl() -> None:
 
 @pytest.mark.skipif(not os.environ.get("POLYGON_API_KEY"), reason="POLYGON_API_KEY not set")
 def test_polygon_aggregates_aapl_last_week() -> None:
-    from tradingagents_tr.dataflows.polygon import PolygonClient
+    from tradingagents_us.dataflows.polygon import PolygonClient
 
     end = date.today() - timedelta(days=1)
     start = end - timedelta(days=10)
@@ -56,7 +56,7 @@ def test_polygon_aggregates_aapl_last_week() -> None:
 
 @pytest.mark.skipif(not os.environ.get("SEC_EDGAR_USER_AGENT"), reason="SEC_EDGAR_USER_AGENT not set")
 def test_edgar_ticker_to_cik_aapl() -> None:
-    from tradingagents_tr.dataflows.sec_edgar import EdgarClient
+    from tradingagents_us.dataflows.sec_edgar import EdgarClient
 
     with EdgarClient() as e:
         cik = e.ticker_to_cik("AAPL")
@@ -65,7 +65,7 @@ def test_edgar_ticker_to_cik_aapl() -> None:
 
 @pytest.mark.skipif(not os.environ.get("SEC_EDGAR_USER_AGENT"), reason="SEC_EDGAR_USER_AGENT not set")
 def test_edgar_recent_10q_aapl() -> None:
-    from tradingagents_tr.dataflows.sec_edgar import EdgarClient
+    from tradingagents_us.dataflows.sec_edgar import EdgarClient
 
     with EdgarClient() as e:
         cik = e.ticker_to_cik("AAPL")

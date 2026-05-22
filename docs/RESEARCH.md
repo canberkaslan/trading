@@ -2,6 +2,9 @@
 
 > Synthesis of 4 parallel deep-research streams conducted 2026-05-22.
 > Sources are linked inline; full deep-dives are preserved as ADRs (`docs/adr/`).
+>
+> **Scope note (2026-05-22):** BIST sections below are preserved as historical
+> research. The project's live scope is **US equities only** — see [ADR-008](adr/008-scope-us-only.md).
 
 ---
 
@@ -114,7 +117,7 @@ Per decision: **~12 LLM calls, 80–110k input tokens, 8–12k output tokens, ~$
 
 ### Forking strategy (chosen)
 
-**Vendored fork with quarterly upstream merge.** Keep `tradingagents/` near-pristine, add `tradingagents_tr/` namespace with TR-specific dataflows, prompts, and graph composition. See ADR-001.
+**Vendored fork with quarterly upstream merge.** Keep `tradingagents/` near-pristine, add `tradingagents_us/` namespace with TR-specific dataflows, prompts, and graph composition. See ADR-001.
 
 ---
 

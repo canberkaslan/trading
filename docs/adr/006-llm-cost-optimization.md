@@ -102,7 +102,7 @@ Failover triggered by:
 
 ## Implementation
 
-`agent/tradingagents_tr/llm/routing.py`:
+`agent/tradingagents_us/llm/routing.py`:
 
 ```python
 from langchain_anthropic import ChatAnthropic
@@ -128,7 +128,7 @@ def build_agent_llms() -> dict[str, ChatAnthropic]:
     }
 ```
 
-Prompt-caching helper in `agent/tradingagents_tr/llm/cache.py`:
+Prompt-caching helper in `agent/tradingagents_us/llm/cache.py`:
 
 ```python
 def with_cache(content: str, ttl: Literal["5m", "1h"] = "5m") -> dict:

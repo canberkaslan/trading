@@ -13,7 +13,7 @@ Phase 2 scope:
 Phase 3+ scope (TODO):
 - Per-agent LLM routing (Haiku for risk debators + sentiment/market analysts)
 - Anthropic prompt-caching markers
-- KAP / Matriks dataflows substituted via VENDOR_METHODS
+- Polygon / Finnhub dataflows substituted via VENDOR_METHODS
 - pgvector semantic memory replacing markdown log
 - True multi-ticker portfolio aggregation
 """
@@ -53,13 +53,12 @@ def _load_env() -> None:
             os.environ.setdefault(k, v)
 
 
-def propagate(ticker: str, trade_date: str, market: str = "US") -> AgentDecision:
-    """Run the upstream 7-agent pipeline for one ticker.
+def propagate(ticker: str, trade_date: str) -> AgentDecision:
+    """Run the upstream 7-agent pipeline for one US ticker.
 
     Args:
-        ticker: e.g. "AAPL" (US) or "ASELS.IS" (BIST — Phase 3+)
+        ticker: e.g. "AAPL"
         trade_date: ISO date string (the "as-of" date for the decision)
-        market: "US" or "BIST"
 
     Returns:
         AgentDecision with the final rating and reasoning blobs.
@@ -141,8 +140,8 @@ def propagate(ticker: str, trade_date: str, market: str = "US") -> AgentDecision
 
     return AgentDecision(
         ticker=ticker,
-        market="US" if market == "US" else "BIST",
-        quote_currency="USD" if market == "US" else "TRY",
+        market="US",
+        quote_currency="USD",
         rating=rating,
         price_target=price_target,
         time_horizon=horizon,
@@ -188,13 +187,12 @@ def _parse_pm_output(text: str) -> tuple[str, float | None, str | None]:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s | %(message)s")
-    parser = argparse.ArgumentParser(description="Run TradingAgents-TR for a single ticker")
-    parser.add_argument("--ticker", required=True, help="Ticker (e.g. AAPL or ASELS.IS)")
+    parser = argparse.ArgumentParser(description="Run TradingAgents-US for a single ticker")
+    parser.add_argument("--ticker", required=True, help="US ticker (e.g. AAPL)")
     parser.add_argument("--date", default=datetime.now(timezone.utc).date().isoformat())
-    parser.add_argument("--market", choices=["US", "BIST"], default="US")
     args = parser.parse_args()
 
-    decision = propagate(args.ticker, args.date, args.market)
+    decision = propagate(args.ticker, args.date)
     print("\n=== DECISION ===")
     print(decision.model_dump_json(indent=2))
 

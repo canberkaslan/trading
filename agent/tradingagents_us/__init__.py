@@ -1,4 +1,4 @@
-"""tradingagents_tr — TR/BIST adaptation layer for TradingAgents.
+"""tradingagents_us — TR/BIST adaptation layer for TradingAgents.
 
 This package contains everything TR/BIST-specific:
 - dataflows: KAP scraper, TR news, Matriks IQ wrapper

@@ -3,7 +3,7 @@
 Pull 10 years of daily OHLCV for our universe → S3 parquet, partitioned by ticker.
 
 Usage:
-    python -m tradingagents_tr.dataflows.bulk_loader \
+    python -m tradingagents_us.dataflows.bulk_loader \
         --tickers AAPL MSFT NVDA \
         --start 2015-01-01 \
         --end 2025-12-31 \
@@ -27,20 +27,12 @@ from .polygon import PolygonClient
 log = logging.getLogger(__name__)
 
 
-# Initial universes — see ADR-004
+# US-only universe — see ADR-004 (Polygon-sourced, survivorship-safe)
 US_UNIVERSE = [
     "SPY",
     "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO",
     "BRK.B", "LLY", "V", "JPM", "UNH", "XOM", "MA", "PG",
     "COST", "HD", "JNJ", "ABBV",
-]
-
-BIST30_UNIVERSE = [
-    # Add ".IS" suffix when querying providers that support BIST
-    "ASELS", "THYAO", "GARAN", "AKBNK", "KCHOL", "EREGL", "SISE", "BIMAS",
-    "ISCTR", "PETKM", "TUPRS", "SAHOL", "FROTO", "TOASO", "ARCLK", "TAVHL",
-    "EKGYO", "PGSUS", "TCELL", "VAKBN", "YKBNK", "HALKB", "TKFEN", "ENKAI",
-    "VESTL", "DOHOL", "SOKM", "TOASO", "MGROS", "ULKER",
 ]
 
 
@@ -96,8 +88,8 @@ def fetch_and_upload(
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     parser = argparse.ArgumentParser()
-    parser.add_argument("--tickers", nargs="+", help="Tickers (or --universe us/bist30)")
-    parser.add_argument("--universe", choices=["us", "bist30"], help="Predefined universe")
+    parser.add_argument("--tickers", nargs="+", help="Tickers (or --universe us)")
+    parser.add_argument("--universe", choices=["us"], help="Predefined universe")
     parser.add_argument("--start", type=date.fromisoformat, default=date(2015, 1, 1))
     parser.add_argument("--end", type=date.fromisoformat, default=date.today())
     parser.add_argument("--bucket", default=os.environ.get("S3_DATA_BUCKET", "ai-trader-data-dev"))
@@ -105,14 +97,9 @@ def main() -> None:
     parser.add_argument("--profile", default=os.environ.get("AWS_PROFILE", "rootingo"))
     args = parser.parse_args()
 
-    if args.universe == "us":
-        tickers = US_UNIVERSE
-    elif args.universe == "bist30":
-        tickers = BIST30_UNIVERSE
-    else:
-        tickers = args.tickers or []
+    tickers = US_UNIVERSE if args.universe == "us" else (args.tickers or [])
     if not tickers:
-        parser.error("provide --tickers or --universe")
+        parser.error("provide --tickers or --universe us")
 
     total = 0
     for t in tickers:

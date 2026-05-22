@@ -2,19 +2,21 @@
 
 Full technical architecture for the AI trading agent system. Companion to [RESEARCH.md](RESEARCH.md) (the why) and the [ADRs](adr/) (individual decisions).
 
+**Scope: US equities only.** See [ADR-008](adr/008-scope-us-only.md).
+
 ## System overview
 
 ```
    ┌─────────────────────────────────────────────────────────────────┐
    │                        DATA SOURCES                              │
-   │  Polygon │ Finnhub │ Reddit │ X │ SEC EDGAR │ KAP │ Matriks IQ  │
+   │  Polygon │ Finnhub │ Reddit │ SEC EDGAR │ FRED                   │
    └──────────────────────────┬──────────────────────────────────────┘
                               │
    ┌──────────────────────────▼──────────────────────────────────────┐
    │                       INGESTION LAYER                            │
    │  EventBridge cron → Lambda → S3 parquet (EOD batch)             │
-   │  Data Daemon EC2: Polygon WS + Matriks IQ socket → Redis pub/sub │
-   │  Lambda + Playwright: KAP scrape (TR public disclosures)         │
+   │  Data Daemon EC2: Polygon WebSocket → Redis pub/sub             │
+   │  Lambda: SEC EDGAR poll, Reddit crawl, FRED daily snapshot       │
    └──────────────────────────┬──────────────────────────────────────┘
                               │
    ┌──────────────────────────▼──────────────────────────────────────┐
@@ -52,9 +54,8 @@ Full technical architecture for the AI trading agent system. Companion to [RESEA
    ┌──────────────────────────▼──────────────────────────────────────┐
    │                       EXECUTION LAYER                            │
    │  SQS trade-signal queue → Executor                               │
-   │  US: Alpaca paper → live (via Broker API)                        │
-   │  TR: Matriks IQ socket / Algolab REST (paper → live)             │
-   │  Slippage modeling: 5–15 bps + SEC TAF fees                      │
+   │  Alpaca paper → live (Broker API)                                │
+   │  Slippage modeling: 5–15 bps + SEC TAF + SEC fees                │
    └──────────────────────────┬──────────────────────────────────────┘
                               │
    ┌──────────────────────────▼──────────────────────────────────────┐
@@ -72,7 +73,7 @@ Full technical architecture for the AI trading agent system. Companion to [RESEA
    │  Zustand + TanStack Query + expo-sqlite (Drizzle)                │
    │  expo-local-authentication (biometric) + TOTP MFA                │
    │  Push: expo-notifications → SNS → APNs/FCM                       │
-   │  i18n: TR + EN (i18next)                                         │
+   │  i18n: TR + EN (i18next — UI language only)                      │
    └─────────────────────────────────────────────────────────────────┘
 
    ┌─────────────────────────────────────────────────────────────────┐
@@ -87,17 +88,20 @@ Full technical architecture for the AI trading agent system. Companion to [RESEA
 ### Agent → Risk
 
 ```python
-# tradingagents_tr/schemas.py
+# tradingagents_us/schemas.py
 class AgentDecision(BaseModel):
     ticker: str
-    market: Literal["US", "BIST"]
+    market: Literal["US"]
+    quote_currency: Literal["USD"]
     rating: Literal["Buy", "Overweight", "Hold", "Underweight", "Sell"]
-    entry_price: float
-    stop_loss: float
+    entry_price: float | None
+    stop_loss: float | None
     take_profit: float | None
+    price_target: float | None
+    time_horizon: str | None
     suggested_size_pct: float       # 0.0–1.0 of portfolio
-    reasoning: dict[str, str]       # per-agent reasoning blobs
-    quote_currency: Literal["USD", "TRY"]
+    reasoning: list[AgentReasoning]
+    final_decision_text: str | None
     timestamp_utc: datetime
 ```
 
@@ -106,13 +110,13 @@ class AgentDecision(BaseModel):
 ```python
 class TradeOrder(BaseModel):
     ticker: str
-    market: Literal["US", "BIST"]
+    market: Literal["US"]
     side: Literal["BUY", "SELL"]
-    quantity: int                    # shares (int — BIST has lot rules)
+    quantity: int
     order_type: Literal["MARKET", "LIMIT"]
     limit_price: float | None
     stop_loss: float
-    risk_approved: bool              # False if any circuit breaker tripped
+    risk_approved: bool
     rejection_reasons: list[str]
 ```
 
@@ -128,27 +132,24 @@ class OrderUpdate(BaseModel):
     timestamp_utc: datetime
 ```
 
-WebSocket frames are Protobuf-encoded; envelope:
+WebSocket frames are Protobuf-encoded:
 
 ```protobuf
 message WSFrame {
   string type = 1;        // "quote", "order_update", "agent_reasoning", "kill_switch"
-  bytes payload = 2;      // type-specific message
-  int64 seq = 3;          // monotonic per-connection
+  bytes payload = 2;
+  int64 seq = 3;
   int64 ts_unix_ms = 4;
 }
 ```
 
 ## Trading calendar
 
-| Market | Timezone | Open | Close | Special |
-|---|---|---|---|---|
-| US (NYSE/NASDAQ) | America/New_York | 09:30 | 16:00 | Pre/post limited support |
-| BIST | Europe/Istanbul | 10:00 | 18:00 | Half-day Fridays after religious holidays |
+| Market | Timezone | Open | Close |
+|---|---|---|---|
+| US (NYSE/NASDAQ) | America/New_York | 09:30 | 16:00 |
 
-Decision schedules (EventBridge cron in UTC):
-- US tickers: 22:30 UTC (30 min post-close, after Polygon EOD reconciliation)
-- BIST tickers: 16:00 Europe/Istanbul → 13:00 UTC
+Decision schedule (EventBridge cron in UTC): **22:30 UTC** — 30 min post-close, after Polygon EOD reconciliation.
 
 ## Multi-environment topology
 
@@ -162,14 +163,14 @@ State buckets: `s3://betcorewin-tfstate/ai-trader/<env>/terraform.tfstate`
 
 ## Security
 
-- **Secrets:** AWS Secrets Manager, separate secret per provider (Polygon, Finnhub, Anthropic, Alpaca, Reddit, X, Matriks). Rotation where supported.
-- **IAM:** Instance profiles per role with least-privilege (agent EC2 reads only its needed S3 prefix + specific Secret ARNs).
+- **Secrets:** AWS Secrets Manager, separate secret per provider (Polygon, Finnhub, Anthropic, Alpaca, Reddit, FRED). Rotation where supported.
+- **IAM:** Instance profiles per role with least-privilege.
 - **KMS:** Customer-managed CMK per env, aliased `alias/ai-trader-<env>`.
 - **Network:** Private subnets only for compute; SSM Session Manager (no bastion); VPC flow logs to S3.
 - **ALB:** WAFv2 (AWS managed Core + Known-bad-inputs + Bot Control), rate-limit 2000 req/5min per IP.
 - **Mobile auth:** Cognito JWT, ALB Lambda authorizer validates `aud`/`iss`, scope-checks `/trade/*`.
 - **Broker keys NEVER on mobile.** Backend proxies all order placement.
-- **Pinning:** Mobile cert-pins intermediate CA (not leaf — rotation safety).
+- **Pinning:** Mobile cert-pins intermediate CA.
 
 ## Observability
 
@@ -181,7 +182,7 @@ State buckets: `s3://betcorewin-tfstate/ai-trader/<env>/terraform.tfstate`
 | Tracing | OpenTelemetry → existing Tempo/Jaeger | **Yes** |
 | Alerting | CloudWatch Alarm → SNS → existing Slack webhook | **Yes** |
 | Crash (mobile) | Sentry | New |
-| Analytics (mobile) | PostHog (self-hosted on existing EKS) | **Yes** (new instance) |
+| Analytics (mobile) | PostHog (self-hosted on existing EKS) | **Yes** |
 
 Key alerts:
 - Drawdown > 2% intraday → Slack
@@ -208,14 +209,14 @@ GitHub main push
 
 Mobile distribution:
 - EAS Build → TestFlight (internal 100 testers, no review)
-- EAS Update OTA for JS-only fixes (Apple permits non-functional changes)
+- EAS Update OTA for JS-only fixes
 
-## Out of scope (Phase 0)
+## Out of scope (current phase)
 
-Explicitly excluded until paper-trade validation succeeds:
-- HFT / sub-second strategies (latency mismatch)
+- **BIST / Turkish market support** — removed in ADR-008. Single-market focus first.
+- HFT / sub-second strategies
 - Options trading (separate risk framework)
 - Crypto (regulatory complexity, user opted out)
-- Multi-user / SaaS mode (requires RIA/PYŞ licensing)
+- Multi-user / SaaS mode (requires RIA licensing)
 - GPU LLM hosting (Anthropic API is cheaper at our volume)
 - Watch app (LOE too high vs user value)

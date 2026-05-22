@@ -72,3 +72,30 @@ def test_edgar_recent_10q_aapl() -> None:
         filings = e.recent_filings(cik, forms=("10-Q", "10-K"), since=date(2024, 1, 1))
     assert len(filings) >= 1
     assert filings[0].form in {"10-K", "10-Q"}
+
+
+@pytest.mark.skipif(
+    not (os.environ.get("ALPACA_API_KEY") and os.environ.get("ALPACA_API_SECRET")),
+    reason="ALPACA_API_KEY/SECRET not set",
+)
+def test_alpaca_account_active() -> None:
+    from tradingagents_us.dataflows.alpaca_broker import AlpacaClient
+
+    with AlpacaClient() as a:
+        acct = a.account()
+    assert acct.status == "ACTIVE"
+    assert acct.currency == "USD"
+    assert acct.cash >= 0
+
+
+@pytest.mark.skipif(
+    not (os.environ.get("ALPACA_API_KEY") and os.environ.get("ALPACA_API_SECRET")),
+    reason="ALPACA_API_KEY/SECRET not set",
+)
+def test_alpaca_clock() -> None:
+    from tradingagents_us.dataflows.alpaca_broker import AlpacaClient
+
+    with AlpacaClient() as a:
+        clock = a.clock()
+    assert isinstance(clock.is_open, bool)
+    assert clock.next_open and clock.next_close

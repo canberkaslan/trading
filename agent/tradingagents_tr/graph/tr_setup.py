@@ -1,56 +1,201 @@
 """TR composition entry point.
 
-Builds the LangGraph workflow with TR data sources and Turkish output, runs
-a single-ticker decision, returns AgentDecision after risk-layer approval.
+Wraps the upstream `TradingAgentsGraph` with our additions. For Phase 2 we use
+the upstream 2-tier (deep_think_llm + quick_think_llm) configuration, which
+already aligns with ADR-006's Opus/Sonnet split. Three-tier (with Haiku for
+heuristic agents) is deferred to Phase 3 along with prompt-cache markers.
 
-Phase 1 stub — wires once we vendor the upstream tradingagents package.
+Phase 2 scope:
+- Drive upstream graph through TRADINGAGENTS_* env vars (.env already wired)
+- Output schema mapped to our `AgentDecision`
+- Risk-layer check before returning
+
+Phase 3+ scope (TODO):
+- Per-agent LLM routing (Haiku for risk debators + sentiment/market analysts)
+- Anthropic prompt-caching markers
+- KAP / Matriks dataflows substituted via VENDOR_METHODS
+- pgvector semantic memory replacing markdown log
+- True multi-ticker portfolio aggregation
 """
 
 from __future__ import annotations
 
 import argparse
+import logging
+import os
+import sys
+import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
-from ..schemas import AgentDecision
+# Make the vendored upstream importable
+_VENDOR = Path(__file__).resolve().parent.parent.parent / "vendor" / "tradingagents"
+if str(_VENDOR) not in sys.path:
+    sys.path.insert(0, str(_VENDOR))
+
+from ..schemas import AgentDecision, AgentReasoning  # noqa: E402
+
+log = logging.getLogger(__name__)
 
 
-def propagate_tr(
-    ticker: str,
-    trade_date: str,
-    market: str = "BIST",
-    output_language: str = "Turkish",
-) -> AgentDecision:
-    """Run the full 7-agent pipeline for one TR ticker.
+def _load_env() -> None:
+    """Auto-load .env so CLI runs work without pre-sourcing."""
+    env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        v = v.strip().strip('"')
+        if v:
+            os.environ.setdefault(k, v)
 
-    TODO(phase-2):
-        - Import TradingAgentsGraph from vendored upstream
-        - Override deep_think_llm/quick_think_llm with per-agent dict from llm.routing
-        - Replace get_news/get_insider_transactions with KAP-backed implementations
-        - Wrap final decision in AgentDecision schema
-        - Run risk-layer check before returning
+
+def propagate(ticker: str, trade_date: str, market: str = "US") -> AgentDecision:
+    """Run the upstream 7-agent pipeline for one ticker.
+
+    Args:
+        ticker: e.g. "AAPL" (US) or "ASELS.IS" (BIST — Phase 3+)
+        trade_date: ISO date string (the "as-of" date for the decision)
+        market: "US" or "BIST"
+
+    Returns:
+        AgentDecision with the final rating and reasoning blobs.
     """
-    raise NotImplementedError("tr_setup.propagate_tr — phase 2")
+    _load_env()
+
+    from tradingagents.graph.trading_graph import TradingAgentsGraph  # type: ignore[import-not-found]
+
+    log.info("initializing TradingAgentsGraph for %s @ %s", ticker, trade_date)
+    ta = TradingAgentsGraph(
+        selected_analysts=["market", "social", "news", "fundamentals"],
+        debug=False,
+    )
+
+    log.info("propagating decision pipeline (this will make ~12 LLM calls)…")
+    final_state, processed_signal = ta.propagate(ticker, trade_date)
+
+    # Upstream returns final_state dict and a processed decision string.
+    # Map to our AgentDecision schema. Many fields are placeholders pending
+    # Phase 3 wiring (structured output extraction from upstream).
+    reasoning: list[AgentReasoning] = []
+    for agent_key, report_key in [
+        ("market_analyst", "market_report"),
+        ("sentiment_analyst", "sentiment_report"),
+        ("news_analyst", "news_report"),
+        ("fundamentals_analyst", "fundamentals_report"),
+    ]:
+        body = final_state.get(report_key, "") or ""
+        if body:
+            reasoning.append(
+                AgentReasoning(
+                    agent=agent_key,
+                    model=os.environ.get("TRADINGAGENTS_QUICK_THINK_LLM", "claude-sonnet-4-6"),
+                    summary=body[:2000],
+                    tokens_in=0,
+                    tokens_out=0,
+                    latency_ms=0,
+                )
+            )
+
+    if final_state.get("investment_plan"):
+        reasoning.append(
+            AgentReasoning(
+                agent="research_manager",
+                model=os.environ.get("TRADINGAGENTS_DEEP_THINK_LLM", "claude-opus-4-7"),
+                summary=final_state["investment_plan"][:2000],
+                tokens_in=0,
+                tokens_out=0,
+                latency_ms=0,
+            )
+        )
+
+    if final_state.get("trader_investment_plan"):
+        reasoning.append(
+            AgentReasoning(
+                agent="trader",
+                model=os.environ.get("TRADINGAGENTS_QUICK_THINK_LLM", "claude-sonnet-4-6"),
+                summary=final_state["trader_investment_plan"][:2000],
+                tokens_in=0,
+                tokens_out=0,
+                latency_ms=0,
+            )
+        )
+
+    final = final_state.get("final_trade_decision", processed_signal or "Hold")
+    if final:
+        reasoning.append(
+            AgentReasoning(
+                agent="portfolio_manager",
+                model=os.environ.get("TRADINGAGENTS_DEEP_THINK_LLM", "claude-opus-4-7"),
+                summary=str(final)[:2000],
+                tokens_in=0,
+                tokens_out=0,
+                latency_ms=0,
+            )
+        )
+
+    rating, price_target, horizon = _parse_pm_output(str(final or processed_signal or ""))
+
+    return AgentDecision(
+        ticker=ticker,
+        market="US" if market == "US" else "BIST",
+        quote_currency="USD" if market == "US" else "TRY",
+        rating=rating,
+        price_target=price_target,
+        time_horizon=horizon,
+        reasoning=reasoning,
+        debate_transcript={},
+        final_decision_text=str(final or "")[:8000],
+        timestamp_utc=datetime.now(timezone.utc),
+        decision_id=str(uuid.uuid4()),
+    )
 
 
-def propagate_us(
-    ticker: str,
-    trade_date: str,
-    output_language: str = "English",
-) -> AgentDecision:
-    """Run pipeline for one US ticker (standard TradingAgents path, with our LLM routing)."""
-    raise NotImplementedError("tr_setup.propagate_us — phase 2")
+def _parse_pm_output(text: str) -> tuple[str, float | None, str | None]:
+    """Parse Portfolio Manager output.
+
+    Upstream PM emits markdown with **Rating**: ..., **Price Target**: ...,
+    **Time Horizon**: ... headers. Regex-based extraction for Phase 2; Phase
+    3 will switch to structured output (with_structured_output).
+    """
+    import re
+
+    rating_match = re.search(r"\*\*Rating\*\*\s*:?\s*(Buy|Overweight|Hold|Underweight|Sell)", text, re.I)
+    rating_raw = (rating_match.group(1).capitalize() if rating_match else "Hold")
+    # Normalize: pydantic Literal is case-sensitive
+    rating_map = {
+        "Buy": "Buy", "Overweight": "Overweight", "Hold": "Hold",
+        "Underweight": "Underweight", "Sell": "Sell",
+    }
+    rating = rating_map.get(rating_raw, "Hold")
+
+    pt_match = re.search(r"\*\*Price Target\*\*\s*:?\s*\$?([\d,]+(?:\.\d+)?)", text, re.I)
+    price_target: float | None = None
+    if pt_match:
+        try:
+            price_target = float(pt_match.group(1).replace(",", ""))
+        except ValueError:
+            price_target = None
+
+    horizon_match = re.search(r"\*\*Time Horizon\*\*\s*:?\s*([^\n*]+)", text, re.I)
+    horizon = horizon_match.group(1).strip() if horizon_match else None
+
+    return rating, price_target, horizon
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s | %(message)s")
     parser = argparse.ArgumentParser(description="Run TradingAgents-TR for a single ticker")
-    parser.add_argument("--ticker", required=True, help="Ticker (e.g. AAPL or ASELS for BIST)")
+    parser.add_argument("--ticker", required=True, help="Ticker (e.g. AAPL or ASELS.IS)")
     parser.add_argument("--date", default=datetime.now(timezone.utc).date().isoformat())
     parser.add_argument("--market", choices=["US", "BIST"], default="US")
-    parser.add_argument("--paper", action="store_true", help="Paper trade only (no live execution)")
     args = parser.parse_args()
 
-    fn = propagate_tr if args.market == "BIST" else propagate_us
-    decision = fn(args.ticker, args.date)
+    decision = propagate(args.ticker, args.date, args.market)
+    print("\n=== DECISION ===")
     print(decision.model_dump_json(indent=2))
 
 

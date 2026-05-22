@@ -30,18 +30,26 @@ class AgentReasoning(BaseModel):
 
 
 class AgentDecision(BaseModel):
-    """Output of the 7-agent pipeline for a single ticker."""
+    """Output of the 7-agent pipeline for a single ticker.
+
+    entry_price / stop_loss are optional: the LLM may not always provide them
+    explicitly (Hold ratings, qualitative outputs). When populated they must
+    be positive — the risk layer fills 0 → None gracefully.
+    """
 
     ticker: str
     market: Market
     quote_currency: Currency
     rating: Rating
-    entry_price: float = Field(gt=0)
-    stop_loss: float = Field(gt=0)
+    entry_price: float | None = Field(default=None, gt=0)
+    stop_loss: float | None = Field(default=None, gt=0)
     take_profit: float | None = None
-    suggested_size_pct: float = Field(ge=0.0, le=1.0)
+    price_target: float | None = None
+    time_horizon: str | None = None
+    suggested_size_pct: float = Field(default=0.0, ge=0.0, le=1.0)
     reasoning: list[AgentReasoning]
     debate_transcript: dict[str, str] = Field(default_factory=dict)
+    final_decision_text: str | None = None
     timestamp_utc: datetime
     decision_id: str
 

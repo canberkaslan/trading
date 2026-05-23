@@ -99,3 +99,36 @@ def test_alpaca_clock() -> None:
         clock = a.clock()
     assert isinstance(clock.is_open, bool)
     assert clock.next_open and clock.next_close
+
+
+def test_sp500_history_survivor_safe() -> None:
+    """Survivor-safe S&P 500 universe reconstruction (Wikipedia scrape)."""
+    from datetime import date as _date
+
+    from tradingagents_us.dataflows.sp500_history import (
+        fetch_changes,
+        fetch_current_constituents,
+        members_as_of,
+    )
+
+    try:
+        current = fetch_current_constituents()
+        changes = fetch_changes()
+    except Exception as e:
+        pytest.skip(f"network/wiki fetch failed: {e}")
+
+    # Sanity: current list is ~500 stocks
+    assert 480 <= len(current) <= 520
+    assert "AAPL" in set(current["symbol"])
+
+    # GFC-era removals should be captured
+    casualties_2008 = {c.removed for c in changes if c.effective_date.year == 2008 and c.removed}
+    assert "LEH" in casualties_2008, "Lehman 2008 removal must be in changes"
+    assert "FNM" in casualties_2008 or "FRE" in casualties_2008
+
+    # Point-in-time: LEH was a member at end of 2007, not at end of 2010
+    m_2007 = members_as_of(_date(2007, 12, 31), changes, current)
+    m_2010 = members_as_of(_date(2010, 12, 31), changes, current)
+    assert "LEH" in m_2007
+    assert "LEH" not in m_2010
+    assert "AAPL" in m_2007 and "AAPL" in m_2010

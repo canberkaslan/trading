@@ -138,11 +138,23 @@ def propagate(ticker: str, trade_date: str) -> AgentDecision:
 
     rating, price_target, horizon = _parse_pm_output(str(final or processed_signal or ""))
 
+    # Trader gives the concrete entry / stop / sizing numbers. Upstream may
+    # store it under either field name across versions.
+    trader_text = (
+        final_state.get("trader_investment_plan")
+        or final_state.get("trader_investment_decision")
+        or ""
+    )
+    entry_price, stop_loss, suggested_size_pct = _parse_trader_output(str(trader_text))
+
     return AgentDecision(
         ticker=ticker,
         market="US",
         quote_currency="USD",
         rating=rating,
+        entry_price=entry_price,
+        stop_loss=stop_loss,
+        suggested_size_pct=suggested_size_pct,
         price_target=price_target,
         time_horizon=horizon,
         reasoning=reasoning,
@@ -183,6 +195,60 @@ def _parse_pm_output(text: str) -> tuple[str, float | None, str | None]:
     horizon = horizon_match.group(1).strip() if horizon_match else None
 
     return rating, price_target, horizon
+
+
+def _parse_trader_output(text: str) -> tuple[float | None, float | None, float]:
+    """Parse upstream Trader markdown into (entry_price, stop_loss, size_pct).
+
+    Trader markdown (render_trader_proposal in vendor schemas.py) emits:
+
+        **Action**: Buy | Hold | Sell
+        **Reasoning**: ...
+        **Entry Price**: 271.0
+        **Stop Loss**: 229.0
+        **Position Sizing**: 4–5% of portfolio, ...
+        FINAL TRANSACTION PROPOSAL: **BUY**
+
+    `position_sizing` is freeform text — we extract the first percentage
+    (e.g. "4-5%" -> 0.045, "5%" -> 0.05). Defaults to 0.0 (risk layer skips
+    sizing if the LLM didn't propose one).
+    """
+    import re
+
+    entry: float | None = None
+    stop: float | None = None
+    size: float = 0.0
+
+    e_match = re.search(r"\*\*Entry Price\*\*\s*:?\s*\$?([\d,]+(?:\.\d+)?)", text, re.I)
+    if e_match:
+        try:
+            entry = float(e_match.group(1).replace(",", ""))
+        except ValueError:
+            entry = None
+
+    s_match = re.search(r"\*\*Stop[ \-]?Loss\*\*\s*:?\s*\$?([\d,]+(?:\.\d+)?)", text, re.I)
+    if s_match:
+        try:
+            stop = float(s_match.group(1).replace(",", ""))
+        except ValueError:
+            stop = None
+
+    # "4–5%" / "4-5%" / "5%" — take midpoint of range, else single value
+    sz_match = re.search(
+        r"\*\*Position Sizing\*\*\s*:?\s*([\d.]+)\s*(?:[–—\-]\s*([\d.]+))?\s*%",
+        text,
+        re.I,
+    )
+    if sz_match:
+        try:
+            lo = float(sz_match.group(1))
+            hi = float(sz_match.group(2)) if sz_match.group(2) else lo
+            size = ((lo + hi) / 2.0) / 100.0
+            size = max(0.0, min(size, 1.0))
+        except ValueError:
+            size = 0.0
+
+    return entry, stop, size
 
 
 def main() -> None:

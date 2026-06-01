@@ -29,11 +29,11 @@ locals {
 }
 
 module "vpc" {
-  source       = "../../modules/vpc"
-  env          = local.env
-  cidr         = local.vpc_cidr
-  azs          = ["eu-west-1a", "eu-west-1b"]
-  use_fck_nat  = true
+  source      = "../../modules/vpc"
+  env         = local.env
+  cidr        = local.vpc_cidr
+  azs         = ["eu-west-1a", "eu-west-1b"]
+  use_fck_nat = true
 }
 
 module "secrets" {

@@ -52,8 +52,8 @@ resource "aws_lambda_function" "agent" {
   role          = var.lambda_role_arn
   package_type  = "Image"
   image_uri     = var.lambda_image_uri
-  timeout       = 900   # 15 min — full 7-agent pipeline ~10 min
-  memory_size   = 2048  # I/O bound; this is generous
+  timeout       = 900  # 15 min — full 7-agent pipeline ~10 min
+  memory_size   = 2048 # I/O bound; this is generous
 
   environment {
     variables = {
@@ -68,7 +68,7 @@ resource "aws_lambda_function" "agent" {
   }
 
   ephemeral_storage {
-    size = 1024  # MB, for vendored upstream + parquet caching
+    size = 1024 # MB, for vendored upstream + parquet caching
   }
 }
 

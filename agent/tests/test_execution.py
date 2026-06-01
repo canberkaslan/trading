@@ -16,7 +16,20 @@ from tradingagents_us.execution.executor import (
     derive_client_order_id,
     submit_order,
 )
-from tradingagents_us.schemas import TradeOrder
+from tradingagents_us.schemas import AgentDecision, AgentReasoning, TradeOrder
+
+
+def _decision_with_pt(price_target: float = 310.0) -> AgentDecision:
+    return AgentDecision(
+        ticker="AAPL", market="US", quote_currency="USD",
+        rating="Overweight",
+        entry_price=271.0, stop_loss=229.0, price_target=price_target,
+        time_horizon="12-18 months", suggested_size_pct=0.045,
+        reasoning=[AgentReasoning(agent="pm", model="claude-opus-4-7", summary="x",
+                                  tokens_in=0, tokens_out=0, latency_ms=0)],
+        timestamp_utc=datetime.now(timezone.utc),
+        decision_id="dec-bracket-test",
+    )
 
 
 def _order(approved: bool = True, reasons: list[str] | None = None) -> TradeOrder:
@@ -119,6 +132,74 @@ class TestLiveSubmissionMocked:
         cli = self._mock_client(market_open=False)
         result = submit_order(_order(), client=cli, config=ExecutionConfig(dry_run=False))
         assert result.submitted
+
+
+class TestBracketOrder:
+    def _mock_client_for_bracket(self):
+        from unittest.mock import MagicMock
+        cli = MagicMock()
+        acct = MagicMock()
+        acct.trading_blocked = False
+        acct.pattern_day_trader = False
+        cli.account.return_value = acct
+
+        clock = MagicMock()
+        clock.is_open = True
+        cli.clock.return_value = clock
+
+        broker = MagicMock()
+        broker.id = "bracket-parent-id"
+        broker.status = "accepted"
+        broker.filled_qty = 0
+        broker.filled_avg_price = None
+        cli.submit_order.return_value = broker
+        cli.close = MagicMock()
+        return cli
+
+    def test_bracket_attaches_tp_and_sl_when_decision_has_pt(self) -> None:
+        cli = self._mock_client_for_bracket()
+        result = submit_order(
+            _order(), client=cli,
+            config=ExecutionConfig(dry_run=False, use_bracket=True),
+            decision=_decision_with_pt(price_target=310.0),
+        )
+        assert result.submitted
+        sent = cli.submit_order.call_args.kwargs
+        assert sent["take_profit_price"] == 310.0
+        assert sent["stop_loss_price"] == 229.0
+
+    def test_no_bracket_when_use_bracket_off(self) -> None:
+        cli = self._mock_client_for_bracket()
+        submit_order(
+            _order(), client=cli,
+            config=ExecutionConfig(dry_run=False, use_bracket=False),
+            decision=_decision_with_pt(),
+        )
+        sent = cli.submit_order.call_args.kwargs
+        assert "take_profit_price" not in sent
+        assert "stop_loss_price" not in sent
+
+    def test_no_bracket_when_decision_missing(self) -> None:
+        # Without a decision (or without a PT) we can't form a bracket
+        cli = self._mock_client_for_bracket()
+        submit_order(
+            _order(), client=cli,
+            config=ExecutionConfig(dry_run=False, use_bracket=True),
+            decision=None,
+        )
+        sent = cli.submit_order.call_args.kwargs
+        assert "take_profit_price" not in sent
+        assert "stop_loss_price" not in sent
+
+    def test_explicit_tp_override(self) -> None:
+        cli = self._mock_client_for_bracket()
+        submit_order(
+            _order(), client=cli,
+            config=ExecutionConfig(dry_run=False, use_bracket=True, take_profit_price=299.5),
+            decision=_decision_with_pt(price_target=310.0),  # should be overridden
+        )
+        sent = cli.submit_order.call_args.kwargs
+        assert sent["take_profit_price"] == 299.5
 
 
 class TestIdempotencyKey:

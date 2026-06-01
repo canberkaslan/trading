@@ -198,7 +198,7 @@ def main() -> int:
 
     # 4. Submit (dry-run by default)
     config = ExecutionConfig(dry_run=not args.submit, refuse_outside_hours=args.refuse_outside_hours)
-    result = submit_order(order, config=config)
+    result = submit_order(order, config=config, decision=decision)
 
     if repo is not None:
         repo.save_order(order, broker_order_id=result.broker_order_id)

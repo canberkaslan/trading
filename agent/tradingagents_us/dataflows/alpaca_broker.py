@@ -165,7 +165,19 @@ class AlpacaClient:
         stop_price: float | None = None,
         client_order_id: str | None = None,
         extended_hours: bool = False,
+        take_profit_price: float | None = None,
+        stop_loss_price: float | None = None,
+        stop_loss_limit_price: float | None = None,
     ) -> Order:
+        """Submit an order. If `take_profit_price` and/or `stop_loss_price`
+        are provided, the parent becomes a bracket order: the entry leg
+        executes per `order_type`, then on fill, Alpaca arms a take-profit
+        limit and/or a stop-loss (or stop-limit) sibling.
+
+        Bracket orders REQUIRE time_in_force='day' or 'gtc'. We auto-promote
+        to 'gtc' when a bracket is requested with 'day' so the children
+        survive overnight, mirroring how the LLM's PT/stop are multi-day.
+        """
         body: dict = {
             "symbol": symbol,
             "qty": str(qty),
@@ -180,6 +192,28 @@ class AlpacaClient:
             body["stop_price"] = str(stop_price)
         if client_order_id is not None:
             body["client_order_id"] = client_order_id
+
+        # Bracket: parent fills first, then Alpaca arms children
+        has_tp = take_profit_price is not None
+        has_sl = stop_loss_price is not None
+        if has_tp and has_sl:
+            body["order_class"] = "bracket"
+        elif has_tp:
+            body["order_class"] = "oto"  # one-triggers-other (take-profit only)
+        elif has_sl:
+            body["order_class"] = "oto"
+        if has_tp or has_sl:
+            # Bracket / OTO requires day or gtc; auto-promote 'day' is fine
+            # but for multi-day PT targets gtc is the right default.
+            if body["time_in_force"] not in ("day", "gtc"):
+                body["time_in_force"] = "gtc"
+        if has_tp:
+            body["take_profit"] = {"limit_price": str(take_profit_price)}
+        if has_sl:
+            sl_leg: dict = {"stop_price": str(stop_loss_price)}
+            if stop_loss_limit_price is not None:
+                sl_leg["limit_price"] = str(stop_loss_limit_price)
+            body["stop_loss"] = sl_leg
 
         d = self._post("/orders", body)
         return _order_from_dict(d)

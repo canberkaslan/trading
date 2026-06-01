@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 import httpx
 
 from ..dataflows.alpaca_broker import AlpacaClient
-from ..schemas import OrderUpdate, TradeOrder
+from ..schemas import AgentDecision, OrderUpdate, TradeOrder
 
 log = logging.getLogger(__name__)
 
@@ -24,6 +24,8 @@ class ExecutionConfig:
     dry_run: bool = True             # safety default — never submit by default
     refuse_outside_hours: bool = False  # paper trades queue OK; flip on for live
     refuse_on_pdt: bool = True       # safety — never trade if PDT flag triggers
+    use_bracket: bool = True         # attach stop + take_profit as broker-side legs
+    take_profit_price: float | None = None  # explicit override; else use decision PT
 
 
 @dataclass(frozen=True)
@@ -39,6 +41,7 @@ def submit_order(
     order: TradeOrder,
     client: AlpacaClient | None = None,
     config: ExecutionConfig = ExecutionConfig(),
+    decision: AgentDecision | None = None,
 ) -> ExecutionResult:
     """Push a risk-approved TradeOrder to Alpaca (paper or live).
 
@@ -112,6 +115,18 @@ def submit_order(
         # Idempotency: deterministic client_order_id from decision_id + order_id
         client_oid = f"tr-{order.decision_id[:8]}-{order.order_id[:8]}"
 
+        # Bracket: attach stop_loss as broker-side leg + (if available)
+        # take_profit from decision.price_target. Broker-side stop survives
+        # disconnects and process restarts — much safer than only tracking
+        # it in our risk layer.
+        bracket_kwargs: dict = {}
+        if config.use_bracket and order.side == "BUY":
+            tp = config.take_profit_price or (decision.price_target if decision else None)
+            sl = order.stop_loss if order.stop_loss > 0 else None
+            if tp and sl:
+                bracket_kwargs["take_profit_price"] = tp
+                bracket_kwargs["stop_loss_price"] = sl
+
         broker = cli.submit_order(
             symbol=order.ticker,
             qty=order.quantity,
@@ -120,6 +135,7 @@ def submit_order(
             time_in_force="day",
             limit_price=order.limit_price,
             client_order_id=client_oid,
+            **bracket_kwargs,
         )
 
         return ExecutionResult(

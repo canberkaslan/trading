@@ -45,6 +45,7 @@ from tradingagents_us.risk.kill_switch import StaticKillSwitchReader  # noqa: E4
 from tradingagents_us.risk.portfolio_limits import PortfolioContext, PortfolioLimits  # noqa: E402
 from tradingagents_us.risk.sizer import MarketContext, size_from_decision  # noqa: E402
 from tradingagents_us.schemas import AgentDecision, AgentReasoning  # noqa: E402
+from tradingagents_us.storage import TradeLogRepository  # noqa: E402
 
 log = logging.getLogger("trade")
 
@@ -119,7 +120,15 @@ def main() -> int:
     parser.add_argument("--submit", action="store_true",
                         help="Actually submit the order to Alpaca (default: dry run)")
     parser.add_argument("--refuse-outside-hours", action="store_true")
+    parser.add_argument("--no-persist", action="store_true",
+                        help="Skip writing to the trade log DB")
+    parser.add_argument("--db-url", default=os.environ.get("LOCAL_DATABASE_URL", "sqlite:///./local.db"),
+                        help="Trade log DB URL (default: SQLite file in CWD). "
+                             "Production sets DATABASE_URL to Aurora — this flag overrides.")
     args = parser.parse_args()
+
+    from sqlalchemy import create_engine
+    repo = None if args.no_persist else TradeLogRepository(engine=create_engine(args.db_url, future=True))
 
     # 1. Get decision
     if args.use_cached:
@@ -129,6 +138,10 @@ def main() -> int:
         log.info("running fresh LLM pipeline for %s @ %s (~5-10 min, ~$0.50-1.50)", args.ticker, args.date)
         decision = propagate(args.ticker, args.date)
     _print_decision(decision)
+
+    if repo is not None:
+        repo.save_decision(decision)
+        log.info("persisted decision %s", decision.decision_id)
 
     if not (decision.entry_price and decision.stop_loss):
         log.warning("decision missing entry/stop — cannot size; aborting before risk layer")
@@ -186,6 +199,11 @@ def main() -> int:
     # 4. Submit (dry-run by default)
     config = ExecutionConfig(dry_run=not args.submit, refuse_outside_hours=args.refuse_outside_hours)
     result = submit_order(order, config=config)
+
+    if repo is not None:
+        repo.save_order(order, broker_order_id=result.broker_order_id)
+        repo.append_update(result.update)
+        log.info("persisted order %s + update status=%s", order.order_id, result.update.status)
 
     print("\n=== EXECUTION RESULT ===")
     print(f"  Dry run:     {result.dry_run}")

@@ -81,5 +81,16 @@ module "eventbridge_daily" {
   lambda_role_arn  = ""
 }
 
+module "cognito" {
+  source        = "../../modules/cognito"
+  env           = local.env
+  region        = "eu-west-1"
+  domain_prefix = "ai-trader-dev-674594306499"
+  # Mobile Expo dev redirect; replace with custom scheme + universal links once we
+  # have App Store presence.
+  callback_urls = ["trading://auth/callback", "http://localhost:8081/auth/callback"]
+  logout_urls   = ["trading://auth/logout", "http://localhost:8081/auth/logout"]
+}
+
 # Compute modules (ec2-agent, ec2-api, ec2-data, alb-waf, apigw-ws, cognito, observability)
 # wired in Phase 4 once paper-trade-ready code lands in agent/.

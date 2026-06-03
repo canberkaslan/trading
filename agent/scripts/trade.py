@@ -34,6 +34,7 @@ if str(_AGENT_ROOT / "vendor" / "tradingagents") not in sys.path:
     sys.path.insert(0, str(_AGENT_ROOT / "vendor" / "tradingagents"))
 
 from tradingagents_us.dataflows.alpaca_broker import AlpacaClient  # noqa: E402
+from tradingagents_us.dataflows.polygon import PolygonClient  # noqa: E402
 from tradingagents_us.execution import ExecutionConfig, submit_order  # noqa: E402
 from tradingagents_us.graph.pipeline import (  # noqa: E402
     _parse_pm_output,
@@ -83,13 +84,42 @@ def _decision_from_cached(ticker: str) -> AgentDecision:
         AgentReasoning(agent="portfolio_manager", model="claude-opus-4-7",
                        summary=pm[:1500], tokens_in=0, tokens_out=0, latency_ms=0),
     ]
+
+    # Use the ORIGINAL trade_date from the cached state as the decision
+    # timestamp — never "now". Otherwise the stale-decision guard is silently
+    # bypassed for replays (which is exactly the bug that caused the
+    # 2026-06-01 AAPL -$5.64 incident).
+    trade_date = state.get("trade_date")
+    if trade_date:
+        try:
+            decision_ts = datetime.fromisoformat(trade_date).replace(tzinfo=timezone.utc)
+        except ValueError:
+            decision_ts = datetime.now(timezone.utc)
+    else:
+        decision_ts = datetime.now(timezone.utc)
+
     return AgentDecision(
         ticker=ticker, market="US", quote_currency="USD",
         rating=rating, entry_price=entry, stop_loss=stop,
         suggested_size_pct=size, price_target=pt, time_horizon=horizon,
         reasoning=reasoning, final_decision_text=pm[:8000],
-        timestamp_utc=datetime.now(timezone.utc), decision_id=str(uuid.uuid4()),
+        timestamp_utc=decision_ts, decision_id=str(uuid.uuid4()),
     )
+
+
+def _fetch_current_price(ticker: str) -> float | None:
+    """Pull the most recent close from Polygon (Stocks Starter is 15-min
+    delayed but close enough for sanity checks). Returns None if unavailable."""
+    try:
+        with PolygonClient() as p:
+            resp = p.previous_close(ticker)
+            results = resp.get("results") or []
+            if not results:
+                return None
+            return float(results[0].get("c", 0)) or None
+    except Exception as e:
+        log.warning("could not fetch current price for %s: %s", ticker, e)
+        return None
 
 
 def _print_decision(d: AgentDecision) -> None:
@@ -197,8 +227,11 @@ def main() -> int:
         print(f"  Reasons:     {order.rejection_reasons}")
 
     # 4. Submit (dry-run by default)
+    current_price = _fetch_current_price(args.ticker)
+    if current_price:
+        print(f"\n  Current price (Polygon, delayed): ${current_price:.2f}")
     config = ExecutionConfig(dry_run=not args.submit, refuse_outside_hours=args.refuse_outside_hours)
-    result = submit_order(order, config=config, decision=decision)
+    result = submit_order(order, config=config, decision=decision, current_price=current_price)
 
     if repo is not None:
         repo.save_order(order, broker_order_id=result.broker_order_id)

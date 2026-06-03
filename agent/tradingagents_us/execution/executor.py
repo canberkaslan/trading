@@ -2,6 +2,15 @@
 
 Deterministic, idempotent, dry-run-safe. The client_order_id is derived
 from the decision_id + order_id so retries don't double-submit.
+
+Sanity guards (Phase 4g, after the 2026-06-01 AAPL stale-decision incident):
+
+- decision_max_age_hours: refuse if the LLM decision is older than this.
+  Catches replays of cached state after the underlying price moved.
+- Headroom check: refuse BUY if current_price >= price_target * (1 - tp_headroom).
+  Catches "the target was reached while we slept" — no profit left in the trade.
+- Stop-proximity check: refuse BUY if current_price <= stop_loss * (1 + stop_buffer).
+  Catches "we'd get stopped out immediately on a normal spread".
 """
 
 from __future__ import annotations
@@ -9,7 +18,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -21,11 +30,14 @@ log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class ExecutionConfig:
-    dry_run: bool = True             # safety default — never submit by default
-    refuse_outside_hours: bool = False  # paper trades queue OK; flip on for live
-    refuse_on_pdt: bool = True       # safety — never trade if PDT flag triggers
-    use_bracket: bool = True         # attach stop + take_profit as broker-side legs
+    dry_run: bool = True              # safety default — never submit by default
+    refuse_outside_hours: bool = False   # paper trades queue OK; flip on for live
+    refuse_on_pdt: bool = True        # safety — never trade if PDT flag triggers
+    use_bracket: bool = True          # attach stop + take_profit as broker-side legs
     take_profit_price: float | None = None  # explicit override; else use decision PT
+    decision_max_age_hours: float = 24.0   # refuse stale decisions; 0 disables
+    tp_headroom: float = 0.05         # require ≥5% upside left to TP; 0 disables
+    stop_buffer: float = 0.02         # current_price must be >=2% above stop; 0 disables
 
 
 @dataclass(frozen=True)
@@ -42,18 +54,24 @@ def submit_order(
     client: AlpacaClient | None = None,
     config: ExecutionConfig = ExecutionConfig(),
     decision: AgentDecision | None = None,
+    current_price: float | None = None,
 ) -> ExecutionResult:
     """Push a risk-approved TradeOrder to Alpaca (paper or live).
 
     Behavior:
     - If `order.risk_approved` is False, refuse and surface the existing
       rejection_reasons.
+    - Stale-decision / entry-sanity guards run before dry_run so even a
+      dry run reports them (helps catch bad invocations in CI).
     - If `config.dry_run` (default), build the payload and log it but do
-      not contact the broker. Use this in CI, in development, and on the
-      first day of any new deployment.
+      not contact the broker.
     - Otherwise check broker preconditions (account status, PDT flag,
-      market hours if configured) and submit a market order with an
-      idempotent client_order_id.
+      market hours if configured) and submit with bracket legs.
+
+    Args:
+        current_price: live last-trade price. Required when tp_headroom or
+            stop_buffer guards are enabled (default ON). Pass None to skip
+            those guards (e.g. backtests).
     """
     refusals: list[str] = []
     now = datetime.now(timezone.utc)
@@ -71,7 +89,48 @@ def submit_order(
             refusal_reasons=refusals,
         )
 
-    # 2. Dry run — log what we would have done, no broker call
+    # 2. Stale-decision guard (Phase 4g)
+    if config.decision_max_age_hours > 0 and decision is not None:
+        age = now - decision.timestamp_utc
+        if age > timedelta(hours=config.decision_max_age_hours):
+            refusals.append(
+                f"stale_decision: age={age.total_seconds() / 3600:.1f}h "
+                f"exceeds {config.decision_max_age_hours:.1f}h"
+            )
+
+    # 3. Entry sanity (TP headroom + stop proximity)
+    if current_price is not None and decision is not None and order.side == "BUY":
+        if (
+            config.tp_headroom > 0
+            and decision.price_target
+            and current_price >= decision.price_target * (1 - config.tp_headroom)
+        ):
+            refusals.append(
+                f"no_tp_headroom: current=${current_price:.2f} "
+                f">= TP=${decision.price_target:.2f} * (1-{config.tp_headroom:.0%})"
+            )
+        if (
+            config.stop_buffer > 0
+            and decision.stop_loss
+            and current_price <= decision.stop_loss * (1 + config.stop_buffer)
+        ):
+            refusals.append(
+                f"too_close_to_stop: current=${current_price:.2f} "
+                f"<= stop=${decision.stop_loss:.2f} * (1+{config.stop_buffer:.0%})"
+            )
+
+    if refusals:
+        return ExecutionResult(
+            submitted=False,
+            dry_run=config.dry_run,
+            update=OrderUpdate(
+                order_id=order.order_id, status="REJECTED",
+                error_message=";".join(refusals), timestamp_utc=now,
+            ),
+            refusal_reasons=refusals,
+        )
+
+    # 4. Dry run — log what we would have done, no broker call
     if config.dry_run:
         log.info(
             "[dry_run] would submit: %s %s qty=%s order_type=%s",
@@ -86,7 +145,7 @@ def submit_order(
             ),
         )
 
-    # 3. Live broker submission
+    # 5. Live broker submission
     own_client = client is None
     cli = client or AlpacaClient()
     try:

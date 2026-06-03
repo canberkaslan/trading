@@ -91,7 +91,11 @@ def submit_order(
 
     # 2. Stale-decision guard (Phase 4g)
     if config.decision_max_age_hours > 0 and decision is not None:
-        age = now - decision.timestamp_utc
+        # SQLite drops tzinfo on roundtrip; assume UTC if naive
+        dts = decision.timestamp_utc
+        if dts.tzinfo is None:
+            dts = dts.replace(tzinfo=timezone.utc)
+        age = now - dts
         if age > timedelta(hours=config.decision_max_age_hours):
             refusals.append(
                 f"stale_decision: age={age.total_seconds() / 3600:.1f}h "

@@ -149,6 +149,8 @@ def main() -> int:
     parser.add_argument("--max-position-pct", type=float, default=0.10)
     parser.add_argument("--submit", action="store_true",
                         help="Actually submit the order to Alpaca (default: dry run)")
+    parser.add_argument("--hold", action="store_true",
+                        help="Save the order as PENDING (no broker call) — wait for mobile approval")
     parser.add_argument("--refuse-outside-hours", action="store_true")
     parser.add_argument("--no-persist", action="store_true",
                         help="Skip writing to the trade log DB")
@@ -226,10 +228,39 @@ def main() -> int:
     if order.rejection_reasons:
         print(f"  Reasons:     {order.rejection_reasons}")
 
-    # 4. Submit (dry-run by default)
+    # 4. Submit / hold / dry-run
     current_price = _fetch_current_price(args.ticker)
     if current_price:
         print(f"\n  Current price (Polygon, delayed): ${current_price:.2f}")
+
+    if args.hold:
+        # Persist the order in PENDING state — mobile approval will submit later.
+        # Still run all the guards so we don't store a bad order.
+        from tradingagents_us.schemas import OrderUpdate
+
+        guard_config = ExecutionConfig(dry_run=True, refuse_outside_hours=False)
+        guard_result = submit_order(order, config=guard_config, decision=decision, current_price=current_price)
+        if not guard_result.dry_run or guard_result.update.status == "REJECTED":
+            # Guards failed even in dry-run -> reject before persisting
+            if repo is not None:
+                repo.save_order(order, broker_order_id=None)
+                repo.append_update(guard_result.update)
+            print(f"\n=== HOLD: REJECTED by guards ===\n  Reasons: {guard_result.refusal_reasons}")
+            return 1
+
+        if repo is not None:
+            repo.save_order(order, broker_order_id=None)
+            repo.append_update(OrderUpdate(
+                order_id=order.order_id, status="PENDING",
+                error_message="awaiting_mobile_approval",
+                timestamp_utc=datetime.now(timezone.utc),
+            ))
+        print(f"\n=== HOLD: order persisted as PENDING ===")
+        print(f"  Order ID:    {order.order_id}")
+        print(f"  Approve via: POST /v1/orders/{order.order_id}/approve (mobile)")
+        print(f"  Or CLI:      curl -X POST http://localhost:8000/v1/orders/{order.order_id}/approve")
+        return 0
+
     config = ExecutionConfig(dry_run=not args.submit, refuse_outside_hours=args.refuse_outside_hours)
     result = submit_order(order, config=config, decision=decision, current_price=current_price)
 

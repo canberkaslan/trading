@@ -2,7 +2,7 @@
  * TanStack Query hooks for the trading backend.
  */
 
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { api } from './endpoints';
 
@@ -31,6 +31,35 @@ export function useOrders() {
     queryKey: ['orders'],
     queryFn: api.listOrders,
     refetchInterval: REFETCH_INTERVAL_MS,
+  });
+}
+
+export function usePendingOrders() {
+  return useQuery({
+    queryKey: ['orders', 'pending'],
+    queryFn: api.listPendingOrders,
+    refetchInterval: REFETCH_INTERVAL_MS,
+  });
+}
+
+export function useApproveOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (orderId: string) => api.approveOrder(orderId),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['orders'] });
+      qc.invalidateQueries({ queryKey: ['portfolio'] });
+    },
+  });
+}
+
+export function useRejectOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (orderId: string) => api.rejectOrder(orderId),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['orders'] });
+    },
   });
 }
 

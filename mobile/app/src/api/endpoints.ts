@@ -29,6 +29,15 @@ export const api = {
 
   // Orders
   listOrders: () => apiClient.get('v1/orders').json<OrderListItem[]>(),
+  listPendingOrders: () => apiClient.get('v1/orders/pending').json<OrderListItem[]>(),
+  approveOrder: (orderId: string) =>
+    apiClient
+      .post(`v1/orders/${orderId}/approve`)
+      .json<{ order_id: string; broker_order_id: string; status: string }>(),
+  rejectOrder: (orderId: string) =>
+    apiClient
+      .post(`v1/orders/${orderId}/reject`)
+      .json<{ order_id: string; status: string }>(),
   cancelOrder: (orderId: string) =>
     apiClient.post(`v1/orders/${orderId}/cancel`).json<{ status: string }>(),
 

@@ -43,6 +43,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   extra: {
     apiUrl: process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000',
     wsUrl: process.env.EXPO_PUBLIC_WS_URL ?? 'ws://localhost:8000/ws',
+    devApiToken: process.env.EXPO_PUBLIC_DEV_API_TOKEN ?? '',
     cognitoPoolId: process.env.EXPO_PUBLIC_COGNITO_POOL_ID,
     cognitoClientId: process.env.EXPO_PUBLIC_COGNITO_CLIENT_ID,
     sentryDsn: process.env.EXPO_PUBLIC_SENTRY_DSN,

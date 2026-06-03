@@ -1,0 +1,122 @@
+name: mobile-build
+
+# Manual + tag-driven EAS builds. Triggered by:
+#   - `workflow_dispatch` for ad-hoc preview/paper builds from any branch
+#   - `mobile-v*` tag push for production submissions to App Store / Play
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'EAS build profile (see mobile/app/eas.json)'
+        required: true
+        default: 'preview'
+        type: choice
+        options:
+          - preview
+          - paper
+          - production
+      platform:
+        description: 'Platforms to build'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - ios
+          - android
+      submit:
+        description: 'eas submit after build (TestFlight / Play Internal)'
+        required: false
+        default: false
+        type: boolean
+  push:
+    tags:
+      - 'mobile-v*'
+
+concurrency:
+  group: mobile-build-${{ github.ref }}
+  cancel-in-progress: false   # never cancel an in-flight EAS build mid-flight
+
+defaults:
+  run:
+    working-directory: mobile/app
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: mobile/app/pnpm-lock.yaml
+
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+        continue-on-error: true   # remove once pnpm-lock.yaml is committed
+
+      - name: Resolve profile
+        id: profile
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "value=production" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${{ inputs.profile }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: EAS Build
+        run: |
+          eas build \
+            --platform ${{ inputs.platform || 'all' }} \
+            --profile ${{ steps.profile.outputs.value }} \
+            --non-interactive \
+            --no-wait
+
+      - name: EAS Submit
+        if: ${{ inputs.submit == true || github.event_name == 'push' }}
+        run: |
+          eas submit \
+            --platform ${{ inputs.platform || 'all' }} \
+            --profile ${{ steps.profile.outputs.value }} \
+            --non-interactive \
+            --latest
+
+  ota-update:
+    # JS-only changes: ship instantly via EAS Update on every main push
+    # (skipped on tag pushes — those go through full build instead).
+    if: github.ref == 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: mobile/app/pnpm-lock.yaml
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+      - name: Install
+        run: pnpm install --frozen-lockfile
+        working-directory: mobile/app
+        continue-on-error: true
+      - name: EAS Update
+        run: eas update --branch preview --auto --non-interactive
+        working-directory: mobile/app
+        continue-on-error: true   # graceful until EXPO_TOKEN is wired

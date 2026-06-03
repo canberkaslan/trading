@@ -1,16 +1,24 @@
 {
   "cli": {
     "version": ">= 13.0.0",
-    "appVersionSource": "remote"
+    "appVersionSource": "remote",
+    "requireCommit": true
   },
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "channel": "development",
+      "ios": { "simulator": true },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "http://localhost:8000"
+      }
     },
     "preview": {
       "distribution": "internal",
       "channel": "preview",
+      "ios": { "resourceClass": "m-medium" },
+      "android": { "buildType": "apk" },
       "env": {
         "EXPO_PUBLIC_API_URL": "https://api-dev.trading.canberkaslan.co"
       }
@@ -18,19 +26,55 @@
     "paper": {
       "distribution": "internal",
       "channel": "paper",
+      "ios": { "resourceClass": "m-medium" },
+      "android": { "buildType": "app-bundle" },
       "env": {
         "EXPO_PUBLIC_API_URL": "https://api-paper.trading.canberkaslan.co"
       }
     },
     "production": {
       "channel": "production",
+      "autoIncrement": true,
+      "ios": { "resourceClass": "m-medium" },
+      "android": { "buildType": "app-bundle" },
       "env": {
         "EXPO_PUBLIC_API_URL": "https://api.trading.canberkaslan.co"
-      },
-      "autoIncrement": true
+      }
     }
   },
   "submit": {
-    "production": {}
+    "preview": {
+      "ios": {
+        "appleId": "canberkaslan@gmail.com",
+        "ascAppId": "REPLACE_AFTER_APP_STORE_CONNECT_CREATE",
+        "appleTeamId": "REPLACE_AFTER_DEV_PROGRAM"
+      },
+      "android": {
+        "serviceAccountKeyPath": "./google-service-account.json",
+        "track": "internal"
+      }
+    },
+    "paper": {
+      "ios": {
+        "appleId": "canberkaslan@gmail.com",
+        "ascAppId": "REPLACE_AFTER_APP_STORE_CONNECT_CREATE",
+        "appleTeamId": "REPLACE_AFTER_DEV_PROGRAM"
+      },
+      "android": {
+        "serviceAccountKeyPath": "./google-service-account.json",
+        "track": "internal"
+      }
+    },
+    "production": {
+      "ios": {
+        "appleId": "canberkaslan@gmail.com",
+        "ascAppId": "REPLACE_AFTER_APP_STORE_CONNECT_CREATE",
+        "appleTeamId": "REPLACE_AFTER_DEV_PROGRAM"
+      },
+      "android": {
+        "serviceAccountKeyPath": "./google-service-account.json",
+        "track": "production"
+      }
+    }
   }
 }

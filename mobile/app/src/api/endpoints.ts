@@ -49,6 +49,14 @@ export const api = {
       .post('v1/orders/kill-switch', { json: { state } })
       .json<{ state: KillSwitchState }>(),
 
+  // Notifications
+  registerPushToken: (token: string, platform: 'ios' | 'android' | 'web') =>
+    apiClient
+      .post('v1/notifications/register', { json: { token, platform } })
+      .json<{ status: string; token: string }>(),
+  testNotification: () =>
+    apiClient.post('v1/notifications/test').json<{ status: string; sent: number }>(),
+
   // Health
   health: () => apiClient.get('healthz').json<{ status: string }>(),
 };

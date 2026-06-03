@@ -1,10 +1,11 @@
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { I18nextProvider } from 'react-i18next';
 
 import i18n from '@/i18n';
+import { registerTapHandler, setupNotifications } from '@/notifications';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -16,8 +17,14 @@ const queryClient = new QueryClient({
 });
 
 export default function RootLayout() {
+  const router = useRouter();
+
   useEffect(() => {
-    // TODO: initialize Sentry, PostHog, push notification registration
+    void setupNotifications();
+    const unsub = registerTapHandler((path) => router.push(path as never));
+    return () => unsub();
+    // We deliberately re-subscribe only on mount; navigation ref is stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (

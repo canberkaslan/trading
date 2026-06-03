@@ -23,7 +23,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .deps import get_alpaca, get_repo
-from .routes import agents, orders, portfolio
+from .routes import agents, notifications, orders, portfolio
 
 app = FastAPI(
     title="Trading API",
@@ -43,6 +43,7 @@ app.add_middleware(
 app.include_router(portfolio.router, prefix="/v1/portfolio", tags=["portfolio"])
 app.include_router(orders.router, prefix="/v1/orders", tags=["orders"])
 app.include_router(agents.router, prefix="/v1/agents", tags=["agents"])
+app.include_router(notifications.router, prefix="/v1/notifications", tags=["notifications"])
 
 
 @app.get("/healthz")

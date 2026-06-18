@@ -1,0 +1,19 @@
+[Unit]
+Description=AI Trader — daily paper-trading decision run
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/opt/ai-trader/agent
+# Secrets live OUTSIDE the git tree so a repo pull never clobbers them.
+EnvironmentFile=/opt/ai-trader/secrets.env
+ExecStart=/usr/bin/env bash /opt/ai-trader/agent/scripts/daily_run.sh
+# Generous timeout: 5 tickers × ~10 min worst-case LLM pipeline = 50 min.
+TimeoutStartSec=4200
+# Don't hammer Anthropic if something loops; one run at a time.
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

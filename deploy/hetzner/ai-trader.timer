@@ -1,0 +1,15 @@
+[Unit]
+Description=AI Trader daily run — weekdays 22:30 UTC (US post-close)
+
+[Timer]
+# 22:30 UTC Mon-Fri. US market closes 21:00 UTC (16:00 ET); +90 min lets
+# Polygon EOD data settle before we ask the agent to decide.
+OnCalendar=Mon-Fri 22:30 UTC
+# If the box was off at 22:30 (reboot, maintenance), run as soon as it's back.
+Persistent=true
+# Small randomized delay so we're not hammering APIs at the exact same second
+# as everyone else's EOD jobs.
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

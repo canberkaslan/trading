@@ -1,7 +1,7 @@
 [project]
-name = "tradingagents-tr"
+name = "tradingagents-us"
 version = "0.1.0"
-description = "AI-powered multi-agent trading system for US + BIST markets"
+description = "AI-powered multi-agent trading system for US equities"
 requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [{ name = "Canberk Aslan" }]
@@ -12,48 +12,32 @@ dependencies = [
     "langchain-anthropic>=0.3.0",
     "langchain-openai>=0.2.0",
     "langgraph>=0.2.0",
+    "langgraph-checkpoint-sqlite>=2.0.0",
 
     # Web framework
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
     "pydantic>=2.9.0",
-    "pydantic-settings>=2.6.0",
+    "python-jose[cryptography]>=3.3.0",  # Cognito JWT validation
 
-    # Data sources
-    "polygon-api-client>=1.14.0",
-    "finnhub-python>=2.4.0",
-    "sec-edgar-downloader>=5.0.0",
-    "yfinance>=0.2.50",
-    "praw>=7.8.0",                 # Reddit
-    "tweepy>=4.14.0",               # X API
-
-    # BIST sources
-    "pykap>=0.5.0",                 # KAP scraper
-    "playwright>=1.49.0",           # KAP dynamic content
+    # Data sources (US only — see ADR-008)
+    "httpx>=0.27.0",                # Polygon / SEC EDGAR / FRED / Alpaca clients
+    "yfinance>=0.2.50",             # fallback OHLCV
+    "praw>=7.8.0",                  # Reddit sentiment (Phase 3+)
+    "lxml>=5.0.0",                  # Wikipedia S&P 500 history parsing
+    "beautifulsoup4>=4.12.0",
 
     # Analysis & backtest
     "pandas>=2.2.0",
     "numpy>=2.0.0",
+    "pyarrow>=17.0.0",             # parquet
     "vectorbt>=0.27.0",
     "stockstats>=0.6.0",
-    "scipy>=1.14.0",
-
-    # Brokers
-    "alpaca-py>=0.34.0",
 
     # Storage
     "boto3>=1.35.0",
-    "redis>=5.2.0",
-    "psycopg[binary]>=3.2.0",
     "sqlalchemy>=2.0.0",
-    "pgvector>=0.3.0",
-
-    # Observability
-    "structlog>=24.4.0",
-    "opentelemetry-api>=1.28.0",
-    "opentelemetry-sdk>=1.28.0",
-    "opentelemetry-exporter-otlp>=1.28.0",
-    "sentry-sdk[fastapi]>=2.18.0",
+    "psycopg[binary]>=3.2.0",     # Aurora PostgreSQL (sqlite needs no driver)
 ]
 
 [project.optional-dependencies]
@@ -65,9 +49,6 @@ dev = [
     "mypy>=1.13.0",
     "ipython>=8.30.0",
 ]
-
-[project.scripts]
-trader = "tradingagents_us.cli:main"
 
 [build-system]
 requires = ["hatchling"]

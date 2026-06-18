@@ -20,7 +20,7 @@
       "ios": { "resourceClass": "m-medium" },
       "android": { "buildType": "apk" },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://api-dev.trading.canberkaslan.co"
+        "EXPO_PUBLIC_API_URL": "http://167.233.102.179:8000"
       }
     },
     "paper": {

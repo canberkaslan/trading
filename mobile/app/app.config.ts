@@ -34,6 +34,16 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     'expo-secure-store',
     'expo-local-authentication',
     'expo-notifications',
+    [
+      // Allow cleartext HTTP on Android so the app can reach the
+      // plain-HTTP backend (http://167.233.102.179:8000) during the
+      // paper-trading personal-use phase. Switch to HTTPS + remove this
+      // once the backend is fronted by TLS (Caddy/tunnel).
+      'expo-build-properties',
+      {
+        android: { usesCleartextTraffic: true },
+      },
+    ],
   ],
 
   experiments: {

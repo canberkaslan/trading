@@ -8,6 +8,12 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   version: '0.1.0',
   orientation: 'portrait',
   userInterfaceStyle: 'automatic',
+  icon: './assets/icon.png',
+  splash: {
+    image: './assets/splash.png',
+    resizeMode: 'contain',
+    backgroundColor: '#0a0a0a',
+  },
 
   ios: {
     bundleIdentifier: 'co.canberkaslan.trading',

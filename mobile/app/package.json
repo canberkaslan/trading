@@ -28,6 +28,7 @@
     "expo-router": "~4.0.0",
     "expo-secure-store": "~14.0.0",
     "expo-status-bar": "~2.0.0",
+    "expo-updates": "~0.27.5",
     "i18next": "^24.0.5",
     "ky": "^1.7.4",
     "protobufjs": "^7.4.0",

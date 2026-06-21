@@ -15,6 +15,14 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     backgroundColor: '#0a0a0a',
   },
 
+  // OTA updates — JS-only fixes ship instantly via `eas update --channel
+  // preview`, no 30-min rebuild. runtimeVersion ties a build to compatible
+  // JS bundles; bump it only on native changes.
+  runtimeVersion: { policy: 'appVersion' },
+  updates: {
+    url: 'https://u.expo.dev/c6b1f8ea-1c38-4bd8-b091-c6bacf17bbaa',
+  },
+
   ios: {
     bundleIdentifier: 'co.canberkaslan.trading',
     supportsTablet: true,

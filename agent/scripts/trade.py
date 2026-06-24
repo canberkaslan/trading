@@ -179,14 +179,24 @@ def main() -> int:
         log.warning("decision missing entry/stop — cannot size; aborting before risk layer")
         return 1
 
-    # 2. Live Alpaca context (equity + market price proxy)
+    # 2. Live Alpaca context (equity + CURRENT positions so we don't re-buy
+    #    a name we already hold up to its cap — the daily run would otherwise
+    #    accumulate the same Overweight ticker every day).
+    existing_by_ticker: dict[str, float] = {}
+    held_qty = 0
     with AlpacaClient() as ac:
         acct = ac.account()
+        for p in ac.list_positions():
+            existing_by_ticker[p.symbol] = abs(p.market_value)
+            if p.symbol == args.ticker:
+                held_qty = int(p.qty)
         print("\n=== ALPACA ACCOUNT ===")
         print(f"  Number:    {acct.account_number} ({acct.status})")
         print(f"  Equity:    ${acct.portfolio_value:,.2f}")
         print(f"  Buying pw: ${acct.buying_power:,.2f}")
         print(f"  PDT:       {acct.pattern_day_trader}")
+        print(f"  Already holding {args.ticker}: {held_qty} shares "
+              f"(${existing_by_ticker.get(args.ticker, 0.0):,.0f})")
 
     # Use entry as price proxy for sizing demo (real run would pull live quote)
     market_ctx = MarketContext(
@@ -199,7 +209,7 @@ def main() -> int:
     )
     portfolio_ctx = PortfolioContext(
         equity=acct.portfolio_value,
-        existing_position_values_by_ticker={},
+        existing_position_values_by_ticker=existing_by_ticker,
         existing_position_values_by_sector={},
         high_correlation_count=0,
     )

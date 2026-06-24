@@ -42,6 +42,18 @@ export interface AgentDecision {
   decision_id: string;
 }
 
+export type AnalyzeStatus = 'queued' | 'running' | 'done' | 'error';
+
+export interface AnalyzeJob {
+  job_id: string;
+  ticker: string;
+  status: AnalyzeStatus;
+  decision: AgentDecision | null;
+  error: string | null;
+  created_utc: string;
+  finished_utc: string | null;
+}
+
 export interface Position {
   ticker: string;
   market: 'US';

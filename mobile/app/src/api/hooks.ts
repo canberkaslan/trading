@@ -63,6 +63,29 @@ export function useRejectOrder() {
   });
 }
 
+export function useStartAnalysis() {
+  return useMutation({
+    mutationFn: (ticker: string) => api.startAnalysis(ticker),
+  });
+}
+
+/**
+ * Polls an analysis job until it finishes. Pass `null` to disable.
+ * The pipeline takes minutes, so we poll every 3s and stop once the
+ * job reaches a terminal state.
+ */
+export function useAnalysisJob(jobId: string | null) {
+  return useQuery({
+    queryKey: ['analyze', jobId],
+    queryFn: () => api.getAnalysisJob(jobId as string),
+    enabled: !!jobId,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === 'done' || status === 'error' ? false : 3_000;
+    },
+  });
+}
+
 export function useKillSwitch() {
   return useQuery({
     queryKey: ['orders', 'kill-switch'],

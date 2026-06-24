@@ -5,6 +5,7 @@
 import { apiClient } from './client';
 import type {
   AgentDecision,
+  AnalyzeJob,
   KillSwitchState,
   OrderListItem,
   PortfolioSnapshot,
@@ -26,6 +27,13 @@ export const api = {
   },
   getDecision: (decisionId: string) =>
     apiClient.get(`v1/agents/decisions/${decisionId}`).json<AgentDecision>(),
+
+  // On-demand analysis (WarrenAI-style). startAnalysis queues the 7-agent
+  // pipeline; poll getAnalysisJob until status is 'done'/'error'.
+  startAnalysis: (ticker: string) =>
+    apiClient.post('v1/analyze', { json: { ticker } }).json<AnalyzeJob>(),
+  getAnalysisJob: (jobId: string) =>
+    apiClient.get(`v1/analyze/${jobId}`).json<AnalyzeJob>(),
 
   // Orders
   listOrders: () => apiClient.get('v1/orders').json<OrderListItem[]>(),

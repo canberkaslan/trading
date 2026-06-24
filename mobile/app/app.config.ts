@@ -65,8 +65,11 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
 
   extra: {
-    apiUrl: process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000',
-    wsUrl: process.env.EXPO_PUBLIC_WS_URL ?? 'ws://localhost:8000/ws',
+    // Fallback points at the live paper-trading backend (not localhost) so a
+    // bundle built without EXPO_PUBLIC_API_URL still reaches the box. Public
+    // IP, safe to commit.
+    apiUrl: process.env.EXPO_PUBLIC_API_URL ?? 'http://167.233.102.179:8000',
+    wsUrl: process.env.EXPO_PUBLIC_WS_URL ?? 'ws://167.233.102.179:8000/ws',
     devApiToken: process.env.EXPO_PUBLIC_DEV_API_TOKEN ?? '',
     cognitoPoolId: process.env.EXPO_PUBLIC_COGNITO_POOL_ID,
     cognitoClientId: process.env.EXPO_PUBLIC_COGNITO_CLIENT_ID,

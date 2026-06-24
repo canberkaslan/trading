@@ -1,8 +1,9 @@
-import { View, Text, StyleSheet, ScrollView, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { useState, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { useRouter } from 'expo-router';
 
 import { usePortfolio } from '@/api/hooks';
 import { colors } from '@/theme/colors';
@@ -17,6 +18,7 @@ function formatPct(n: number): string {
 
 export default function PortfolioScreen() {
   const { t } = useTranslation();
+  const router = useRouter();
   const { data, isLoading, isError, error, refetch, isFetching } = usePortfolio();
   const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
@@ -76,7 +78,11 @@ export default function PortfolioScreen() {
           data.positions.map((p) => {
             const c = p.unrealized_pnl >= 0 ? colors.up : colors.down;
             return (
-              <View key={p.ticker} style={styles.positionCard}>
+              <Pressable
+                key={p.ticker}
+                style={styles.positionCard}
+                onPress={() => router.push(`/(tabs)/ask?ticker=${p.ticker}` as never)}
+              >
                 <View style={styles.row}>
                   <Text style={styles.posTicker}>{p.ticker}</Text>
                   <Text style={[styles.posPnl, { color: c }]}>
@@ -84,10 +90,13 @@ export default function PortfolioScreen() {
                     {'  '}({formatPct(p.unrealized_pnl_pct)})
                   </Text>
                 </View>
-                <Text style={styles.muted}>
-                  {p.quantity} @ {formatUsd(p.avg_entry_price)}  •  now {formatUsd(p.current_price)}
-                </Text>
-              </View>
+                <View style={styles.row}>
+                  <Text style={styles.muted}>
+                    {p.quantity} @ {formatUsd(p.avg_entry_price)}  •  now {formatUsd(p.current_price)}
+                  </Text>
+                  <Text style={styles.analyzeHint}>Analiz →</Text>
+                </View>
+              </Pressable>
             );
           })
         )}
@@ -114,5 +123,6 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   posTicker: { color: colors.textPrimary, fontSize: 18, fontWeight: '600' },
   posPnl: { fontSize: 14, fontWeight: '600' },
+  analyzeHint: { color: colors.accent, fontSize: 12, fontWeight: '600', marginTop: 4 },
   disclaimer: { color: '#555', fontSize: 11, padding: 24, fontStyle: 'italic', textAlign: 'center' },
 });

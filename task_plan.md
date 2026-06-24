@@ -5,7 +5,7 @@ eval timer until the eval window closes. Commit as Canberk, no AI attribution.
 Each item: code → tests green → commit → deploy (OTA if mobile).
 
 ## Backlog
-- [ ] **1. Charts tab** — backend `/v1/prices/{ticker}` (Polygon daily bars) + mobile sparkline/candles (react-native-svg). OTA.
+- [x] **1. Charts tab** — backend `/v1/prices/{ticker}` (Polygon daily bars) + mobile area/line chart (react-native-svg). OTA. ✅
 - [ ] **2. "Analiz Et" quick action** — Portfolio/Agents cards → POST /v1/analyze, deep-link to Ask tab. OTA.
 - [ ] **3. Settings** — kill-switch toggle (wire existing endpoint) + last-run time / health. OTA.
 - [ ] **4. Eval snapshot logger** — daily equity+positions JSONL on the box; eval_report reads it for richer history.

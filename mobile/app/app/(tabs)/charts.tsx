@@ -10,6 +10,7 @@ import {
   Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import Svg, { Path, Line, Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
 
 import { usePrices } from '@/api/hooks';
@@ -39,6 +40,7 @@ function buildPaths(bars: Bar[], width: number, height: number) {
 
 export default function ChartsScreen() {
   const { width } = useWindowDimensions();
+  const router = useRouter();
   const chartW = width - 48;
   const [input, setInput] = useState('AAPL');
   const [ticker, setTicker] = useState('AAPL');
@@ -138,6 +140,13 @@ export default function ChartsScreen() {
             </Pressable>
           ))}
         </View>
+
+        <Pressable
+          style={styles.analyzeBtn}
+          onPress={() => router.push(`/(tabs)/ask?ticker=${ticker}` as never)}
+        >
+          <Text style={styles.analyzeBtnText}>🤖 {ticker} analiz et</Text>
+        </Pressable>
       </View>
     </SafeAreaView>
   );
@@ -173,4 +182,6 @@ const styles = StyleSheet.create({
   rangeText: { color: colors.textSecondary, fontWeight: '600' },
   rangeTextActive: { color: '#fff' },
   err: { color: colors.danger, fontSize: 14, textAlign: 'center', marginTop: 90 },
+  analyzeBtn: { backgroundColor: colors.surfaceElevated, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 4 },
+  analyzeBtnText: { color: colors.textPrimary, fontSize: 15, fontWeight: '600' },
 });

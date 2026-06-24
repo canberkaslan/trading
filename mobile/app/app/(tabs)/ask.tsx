@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,7 @@ import {
   Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 
 import { useStartAnalysis, useAnalysisJob } from '@/api/hooks';
 import { colors } from '@/theme/colors';
@@ -33,20 +33,36 @@ const STATUS_LABEL: Record<string, string> = {
 
 export default function AskScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ ticker?: string }>();
   const [ticker, setTicker] = useState('');
   const [jobId, setJobId] = useState<string | null>(null);
   const start = useStartAnalysis();
   const { data: job } = useAnalysisJob(jobId);
+  const lastDeepLink = useRef<string | null>(null);
 
   const busy =
     start.isPending || job?.status === 'queued' || job?.status === 'running';
 
-  const onAnalyze = () => {
-    const t = ticker.trim().toUpperCase();
+  const runAnalysis = (raw: string) => {
+    const t = raw.trim().toUpperCase();
     if (!t || busy) return;
     Keyboard.dismiss();
+    setTicker(t);
     start.mutate(t, { onSuccess: (j) => setJobId(j.job_id) });
   };
+
+  const onAnalyze = () => runAnalysis(ticker);
+
+  // Deep-link from Portfolio/Agents: /(tabs)/ask?ticker=NVDA auto-runs once.
+  useEffect(() => {
+    const dl = params.ticker;
+    if (dl && dl !== lastDeepLink.current) {
+      lastDeepLink.current = dl;
+      setTicker(dl.toUpperCase());
+      runAnalysis(dl);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.ticker]);
 
   const decision = job?.status === 'done' ? job.decision : null;
 

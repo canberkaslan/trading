@@ -98,7 +98,26 @@ class TradingAgentsGraph:
 
         self.deep_thinking_llm = deep_client.get_llm()
         self.quick_thinking_llm = quick_client.get_llm()
-        
+
+        # ADR-006 (fork addition): per-agent LLM routing. If config provides an
+        # agent_model_map (role -> model id), build one client per UNIQUE model
+        # — reusing the same llm_kwargs/callbacks so token tracking still works —
+        # and hand GraphSetup a role->LLM dict. Absent the map, behavior is the
+        # legacy 2-tier quick/deep assignment (the eval runs on legacy).
+        self.agent_llms = {}
+        agent_model_map = self.config.get("agent_model_map")
+        if agent_model_map:
+            model_clients = {}
+            for role, model in agent_model_map.items():
+                if model not in model_clients:
+                    model_clients[model] = create_llm_client(
+                        provider=self.config["llm_provider"],
+                        model=model,
+                        base_url=self.config.get("backend_url"),
+                        **llm_kwargs,
+                    ).get_llm()
+                self.agent_llms[role] = model_clients[model]
+
         self.memory_log = TradingMemoryLog(self.config)
 
         # Create tool nodes
@@ -114,6 +133,7 @@ class TradingAgentsGraph:
             self.deep_thinking_llm,
             self.tool_nodes,
             self.conditional_logic,
+            agent_llms=self.agent_llms,
         )
 
         self.propagator = Propagator(

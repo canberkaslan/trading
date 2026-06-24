@@ -65,12 +65,24 @@ def propagate(ticker: str, trade_date: str) -> AgentDecision:
     """
     _load_env()
 
+    from tradingagents.default_config import DEFAULT_CONFIG  # type: ignore[import-not-found]
     from tradingagents.graph.trading_graph import TradingAgentsGraph  # type: ignore[import-not-found]
+
+    # ADR-006: opt-in per-agent LLM routing (Haiku for heuristic agents, Opus
+    # for managers). OFF by default so the paper eval measures one fixed system;
+    # flip TRADINGAGENTS_PER_AGENT_ROUTING=1 only after the eval window closes.
+    cfg = dict(DEFAULT_CONFIG)
+    if os.environ.get("TRADINGAGENTS_PER_AGENT_ROUTING", "0") in ("1", "true", "True"):
+        from tradingagents_us.llm.routing import AGENT_MODEL_MAP
+
+        cfg["agent_model_map"] = AGENT_MODEL_MAP
+        log.info("per-agent LLM routing ENABLED (ADR-006)")
 
     log.info("initializing TradingAgentsGraph for %s @ %s", ticker, trade_date)
     ta = TradingAgentsGraph(
         selected_analysts=["market", "social", "news", "fundamentals"],
         debug=False,
+        config=cfg,
     )
 
     log.info("propagating decision pipeline (this will make ~12 LLM calls)…")

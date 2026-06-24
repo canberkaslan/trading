@@ -3,7 +3,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useState } from 'react';
 
 import { api } from '@/api/endpoints';
-import { useKillSwitch, useSetKillSwitch, useHealth, useDecisions } from '@/api/hooks';
+import { useKillSwitch, useSetKillSwitch, useHealth, useDecisions, useEval } from '@/api/hooks';
 import { setupNotifications } from '@/notifications';
 import { colors } from '@/theme/colors';
 import type { KillSwitchState } from '@/api/types';
@@ -14,6 +14,16 @@ const KILL_STATES: { state: KillSwitchState; label: string; desc: string; color:
   { state: 'FLATTEN_ALL', label: 'FLATTEN', desc: 'Tüm pozisyonları kapat', color: colors.down },
 ];
 
+function EvalStat({ label, value, gate }: { label: string; value: string; gate: string }) {
+  return (
+    <View style={styles.evalStat}>
+      <Text style={styles.evalStatLabel}>{label}</Text>
+      <Text style={styles.evalStatValue}>{value}</Text>
+      <Text style={styles.evalStatGate}>{gate}</Text>
+    </View>
+  );
+}
+
 export default function SettingsScreen() {
   const [autoExecute, setAutoExecute] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
@@ -21,6 +31,13 @@ export default function SettingsScreen() {
   const setKs = useSetKillSwitch();
   const { data: health, isError: healthError } = useHealth();
   const { data: decisions } = useDecisions({ limit: 1 });
+  const { data: evalData, isLoading: evalLoading } = useEval('1M');
+
+  const VERDICT_COLOR: Record<string, string> = {
+    GO: colors.up,
+    'NO-GO': colors.down,
+    'TOO EARLY': colors.warning,
+  };
 
   const applyKill = (state: KillSwitchState) => {
     if (state === ks?.state) return;
@@ -75,6 +92,32 @@ export default function SettingsScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       <ScrollView contentContainerStyle={{ padding: 16 }}>
         <Text style={styles.heading}>Settings</Text>
+
+        <Text style={styles.subheading}>Eval scorecard</Text>
+        <View style={styles.evalCard}>
+          {evalLoading ? (
+            <Text style={styles.muted}>hesaplanıyor…</Text>
+          ) : !evalData ? (
+            <Text style={styles.muted}>Yeterli geçmiş yok — eval yeni başladı.</Text>
+          ) : (
+            <>
+              <View style={styles.healthRow}>
+                <Text style={styles.label}>Karar</Text>
+                <Text style={[styles.verdict, { color: VERDICT_COLOR[evalData.verdict] ?? colors.textMuted }]}>
+                  {evalData.verdict}
+                </Text>
+              </View>
+              <View style={styles.evalGrid}>
+                <EvalStat label="Sharpe" value={evalData.sharpe.toFixed(2)} gate={`>${evalData.gate_sharpe}`} />
+                <EvalStat label="Max DD" value={`${evalData.max_dd_pct.toFixed(1)}%`} gate={`<${evalData.gate_max_dd_pct}%`} />
+                <EvalStat label="Getiri" value={`${evalData.total_return_pct >= 0 ? '+' : ''}${evalData.total_return_pct.toFixed(1)}%`} gate={`${evalData.days}g`} />
+              </View>
+              {evalData.reasons.length ? (
+                <Text style={styles.evalReason}>{evalData.reasons.join(' · ')}</Text>
+              ) : null}
+            </>
+          )}
+        </View>
 
         <Text style={styles.subheading}>Kill switch</Text>
         <View style={styles.killRow}>
@@ -159,6 +202,14 @@ const styles = StyleSheet.create({
   killDesc: { color: colors.textMuted, fontSize: 12, marginTop: 8, paddingHorizontal: 4 },
   healthCard: { backgroundColor: colors.surface, borderRadius: 12, padding: 16, gap: 12 },
   healthRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  evalCard: { backgroundColor: colors.surface, borderRadius: 12, padding: 16, gap: 12 },
+  verdict: { fontSize: 16, fontWeight: '800' },
+  evalGrid: { flexDirection: 'row', justifyContent: 'space-between' },
+  evalStat: { alignItems: 'flex-start' },
+  evalStatLabel: { color: colors.textMuted, fontSize: 11 },
+  evalStatValue: { color: colors.textPrimary, fontSize: 17, fontWeight: '700', marginTop: 2 },
+  evalStatGate: { color: colors.textMuted, fontSize: 10, marginTop: 1 },
+  evalReason: { color: colors.warning, fontSize: 11, fontStyle: 'italic' },
   warning: {
     color: colors.warning,
     fontSize: 12,

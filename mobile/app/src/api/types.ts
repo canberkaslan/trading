@@ -59,6 +59,20 @@ export interface PriceSeries {
   change_pct: number | null;
 }
 
+export interface EvalResult {
+  verdict: 'GO' | 'NO-GO' | 'TOO EARLY';
+  reasons: string[];
+  days: number;
+  total_return_pct: number;
+  sharpe: number;
+  sortino: number;
+  max_dd_pct: number;
+  calmar: number;
+  spy_return_pct: number | null;
+  gate_sharpe: number;
+  gate_max_dd_pct: number;
+}
+
 export type AnalyzeStatus = 'queued' | 'running' | 'done' | 'error';
 
 export interface AnalyzeJob {

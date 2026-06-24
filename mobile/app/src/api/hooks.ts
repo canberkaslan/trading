@@ -114,6 +114,15 @@ export function useSetKillSwitch() {
   });
 }
 
+export function useEval(period = '1M') {
+  return useQuery({
+    queryKey: ['eval', period],
+    queryFn: () => api.getEval(period),
+    refetchInterval: 5 * 60_000,
+    retry: false,
+  });
+}
+
 export function useHealth() {
   return useQuery({
     queryKey: ['health'],

@@ -6,6 +6,7 @@ import { apiClient } from './client';
 import type {
   AgentDecision,
   AnalyzeJob,
+  EvalResult,
   KillSwitchState,
   OrderListItem,
   PortfolioSnapshot,
@@ -28,6 +29,9 @@ export const api = {
   },
   getDecision: (decisionId: string) =>
     apiClient.get(`v1/agents/decisions/${decisionId}`).json<AgentDecision>(),
+
+  // Eval scorecard (same logic as the weekly push)
+  getEval: (period = '1M') => apiClient.get(`v1/eval?period=${period}`).json<EvalResult>(),
 
   // Prices (Polygon daily bars, proxied so the key stays server-side)
   getPrices: (ticker: string, days = 60) =>

@@ -1,0 +1,77 @@
+"""/v1/eval — live paper-trading scorecard for the mobile app.
+
+Reuses the same scorecard logic as scripts/eval_report.py so the in-app
+number and the weekly push always agree. Read-only; cached briefly since
+the equity curve only moves once a day.
+"""
+
+from __future__ import annotations
+
+import time
+from threading import Lock
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+
+from scripts.eval_report import GATE_MAX_DD, GATE_SHARPE, build_scorecard, _verdict
+
+from ..deps import require_token
+
+router = APIRouter()
+
+_CACHE_TTL_S = 60.0
+_cache: dict[str, tuple[float, "EvalResult"]] = {}
+_lock = Lock()
+
+
+class EvalResult(BaseModel):
+    verdict: str
+    reasons: list[str]
+    days: int
+    total_return_pct: float
+    sharpe: float
+    sortino: float
+    max_dd_pct: float
+    calmar: float
+    spy_return_pct: float | None
+    gate_sharpe: float
+    gate_max_dd_pct: float
+
+
+def _build(period: str, benchmark: bool) -> EvalResult:
+    sc = build_scorecard(period=period, benchmark=benchmark)
+    verdict, reasons = _verdict(sc)
+    return EvalResult(
+        verdict=verdict,
+        reasons=reasons,
+        days=sc.days,
+        total_return_pct=round(sc.total_return * 100, 2),
+        sharpe=round(sc.sharpe, 2),
+        sortino=round(sc.sortino, 2),
+        max_dd_pct=round(sc.max_dd * 100, 2),
+        calmar=round(sc.calmar, 2),
+        spy_return_pct=round(sc.spy_return * 100, 2) if sc.spy_return is not None else None,
+        gate_sharpe=GATE_SHARPE,
+        gate_max_dd_pct=GATE_MAX_DD * 100,
+    )
+
+
+@router.get("", response_model=EvalResult)
+async def get_eval(
+    period: str = "1M",
+    benchmark: bool = False,
+    user: str = Depends(require_token),
+) -> EvalResult:
+    key = f"{period}:{benchmark}"
+    now = time.time()
+    with _lock:
+        hit = _cache.get(key)
+        if hit and (now - hit[0]) < _CACHE_TTL_S:
+            return hit[1]
+    try:
+        result = _build(period, benchmark)
+    except SystemExit as exc:  # build_scorecard raises this when too little history
+        raise HTTPException(409, str(exc)) from exc
+    with _lock:
+        _cache[key] = (now, result)
+    return result

@@ -6,8 +6,8 @@ Each item: code → tests green → commit → deploy (OTA if mobile).
 
 ## Backlog
 - [x] **1. Charts tab** — backend `/v1/prices/{ticker}` (Polygon daily bars) + mobile area/line chart (react-native-svg). OTA. ✅
-- [ ] **2. "Analiz Et" quick action** — Portfolio/Agents cards → POST /v1/analyze, deep-link to Ask tab. OTA.
-- [ ] **3. Settings** — kill-switch toggle (wire existing endpoint) + last-run time / health. OTA.
+- [x] **2. "Analiz Et" quick action** — portfolio positions + Charts button → deep-link Ask, auto-run. OTA. ✅
+- [x] **3. Settings** — kill-switch 3-state control + backend health + last-run. OTA. ✅
 - [ ] **4. Eval snapshot logger** — daily equity+positions JSONL on the box; eval_report reads it for richer history.
 - [ ] **5. Cost-opt (ADR-006)** — per-agent Haiku routing + prompt caching, on a SEPARATE branch, build+test, DO NOT deploy to eval timer.
 

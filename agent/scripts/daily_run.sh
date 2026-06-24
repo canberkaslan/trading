@@ -11,8 +11,9 @@
 # Idempotent per (ticker, date): the executor's client_order_id dedupes,
 # and the stale/headroom guards stop accidental double-entries.
 #
-# Cost: ~$0.50-1.50 LLM per ticker. With 5 tickers × 22 trading days that's
-# ~$55-165/mo. Keep UNIVERSE small until prompt caching (Phase 3b) lands.
+# Cost: ~$0.50-1.50 LLM per ticker. With 11 tickers × 22 trading days that's
+# ~$120-360/mo on the current 2-tier Opus/Sonnet routing. ADR-006 per-agent
+# Haiku routing + prompt caching cuts this ~2-3x — apply after the eval window.
 
 set -euo pipefail
 
@@ -65,6 +66,15 @@ for TICKER in $UNIVERSE; do
     rc_total=$((rc_total + 1))
   fi
 done
+
+echo "" | tee -a "$RUN_LOG"
+# Append an end-of-run portfolio snapshot for eval enrichment (best-effort —
+# a snapshot failure must not fail the run).
+if PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.snapshot 2>&1 | tee -a "$RUN_LOG"; then
+  :
+else
+  echo "  -> snapshot failed (non-fatal)" | tee -a "$RUN_LOG"
+fi
 
 echo "" | tee -a "$RUN_LOG"
 echo "Daily run complete. $rc_total ticker(s) errored." | tee -a "$RUN_LOG"

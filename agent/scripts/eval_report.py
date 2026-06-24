@@ -16,9 +16,12 @@ The script is read-only — it never places or cancels an order.
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pandas as pd
 
@@ -126,6 +129,29 @@ def build_scorecard(period: str, benchmark: bool) -> Scorecard:
     )
 
 
+def _snapshot_summary() -> tuple[float, float, int] | None:
+    """Avg position count, max concentration, sample count from the snapshot
+    JSONL (written by scripts/snapshot.py). None if no log exists yet."""
+    path = Path(os.environ.get("EVAL_SNAPSHOT_FILE", "./data/eval_snapshots.jsonl"))
+    if not path.exists():
+        return None
+    counts: list[int] = []
+    tops: list[float] = []
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        counts.append(int(rec.get("n_positions", 0)))
+        tops.append(float(rec.get("top_weight_pct", 0.0)))
+    if not counts:
+        return None
+    return sum(counts) / len(counts), max(tops), len(counts)
+
+
 def _verdict(sc: Scorecard) -> tuple[str, list[str]]:
     reasons: list[str] = []
     if sc.days < MIN_TRADING_DAYS:
@@ -169,6 +195,11 @@ def _print(sc: Scorecard) -> None:
     row("VaR 95% (daily)", f"{sc.var95 * 100:.2f}%")
     row("CVaR 95% (daily)", f"{sc.cvar95 * 100:.2f}%")
     row("Positive days", f"{sc.positive_days_pct:.0f}%")
+    snap = _snapshot_summary()
+    if snap is not None:
+        avg_pos, max_conc, n = snap
+        row("Avg positions", f"{avg_pos:.1f}", f"{n} snapshots")
+        row("Max concentration", f"{max_conc:.0f}%", "watch >10% per name")
     print("  " + "-" * 52)
 
     verdict, reasons = _verdict(sc)

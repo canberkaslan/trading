@@ -11,11 +11,17 @@ Each item: code → tests green → commit → deploy (OTA if mobile).
 - [x] **4. Eval snapshot logger** — daily equity+positions JSONL on the box (EVAL_SNAPSHOT_FILE), wired into daily_run; eval_report shows avg-positions + max-concentration. ✅
 - [x] **5. Cost-opt (ADR-006)** — per-agent routing wired on branch `feat/cost-opt-adr006` (GraphSetup._pick + agent_model_map), opt-in `TRADINGAGENTS_PER_AGENT_ROUTING=1`, 93 tests green, NOT merged/deployed. ✅ branch-only
 
-## Backlog drained — next round (eval-safe)
-- [ ] Candlestick mode toggle on Charts (have OHLC already)
-- [ ] eval_report: weekly auto-post to Slack/push at checkpoint
-- [ ] prompt-cache markers actually injected (cache.py helpers exist; wire into client) — branch
-- [ ] Agents tab: show reasoning expand/collapse + model badge per agent
+## Round 2 (eval-safe) — done
+- [x] Candlestick mode toggle on Charts ✅
+- [x] eval --notify push + weekly eval-report.timer (Mon 14:00 UTC) ✅
+- [x] Agents tab reasoning expand + model badges ✅
+- [x] /v1/eval endpoint + in-app scorecard card (Settings) ✅
+
+## Round 3 (next, eval-safe)
+- [ ] prompt-cache markers injected into the LLM client (cache.py helpers exist) — BRANCH; needs a live API run to confirm cache hits (costs ~$1)
+- [ ] Portfolio: surface snapshot concentration / position-count trend
+- [ ] Pull-to-refresh + empty states polish on Charts/Ask
+- [ ] eval_report: walk-forward holdout note when days>=60
 
 ## Deferred (go-live)
 - HTTPS (cloudflared/caddy) — needs domain decision; low risk on paper.

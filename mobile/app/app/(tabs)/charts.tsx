@@ -1,4 +1,4 @@
-import { useMemo, useState, Fragment } from 'react';
+import { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -11,11 +11,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import Svg, { Path, Line, Circle, Rect, Defs, LinearGradient, Stop } from 'react-native-svg';
 
 import { usePrices } from '@/api/hooks';
 import { colors } from '@/theme/colors';
-import type { Bar } from '@/api/types';
 
 const RANGES = [
   { label: '1A', days: 30 },
@@ -25,47 +23,8 @@ const RANGES = [
 
 const CHART_H = 220;
 
-function buildPaths(bars: Bar[], width: number, height: number) {
-  const closes = bars.map((b) => b.c);
-  const min = Math.min(...closes);
-  const max = Math.max(...closes);
-  const span = max - min || 1;
-  const dx = bars.length > 1 ? width / (bars.length - 1) : width;
-  const y = (c: number) => height - ((c - min) / span) * height;
-  const pts = closes.map((c, i) => [i * dx, y(c)] as const);
-  const line = pts.map(([px, py], i) => `${i ? 'L' : 'M'}${px.toFixed(1)},${py.toFixed(1)}`).join(' ');
-  const area = `${line} L${((bars.length - 1) * dx).toFixed(1)},${height} L0,${height} Z`;
-  return { line, area, min, max, lastPt: pts[pts.length - 1] };
-}
-
-type Candle = { x: number; w: number; wickTop: number; wickBot: number; bodyTop: number; bodyH: number; up: boolean };
-
-function buildCandles(bars: Bar[], width: number, height: number): { candles: Candle[]; min: number; max: number } {
-  const lows = bars.map((b) => b.l);
-  const highs = bars.map((b) => b.h);
-  const min = Math.min(...lows);
-  const max = Math.max(...highs);
-  const span = max - min || 1;
-  const slot = width / bars.length;
-  const w = Math.max(1, slot * 0.6);
-  const y = (v: number) => height - ((v - min) / span) * height;
-  const candles = bars.map((b, i) => {
-    const up = b.c >= b.o;
-    const bodyTop = y(Math.max(b.o, b.c));
-    const bodyBot = y(Math.min(b.o, b.c));
-    return {
-      x: i * slot + (slot - w) / 2,
-      w,
-      wickTop: y(b.h),
-      wickBot: y(b.l),
-      bodyTop,
-      bodyH: Math.max(1, bodyBot - bodyTop),
-      up,
-    };
-  });
-  return { candles, min, max };
-}
-
+// Chart is rendered with plain RN Views (no native chart lib) so it ships via
+// OTA on any installed build — no APK rebuild needed.
 export default function ChartsScreen() {
   const { width } = useWindowDimensions();
   const router = useRouter();
@@ -73,21 +32,20 @@ export default function ChartsScreen() {
   const [input, setInput] = useState('AAPL');
   const [ticker, setTicker] = useState('AAPL');
   const [days, setDays] = useState(90);
-  const [mode, setMode] = useState<'line' | 'candle'>('line');
+  const [mode, setMode] = useState<'area' | 'candle'>('area');
   const { data, isLoading, isError } = usePrices(ticker, days);
 
+  const bars = data?.bars ?? [];
   const up = (data?.change_pct ?? 0) >= 0;
   const lineColor = up ? colors.up : colors.down;
 
-  const paths = useMemo(() => {
-    if (!data?.bars?.length) return null;
-    return buildPaths(data.bars, chartW, CHART_H);
-  }, [data, chartW]);
-
-  const candleData = useMemo(() => {
-    if (mode !== 'candle' || !data?.bars?.length) return null;
-    return buildCandles(data.bars, chartW, CHART_H);
-  }, [mode, data, chartW]);
+  const { min, max } = useMemo(() => {
+    if (!bars.length) return { min: 0, max: 0 };
+    return { min: Math.min(...bars.map((b) => b.l)), max: Math.max(...bars.map((b) => b.h)) };
+  }, [bars]);
+  const span = max - min || 1;
+  const slot = bars.length ? chartW / bars.length : chartW;
+  const yTop = (v: number) => CHART_H - ((v - min) / span) * CHART_H; // px from top
 
   const onSubmit = () => {
     const t = input.trim().toUpperCase();
@@ -131,62 +89,89 @@ export default function ChartsScreen() {
         </View>
 
         <View style={styles.modeRow}>
-          {(['line', 'candle'] as const).map((m) => (
+          {(['area', 'candle'] as const).map((m) => (
             <Pressable
               key={m}
               style={[styles.modeChip, mode === m && styles.modeChipActive]}
               onPress={() => setMode(m)}
             >
               <Text style={[styles.modeText, mode === m && styles.modeTextActive]}>
-                {m === 'line' ? 'Çizgi' : 'Mum'}
+                {m === 'area' ? 'Alan' : 'Mum'}
               </Text>
             </Pressable>
           ))}
         </View>
 
-        <View style={styles.chartBox}>
+        <View style={[styles.chartBox, { width: chartW, height: CHART_H }]}>
           {isLoading ? (
-            <ActivityIndicator color={colors.accent} style={{ marginTop: 90 }} />
+            <ActivityIndicator color={colors.accent} />
           ) : isError ? (
             <Text style={styles.err}>Fiyat alınamadı — ticker geçerli mi?</Text>
-          ) : mode === 'candle' && candleData ? (
-            <Svg width={chartW} height={CHART_H}>
-              {candleData.candles.map((c, i) => {
-                const col = c.up ? colors.up : colors.down;
+          ) : !bars.length ? (
+            <Text style={styles.err}>Veri yok</Text>
+          ) : mode === 'candle' ? (
+            <View style={styles.candleWrap}>
+              {bars.map((b, i) => {
+                const cUp = b.c >= b.o;
+                const col = cUp ? colors.up : colors.down;
+                const wickTop = yTop(b.h);
+                const bodyTop = yTop(Math.max(b.o, b.c));
+                const bodyBot = yTop(Math.min(b.o, b.c));
+                const bw = Math.max(1, slot * 0.6);
                 return (
-                  <Fragment key={i}>
-                    <Line x1={c.x + c.w / 2} y1={c.wickTop} x2={c.x + c.w / 2} y2={c.wickBot} stroke={col} strokeWidth={1} />
-                    <Rect x={c.x} y={c.bodyTop} width={c.w} height={c.bodyH} fill={col} />
-                  </Fragment>
+                  <View key={i} style={{ width: slot, height: CHART_H }}>
+                    <View
+                      style={{
+                        position: 'absolute',
+                        left: slot / 2 - 0.5,
+                        top: wickTop,
+                        width: 1,
+                        height: Math.max(1, yTop(b.l) - wickTop),
+                        backgroundColor: col,
+                      }}
+                    />
+                    <View
+                      style={{
+                        position: 'absolute',
+                        left: (slot - bw) / 2,
+                        top: bodyTop,
+                        width: bw,
+                        height: Math.max(1, bodyBot - bodyTop),
+                        backgroundColor: col,
+                      }}
+                    />
+                  </View>
                 );
               })}
-              <Line x1={0} y1={CHART_H - 1} x2={chartW} y2={CHART_H - 1} stroke={colors.surfaceElevated} strokeWidth={1} />
-            </Svg>
-          ) : paths ? (
-            <Svg width={chartW} height={CHART_H}>
-              <Defs>
-                <LinearGradient id="fill" x1="0" y1="0" x2="0" y2="1">
-                  <Stop offset="0" stopColor={lineColor} stopOpacity={0.25} />
-                  <Stop offset="1" stopColor={lineColor} stopOpacity={0} />
-                </LinearGradient>
-              </Defs>
-              <Path d={paths.area} fill="url(#fill)" />
-              <Path d={paths.line} stroke={lineColor} strokeWidth={2} fill="none" />
-              {paths.lastPt ? (
-                <Circle cx={paths.lastPt[0]} cy={paths.lastPt[1]} r={4} fill={lineColor} />
-              ) : null}
-              <Line x1={0} y1={CHART_H - 1} x2={chartW} y2={CHART_H - 1} stroke={colors.surfaceElevated} strokeWidth={1} />
-            </Svg>
+            </View>
           ) : (
-            <Text style={styles.err}>Veri yok</Text>
+            <View style={styles.areaWrap}>
+              {bars.map((b, i) => {
+                const h = Math.max(2, ((b.c - min) / span) * CHART_H);
+                return (
+                  <View key={i} style={{ width: slot, alignItems: 'center' }}>
+                    <View
+                      style={{
+                        width: Math.max(1, slot * 0.85),
+                        height: h,
+                        backgroundColor: lineColor,
+                        opacity: 0.5,
+                        borderTopLeftRadius: 1,
+                        borderTopRightRadius: 1,
+                      }}
+                    />
+                  </View>
+                );
+              })}
+            </View>
           )}
         </View>
 
-        {paths ? (
+        {bars.length ? (
           <View style={styles.minmax}>
-            <Text style={styles.muted}>Düşük ${paths.min.toFixed(2)}</Text>
-            <Text style={styles.muted}>{data?.bars.length} gün</Text>
-            <Text style={styles.muted}>Yüksek ${paths.max.toFixed(2)}</Text>
+            <Text style={styles.muted}>Düşük ${min.toFixed(2)}</Text>
+            <Text style={styles.muted}>{bars.length} gün</Text>
+            <Text style={styles.muted}>Yüksek ${max.toFixed(2)}</Text>
           </View>
         ) : null}
 
@@ -239,7 +224,9 @@ const styles = StyleSheet.create({
   modeChipActive: { backgroundColor: colors.surfaceElevated },
   modeText: { color: colors.textMuted, fontSize: 13, fontWeight: '600' },
   modeTextActive: { color: colors.textPrimary },
-  chartBox: { minHeight: CHART_H, justifyContent: 'center' },
+  chartBox: { justifyContent: 'center', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: colors.surfaceElevated },
+  areaWrap: { flexDirection: 'row', alignItems: 'flex-end', height: CHART_H, width: '100%' },
+  candleWrap: { flexDirection: 'row', height: CHART_H, width: '100%' },
   minmax: { flexDirection: 'row', justifyContent: 'space-between' },
   muted: { color: colors.textMuted, fontSize: 12 },
   ranges: { flexDirection: 'row', gap: 10, justifyContent: 'center' },
@@ -247,7 +234,7 @@ const styles = StyleSheet.create({
   rangeChipActive: { backgroundColor: colors.accent },
   rangeText: { color: colors.textSecondary, fontWeight: '600' },
   rangeTextActive: { color: '#fff' },
-  err: { color: colors.danger, fontSize: 14, textAlign: 'center', marginTop: 90 },
-  analyzeBtn: { backgroundColor: colors.surfaceElevated, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 4 },
+  err: { color: colors.danger, fontSize: 14, textAlign: 'center' },
+  analyzeBtn: { backgroundColor: colors.surfaceElevated, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   analyzeBtnText: { color: colors.textPrimary, fontSize: 15, fontWeight: '600' },
 });

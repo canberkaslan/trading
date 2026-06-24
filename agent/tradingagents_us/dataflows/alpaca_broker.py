@@ -129,6 +129,20 @@ class AlpacaClient:
             next_close=d["next_close"],
         )
 
+    def portfolio_history(
+        self, period: str = "3M", timeframe: str = "1D"
+    ) -> dict:
+        """Account equity time series for performance metrics.
+
+        Returns Alpaca's portfolio history payload: parallel arrays
+        ``timestamp`` (epoch s), ``equity``, ``profit_loss``,
+        ``profit_loss_pct`` plus a scalar ``base_value``. ``1D`` timeframe
+        with a multi-month period is the right granularity for Sharpe/DD.
+        """
+        d = self._get(f"/account/portfolio/history?period={period}&timeframe={timeframe}")
+        assert isinstance(d, dict)
+        return d
+
     # ---------------------- positions ----------------------
 
     def list_positions(self) -> list[Position]:

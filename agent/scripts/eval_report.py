@@ -212,15 +212,54 @@ def _print(sc: Scorecard) -> None:
     print("=" * 56 + "\n")
 
 
+def _notify(sc: Scorecard, verdict: str) -> None:
+    """Push the scorecard verdict to every registered device (best-effort)."""
+    try:
+        from sqlalchemy import create_engine
+
+        from tradingagents_us.notifications import send_expo_push
+        from tradingagents_us.notifications.sender import PushMessage
+        from tradingagents_us.storage import TradeLogRepository
+        from tradingagents_us.storage.device_tokens import list_all_tokens
+
+        url = os.environ.get("TRADE_LOG_DB_URL", "sqlite:///./local.db")
+        repo = TradeLogRepository(engine=create_engine(url, future=True))
+        with repo.session() as s:
+            tokens = list_all_tokens(s)
+        if not tokens:
+            print("notify: no registered devices", file=sys.stderr)
+            return
+        mark = {"GO": "✅", "NO-GO": "⛔", "TOO EARLY": "⏳"}.get(verdict, "")
+        body = (
+            f"Sharpe {sc.sharpe:.2f} · DD {sc.max_dd * 100:.1f}% · "
+            f"{sc.total_return * 100:+.1f}% ({sc.days}g)"
+        )
+        send_expo_push([
+            PushMessage(
+                to=t,
+                title=f"{mark} Eval: {verdict}",
+                body=body,
+                data={"type": "eval_scorecard", "verdict": verdict},
+            )
+            for t in tokens
+        ])
+        print(f"notify: sent to {len(tokens)} device(s)")
+    except Exception as exc:  # never fail the report on a push error
+        print(f"notify failed: {exc}", file=sys.stderr)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Paper-trading eval scorecard")
     ap.add_argument("--period", default="1M", help="Alpaca history window (1M/3M/6M/1A)")
     ap.add_argument("--no-benchmark", action="store_true", help="skip SPY benchmark")
+    ap.add_argument("--notify", action="store_true", help="push the verdict to registered devices")
     args = ap.parse_args()
 
     sc = build_scorecard(period=args.period, benchmark=not args.no_benchmark)
     _print(sc)
     verdict, _ = _verdict(sc)
+    if args.notify:
+        _notify(sc, verdict)
     return 0 if verdict == "GO" else 1
 
 

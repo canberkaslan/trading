@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly eval scorecard push (Mondays 14:00 UTC)
+
+[Timer]
+# Monday early-US-session: a fresh weekly readout to start the trading week.
+OnCalendar=Mon *-*-* 14:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

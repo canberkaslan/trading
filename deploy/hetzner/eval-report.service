@@ -1,0 +1,17 @@
+[Unit]
+Description=AI Trader — weekly eval scorecard + push
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/opt/ai-trader/agent
+EnvironmentFile=/opt/ai-trader/secrets.env
+# Read-only against the broker; pushes the Sharpe/DD verdict to the phone.
+ExecStart=/usr/bin/env bash -c 'PYTHONPATH=.:vendor/tradingagents ./.venv/bin/python -m scripts.eval_report --notify'
+TimeoutStartSec=300
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

@@ -19,7 +19,7 @@ function formatPct(n: number): string {
 export default function PortfolioScreen() {
   const { t } = useTranslation();
   const router = useRouter();
-  const { data, isLoading, isError, error, refetch, isFetching } = usePortfolio();
+  const { data, isLoading, isError, error, isFetching } = usePortfolio();
   const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
 

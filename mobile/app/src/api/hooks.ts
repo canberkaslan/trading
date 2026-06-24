@@ -63,6 +63,15 @@ export function useRejectOrder() {
   });
 }
 
+export function usePrices(ticker: string | null, days = 60) {
+  return useQuery({
+    queryKey: ['prices', ticker, days],
+    queryFn: () => api.getPrices(ticker as string, days),
+    enabled: !!ticker,
+    staleTime: 5 * 60_000, // bars don't move faster than the 5-min server cache
+  });
+}
+
 export function useStartAnalysis() {
   return useMutation({
     mutationFn: (ticker: string) => api.startAnalysis(ticker),

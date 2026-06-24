@@ -42,6 +42,23 @@ export interface AgentDecision {
   decision_id: string;
 }
 
+export interface Bar {
+  t: string;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+}
+
+export interface PriceSeries {
+  ticker: string;
+  bars: Bar[];
+  first: number | null;
+  last: number | null;
+  change_pct: number | null;
+}
+
 export type AnalyzeStatus = 'queued' | 'running' | 'done' | 'error';
 
 export interface AnalyzeJob {

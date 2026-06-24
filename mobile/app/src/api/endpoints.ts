@@ -9,6 +9,7 @@ import type {
   KillSwitchState,
   OrderListItem,
   PortfolioSnapshot,
+  PriceSeries,
 } from './types';
 
 export const api = {
@@ -27,6 +28,10 @@ export const api = {
   },
   getDecision: (decisionId: string) =>
     apiClient.get(`v1/agents/decisions/${decisionId}`).json<AgentDecision>(),
+
+  // Prices (Polygon daily bars, proxied so the key stays server-side)
+  getPrices: (ticker: string, days = 60) =>
+    apiClient.get(`v1/prices/${ticker}?days=${days}`).json<PriceSeries>(),
 
   // On-demand analysis (WarrenAI-style). startAnalysis queues the 7-agent
   // pipeline; poll getAnalysisJob until status is 'done'/'error'.

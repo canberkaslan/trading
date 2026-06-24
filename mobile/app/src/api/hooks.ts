@@ -5,6 +5,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { api } from './endpoints';
+import type { KillSwitchState } from './types';
 
 const REFETCH_INTERVAL_MS = 10_000;
 
@@ -100,5 +101,24 @@ export function useKillSwitch() {
     queryKey: ['orders', 'kill-switch'],
     queryFn: api.getKillSwitch,
     refetchInterval: 30_000,
+  });
+}
+
+export function useSetKillSwitch() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (state: KillSwitchState) => api.setKillSwitch(state),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['orders', 'kill-switch'] });
+    },
+  });
+}
+
+export function useHealth() {
+  return useQuery({
+    queryKey: ['health'],
+    queryFn: api.health,
+    refetchInterval: 30_000,
+    retry: false,
   });
 }

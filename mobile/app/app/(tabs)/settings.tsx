@@ -3,12 +3,45 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useState } from 'react';
 
 import { api } from '@/api/endpoints';
+import { useKillSwitch, useSetKillSwitch, useHealth, useDecisions } from '@/api/hooks';
 import { setupNotifications } from '@/notifications';
 import { colors } from '@/theme/colors';
+import type { KillSwitchState } from '@/api/types';
+
+const KILL_STATES: { state: KillSwitchState; label: string; desc: string; color: string }[] = [
+  { state: 'RUN', label: 'RUN', desc: 'Normal işlem', color: colors.up },
+  { state: 'PAUSE_NEW', label: 'PAUSE', desc: 'Yeni giriş yok, mevcut yönetilir', color: colors.warning },
+  { state: 'FLATTEN_ALL', label: 'FLATTEN', desc: 'Tüm pozisyonları kapat', color: colors.down },
+];
 
 export default function SettingsScreen() {
   const [autoExecute, setAutoExecute] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
+  const { data: ks } = useKillSwitch();
+  const setKs = useSetKillSwitch();
+  const { data: health, isError: healthError } = useHealth();
+  const { data: decisions } = useDecisions({ limit: 1 });
+
+  const applyKill = (state: KillSwitchState) => {
+    if (state === ks?.state) return;
+    const go = () => setKs.mutate(state);
+    if (state === 'FLATTEN_ALL') {
+      Alert.alert(
+        'Tüm pozisyonları kapat?',
+        'FLATTEN_ALL tüm açık pozisyonları piyasa fiyatından kapatır. Emin misin?',
+        [
+          { text: 'Vazgeç', style: 'cancel' },
+          { text: 'FLATTEN', style: 'destructive', onPress: go },
+        ],
+      );
+    } else {
+      go();
+    }
+  };
+
+  const lastRun = decisions?.[0]?.timestamp_utc
+    ? new Date(decisions[0].timestamp_utc).toLocaleString()
+    : '—';
 
   const handleRegisterPush = async () => {
     setPushBusy(true);
@@ -42,6 +75,40 @@ export default function SettingsScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       <ScrollView contentContainerStyle={{ padding: 16 }}>
         <Text style={styles.heading}>Settings</Text>
+
+        <Text style={styles.subheading}>Kill switch</Text>
+        <View style={styles.killRow}>
+          {KILL_STATES.map((k) => {
+            const active = ks?.state === k.state;
+            return (
+              <Pressable
+                key={k.state}
+                style={[styles.killChip, active && { backgroundColor: k.color }]}
+                onPress={() => applyKill(k.state)}
+                disabled={setKs.isPending}
+              >
+                <Text style={[styles.killLabel, active && { color: '#000' }]}>{k.label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        <Text style={styles.killDesc}>
+          {KILL_STATES.find((k) => k.state === ks?.state)?.desc ?? 'durum yükleniyor…'}
+        </Text>
+
+        <Text style={styles.subheading}>Sistem</Text>
+        <View style={styles.healthCard}>
+          <View style={styles.healthRow}>
+            <Text style={styles.label}>Backend</Text>
+            <Text style={{ color: healthError ? colors.down : colors.up, fontWeight: '600' }}>
+              {healthError ? '● offline' : health?.status === 'ok' ? '● online' : '…'}
+            </Text>
+          </View>
+          <View style={styles.healthRow}>
+            <Text style={styles.label}>Son ajan kararı</Text>
+            <Text style={styles.muted}>{lastRun}</Text>
+          </View>
+        </View>
 
         <View style={styles.section}>
           <Text style={styles.label}>Auto-execute trades</Text>
@@ -85,6 +152,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   label: { color: colors.textPrimary, fontSize: 16 },
+  muted: { color: colors.textMuted, fontSize: 13 },
+  killRow: { flexDirection: 'row', gap: 8 },
+  killChip: { flex: 1, paddingVertical: 14, borderRadius: 10, backgroundColor: colors.surface, alignItems: 'center' },
+  killLabel: { color: colors.textPrimary, fontSize: 14, fontWeight: '700' },
+  killDesc: { color: colors.textMuted, fontSize: 12, marginTop: 8, paddingHorizontal: 4 },
+  healthCard: { backgroundColor: colors.surface, borderRadius: 12, padding: 16, gap: 12 },
+  healthRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   warning: {
     color: colors.warning,
     fontSize: 12,

@@ -19,12 +19,24 @@ class GraphSetup:
         deep_thinking_llm: Any,
         tool_nodes: Dict[str, ToolNode],
         conditional_logic: ConditionalLogic,
+        agent_llms: Dict[str, Any] = None,
     ):
-        """Initialize with required components."""
+        """Initialize with required components.
+
+        agent_llms (ADR-006, fork addition): optional per-agent-role -> LLM
+        map. When provided, each node uses agent_llms[role]; otherwise it
+        falls back to the legacy quick/deep 2-tier assignment. Keeps upstream
+        behavior identical when the map is absent.
+        """
         self.quick_thinking_llm = quick_thinking_llm
         self.deep_thinking_llm = deep_thinking_llm
         self.tool_nodes = tool_nodes
         self.conditional_logic = conditional_logic
+        self.agent_llms = agent_llms or {}
+
+    def _pick(self, role: str, default: Any) -> Any:
+        """Per-agent LLM if routing is configured, else the 2-tier default."""
+        return self.agent_llms.get(role, default)
 
     def setup_graph(
         self, selected_analysts=["market", "social", "news", "fundamentals"]
@@ -48,7 +60,7 @@ class GraphSetup:
 
         if "market" in selected_analysts:
             analyst_nodes["market"] = create_market_analyst(
-                self.quick_thinking_llm
+                self._pick("market_analyst", self.quick_thinking_llm)
             )
             delete_nodes["market"] = create_msg_delete()
             tool_nodes["market"] = self.tool_nodes["market"]
@@ -59,36 +71,36 @@ class GraphSetup:
             # sentiment_analyst (the old name advertised social-media data
             # the agent never had access to — see issue #557).
             analyst_nodes["social"] = create_sentiment_analyst(
-                self.quick_thinking_llm
+                self._pick("sentiment_analyst", self.quick_thinking_llm)
             )
             delete_nodes["social"] = create_msg_delete()
             tool_nodes["social"] = self.tool_nodes["social"]
 
         if "news" in selected_analysts:
             analyst_nodes["news"] = create_news_analyst(
-                self.quick_thinking_llm
+                self._pick("news_analyst", self.quick_thinking_llm)
             )
             delete_nodes["news"] = create_msg_delete()
             tool_nodes["news"] = self.tool_nodes["news"]
 
         if "fundamentals" in selected_analysts:
             analyst_nodes["fundamentals"] = create_fundamentals_analyst(
-                self.quick_thinking_llm
+                self._pick("fundamentals_analyst", self.quick_thinking_llm)
             )
             delete_nodes["fundamentals"] = create_msg_delete()
             tool_nodes["fundamentals"] = self.tool_nodes["fundamentals"]
 
         # Create researcher and manager nodes
-        bull_researcher_node = create_bull_researcher(self.quick_thinking_llm)
-        bear_researcher_node = create_bear_researcher(self.quick_thinking_llm)
-        research_manager_node = create_research_manager(self.deep_thinking_llm)
-        trader_node = create_trader(self.quick_thinking_llm)
+        bull_researcher_node = create_bull_researcher(self._pick("bull_researcher", self.quick_thinking_llm))
+        bear_researcher_node = create_bear_researcher(self._pick("bear_researcher", self.quick_thinking_llm))
+        research_manager_node = create_research_manager(self._pick("research_manager", self.deep_thinking_llm))
+        trader_node = create_trader(self._pick("trader", self.quick_thinking_llm))
 
         # Create risk analysis nodes
-        aggressive_analyst = create_aggressive_debator(self.quick_thinking_llm)
-        neutral_analyst = create_neutral_debator(self.quick_thinking_llm)
-        conservative_analyst = create_conservative_debator(self.quick_thinking_llm)
-        portfolio_manager_node = create_portfolio_manager(self.deep_thinking_llm)
+        aggressive_analyst = create_aggressive_debator(self._pick("aggressive_debator", self.quick_thinking_llm))
+        neutral_analyst = create_neutral_debator(self._pick("neutral_debator", self.quick_thinking_llm))
+        conservative_analyst = create_conservative_debator(self._pick("conservative_debator", self.quick_thinking_llm))
+        portfolio_manager_node = create_portfolio_manager(self._pick("portfolio_manager", self.deep_thinking_llm))
 
         # Create workflow
         workflow = StateGraph(AgentState)

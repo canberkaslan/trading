@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, Fragment } from 'react';
 import {
   View,
   Text,
@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import Svg, { Path, Line, Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
+import Svg, { Path, Line, Circle, Rect, Defs, LinearGradient, Stop } from 'react-native-svg';
 
 import { usePrices } from '@/api/hooks';
 import { colors } from '@/theme/colors';
@@ -38,6 +38,34 @@ function buildPaths(bars: Bar[], width: number, height: number) {
   return { line, area, min, max, lastPt: pts[pts.length - 1] };
 }
 
+type Candle = { x: number; w: number; wickTop: number; wickBot: number; bodyTop: number; bodyH: number; up: boolean };
+
+function buildCandles(bars: Bar[], width: number, height: number): { candles: Candle[]; min: number; max: number } {
+  const lows = bars.map((b) => b.l);
+  const highs = bars.map((b) => b.h);
+  const min = Math.min(...lows);
+  const max = Math.max(...highs);
+  const span = max - min || 1;
+  const slot = width / bars.length;
+  const w = Math.max(1, slot * 0.6);
+  const y = (v: number) => height - ((v - min) / span) * height;
+  const candles = bars.map((b, i) => {
+    const up = b.c >= b.o;
+    const bodyTop = y(Math.max(b.o, b.c));
+    const bodyBot = y(Math.min(b.o, b.c));
+    return {
+      x: i * slot + (slot - w) / 2,
+      w,
+      wickTop: y(b.h),
+      wickBot: y(b.l),
+      bodyTop,
+      bodyH: Math.max(1, bodyBot - bodyTop),
+      up,
+    };
+  });
+  return { candles, min, max };
+}
+
 export default function ChartsScreen() {
   const { width } = useWindowDimensions();
   const router = useRouter();
@@ -45,6 +73,7 @@ export default function ChartsScreen() {
   const [input, setInput] = useState('AAPL');
   const [ticker, setTicker] = useState('AAPL');
   const [days, setDays] = useState(90);
+  const [mode, setMode] = useState<'line' | 'candle'>('line');
   const { data, isLoading, isError } = usePrices(ticker, days);
 
   const up = (data?.change_pct ?? 0) >= 0;
@@ -54,6 +83,11 @@ export default function ChartsScreen() {
     if (!data?.bars?.length) return null;
     return buildPaths(data.bars, chartW, CHART_H);
   }, [data, chartW]);
+
+  const candleData = useMemo(() => {
+    if (mode !== 'candle' || !data?.bars?.length) return null;
+    return buildCandles(data.bars, chartW, CHART_H);
+  }, [mode, data, chartW]);
 
   const onSubmit = () => {
     const t = input.trim().toUpperCase();
@@ -96,11 +130,38 @@ export default function ChartsScreen() {
           ) : null}
         </View>
 
+        <View style={styles.modeRow}>
+          {(['line', 'candle'] as const).map((m) => (
+            <Pressable
+              key={m}
+              style={[styles.modeChip, mode === m && styles.modeChipActive]}
+              onPress={() => setMode(m)}
+            >
+              <Text style={[styles.modeText, mode === m && styles.modeTextActive]}>
+                {m === 'line' ? 'Çizgi' : 'Mum'}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+
         <View style={styles.chartBox}>
           {isLoading ? (
             <ActivityIndicator color={colors.accent} style={{ marginTop: 90 }} />
           ) : isError ? (
             <Text style={styles.err}>Fiyat alınamadı — ticker geçerli mi?</Text>
+          ) : mode === 'candle' && candleData ? (
+            <Svg width={chartW} height={CHART_H}>
+              {candleData.candles.map((c, i) => {
+                const col = c.up ? colors.up : colors.down;
+                return (
+                  <Fragment key={i}>
+                    <Line x1={c.x + c.w / 2} y1={c.wickTop} x2={c.x + c.w / 2} y2={c.wickBot} stroke={col} strokeWidth={1} />
+                    <Rect x={c.x} y={c.bodyTop} width={c.w} height={c.bodyH} fill={col} />
+                  </Fragment>
+                );
+              })}
+              <Line x1={0} y1={CHART_H - 1} x2={chartW} y2={CHART_H - 1} stroke={colors.surfaceElevated} strokeWidth={1} />
+            </Svg>
           ) : paths ? (
             <Svg width={chartW} height={CHART_H}>
               <Defs>
@@ -173,6 +234,11 @@ const styles = StyleSheet.create({
   ticker: { color: colors.textPrimary, fontSize: 26, fontWeight: '700' },
   price: { color: colors.textPrimary, fontSize: 22, fontWeight: '700' },
   change: { fontSize: 14, fontWeight: '600', marginTop: 2 },
+  modeRow: { flexDirection: 'row', gap: 8, alignSelf: 'flex-start' },
+  modeChip: { paddingHorizontal: 16, paddingVertical: 6, borderRadius: 16, backgroundColor: colors.surface },
+  modeChipActive: { backgroundColor: colors.surfaceElevated },
+  modeText: { color: colors.textMuted, fontSize: 13, fontWeight: '600' },
+  modeTextActive: { color: colors.textPrimary },
   chartBox: { minHeight: CHART_H, justifyContent: 'center' },
   minmax: { flexDirection: 'row', justifyContent: 'space-between' },
   muted: { color: colors.textMuted, fontSize: 12 },

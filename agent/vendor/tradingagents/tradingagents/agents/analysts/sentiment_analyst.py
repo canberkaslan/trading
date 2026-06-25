@@ -30,6 +30,9 @@ from tradingagents.agents.utils.agent_utils import (
 from tradingagents.dataflows.reddit import fetch_reddit_posts
 from tradingagents.dataflows.stocktwits import fetch_stocktwits_messages
 
+# Fork addition: sell-side analyst recommendations + earnings surprises.
+from tradingagents_us.dataflows.finnhub import finnhub_block
+
 
 def _seven_days_back(trade_date: str) -> str:
     return (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=7)).strftime("%Y-%m-%d")
@@ -53,6 +56,9 @@ def create_sentiment_analyst(llm):
         # returns a string (no exceptions surface from here), so the LLM
         # always sees something — either real data or a clear placeholder.
         news_block = get_news.func(ticker, start_date, end_date)
+        # Append Finnhub analyst-recommendation + earnings-surprise data to the
+        # news block (degrades to a placeholder when FINNHUB_API_KEY is unset).
+        news_block = f"{news_block}\n\n{finnhub_block(ticker)}"
         stocktwits_block = fetch_stocktwits_messages(ticker, limit=30)
         reddit_block = fetch_reddit_posts(ticker)
 

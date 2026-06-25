@@ -65,11 +65,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
 
   extra: {
-    // Fallback points at the live paper-trading backend (not localhost) so a
-    // bundle built without EXPO_PUBLIC_API_URL still reaches the box. Public
-    // IP, safe to commit.
-    apiUrl: process.env.EXPO_PUBLIC_API_URL ?? 'http://167.233.102.179:8000',
-    wsUrl: process.env.EXPO_PUBLIC_WS_URL ?? 'ws://167.233.102.179:8000/ws',
+    // Fallback = HTTPS via the Cloudflare named tunnel (port 443, reachable on
+    // any network, TLS). A bundle built without EXPO_PUBLIC_API_URL still works.
+    apiUrl: process.env.EXPO_PUBLIC_API_URL ?? 'https://trader.fusapp.com',
+    wsUrl: process.env.EXPO_PUBLIC_WS_URL ?? 'wss://trader.fusapp.com/ws',
     devApiToken: process.env.EXPO_PUBLIC_DEV_API_TOKEN ?? '',
     cognitoPoolId: process.env.EXPO_PUBLIC_COGNITO_POOL_ID,
     cognitoClientId: process.env.EXPO_PUBLIC_COGNITO_CLIENT_ID,

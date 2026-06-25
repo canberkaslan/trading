@@ -99,6 +99,14 @@ def build_scorecard(period: str, benchmark: bool) -> Scorecard:
         history = ac.portfolio_history(period=period, timeframe="1D")
 
     equity = _equity_series(history)
+
+    # Eval start cutoff: ignore everything before the clean diversified book
+    # began (set EVAL_START_DATE=YYYY-MM-DD), so the earlier bug-era history
+    # can't pollute Sharpe / drawdown / return.
+    start = os.environ.get("EVAL_START_DATE")
+    if start:
+        equity = equity[equity.index >= pd.Timestamp(start, tz="UTC")]
+
     if len(equity) < 2:
         raise SystemExit(
             "Not enough equity history yet — the clean eval book likely just "

@@ -147,6 +147,12 @@ def propagate(ticker: str, trade_date: str) -> AgentDecision:
     )
     entry_price, stop_loss, suggested_size_pct = _parse_trader_output(str(trader_text))
 
+    # LLM council (opt-in): cross-family voters (DeepSeek + GLM) re-rate the
+    # house view, Opus 4.8 chair issues the final call. Fail-safe — any error
+    # leaves the house `rating` untouched.
+    if os.environ.get("LLM_COUNCIL", "0") in ("1", "true", "True"):
+        rating = _apply_council(ticker, final_state, rating, str(final or ""), reasoning)
+
     return AgentDecision(
         ticker=ticker,
         market="US",
@@ -163,6 +169,63 @@ def propagate(ticker: str, trade_date: str) -> AgentDecision:
         timestamp_utc=datetime.now(timezone.utc),
         decision_id=str(uuid.uuid4()),
     )
+
+
+def _apply_council(ticker, final_state, house_rating, house_final, reasoning):
+    """Run the LLM council and return the chair's final rating.
+
+    Returns the unchanged house rating on any failure. Appends the chair
+    synthesis + each voter's opinion to `reasoning` so the app can show them.
+    """
+    try:
+        from tradingagents_us.llm.council import CHAIR_MODEL, council_review
+    except Exception:  # noqa: BLE001
+        return house_rating
+
+    parts = []
+    for label, key in [
+        ("MARKET", "market_report"),
+        ("FUNDAMENTALS", "fundamentals_report"),
+        ("NEWS", "news_report"),
+        ("SENTIMENT", "sentiment_report"),
+        ("RESEARCH PLAN", "investment_plan"),
+    ]:
+        body = (final_state.get(key) or "").strip()
+        if body:
+            parts.append(f"[{label}]\n{body[:1200]}")
+    digest = f"Research digest for {ticker}:\n\n" + "\n\n".join(parts)
+
+    result = council_review(ticker, digest, house_rating, house_final)
+    if result is None:
+        log.info("council unavailable for %s — keeping house rating %s", ticker, house_rating)
+        return house_rating
+
+    log.info(
+        "council: %s house=%s -> final=%s (conf %d)",
+        ticker, house_rating, result.final_rating, result.confidence,
+    )
+    reasoning.append(
+        AgentReasoning(
+            agent="council_chair",
+            model=CHAIR_MODEL,
+            summary=f"[confidence {result.confidence}] {result.chair_summary}",
+            tokens_in=0,
+            tokens_out=0,
+            latency_ms=0,
+        )
+    )
+    for v in result.votes:
+        reasoning.append(
+            AgentReasoning(
+                agent=f"council:{v.member}",
+                model=v.member,
+                summary=f"{v.rating or '?'} — {v.rationale}",
+                tokens_in=0,
+                tokens_out=0,
+                latency_ms=0,
+            )
+        )
+    return result.final_rating
 
 
 def _parse_pm_output(text: str) -> tuple[str, float | None, str | None]:

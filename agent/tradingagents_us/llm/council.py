@@ -32,16 +32,21 @@ log = logging.getLogger(__name__)
 
 _RATINGS = ("Buy", "Overweight", "Hold", "Underweight", "Sell")
 
-# Council voters (cross-family, cheap). Reached via OpenRouter.
+# Council voters (cross-family). DeepSeek/GLM via OpenRouter (fast, cheap);
+# qwen-local via on-box ollama (free, but CPU inference so it gets a longer
+# timeout and is dropped if it can't answer in time).
 VOTERS = [
-    {"name": "deepseek", "model": "deepseek/deepseek-chat"},
-    {"name": "glm", "model": "z-ai/glm-4.6"},
+    {"name": "deepseek", "provider": "openrouter", "model": "deepseek/deepseek-chat"},
+    {"name": "glm", "provider": "openrouter", "model": "z-ai/glm-4.6"},
+    {"name": "qwen-local", "provider": "ollama", "model": os.environ.get("OLLAMA_COUNCIL_MODEL", "qwen2.5:7b")},
 ]
 CHAIR_MODEL = os.environ.get("LLM_COUNCIL_CHAIR", "claude-opus-4-8")
 
 _OPENROUTER = "https://openrouter.ai/api/v1/chat/completions"
 _ANTHROPIC = "https://api.anthropic.com/v1/messages"
+_OLLAMA = os.environ.get("OLLAMA_BASE", "http://localhost:11434") + "/v1/chat/completions"
 _TIMEOUT = 60.0
+_OLLAMA_TIMEOUT = 120.0  # CPU inference is slow
 
 
 @dataclass(frozen=True)
@@ -88,6 +93,25 @@ def _call_openrouter(model: str, system: str, user: str) -> str:
                     {"role": "user", "content": user},
                 ],
                 "max_tokens": 600,
+                "temperature": 0.2,
+            },
+        )
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"]
+
+
+def _call_ollama(model: str, system: str, user: str) -> str:
+    """Local ollama via its OpenAI-compatible endpoint. No auth; slow on CPU."""
+    with httpx.Client(timeout=_OLLAMA_TIMEOUT) as c:
+        r = c.post(
+            _OLLAMA,
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                "max_tokens": 500,
                 "temperature": 0.2,
             },
         )
@@ -142,7 +166,10 @@ def _collect_votes(digest: str, house_block: str) -> list[Vote]:
     user = f"{digest}\n\n{house_block}\n\nGive your independent rating."
     for v in VOTERS:
         try:
-            text = _call_openrouter(v["model"], _VOTER_SYSTEM, user)
+            if v["provider"] == "ollama":
+                text = _call_ollama(v["model"], _VOTER_SYSTEM, user)
+            else:
+                text = _call_openrouter(v["model"], _VOTER_SYSTEM, user)
             votes.append(Vote(v["name"], _parse_rating(text), text.strip()[:1200]))
         except Exception as exc:  # noqa: BLE001 — drop a failed voter, keep going
             log.warning("council voter %s failed: %s", v["name"], exc)

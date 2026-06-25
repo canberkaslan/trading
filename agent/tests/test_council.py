@@ -8,6 +8,16 @@ from tradingagents_us.llm import council
 from tradingagents_us.llm.council import _parse_confidence, _parse_rating, council_review
 
 
+@pytest.fixture(autouse=True)
+def _no_local_ollama(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No ollama in CI — the qwen-local voter is always dropped, leaving the
+    two OpenRouter voters (matches the assertions below)."""
+    def _down(model, s, u):
+        raise RuntimeError("ollama not available in test")
+
+    monkeypatch.setattr(council, "_call_ollama", _down)
+
+
 class TestParse:
     def test_rating_variants(self) -> None:
         assert _parse_rating("blah\nRATING: Overweight") == "Overweight"

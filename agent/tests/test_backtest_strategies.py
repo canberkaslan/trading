@@ -29,17 +29,16 @@ def test_ma_crossover_fires_on_cross() -> None:
     assert entries.dtypes.iloc[0] == bool
 
 
-def test_momentum_long_when_trailing_positive() -> None:
-    vals = list(np.linspace(100, 200, 200))  # persistent uptrend
-    entries, exits = momentum(_series(vals), lookback=20)
-    assert entries["X"].any()
-
-
-def test_mean_reversion_buys_oversold() -> None:
-    # sharp drop -> low RSI -> entry; recovery -> exit
-    vals = list(np.linspace(100, 50, 30)) + list(np.linspace(50, 120, 60))
-    entries, exits = mean_reversion(_series(vals))
-    assert entries["X"].any()
+def test_momentum_and_mean_reversion_fire_on_oscillation() -> None:
+    # Oscillating + trending series: momentum crosses zero, RSI crosses its
+    # bands — both signal types must fire (monotonic data never crosses).
+    t = np.arange(320)
+    vals = list(100 + 20 * np.sin(t / 14.0) + np.linspace(0, 30, 320))
+    df = _series(vals)
+    m_entries, _ = momentum(df, lookback=20)
+    r_entries, _ = mean_reversion(df)
+    assert m_entries["X"].any()
+    assert r_entries["X"].any()
 
 
 def test_signals_have_no_nan_leak() -> None:

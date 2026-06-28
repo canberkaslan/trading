@@ -1,0 +1,91 @@
+<svg viewBox="0 0 900 820" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, system-ui, sans-serif" role="img">
+<title>AI trading agent — current architecture</title>
+<desc>Data sources, decision engine (7 agents, LLM council, reflection-memory, risk layer), broker, delivery and validation layers.</desc>
+<defs>
+<marker id="a" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker>
+<marker id="p" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#a855f7"/></marker>
+</defs>
+
+<rect x="16" y="20" width="868" height="86" rx="12" fill="#fafaf9" stroke="#ececea"/>
+<text x="34" y="42" font-size="12" font-weight="600" fill="#78716c">1 · DATA SOURCES</text>
+<g font-size="11">
+<rect x="34" y="52" width="158" height="42" rx="8" fill="#f4f4f3" stroke="#cfcdc8"/><text x="113" y="70" text-anchor="middle" font-weight="600" fill="#57534e">Polygon</text><text x="113" y="85" text-anchor="middle" fill="#78716c">price · technicals</text>
+<rect x="200" y="52" width="158" height="42" rx="8" fill="#f4f4f3" stroke="#cfcdc8"/><text x="279" y="70" text-anchor="middle" font-weight="600" fill="#57534e">SEC EDGAR</text><text x="279" y="85" text-anchor="middle" fill="#78716c">fundamentals</text>
+<rect x="366" y="52" width="158" height="42" rx="8" fill="#f4f4f3" stroke="#cfcdc8"/><text x="445" y="70" text-anchor="middle" font-weight="600" fill="#57534e">Finnhub</text><text x="445" y="85" text-anchor="middle" fill="#78716c">analyst · earnings</text>
+<rect x="532" y="52" width="158" height="42" rx="8" fill="#f4f4f3" stroke="#cfcdc8"/><text x="611" y="70" text-anchor="middle" font-weight="600" fill="#57534e">StockTwits</text><text x="611" y="85" text-anchor="middle" fill="#78716c">retail sentiment</text>
+<rect x="698" y="52" width="152" height="42" rx="8" fill="#f4f4f3" stroke="#cfcdc8"/><text x="774" y="70" text-anchor="middle" font-weight="600" fill="#57534e">FRED</text><text x="774" y="85" text-anchor="middle" fill="#78716c">macro</text>
+</g>
+<line x1="450" y1="106" x2="450" y2="122" stroke="#94a3b8" marker-end="url(#a)"/>
+
+<rect x="16" y="124" width="868" height="438" rx="12" fill="#f6f9fe" stroke="#dbe6f7"/>
+<text x="34" y="146" font-size="12" font-weight="600" fill="#3b6fd4">2 · DECISION ENGINE — Hetzner box · weekday 22:30 UTC</text>
+
+<g font-size="11">
+<rect x="34" y="156" width="816" height="46" rx="8" fill="#eaf2fd" stroke="#7ba4ec"/><text x="442" y="174" text-anchor="middle" font-weight="600" fill="#1e40af">4 analysts — market · fundamentals · news · sentiment</text><text x="442" y="190" text-anchor="middle" fill="#3a5e8c">Sonnet 4.6 · her biri kendi veri kaynağını yorumlar</text>
+</g>
+<line x1="450" y1="202" x2="450" y2="216" stroke="#94a3b8" marker-end="url(#a)"/>
+
+<g font-size="11">
+<rect x="150" y="218" width="150" height="42" rx="8" fill="#eaf2fd" stroke="#7ba4ec"/><text x="225" y="236" text-anchor="middle" font-weight="600" fill="#1e40af">Bull researcher</text><text x="225" y="251" text-anchor="middle" fill="#3a5e8c">Sonnet 4.6</text>
+<rect x="320" y="218" width="150" height="42" rx="8" fill="#eaf2fd" stroke="#7ba4ec"/><text x="395" y="236" text-anchor="middle" font-weight="600" fill="#1e40af">Bear researcher</text><text x="395" y="251" text-anchor="middle" fill="#3a5e8c">Sonnet 4.6</text>
+<rect x="600" y="218" width="250" height="42" rx="8" fill="#dbeafe" stroke="#3b6fd4"/><text x="725" y="236" text-anchor="middle" font-weight="600" fill="#1e3a8a">Research Manager · judge</text><text x="725" y="251" text-anchor="middle" fill="#3a5e8c">Opus 4.8</text>
+</g>
+<text x="310" y="243" text-anchor="middle" font-size="13" fill="#94a3b8">&#8646;</text>
+<line x1="470" y1="239" x2="599" y2="239" stroke="#94a3b8" marker-end="url(#a)"/>
+<line x1="725" y1="260" x2="725" y2="276" stroke="#94a3b8" marker-end="url(#a)"/>
+
+<g font-size="11">
+<rect x="34" y="278" width="170" height="42" rx="8" fill="#eaf2fd" stroke="#7ba4ec"/><text x="119" y="296" text-anchor="middle" font-weight="600" fill="#1e40af">Trader</text><text x="119" y="311" text-anchor="middle" fill="#3a5e8c">plan · Sonnet</text>
+<rect x="224" y="278" width="250" height="42" rx="8" fill="#eaf2fd" stroke="#7ba4ec"/><text x="349" y="296" text-anchor="middle" font-weight="600" fill="#1e40af">3 risk debators</text><text x="349" y="311" text-anchor="middle" fill="#3a5e8c">aggressive · neutral · conservative</text>
+<rect x="600" y="278" width="250" height="42" rx="8" fill="#dbeafe" stroke="#3b6fd4"/><text x="725" y="296" text-anchor="middle" font-weight="600" fill="#1e3a8a">Portfolio Manager · house view</text><text x="725" y="311" text-anchor="middle" fill="#3a5e8c">Opus 4.8</text>
+</g>
+<line x1="204" y1="299" x2="223" y2="299" stroke="#94a3b8" marker-end="url(#a)"/>
+<line x1="474" y1="299" x2="599" y2="299" stroke="#94a3b8" marker-end="url(#a)"/>
+<line x1="725" y1="320" x2="725" y2="338" stroke="#94a3b8" marker-end="url(#a)"/>
+
+<rect x="250" y="340" width="600" height="74" rx="10" fill="#eef4fd" stroke="#3b6fd4"/>
+<text x="550" y="358" text-anchor="middle" font-size="11" font-weight="600" fill="#1e3a8a">LLM COUNCIL — house view'ı çapraz-aile doğrular</text>
+<g font-size="11">
+<rect x="266" y="366" width="146" height="38" rx="8" fill="#eaf2fd" stroke="#7ba4ec"/><text x="339" y="389" text-anchor="middle" fill="#1e40af">DeepSeek · oy</text>
+<rect x="420" y="366" width="120" height="38" rx="8" fill="#eaf2fd" stroke="#7ba4ec"/><text x="480" y="389" text-anchor="middle" fill="#1e40af">GLM · oy</text>
+<rect x="548" y="366" width="150" height="38" rx="8" fill="#eaf2fd" stroke="#7ba4ec"/><text x="623" y="389" text-anchor="middle" fill="#1e40af">qwen lokal · oy</text>
+<rect x="706" y="366" width="128" height="38" rx="8" fill="#dbeafe" stroke="#3b6fd4"/><text x="770" y="389" text-anchor="middle" font-weight="600" fill="#1e3a8a">Chair · Opus 4.8</text>
+</g>
+
+<rect x="34" y="340" width="150" height="74" rx="10" fill="#f6edfd" stroke="#c084fc"/>
+<text x="109" y="366" text-anchor="middle" font-size="11" font-weight="600" fill="#7c3aed">Reflection-memory</text>
+<text x="109" y="383" text-anchor="middle" font-size="10" fill="#9333ea">outcome → ders</text>
+<text x="109" y="398" text-anchor="middle" font-size="10" fill="#9333ea">→ PM'e enjekte</text>
+<path d="M184 360 C 350 330 560 320 725 320" fill="none" stroke="#a855f7" stroke-dasharray="4,3" marker-end="url(#p)"/>
+
+<line x1="550" y1="414" x2="550" y2="430" stroke="#94a3b8" marker-end="url(#a)"/>
+<g font-size="11">
+<rect x="150" y="432" width="430" height="44" rx="8" fill="#eaf2fd" stroke="#7ba4ec"/><text x="365" y="450" text-anchor="middle" font-weight="600" fill="#1e40af">Risk layer · deterministik</text><text x="365" y="465" text-anchor="middle" fill="#3a5e8c">sizing · stop · take-profit · circuit breaker · kill switch</text>
+<rect x="600" y="432" width="200" height="44" rx="8" fill="#eaf2fd" stroke="#7ba4ec"/><text x="700" y="450" text-anchor="middle" font-weight="600" fill="#1e40af">Executor</text><text x="700" y="465" text-anchor="middle" fill="#3a5e8c">bracket order</text>
+</g>
+<line x1="580" y1="454" x2="599" y2="454" stroke="#94a3b8" marker-end="url(#a)"/>
+<text x="34" y="500" font-size="10.5" fill="#3a5e8c">+ box'ta: FastAPI · ollama · SQLite · cloudflared · backtest harness · daily-loop scheduler</text>
+
+<line x1="700" y1="476" x2="700" y2="494" stroke="#94a3b8" marker-end="url(#a)"/>
+<rect x="590" y="512" width="220" height="40" rx="8" fill="#f4f4f3" stroke="#cfcdc8" font-size="11"/><text x="700" y="530" text-anchor="middle" font-weight="600" fill="#57534e">Alpaca · paper broker</text><text x="700" y="544" text-anchor="middle" fill="#78716c">NASDAQ / NYSE</text>
+
+<rect x="16" y="580" width="868" height="86" rx="12" fill="#fafaf9" stroke="#ececea"/>
+<text x="34" y="602" font-size="12" font-weight="600" fill="#78716c">3 · DELIVERY</text>
+<g font-size="11">
+<rect x="34" y="612" width="250" height="44" rx="8" fill="#eaf2fd" stroke="#7ba4ec"/><text x="159" y="630" text-anchor="middle" font-weight="600" fill="#1e40af">FastAPI backend</text><text x="159" y="645" text-anchor="middle" fill="#3a5e8c">/portfolio /eval /analyze /prices</text>
+<rect x="320" y="612" width="210" height="44" rx="8" fill="#f4f4f3" stroke="#cfcdc8"/><text x="425" y="630" text-anchor="middle" font-weight="600" fill="#57534e">Cloudflare tunnel</text><text x="425" y="645" text-anchor="middle" fill="#78716c">trader.fusapp.com · HTTPS</text>
+<rect x="566" y="612" width="284" height="44" rx="8" fill="#eaf2fd" stroke="#7ba4ec"/><text x="708" y="630" text-anchor="middle" font-weight="600" fill="#1e40af">Mobile app — Xiaomi</text><text x="708" y="645" text-anchor="middle" fill="#3a5e8c">Portfolio · Sor · Charts · Agents · Settings</text>
+</g>
+<line x1="284" y1="634" x2="319" y2="634" stroke="#94a3b8" marker-end="url(#a)"/>
+<line x1="530" y1="634" x2="565" y2="634" stroke="#94a3b8" marker-end="url(#a)"/>
+
+<rect x="16" y="684" width="868" height="86" rx="12" fill="#fafaf9" stroke="#ececea"/>
+<text x="34" y="706" font-size="12" font-weight="600" fill="#78716c">4 · VALIDATION · eval-safe</text>
+<g font-size="11">
+<rect x="34" y="716" width="266" height="44" rx="8" fill="#eaf2fd" stroke="#7ba4ec"/><text x="167" y="734" text-anchor="middle" font-weight="600" fill="#1e40af">Backtest harness</text><text x="167" y="749" text-anchor="middle" fill="#3a5e8c">risk · baseline · PIT-LLM · param-opt</text>
+<rect x="316" y="716" width="250" height="44" rx="8" fill="#eaf2fd" stroke="#7ba4ec"/><text x="441" y="734" text-anchor="middle" font-weight="600" fill="#1e40af">Eval scorecard</text><text x="441" y="749" text-anchor="middle" fill="#3a5e8c">Sharpe / MaxDD · GO / NO-GO</text>
+<rect x="582" y="716" width="268" height="44" rx="8" fill="#f6edfd" stroke="#c084fc"/><text x="716" y="734" text-anchor="middle" font-weight="600" fill="#7c3aed">Daily loop scheduler</text><text x="716" y="749" text-anchor="middle" fill="#9333ea">improve + test + report</text>
+</g>
+
+<text x="34" y="796" font-size="10.5" fill="#78716c">Opus 4.8 (manager+chair) · Sonnet 4.6 (analyst/trader) · DeepSeek · GLM · qwen (council) · Haiku (cost-opt branch)   ·   ⬜ box  ⬜ external  ⬜ learning</text>
+</svg>

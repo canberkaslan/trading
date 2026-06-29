@@ -19,7 +19,7 @@ Each item: code → tests green → commit → deploy (OTA if mobile).
 
 ## Round 3 (next, eval-safe)
 - [ ] prompt-cache markers injected into the LLM client (cache.py helpers exist) — BRANCH; needs a live API run to confirm cache hits (costs ~$1)
-- [ ] Portfolio: surface snapshot concentration / position-count trend
+- [x] Portfolio: surface snapshot concentration / position-count trend — /v1/portfolio/concentration deployed 2026-06-29 (HHI, effective_n, top/top3 weight, flags, snapshot trend; read-only, off-eval-path)
 - [ ] Pull-to-refresh + empty states polish on Charts/Ask
 - [ ] eval_report: walk-forward holdout note when days>=60
 

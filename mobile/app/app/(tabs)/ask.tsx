@@ -105,6 +105,24 @@ export default function AskScreen() {
           <Text style={styles.err}>İstek başarısız — backend'e ulaşılamadı.</Text>
         ) : null}
 
+        {!job && !decision && !busy && !start.isError ? (
+          <View style={styles.empty}>
+            <Text style={styles.emptyIcon}>📊</Text>
+            <Text style={styles.emptyTitle}>Henüz analiz yok</Text>
+            <Text style={styles.emptyText}>
+              Yukarıya bir hisse kodu yaz ya da aşağıdan birini seç. 7 ajanlı pipeline
+              ~5-10 dk içinde Buy/Hold/Sell kararı üretir.
+            </Text>
+            <View style={styles.chips}>
+              {['AAPL', 'NVDA', 'MSFT', 'GOOGL', 'AMZN'].map((t) => (
+                <Pressable key={t} style={styles.chip} onPress={() => runAnalysis(t)}>
+                  <Text style={styles.chipText}>{t}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        ) : null}
+
         {job && !decision ? (
           <View style={styles.statusCard}>
             {busy ? <ActivityIndicator color={colors.accent} /> : null}
@@ -224,4 +242,11 @@ const styles = StyleSheet.create({
   agentName: { color: colors.accent, fontWeight: '600' },
   tapHint: { color: colors.textMuted, fontSize: 11, marginTop: 12, textAlign: 'right' },
   err: { color: colors.danger, fontSize: 13, marginTop: 4 },
+  empty: { alignItems: 'center', paddingVertical: 32, gap: 10 },
+  emptyIcon: { fontSize: 40 },
+  emptyTitle: { color: colors.textPrimary, fontSize: 17, fontWeight: '700' },
+  emptyText: { color: colors.textSecondary, fontSize: 13, lineHeight: 19, textAlign: 'center', paddingHorizontal: 8 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center', marginTop: 8 },
+  chip: { paddingHorizontal: 18, paddingVertical: 8, borderRadius: 18, backgroundColor: colors.surfaceElevated },
+  chipText: { color: colors.textPrimary, fontSize: 14, fontWeight: '600', letterSpacing: 1 },
 });

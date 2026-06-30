@@ -8,6 +8,8 @@ import {
   ActivityIndicator,
   useWindowDimensions,
   Keyboard,
+  ScrollView,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -33,7 +35,7 @@ export default function ChartsScreen() {
   const [ticker, setTicker] = useState('AAPL');
   const [days, setDays] = useState(90);
   const [mode, setMode] = useState<'area' | 'candle'>('area');
-  const { data, isLoading, isError } = usePrices(ticker, days);
+  const { data, isLoading, isError, refetch, isRefetching } = usePrices(ticker, days);
 
   const bars = data?.bars ?? [];
   const up = (data?.change_pct ?? 0) >= 0;
@@ -57,7 +59,18 @@ export default function ChartsScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <View style={styles.scroll}>
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefetching}
+            onRefresh={refetch}
+            tintColor={colors.accent}
+            colors={[colors.accent]}
+          />
+        }
+      >
         <View style={styles.inputRow}>
           <TextInput
             style={styles.input}
@@ -193,7 +206,7 @@ export default function ChartsScreen() {
         >
           <Text style={styles.analyzeBtnText}>🤖 {ticker} analiz et</Text>
         </Pressable>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }

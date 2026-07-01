@@ -21,7 +21,7 @@ Each item: code → tests green → commit → deploy (OTA if mobile).
 - [ ] prompt-cache markers injected into the LLM client (cache.py helpers exist) — BRANCH; needs a live API run to confirm cache hits (costs ~$1)
 - [x] Portfolio: surface snapshot concentration / position-count trend — /v1/portfolio/concentration deployed 2026-06-29 (HHI, effective_n, top/top3 weight, flags, snapshot trend; read-only, off-eval-path)
 - [x] Pull-to-refresh + empty states polish on Charts/Ask — Charts View→ScrollView+RefreshControl(refetch), Ask empty-state card + ticker chips; OTA preview 2026-06-30 ✅
-- [ ] eval_report: walk-forward holdout note when days>=60
+- [x] eval_report: walk-forward holdout note when days>=60 — IS(2/3)->OOS(1/3) Sharpe split, regime-fit WARN flag; read-only, off-eval-path; 13 eval_report tests green 2026-07-01
 
 ## Deferred (go-live)
 - HTTPS (cloudflared/caddy) — needs domain decision; low risk on paper.

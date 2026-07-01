@@ -32,6 +32,9 @@ from tradingagents_us.risk import metrics
 GATE_SHARPE = 1.0
 GATE_MAX_DD = 0.15  # 15%, as a positive magnitude
 MIN_TRADING_DAYS = 10  # below this the metrics are too noisy to trust
+HOLDOUT_MIN_DAYS = 60  # below this a walk-forward holdout split is meaningless
+# Out-of-sample Sharpe below IS Sharpe by more than this fraction = regime-fit warning.
+HOLDOUT_DEGRADE_FRAC = 0.5
 
 
 @dataclass
@@ -49,6 +52,8 @@ class Scorecard:
     cvar95: float
     positive_days_pct: float
     spy_return: float | None
+    is_sharpe: float | None = None  # in-sample (first 2/3) Sharpe
+    oos_sharpe: float | None = None  # out-of-sample holdout (last 1/3) Sharpe
 
 
 def _equity_series(history: dict) -> pd.Series:
@@ -76,6 +81,23 @@ def _equity_series(history: dict) -> pd.Series:
         start = max(0, idx.index(first_move) - 1)
         s = s.iloc[start:]
     return s
+
+
+def _walk_forward_sharpe(equity: pd.Series) -> tuple[float, float] | None:
+    """Split the equity curve into a 2/3 in-sample head and a 1/3 out-of-sample
+    holdout tail, returning (is_sharpe, oos_sharpe). None if there aren't enough
+    days for the split to be meaningful. Read-only diagnostic — a strategy that
+    only worked in-sample shows up as a Sharpe that collapses on the holdout."""
+    if len(equity) < HOLDOUT_MIN_DAYS:
+        return None
+    split = (len(equity) * 2) // 3
+    in_sample = equity.iloc[:split]
+    holdout = equity.iloc[split - 1:]  # overlap one bar so returns are continuous
+    is_ret = in_sample.pct_change().dropna()
+    oos_ret = holdout.pct_change().dropna()
+    if len(is_ret) < 2 or len(oos_ret) < 2:
+        return None
+    return metrics.sharpe(is_ret), metrics.sharpe(oos_ret)
 
 
 def _spy_return(start: datetime, end: datetime) -> float | None:
@@ -119,6 +141,7 @@ def build_scorecard(period: str, benchmark: bool) -> Scorecard:
     spy = (
         _spy_return(equity.index[0], equity.index[-1]) if benchmark else None
     )
+    wf = _walk_forward_sharpe(equity)
 
     return Scorecard(
         days=len(equity),
@@ -134,6 +157,8 @@ def build_scorecard(period: str, benchmark: bool) -> Scorecard:
         cvar95=cvar95,
         positive_days_pct=float((returns > 0).mean() * 100.0),
         spy_return=spy,
+        is_sharpe=wf[0] if wf else None,
+        oos_sharpe=wf[1] if wf else None,
     )
 
 
@@ -158,6 +183,22 @@ def _snapshot_summary() -> tuple[float, float, int] | None:
     if not counts:
         return None
     return sum(counts) / len(counts), max(tops), len(counts)
+
+
+def _holdout_note(sc: Scorecard) -> str | None:
+    """Human-readable walk-forward holdout line, or None if not enough days.
+    Warns when out-of-sample Sharpe collapses vs in-sample (regime-fit risk)."""
+    if sc.is_sharpe is None or sc.oos_sharpe is None:
+        return None
+    degraded = (
+        sc.is_sharpe > 0
+        and sc.oos_sharpe < sc.is_sharpe * (1.0 - HOLDOUT_DEGRADE_FRAC)
+    )
+    flag = "  [WARN regime-fit]" if degraded else "  [stable]"
+    return (
+        f"Walk-forward: IS Sharpe {sc.is_sharpe:.2f} -> "
+        f"OOS Sharpe {sc.oos_sharpe:.2f}{flag}"
+    )
 
 
 def _verdict(sc: Scorecard) -> tuple[str, list[str]]:
@@ -208,6 +249,10 @@ def _print(sc: Scorecard) -> None:
         avg_pos, max_conc, n = snap
         row("Avg positions", f"{avg_pos:.1f}", f"{n} snapshots")
         row("Max concentration", f"{max_conc:.0f}%", "watch >10% per name")
+    note = _holdout_note(sc)
+    if note is not None:
+        print("  " + "-" * 52)
+        print(f"  {note}")
     print("  " + "-" * 52)
 
     verdict, reasons = _verdict(sc)

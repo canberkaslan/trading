@@ -7,10 +7,13 @@ import pandas as pd
 from scripts.eval_report import (
     GATE_MAX_DD,
     GATE_SHARPE,
+    HOLDOUT_MIN_DAYS,
     MIN_TRADING_DAYS,
     Scorecard,
     _equity_series,
+    _holdout_note,
     _verdict,
+    _walk_forward_sharpe,
 )
 
 
@@ -81,3 +84,36 @@ class TestEquitySeries:
     def test_empty_history_returns_empty(self) -> None:
         assert _equity_series({"timestamp": [], "equity": []}).empty
         assert isinstance(_equity_series({}), pd.Series)
+
+
+def _equity(vals: list[float]) -> pd.Series:
+    idx = pd.date_range("2026-01-01", periods=len(vals), freq="D", tz="UTC")
+    return pd.Series(vals, index=idx)
+
+
+class TestWalkForward:
+    def test_none_below_holdout_min_days(self) -> None:
+        eq = _equity([100_000.0 + i for i in range(HOLDOUT_MIN_DAYS - 1)])
+        assert _walk_forward_sharpe(eq) is None
+
+    def test_splits_two_thirds_in_sample(self) -> None:
+        eq = _equity([100_000.0 * (1.001 ** i) for i in range(HOLDOUT_MIN_DAYS)])
+        wf = _walk_forward_sharpe(eq)
+        assert wf is not None
+        is_sh, oos_sh = wf
+        # steady compounding -> both Sharpes finite and strongly positive
+        assert is_sh > 0 and oos_sh > 0
+
+    def test_holdout_note_none_without_split(self) -> None:
+        sc = _sc(is_sharpe=None, oos_sharpe=None)
+        assert _holdout_note(sc) is None
+
+    def test_holdout_note_flags_regime_fit_collapse(self) -> None:
+        sc = _sc(is_sharpe=2.0, oos_sharpe=0.3)
+        note = _holdout_note(sc)
+        assert note is not None and "regime-fit" in note
+
+    def test_holdout_note_stable_when_oos_holds(self) -> None:
+        sc = _sc(is_sharpe=1.8, oos_sharpe=1.6)
+        note = _holdout_note(sc)
+        assert note is not None and "stable" in note

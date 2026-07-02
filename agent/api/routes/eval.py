@@ -13,7 +13,14 @@ from threading import Lock
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from scripts.eval_report import GATE_MAX_DD, GATE_SHARPE, build_scorecard, _verdict
+from scripts.eval_report import (
+    GATE_MAX_DD,
+    GATE_SHARPE,
+    MIN_TRADING_DAYS,
+    build_gates,
+    build_scorecard,
+    _verdict,
+)
 
 from ..deps import require_token
 
@@ -24,10 +31,18 @@ _cache: dict[str, tuple[float, "EvalResult"]] = {}
 _lock = Lock()
 
 
+class Gate(BaseModel):
+    name: str
+    passed: bool | None
+    detail: str
+
+
 class EvalResult(BaseModel):
     verdict: str
     reasons: list[str]
     days: int
+    days_required: int
+    days_remaining: int
     total_return_pct: float
     sharpe: float
     sortino: float
@@ -36,6 +51,7 @@ class EvalResult(BaseModel):
     spy_return_pct: float | None
     gate_sharpe: float
     gate_max_dd_pct: float
+    gates: list[Gate]
 
 
 def _build(period: str, benchmark: bool) -> EvalResult:
@@ -45,6 +61,8 @@ def _build(period: str, benchmark: bool) -> EvalResult:
         verdict=verdict,
         reasons=reasons,
         days=sc.days,
+        days_required=MIN_TRADING_DAYS,
+        days_remaining=max(0, MIN_TRADING_DAYS - sc.days),
         total_return_pct=round(sc.total_return * 100, 2),
         sharpe=round(sc.sharpe, 2),
         sortino=round(sc.sortino, 2),
@@ -53,6 +71,7 @@ def _build(period: str, benchmark: bool) -> EvalResult:
         spy_return_pct=round(sc.spy_return * 100, 2) if sc.spy_return is not None else None,
         gate_sharpe=GATE_SHARPE,
         gate_max_dd_pct=GATE_MAX_DD * 100,
+        gates=[Gate(**g) for g in build_gates(sc)],
     )
 
 

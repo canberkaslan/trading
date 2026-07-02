@@ -60,6 +60,34 @@ def test_no_go_surfaces_reasons(client: TestClient, monkeypatch: pytest.MonkeyPa
     assert any("Sharpe" in r for r in b["reasons"])
 
 
+def test_gates_and_countdown_serialized(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("api.routes.eval.build_scorecard", lambda period, benchmark: _sc())
+    b = client.get("/v1/eval").json()
+    assert b["days_required"] == 10
+    assert b["days_remaining"] == 0  # 20 days done
+    gates = {g["name"]: g for g in b["gates"]}
+    assert gates["Trading days"]["passed"] is True
+    assert gates["Sharpe"]["passed"] is True
+    assert gates["Max drawdown"]["passed"] is True
+    assert gates["Beats SPY"]["passed"] is True  # 12% vs 5%
+
+
+def test_gates_pending_below_min_days(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "api.routes.eval.build_scorecard", lambda period, benchmark: _sc(days=6)
+    )
+    b = client.get("/v1/eval").json()
+    assert b["days_remaining"] == 4
+    gates = {g["name"]: g for g in b["gates"]}
+    assert gates["Trading days"]["passed"] is False
+    assert gates["Sharpe"]["passed"] is None  # not evaluable yet
+    assert gates["Trading days"]["detail"] == "6/10"
+
+
 def test_too_little_history_409(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     def _boom(period, benchmark):
         raise SystemExit("not enough history")

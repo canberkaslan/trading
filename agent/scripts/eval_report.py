@@ -222,6 +222,44 @@ def _verdict(sc: Scorecard) -> tuple[str, list[str]]:
     return ("GO" if passed else "NO-GO"), reasons
 
 
+def build_gates(sc: Scorecard) -> list[dict]:
+    """Structured GO/NO-GO gate breakdown for the mobile scorecard.
+
+    Read-only reporting: mirrors the pass/fail logic in _verdict but as a
+    per-gate checklist the UI can render. `passed=None` means "not yet
+    evaluable" (e.g. SPY edge without a benchmark, or metrics while still
+    below the min-days threshold)."""
+    have_days = sc.days >= MIN_TRADING_DAYS
+    gates: list[dict] = [
+        {
+            "name": "Trading days",
+            "passed": have_days,
+            "detail": f"{sc.days}/{MIN_TRADING_DAYS}",
+        },
+        {
+            "name": "Sharpe",
+            "passed": (sc.sharpe > GATE_SHARPE) if have_days else None,
+            "detail": f"{sc.sharpe:.2f} > {GATE_SHARPE}",
+        },
+        {
+            "name": "Max drawdown",
+            "passed": (abs(sc.max_dd) < GATE_MAX_DD) if have_days else None,
+            "detail": f"{abs(sc.max_dd) * 100:.1f}% < {GATE_MAX_DD * 100:.0f}%",
+        },
+    ]
+    if sc.spy_return is not None:
+        gates.append(
+            {
+                "name": "Beats SPY",
+                "passed": (sc.total_return >= sc.spy_return) if have_days else None,
+                "detail": f"{sc.total_return * 100:+.1f}% vs {sc.spy_return * 100:+.1f}%",
+            }
+        )
+    else:
+        gates.append({"name": "Beats SPY", "passed": None, "detail": "benchmark off"})
+    return gates
+
+
 def _print(sc: Scorecard) -> None:
     def row(label: str, value: str, gate: str = "") -> None:
         print(f"  {label:<22} {value:>14}   {gate}")

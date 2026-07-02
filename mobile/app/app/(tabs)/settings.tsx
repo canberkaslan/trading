@@ -24,6 +24,18 @@ function EvalStat({ label, value, gate }: { label: string; value: string; gate: 
   );
 }
 
+function GateRow({ name, passed, detail }: { name: string; passed: boolean | null; detail: string }) {
+  const icon = passed === null ? '○' : passed ? '✓' : '✗';
+  const color = passed === null ? colors.textMuted : passed ? colors.up : colors.down;
+  return (
+    <View style={styles.gateRow}>
+      <Text style={[styles.gateIcon, { color }]}>{icon}</Text>
+      <Text style={styles.gateName}>{name}</Text>
+      <Text style={styles.gateDetail}>{detail}</Text>
+    </View>
+  );
+}
+
 export default function SettingsScreen() {
   const [autoExecute, setAutoExecute] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
@@ -112,6 +124,22 @@ export default function SettingsScreen() {
                 <EvalStat label="Max DD" value={`${evalData.max_dd_pct.toFixed(1)}%`} gate={`<${evalData.gate_max_dd_pct}%`} />
                 <EvalStat label="Getiri" value={`${evalData.total_return_pct >= 0 ? '+' : ''}${evalData.total_return_pct.toFixed(1)}%`} gate={`${evalData.days}g`} />
               </View>
+              {evalData.days_remaining > 0 ? (
+                <Text style={styles.countdown}>
+                  Karara {evalData.days_remaining} gün · {evalData.days}/{evalData.days_required} işlem günü
+                </Text>
+              ) : (
+                <Text style={styles.countdown}>
+                  {evalData.days}/{evalData.days_required} işlem günü · karar penceresi açık
+                </Text>
+              )}
+              {evalData.gates?.length ? (
+                <View style={styles.gateList}>
+                  {evalData.gates.map((g) => (
+                    <GateRow key={g.name} name={g.name} passed={g.passed} detail={g.detail} />
+                  ))}
+                </View>
+              ) : null}
               {evalData.reasons.length ? (
                 <Text style={styles.evalReason}>{evalData.reasons.join(' · ')}</Text>
               ) : null}
@@ -210,6 +238,12 @@ const styles = StyleSheet.create({
   evalStatValue: { color: colors.textPrimary, fontSize: 17, fontWeight: '700', marginTop: 2 },
   evalStatGate: { color: colors.textMuted, fontSize: 10, marginTop: 1 },
   evalReason: { color: colors.warning, fontSize: 11, fontStyle: 'italic' },
+  countdown: { color: colors.textMuted, fontSize: 12, fontWeight: '600' },
+  gateList: { gap: 6, borderTopWidth: 1, borderTopColor: colors.surfaceElevated, paddingTop: 10 },
+  gateRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  gateIcon: { fontSize: 13, fontWeight: '800', width: 16, textAlign: 'center' },
+  gateName: { color: colors.textPrimary, fontSize: 13, flex: 1 },
+  gateDetail: { color: colors.textMuted, fontSize: 12 },
   warning: {
     color: colors.warning,
     fontSize: 12,

@@ -94,3 +94,19 @@ def test_too_little_history_409(client: TestClient, monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr("api.routes.eval.build_scorecard", _boom)
     assert client.get("/v1/eval").status_code == 409
+
+
+def test_benchmark_on_by_default(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mobile calls /v1/eval with no query params — SPY benchmark must be
+    requested by default so the GO/NO-GO scorecard shows the 'Beats SPY' gate."""
+    seen: dict[str, bool] = {}
+
+    def _spy(period, benchmark):
+        seen["benchmark"] = benchmark
+        return _sc()
+
+    monkeypatch.setattr("api.routes.eval.build_scorecard", _spy)
+    b = client.get("/v1/eval").json()
+    assert seen["benchmark"] is True
+    assert b["gates"][-1]["name"] == "Beats SPY"
+    assert b["gates"][-1]["passed"] is True

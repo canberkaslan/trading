@@ -78,7 +78,7 @@ def _build(period: str, benchmark: bool) -> EvalResult:
 @router.get("", response_model=EvalResult)
 async def get_eval(
     period: str = "1M",
-    benchmark: bool = False,
+    benchmark: bool = True,
     user: str = Depends(require_token),
 ) -> EvalResult:
     key = f"{period}:{benchmark}"

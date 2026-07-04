@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from tradingagents_us.dataflows.alpaca_broker import AlpacaClient
+from tradingagents_us.dataflows.sector_map import sector_for
 from tradingagents_us.risk.concentration import (
     PositionWeight,
     compute_concentration,
@@ -83,7 +84,7 @@ async def get_snapshot(
             unrealized_pnl=p.unrealized_pl,
             unrealized_pnl_pct=p.unrealized_plpc,
             stop_loss=0.0,                # broker-side leg lives on order, not position
-            sector=None,
+            sector=sector_for(p.symbol),  # static GICS map, display-only (off trading path)
             opened_at_utc=datetime.now(timezone.utc),  # Alpaca doesn't expose open ts on position
         )
         for p in positions_raw

@@ -1,0 +1,20 @@
+[Unit]
+Description=AI Trader — pre-run preflight canary (keys, broker, DB, disk)
+After=network-online.target
+Wants=network-online.target
+# Crash-before-alert (e.g. import failure after a venv rebuild) must still page.
+OnFailure=ai-trader-alert.service
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/opt/ai-trader/agent
+EnvironmentFile=/opt/ai-trader/secrets.env
+Environment=PYTHONPATH=.:vendor/tradingagents
+ExecStart=/opt/ai-trader/agent/.venv/bin/python -m scripts.preflight
+# Alert-only: a preflight failure pushes a notification and marks this unit
+# failed, but never blocks ai-trader.service — the run still attempts.
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

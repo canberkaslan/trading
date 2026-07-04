@@ -2,6 +2,9 @@
 Description=AI Trader — daily paper-trading decision run
 After=network-online.target
 Wants=network-online.target
+# Push an alert when the run dies in a way the script can't catch
+# (SIGKILL on timeout, OOM, env failure before bash even starts).
+OnFailure=ai-trader-alert.service
 
 [Service]
 Type=oneshot
@@ -10,8 +13,11 @@ WorkingDirectory=/opt/ai-trader/agent
 # Secrets live OUTSIDE the git tree so a repo pull never clobbers them.
 EnvironmentFile=/opt/ai-trader/secrets.env
 ExecStart=/usr/bin/env bash /opt/ai-trader/agent/scripts/daily_run.sh
-# Generous timeout: 5 tickers × ~10 min worst-case LLM pipeline = 50 min.
-TimeoutStartSec=4200
+# Absolute backstop above the per-ticker cap: 11 tickers × 1800s
+# (daily_run.sh TICKER_TIMEOUT_S) ≈ 19800s theoretical worst + overhead.
+# The old 4200 was sized for 5 tickers and would SIGKILL a slow
+# full-universe run mid-eval — realistic runs are 1-2h.
+TimeoutStartSec=21600
 # Don't hammer Anthropic if something loops; one run at a time.
 Nice=10
 

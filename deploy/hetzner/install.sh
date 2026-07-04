@@ -64,7 +64,7 @@ FRED_API_KEY=
 ALPACA_API_KEY=
 ALPACA_API_SECRET=
 ALPACA_BASE_URL=https://paper-api.alpaca.markets/v2
-SEC_EDGAR_USER_AGENT=AI Trader you@example.com
+SEC_EDGAR_USER_AGENT="AI Trader you@example.com"
 
 # TradingAgents upstream model routing
 TRADINGAGENTS_LLM_PROVIDER=anthropic
@@ -74,9 +74,13 @@ TRADINGAGENTS_OUTPUT_LANGUAGE=English
 TRADINGAGENTS_MAX_DEBATE_ROUNDS=1
 TRADINGAGENTS_MAX_RISK_ROUNDS=1
 
-# Daily run config
-UNIVERSE=SPY AAPL MSFT NVDA GOOGL
+# Daily run config — full production universe; a reinstall must not
+# silently shrink the eval book. (Quoted: valid for BOTH systemd
+# EnvironmentFile= and `source` in a shell.)
+UNIVERSE="SPY AAPL MSFT NVDA GOOGL AMZN META JPM V XOM UNH"
 SUBMIT=1
+# Optional dead-man's switch (healthchecks.io ping URL, pinged on success)
+#HEALTHCHECK_URL=
 PYTHON=/opt/ai-trader/agent/.venv/bin/python
 
 # Local trade-log DB (sqlite on the box)
@@ -87,10 +91,30 @@ else
   echo "==> secrets.env already exists, leaving it alone"
 fi
 
+# Backup destination template (optional — backup.py no-ops without it, so
+# the timer would run green while backing up NOTHING; fill it in).
+if [[ ! -f "${APP_DIR}/backup.env" ]]; then
+  cat > "${APP_DIR}/backup.env" <<'EOF'
+# Off-box backup destinations — configure at least one.
+# Git: local clone of a PRIVATE repo with a write deploy key.
+#BACKUP_GIT_DIR=/opt/ai-trader/backups
+# S3: bucket + dedicated put-only credentials.
+#BACKUP_S3_BUCKET=
+#BACKUP_S3_PREFIX=ai-trader
+#BACKUP_AWS_ACCESS_KEY_ID=
+#BACKUP_AWS_SECRET_ACCESS_KEY=
+#BACKUP_AWS_REGION=eu-west-1
+EOF
+  chmod 600 "${APP_DIR}/backup.env"
+fi
+
 # 5. systemd units ---------------------------------------------------------
 echo "==> installing systemd units"
-sudo cp "${APP_DIR}/deploy/hetzner/ai-trader.service" /etc/systemd/system/ai-trader.service
-sudo cp "${APP_DIR}/deploy/hetzner/ai-trader.timer"   /etc/systemd/system/ai-trader.timer
+for unit in ai-trader.service ai-trader.timer ai-trader-alert.service \
+            ai-trader-preflight.service ai-trader-preflight.timer \
+            ai-trader-backup.service ai-trader-backup.timer; do
+  sudo cp "${APP_DIR}/deploy/hetzner/${unit}" "/etc/systemd/system/${unit}"
+done
 sudo systemctl daemon-reload
 
 echo ""
@@ -102,7 +126,8 @@ echo "   1. Fill in secrets:   nano ${APP_DIR}/secrets.env"
 echo "   2. Test one ticker:   cd ${AGENT_DIR} && \\"
 echo "        set -a && source ${APP_DIR}/secrets.env && set +a && \\"
 echo "        UNIVERSE='AAPL' SUBMIT=0 bash scripts/daily_run.sh"
-echo "   3. Enable the timer:  sudo systemctl enable --now ai-trader.timer"
-echo "   4. Check schedule:    systemctl list-timers ai-trader.timer"
+echo "   3. Enable the timers: sudo systemctl enable --now ai-trader.timer \\"
+echo "        ai-trader-preflight.timer ai-trader-backup.timer"
+echo "   4. Check schedule:    systemctl list-timers 'ai-trader*'"
 echo "   5. Watch a run:       journalctl -u ai-trader.service -f"
 echo "============================================================"

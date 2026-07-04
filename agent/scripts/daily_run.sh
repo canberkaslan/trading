@@ -29,9 +29,17 @@ if [[ -f .env ]]; then
 fi
 
 PYTHON="${PYTHON:-./.venv/bin/python}"
-UNIVERSE="${UNIVERSE:-SPY AAPL MSFT NVDA GOOGL}"
+# Default matches the LIVE production universe — a box missing the env var
+# must not silently trade a smaller book mid-eval.
+UNIVERSE="${UNIVERSE:-SPY AAPL MSFT NVDA GOOGL AMZN META JPM V XOM UNH}"
 SUBMIT="${SUBMIT:-1}"              # 1 = real paper submit, 0 = dry-run
 LOG_DIR="${LOG_DIR:-./logs}"
+# Hard wall-clock cap per ticker — one hung LangGraph/httpx call must not
+# starve the rest of the post-close window (that would burn an eval day).
+# Generous 30 min: a slow-but-viable ticker (Anthropic overload retries, long
+# debate) must still complete — this only fires on a genuine hang, where the
+# old behavior was worse (unit-level SIGKILL taking the REMAINING tickers too).
+TICKER_TIMEOUT_S="${TICKER_TIMEOUT_S:-1800}"
 mkdir -p "$LOG_DIR"
 
 DATE="$(date -u +%F)"
@@ -53,17 +61,23 @@ SUBMIT_FLAG=""
 [[ "$SUBMIT" == "1" ]] && SUBMIT_FLAG="--submit"
 
 rc_total=0
+failed_tickers=""
 for TICKER in $UNIVERSE; do
   echo "" | tee -a "$RUN_LOG"
   echo "--- $TICKER @ $DATE ---" | tee -a "$RUN_LOG"
   # Fresh decision (no --use-cached). Guards + bracket are on by default.
-  if PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.trade \
+  if timeout -k 30 "$TICKER_TIMEOUT_S" env PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.trade \
         --ticker "$TICKER" --date "$DATE" $SUBMIT_FLAG 2>&1 | tee -a "$RUN_LOG"; then
     echo "  -> $TICKER done" | tee -a "$RUN_LOG"
   else
     rc=$?
-    echo "  -> $TICKER FAILED (rc=$rc) — continuing" | tee -a "$RUN_LOG"
+    if [[ "$rc" -eq 124 ]]; then
+      echo "  -> $TICKER TIMED OUT after ${TICKER_TIMEOUT_S}s — continuing" | tee -a "$RUN_LOG"
+    else
+      echo "  -> $TICKER FAILED (rc=$rc) — continuing" | tee -a "$RUN_LOG"
+    fi
     rc_total=$((rc_total + 1))
+    failed_tickers="${failed_tickers} ${TICKER}"
   fi
 done
 
@@ -78,4 +92,22 @@ fi
 
 echo "" | tee -a "$RUN_LOG"
 echo "Daily run complete. $rc_total ticker(s) errored." | tee -a "$RUN_LOG"
+
+if [[ "$rc_total" -gt 0 ]]; then
+  # Alert the human (best-effort — notify_ops always exits 0) and exit
+  # non-zero so systemd marks the unit failed and OnFailure= fires too.
+  PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.notify_ops \
+    --title "⚠️ Daily run: ${rc_total} ticker(s) failed" \
+    --body "Failed:${failed_tickers} @ ${DATE}" 2>&1 | tee -a "$RUN_LOG" || true
+  exit 1
+fi
+
+# Dead-man's switch: ping only on a fully successful run. If HEALTHCHECK_URL
+# is set (healthchecks.io or similar), a missed ping means the run silently
+# died — the service alerts even when nothing here got to run.
+if [[ -n "${HEALTHCHECK_URL:-}" ]]; then
+  curl -fsS -m 10 --retry 3 "$HEALTHCHECK_URL" >/dev/null 2>&1 \
+    || echo "  -> healthcheck ping failed (non-fatal)" | tee -a "$RUN_LOG"
+fi
+
 exit 0

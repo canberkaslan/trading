@@ -1,0 +1,21 @@
+[Unit]
+Description=AI Trader — off-box backup of local.db + snapshots + reflection memory
+After=network-online.target
+Wants=network-online.target
+# Crash-before-alert backstop — a silently rotting backup must page.
+OnFailure=ai-trader-alert.service
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/opt/ai-trader/agent
+EnvironmentFile=/opt/ai-trader/secrets.env
+# Dedicated put-only S3 credentials — kept out of secrets.env so the trading
+# run never sees AWS keys. Optional (-): without it the script no-ops.
+EnvironmentFile=-/opt/ai-trader/backup.env
+Environment=PYTHONPATH=.:vendor/tradingagents
+ExecStart=/opt/ai-trader/agent/.venv/bin/python -m scripts.backup
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

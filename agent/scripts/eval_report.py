@@ -9,7 +9,11 @@ checkpoint to decide whether to risk real capital.
     python scripts/eval_report.py --period 3M
     python scripts/eval_report.py --period 1M --no-benchmark
 
-Gates (ADR-005, user-shortened eval): Sharpe(net) > 1.0, MaxDD < 15%.
+Gates (ADR-005, user-shortened eval): Sharpe > 1.0, MaxDD < 15%. Sharpe is
+EXCESS over the 3-month T-bill (FRED DGS3MO; EVAL_RISK_FREE_RATE fallback) —
+grading against a 0% risk-free while cash yields 4-5% would inflate the
+metric and bias the GO/NO-GO toward GO. The rate and source used are shown
+on the report (rf_annual/rf_source).
 The script is read-only — it never places or cancels an order.
 """
 
@@ -54,6 +58,8 @@ class Scorecard:
     spy_return: float | None
     is_sharpe: float | None = None  # in-sample (first 2/3) Sharpe
     oos_sharpe: float | None = None  # out-of-sample holdout (last 1/3) Sharpe
+    rf_annual: float = 0.0  # annualized risk-free rate used for Sharpe/Sortino
+    rf_source: str = "none"  # "fred:DGS3MO" | "env" | "none"
 
 
 def _equity_series(history: dict) -> pd.Series:
@@ -83,11 +89,13 @@ def _equity_series(history: dict) -> pd.Series:
     return s
 
 
-def _walk_forward_sharpe(equity: pd.Series) -> tuple[float, float] | None:
+def _walk_forward_sharpe(equity: pd.Series, rf: float = 0.0) -> tuple[float, float] | None:
     """Split the equity curve into a 2/3 in-sample head and a 1/3 out-of-sample
     holdout tail, returning (is_sharpe, oos_sharpe). None if there aren't enough
     days for the split to be meaningful. Read-only diagnostic — a strategy that
-    only worked in-sample shows up as a Sharpe that collapses on the holdout."""
+    only worked in-sample shows up as a Sharpe that collapses on the holdout.
+    Uses the same risk-free basis as the headline Sharpe so all three figures
+    are comparable."""
     if len(equity) < HOLDOUT_MIN_DAYS:
         return None
     split = (len(equity) * 2) // 3
@@ -97,23 +105,69 @@ def _walk_forward_sharpe(equity: pd.Series) -> tuple[float, float] | None:
     oos_ret = holdout.pct_change().dropna()
     if len(is_ret) < 2 or len(oos_ret) < 2:
         return None
-    return metrics.sharpe(is_ret), metrics.sharpe(oos_ret)
+    return (
+        metrics.sharpe(is_ret, risk_free_rate=rf),
+        metrics.sharpe(oos_ret, risk_free_rate=rf),
+    )
 
 
 def _spy_return(start: datetime, end: datetime) -> float | None:
-    """Best-effort SPY total return over the window for benchmark."""
+    """Best-effort SPY TOTAL return (price + cash dividends) over the window.
+
+    The account equity curve is dividend-inclusive (cash dividends land in
+    the account), so benchmarking it against SPY price return alone flatters
+    the strategy by SPY's yield (~1.2%/yr). Dividends are best-effort — if
+    the reference call fails we still return the price return rather than
+    dropping the benchmark."""
     try:
         from tradingagents_us.dataflows.polygon import PolygonClient
 
         with PolygonClient() as pc:
             bars = pc.aggregates("SPY", start.date(), end.date(), timespan="day")
-        closes = [b.close for b in bars if b.close]
-        if len(closes) < 2:
-            return None
-        return closes[-1] / closes[0] - 1.0
+            closes = [b.close for b in bars if b.close]
+            if len(closes) < 2:
+                return None
+            divs = 0.0
+            try:
+                divs = sum(
+                    float(d.get("cash_amount") or 0.0)
+                    for d in pc.dividends("SPY", start.date(), end.date())
+                )
+            except Exception as exc:
+                print(f"  (SPY dividends unavailable: {exc})", file=sys.stderr)
+        return (closes[-1] + divs) / closes[0] - 1.0
     except Exception as exc:  # benchmark is optional — never fail the report
         print(f"  (SPY benchmark unavailable: {exc})", file=sys.stderr)
         return None
+
+
+def _risk_free_rate() -> tuple[float, str]:
+    """Annualized risk-free rate for excess-return metrics, with source tag.
+
+    Order: FRED 3-month T-bill (DGS3MO, latest print) -> EVAL_RISK_FREE_RATE
+    env (decimal, e.g. 0.043) -> 0.0. Grading Sharpe > 1.0 against a 0%%
+    risk-free while cash yields 4-5%% inflates the metric — this keeps the
+    GO/NO-GO gate honest. Best-effort: any failure falls through."""
+    try:
+        from datetime import timedelta
+
+        from tradingagents_us.dataflows.fred import FREDClient
+
+        today = datetime.now(timezone.utc).date()
+        with FREDClient() as fc:
+            obs = fc.series("DGS3MO", start=today - timedelta(days=14), end=today)
+        vals = [o.value for o in obs if o.value is not None]
+        if vals:
+            return vals[-1] / 100.0, "fred:DGS3MO"
+    except Exception as exc:
+        print(f"  (FRED risk-free unavailable: {exc})", file=sys.stderr)
+    env = os.environ.get("EVAL_RISK_FREE_RATE")
+    if env:
+        try:
+            return float(env), "env"
+        except ValueError:
+            pass
+    return 0.0, "none"
 
 
 def build_scorecard(period: str, benchmark: bool) -> Scorecard:
@@ -141,15 +195,16 @@ def build_scorecard(period: str, benchmark: bool) -> Scorecard:
     spy = (
         _spy_return(equity.index[0], equity.index[-1]) if benchmark else None
     )
-    wf = _walk_forward_sharpe(equity)
+    rf, rf_source = _risk_free_rate()
+    wf = _walk_forward_sharpe(equity, rf=rf)
 
     return Scorecard(
         days=len(equity),
         start_equity=float(equity.iloc[0]),
         end_equity=float(equity.iloc[-1]),
         total_return=float(equity.iloc[-1] / equity.iloc[0] - 1.0),
-        sharpe=metrics.sharpe(returns),
-        sortino=metrics.sortino(returns),
+        sharpe=metrics.sharpe(returns, risk_free_rate=rf),
+        sortino=metrics.sortino(returns, risk_free_rate=rf),
         max_dd=max_dd,
         dd_duration=dd_dur,
         calmar=metrics.calmar(returns, equity),
@@ -159,6 +214,8 @@ def build_scorecard(period: str, benchmark: bool) -> Scorecard:
         spy_return=spy,
         is_sharpe=wf[0] if wf else None,
         oos_sharpe=wf[1] if wf else None,
+        rf_annual=rf,
+        rf_source=rf_source,
     )
 
 
@@ -274,7 +331,8 @@ def _print(sc: Scorecard) -> None:
         edge = (sc.total_return - sc.spy_return) * 100
         row("SPY (same window)", f"{sc.spy_return * 100:+.2f}%", f"edge {edge:+.2f}pp")
     print("  " + "-" * 52)
-    row("Sharpe (net)", f"{sc.sharpe:.2f}", f"GATE > {GATE_SHARPE}")
+    row("Risk-free (ann.)", f"{sc.rf_annual * 100:.2f}%", f"src {sc.rf_source}")
+    row("Sharpe (excess)", f"{sc.sharpe:.2f}", f"GATE > {GATE_SHARPE}")
     row("Sortino", f"{sc.sortino:.2f}", "> 1.2 nice")
     row("Max drawdown", f"{sc.max_dd * 100:.2f}%", f"GATE < {GATE_MAX_DD * 100:.0f}%")
     row("DD duration", f"{sc.dd_duration} bars")

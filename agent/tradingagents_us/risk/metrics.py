@@ -15,15 +15,25 @@ def sharpe(returns: pd.Series, risk_free_rate: float = 0.0, periods_per_year: in
     return float(excess.mean() / sd * np.sqrt(periods_per_year))
 
 
-def sortino(returns: pd.Series, periods_per_year: int = 252) -> float:
-    """Annualized Sortino — penalizes downside vol only."""
-    downside = returns[returns < 0]
-    if len(downside) == 0:
-        return float("inf")
-    dd_std = downside.std()
-    if dd_std == 0 or np.isnan(dd_std):
+def sortino(
+    returns: pd.Series, risk_free_rate: float = 0.0, periods_per_year: int = 252
+) -> float:
+    """Annualized Sortino — penalizes downside vol only.
+
+    Standard convention: mean excess return over the target divided by the
+    target-relative downside deviation computed across ALL observations
+    (sqrt of the mean squared shortfall), not the std of the negative
+    subset — the subset-std variant understates downside risk and ignores
+    how often losses occur."""
+    if len(returns) == 0:
         return 0.0
-    return float(returns.mean() / dd_std * np.sqrt(periods_per_year))
+    target = risk_free_rate / periods_per_year
+    excess = returns - target
+    shortfall = excess.clip(upper=0.0)
+    downside_dev = float(np.sqrt((shortfall**2).mean()))
+    if downside_dev == 0 or np.isnan(downside_dev):
+        return float("inf") if excess.mean() > 0 else 0.0
+    return float(excess.mean() / downside_dev * np.sqrt(periods_per_year))
 
 
 def max_drawdown(equity_curve: pd.Series) -> tuple[float, int]:

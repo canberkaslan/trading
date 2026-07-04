@@ -1,0 +1,16 @@
+[Unit]
+Description=AI Trader backup — daily 23:45 UTC (after the post-close run settles)
+
+[Timer]
+# Daily incl. weekends: the DB also changes via API actions (approvals,
+# kill-switch flips), not just the weekday run. 02:15 UTC clears realistic
+# run windows (22:30 start, typically 1-2h). A pathological max-length run
+# could still overlap — harmless: the sqlite online backup stays consistent
+# and the next night picks up anything missed. backup.py stamps artifacts
+# with the TRADING day (now-6h), not the calendar day.
+OnCalendar=*-*-* 02:15 UTC
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

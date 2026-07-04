@@ -49,6 +49,8 @@ class EvalResult(BaseModel):
     max_dd_pct: float
     calmar: float
     spy_return_pct: float | None
+    risk_free_pct: float
+    risk_free_source: str
     gate_sharpe: float
     gate_max_dd_pct: float
     gates: list[Gate]
@@ -69,6 +71,8 @@ def _build(period: str, benchmark: bool) -> EvalResult:
         max_dd_pct=round(sc.max_dd * 100, 2),
         calmar=round(sc.calmar, 2),
         spy_return_pct=round(sc.spy_return * 100, 2) if sc.spy_return is not None else None,
+        risk_free_pct=round(sc.rf_annual * 100, 2),
+        risk_free_source=sc.rf_source,
         gate_sharpe=GATE_SHARPE,
         gate_max_dd_pct=GATE_MAX_DD * 100,
         gates=[Gate(**g) for g in build_gates(sc)],

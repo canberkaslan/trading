@@ -16,6 +16,7 @@ BASE = "https://api.stlouisfed.org/fred"
 # Series IDs we care about
 SERIES = {
     "fed_funds_rate":     "DFF",       # Daily Fed Funds Rate
+    "3m_tbill":           "DGS3MO",    # 3-Month Treasury — risk-free for Sharpe/Sortino
     "10y_treasury":       "DGS10",     # 10-Year Treasury Yield
     "2y_treasury":        "DGS2",
     "cpi_yoy":            "CPIAUCSL",  # CPI All Urban Consumers

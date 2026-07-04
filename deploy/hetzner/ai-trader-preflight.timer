@@ -1,0 +1,12 @@
+[Unit]
+Description=AI Trader preflight — weekdays 21:45 UTC (45 min before the daily run)
+
+[Timer]
+# Early enough that a broken API key can be fixed before 22:30 UTC; a
+# failure discovered mid-run costs a full eval trading day.
+OnCalendar=Mon-Fri 21:45 UTC
+Persistent=false
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

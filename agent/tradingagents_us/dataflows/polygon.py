@@ -66,7 +66,9 @@ class PolygonClient:
         adjusted: bool = True,
         limit: int = 50_000,
     ) -> list[Aggregate]:
-        """Fetch OHLCV bars. Adjusted=True applies splits + dividends."""
+        """Fetch OHLCV bars. Adjusted=True applies SPLIT adjustments only —
+        Polygon does not dividend-adjust aggregates. For total return, add
+        cash dividends from dividends() on top (see eval_report._spy_return)."""
         path = (
             f"/v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/"
             f"{from_date.isoformat()}/{to_date.isoformat()}"
@@ -141,6 +143,22 @@ class PolygonClient:
         if as_of:
             params["date"] = as_of.isoformat()
         return self._get(f"/v3/reference/tickers/{ticker}", params)
+
+    def dividends(self, ticker: str, start: date, end: date) -> list[dict]:
+        """Cash dividends with an ex-date inside [start, end].
+
+        Used to turn a price return into a total return (e.g. the SPY
+        benchmark in the eval scorecard). Returns the raw result dicts —
+        callers usually only need `cash_amount`."""
+        params: dict[str, str | int] = {
+            "ticker": ticker,
+            "ex_dividend_date.gte": start.isoformat(),
+            "ex_dividend_date.lte": end.isoformat(),
+            "limit": 50,
+            "apiKey": self.api_key,
+        }
+        resp = self._get("/v3/reference/dividends", params)
+        return resp.get("results", []) or []
 
     # ----------------------------- http -------------------------------
 

@@ -1,0 +1,14 @@
+[Unit]
+Description=AI Trader — OnFailure push alert (fires when the daily run unit fails)
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/opt/ai-trader/agent
+# Optional (-): the one failure class this unit exists to catch includes a
+# missing/unreadable secrets.env — the alert must not die on the same hurdle.
+# notify_ops needs nothing from it (DB defaults to ./local.db under CWD).
+EnvironmentFile=-/opt/ai-trader/secrets.env
+Environment=PYTHONPATH=.:vendor/tradingagents
+ExecStart=/opt/ai-trader/agent/.venv/bin/python -m scripts.notify_ops --title "🔴 ai-trader unit FAILED" --body "systemd: a trader unit failed (run error/timeout/OOM/crash) — check journalctl -u 'ai-trader*'"
+TimeoutStartSec=60

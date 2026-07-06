@@ -7,9 +7,11 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from scripts.eval_report import _equity_series
 from tradingagents_us.dataflows.alpaca_broker import AlpacaClient
 from tradingagents_us.dataflows.sector_map import sector_for
 from tradingagents_us.risk.concentration import (
@@ -22,6 +24,23 @@ from tradingagents_us.schemas import PortfolioSnapshot, Position
 from ..deps import get_alpaca, require_token
 
 router = APIRouter()
+
+
+class EquityPointOut(BaseModel):
+    date: str          # ISO date (UTC) of the daily equity bar
+    equity: float
+    return_pct: float  # cumulative return vs the first bar
+    drawdown_pct: float  # vs running peak, <= 0
+
+
+class EquityHistoryOut(BaseModel):
+    period: str
+    days: int
+    start_equity: float
+    end_equity: float
+    total_return_pct: float
+    max_drawdown_pct: float
+    points: list[EquityPointOut]
 
 
 class TrendPointOut(BaseModel):
@@ -102,6 +121,68 @@ async def get_snapshot(
         daily_pnl_pct=daily_pnl_pct,
         max_drawdown_today=0.0,  # computed once we have intraday equity series in DB
         timestamp_utc=datetime.now(timezone.utc),
+    )
+
+
+@router.get("/history", response_model=EquityHistoryOut)
+async def get_history(
+    period: str = "1M",
+    user: str = Depends(require_token),
+    alpaca: AlpacaClient = Depends(get_alpaca),
+) -> EquityHistoryOut:
+    """Cleaned daily equity curve for charting. Reuses the same equity-series
+    cleaning + EVAL_START_DATE cutoff as the eval scorecard so the chart and
+    the GO/NO-GO numbers agree. Read-only, off the trading path.
+    """
+    try:
+        history = alpaca.portfolio_history(period=period, timeframe="1D")
+    except Exception as e:
+        raise HTTPException(502, f"alpaca_error: {e}") from e
+    finally:
+        alpaca.close()
+
+    s = _equity_series(history)
+    start = os.environ.get("EVAL_START_DATE")
+    if start:
+        s = s[s.index >= pd.Timestamp(start, tz="UTC")]
+
+    if s.empty:
+        return EquityHistoryOut(
+            period=period,
+            days=0,
+            start_equity=0.0,
+            end_equity=0.0,
+            total_return_pct=0.0,
+            max_drawdown_pct=0.0,
+            points=[],
+        )
+
+    base = float(s.iloc[0])
+    peak = float("-inf")
+    points: list[EquityPointOut] = []
+    max_dd = 0.0
+    for ts, val in s.items():
+        eq = float(val)
+        peak = max(peak, eq)
+        dd = (eq / peak - 1.0) if peak > 0 else 0.0
+        max_dd = min(max_dd, dd)
+        points.append(
+            EquityPointOut(
+                date=ts.date().isoformat(),
+                equity=round(eq, 2),
+                return_pct=round((eq / base - 1.0) * 100, 2) if base else 0.0,
+                drawdown_pct=round(dd * 100, 2),
+            )
+        )
+
+    return EquityHistoryOut(
+        period=period,
+        days=len(points),
+        start_equity=round(base, 2),
+        end_equity=round(float(s.iloc[-1]), 2),
+        total_return_pct=round((float(s.iloc[-1]) / base - 1.0) * 100, 2) if base else 0.0,
+        max_drawdown_pct=round(max_dd * 100, 2),
+        points=points,
     )
 
 

@@ -67,6 +67,7 @@ export interface EvalGate {
 
 export interface EvalResult {
   verdict: 'GO' | 'NO-GO' | 'TOO EARLY';
+  provisional_verdict: 'GO' | 'NO-GO' | null;
   reasons: string[];
   days: number;
   days_required: number;

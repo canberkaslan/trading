@@ -279,6 +279,24 @@ def _verdict(sc: Scorecard) -> tuple[str, list[str]]:
     return ("GO" if passed else "NO-GO"), reasons
 
 
+def _provisional_verdict(sc: Scorecard) -> str | None:
+    """Trend verdict ("eğilim") while the eval window is still open.
+
+    Read-only reporting only. When there aren't yet enough trading days the
+    real verdict is locked to "TOO EARLY"; this projects what the GO/NO-GO
+    *would* be if the current hard-gate metrics (Sharpe, MaxDD) held to day
+    ``MIN_TRADING_DAYS``. Returns None once enough days exist (the real
+    verdict is then authoritative) or before the metrics are meaningful.
+    Beating SPY is a flag, not a hard gate, so it does not affect this.
+    """
+    if sc.days >= MIN_TRADING_DAYS:
+        return None
+    if sc.days < 2:
+        return None  # Sharpe/MaxDD need at least a couple of points to mean anything
+    passed = sc.sharpe > GATE_SHARPE and abs(sc.max_dd) < GATE_MAX_DD
+    return "GO" if passed else "NO-GO"
+
+
 def build_gates(sc: Scorecard) -> list[dict]:
     """Structured GO/NO-GO gate breakdown for the mobile scorecard.
 

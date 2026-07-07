@@ -115,9 +115,16 @@ export default function SettingsScreen() {
             <>
               <View style={styles.healthRow}>
                 <Text style={styles.label}>Karar</Text>
-                <Text style={[styles.verdict, { color: VERDICT_COLOR[evalData.verdict] ?? colors.textMuted }]}>
-                  {evalData.verdict}
-                </Text>
+                <View style={styles.verdictWrap}>
+                  <Text style={[styles.verdict, { color: VERDICT_COLOR[evalData.verdict] ?? colors.textMuted }]}>
+                    {evalData.verdict}
+                  </Text>
+                  {evalData.verdict === 'TOO EARLY' && evalData.provisional_verdict ? (
+                    <Text style={[styles.trend, { color: VERDICT_COLOR[evalData.provisional_verdict] ?? colors.textMuted }]}>
+                      eğilim: {evalData.provisional_verdict}
+                    </Text>
+                  ) : null}
+                </View>
               </View>
               <View style={styles.evalGrid}>
                 <EvalStat label="Sharpe" value={evalData.sharpe.toFixed(2)} gate={`>${evalData.gate_sharpe}`} />
@@ -232,6 +239,8 @@ const styles = StyleSheet.create({
   healthRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   evalCard: { backgroundColor: colors.surface, borderRadius: 12, padding: 16, gap: 12 },
   verdict: { fontSize: 16, fontWeight: '800' },
+  verdictWrap: { alignItems: 'flex-end' },
+  trend: { fontSize: 11, fontWeight: '700', marginTop: 1 },
   evalGrid: { flexDirection: 'row', justifyContent: 'space-between' },
   evalStat: { alignItems: 'flex-start' },
   evalStatLabel: { color: colors.textMuted, fontSize: 11 },

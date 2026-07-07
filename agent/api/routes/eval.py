@@ -19,6 +19,7 @@ from scripts.eval_report import (
     MIN_TRADING_DAYS,
     build_gates,
     build_scorecard,
+    _provisional_verdict,
     _verdict,
 )
 
@@ -39,6 +40,7 @@ class Gate(BaseModel):
 
 class EvalResult(BaseModel):
     verdict: str
+    provisional_verdict: str | None
     reasons: list[str]
     days: int
     days_required: int
@@ -61,6 +63,7 @@ def _build(period: str, benchmark: bool) -> EvalResult:
     verdict, reasons = _verdict(sc)
     return EvalResult(
         verdict=verdict,
+        provisional_verdict=_provisional_verdict(sc),
         reasons=reasons,
         days=sc.days,
         days_required=MIN_TRADING_DAYS,

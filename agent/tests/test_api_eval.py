@@ -46,11 +46,24 @@ def test_go_verdict_serialized(client: TestClient, monkeypatch: pytest.MonkeyPat
     assert r.status_code == 200
     b = r.json()
     assert b["verdict"] == "GO"
+    assert b["provisional_verdict"] is None  # past min-days, real verdict rules
     assert b["sharpe"] == 1.6
     assert b["max_dd_pct"] == -4.0
     assert b["total_return_pct"] == 12.0
     assert b["spy_return_pct"] == 5.0
     assert b["gate_sharpe"] == 1.0
+
+
+def test_provisional_trend_below_min_days(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # still TOO EARLY, but current metrics project a GO trend
+    monkeypatch.setattr(
+        "api.routes.eval.build_scorecard", lambda period, benchmark: _sc(days=6)
+    )
+    b = client.get("/v1/eval").json()
+    assert b["verdict"] == "TOO EARLY"
+    assert b["provisional_verdict"] == "GO"
 
 
 def test_no_go_surfaces_reasons(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

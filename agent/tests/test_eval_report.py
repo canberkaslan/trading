@@ -12,6 +12,7 @@ from scripts.eval_report import (
     Scorecard,
     _equity_series,
     _holdout_note,
+    _provisional_verdict,
     _verdict,
     _walk_forward_sharpe,
 )
@@ -62,6 +63,32 @@ class TestVerdict:
         verdict, reasons = _verdict(_sc(total_return=0.02, spy_return=0.09))
         assert verdict == "GO"
         assert any("SPY" in r for r in reasons)
+
+
+class TestProvisionalVerdict:
+    def test_none_once_enough_days(self) -> None:
+        # real verdict is authoritative past the min-days threshold
+        assert _provisional_verdict(_sc(days=MIN_TRADING_DAYS)) is None
+
+    def test_none_before_metrics_meaningful(self) -> None:
+        assert _provisional_verdict(_sc(days=1)) is None
+
+    def test_go_trend_when_metrics_hold(self) -> None:
+        sc = _sc(days=MIN_TRADING_DAYS - 2, sharpe=2.0, max_dd=-0.03)
+        assert _provisional_verdict(sc) == "GO"
+
+    def test_no_go_trend_on_low_sharpe(self) -> None:
+        sc = _sc(days=MIN_TRADING_DAYS - 2, sharpe=GATE_SHARPE - 0.01)
+        assert _provisional_verdict(sc) == "NO-GO"
+
+    def test_no_go_trend_on_deep_drawdown(self) -> None:
+        sc = _sc(days=MIN_TRADING_DAYS - 2, max_dd=-(GATE_MAX_DD + 0.01))
+        assert _provisional_verdict(sc) == "NO-GO"
+
+    def test_spy_lag_does_not_flip_trend(self) -> None:
+        # beating SPY is a flag, not a hard gate — trend stays GO
+        sc = _sc(days=MIN_TRADING_DAYS - 2, total_return=0.01, spy_return=0.09)
+        assert _provisional_verdict(sc) == "GO"
 
 
 class TestEquitySeries:

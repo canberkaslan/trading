@@ -27,6 +27,8 @@ Each item: code → tests green → commit → deploy (OTA if mobile).
 - [x] snapshot: populate `sector` from static GICS map (sector_map.py) — display-only, off trading path; deployed + verified live 2026-07-04 ✅
 - [x] E2E review critical fixes (docs/review-e2e-2026-07-04.md top-now #1/#3/#5/#7) — daily-run alerting (exit-1 + push + OnFailure unit + per-ticker timeout 1800s -k 30 + TimeoutStartSec 21600), off-box backup (private repo canberkaslan/trading-backups, deploy key, 02:15 UTC timer, sqlite online backup + snapshots + memory), preflight canary (21:45 UTC, alert-only), honest eval metrics (Sharpe/Sortino excess over FRED DGS3MO, correct Sortino downside dev, SPY total-return benchmark); adversarially reviewed (20 findings fixed pre-deploy), deployed + verified live 2026-07-04 ✅ — HEALTHCHECK_URL dead-man ping env-gated, needs healthchecks.io URL
 
+- [x] scorecard: α vs SPY stat (portfolio return − SPY total return) as 4th grid card — makes the "Beats SPY" gate legible as a number ahead of GO/NO-GO; read-only, off-eval-path; OTA preview 2026-07-08 ✅
+
 ## Deferred (go-live)
 - HTTPS (cloudflared/caddy) — needs domain decision; low risk on paper.
 - Merge `feat/cost-opt-adr006` + flip routing flag — AFTER eval window closes.

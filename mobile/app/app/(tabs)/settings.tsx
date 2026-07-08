@@ -130,6 +130,13 @@ export default function SettingsScreen() {
                 <EvalStat label="Sharpe" value={evalData.sharpe.toFixed(2)} gate={`>${evalData.gate_sharpe}`} />
                 <EvalStat label="Max DD" value={`${evalData.max_dd_pct.toFixed(1)}%`} gate={`<${evalData.gate_max_dd_pct}%`} />
                 <EvalStat label="Getiri" value={`${evalData.total_return_pct >= 0 ? '+' : ''}${evalData.total_return_pct.toFixed(1)}%`} gate={`${evalData.days}g`} />
+                {evalData.spy_return_pct != null ? (
+                  <EvalStat
+                    label="α vs SPY"
+                    value={`${evalData.total_return_pct - evalData.spy_return_pct >= 0 ? '+' : ''}${(evalData.total_return_pct - evalData.spy_return_pct).toFixed(1)}%`}
+                    gate={`SPY ${evalData.spy_return_pct >= 0 ? '+' : ''}${evalData.spy_return_pct.toFixed(1)}%`}
+                  />
+                ) : null}
               </View>
               {evalData.days_remaining > 0 ? (
                 <Text style={styles.countdown}>
@@ -241,7 +248,7 @@ const styles = StyleSheet.create({
   verdict: { fontSize: 16, fontWeight: '800' },
   verdictWrap: { alignItems: 'flex-end' },
   trend: { fontSize: 11, fontWeight: '700', marginTop: 1 },
-  evalGrid: { flexDirection: 'row', justifyContent: 'space-between' },
+  evalGrid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 12, justifyContent: 'space-between' },
   evalStat: { alignItems: 'flex-start' },
   evalStatLabel: { color: colors.textMuted, fontSize: 11 },
   evalStatValue: { color: colors.textPrimary, fontSize: 17, fontWeight: '700', marginTop: 2 },

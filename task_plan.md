@@ -19,7 +19,7 @@ Each item: code → tests green → commit → deploy (OTA if mobile).
 
 ## 🎯 EVAL GATE — GO (2026-07-09)
 - /v1/eval verdict=**GO** at day 10/10 (days_remaining=0). Sharpe **9.94**, MaxDD **-1.04%**, total return **+4.55%** vs SPY +1.66% (α +2.9pt). All 4 hard gates passed. Paper account PA348DFG9628 equity **$103,643**.
-- **DO NOT move real money automatically** — go-live requires the user to open + fund a live Alpaca account, set ALPACA_BASE_URL=live + live keys on the box, and flip submit/routing. See `docs/go-live-checklist.md` (pending) + Deferred (go-live) below.
+- **DO NOT move real money automatically** — go-live requires the user to open + fund a live Alpaca account, set ALPACA_BASE_URL=live + live keys on the box, and flip submit/routing. See [`docs/go-live-checklist.md`](docs/go-live-checklist.md) + Deferred (go-live) below.
 
 ## Round 3 (next, eval-safe)
 - [x] daily-run false-failure fix — a legitimate policy refusal (non-actionable Hold, risk guard, PDT, market closed) made `trade.py` exit rc=1 under `--submit`, so all-Hold days marked `ai-trader.service` failed + fired OnFailure push (alert fatigue, masks real broker errors). Added `ExecutionResult.error` (True only for broker/unexpected exceptions); trade.py exits non-zero only on `error`. 24 execution tests green, off-eval-path (no decision/order change), deployed 2026-07-09 ✅

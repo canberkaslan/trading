@@ -276,6 +276,72 @@ class TestStaleAndEntryGuards:
         assert result.dry_run and result.update.status == "PENDING"
 
 
+class TestErrorFlag:
+    """`ExecutionResult.error` must be True ONLY for operational failures
+    (broker/API error, unexpected exception) — never for a policy refusal.
+    The daily-run wrapper keys its exit code off this: a legitimate "no trade"
+    outcome (Hold, risk guard, PDT, market closed) must not fail the run.
+    """
+
+    def _mock_client(self):
+        cli = MagicMock()
+        acct = MagicMock()
+        acct.trading_blocked = False
+        acct.pattern_day_trader = False
+        acct.status = "ACTIVE"
+        cli.account.return_value = acct
+        clock = MagicMock()
+        clock.is_open = True
+        clock.next_open = "2026-05-23T13:30:00Z"
+        cli.clock.return_value = clock
+        cli.close = MagicMock()
+        return cli
+
+    def test_policy_refusal_unapproved_is_not_error(self) -> None:
+        result = submit_order(_order(approved=False, reasons=["non-actionable rating=Hold"]))
+        assert not result.submitted
+        assert result.error is False
+
+    def test_policy_refusal_pdt_is_not_error(self) -> None:
+        cli = self._mock_client()
+        cli.account.return_value.pattern_day_trader = True
+        result = submit_order(
+            _order(), client=cli,
+            config=ExecutionConfig(dry_run=False, refuse_on_pdt=True),
+        )
+        assert not result.submitted
+        assert result.error is False
+
+    def test_broker_http_error_is_error(self) -> None:
+        import httpx
+
+        cli = self._mock_client()
+        cli.submit_order.side_effect = httpx.HTTPError("boom")
+        result = submit_order(_order(), client=cli, config=ExecutionConfig(dry_run=False))
+        assert not result.submitted
+        assert result.error is True
+        assert any("broker_error" in r for r in (result.refusal_reasons or []))
+
+    def test_unexpected_exception_is_error(self) -> None:
+        cli = self._mock_client()
+        cli.submit_order.side_effect = RuntimeError("kaboom")
+        result = submit_order(_order(), client=cli, config=ExecutionConfig(dry_run=False))
+        assert not result.submitted
+        assert result.error is True
+
+    def test_successful_submission_is_not_error(self) -> None:
+        cli = self._mock_client()
+        broker_order = MagicMock()
+        broker_order.id = "oid"
+        broker_order.status = "accepted"
+        broker_order.filled_qty = 0
+        broker_order.filled_avg_price = None
+        cli.submit_order.return_value = broker_order
+        result = submit_order(_order(), client=cli, config=ExecutionConfig(dry_run=False))
+        assert result.submitted
+        assert result.error is False
+
+
 class TestIdempotencyKey:
     def test_client_order_id_is_deterministic(self) -> None:
         a = derive_client_order_id("decision-abc-12345", "order-xyz-67890")

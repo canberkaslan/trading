@@ -289,7 +289,12 @@ def main() -> int:
         print(f"  Refusals:    {result.refusal_reasons}")
     if not args.submit:
         print("\n(--submit not set — no broker call made. Re-run with --submit to send to Alpaca paper.)")
-    return 0 if (result.submitted or result.dry_run) else 1
+    # Exit non-zero ONLY on an operational failure (broker/API error). A policy
+    # refusal — non-actionable Hold, risk guard, PDT, market closed — is the
+    # intended "no trade today" outcome and must not mark the daily run failed.
+    if result.error:
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

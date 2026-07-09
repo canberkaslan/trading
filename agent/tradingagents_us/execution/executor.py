@@ -47,6 +47,10 @@ class ExecutionResult:
     update: OrderUpdate
     broker_order_id: str | None = None
     refusal_reasons: list[str] | None = None
+    # True only for operational failures (broker/API error, unexpected
+    # exception). A policy refusal — non-actionable Hold, risk guard, PDT,
+    # market closed — is a legitimate "no trade" outcome and leaves this False.
+    error: bool = False
 
 
 def submit_order(
@@ -222,6 +226,7 @@ def submit_order(
                 error_message=f"broker_error: {e}", timestamp_utc=now,
             ),
             refusal_reasons=[f"broker_error: {e}"],
+            error=True,
         )
     except Exception as e:  # broad: surface anything unexpected
         return ExecutionResult(
@@ -232,6 +237,7 @@ def submit_order(
                 error_message=f"unexpected: {e}", timestamp_utc=now,
             ),
             refusal_reasons=[f"unexpected: {e}"],
+            error=True,
         )
     finally:
         if own_client:

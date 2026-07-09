@@ -420,6 +420,9 @@ def main() -> int:
     ap.add_argument("--period", default="1M", help="Alpaca history window (1M/3M/6M/1A)")
     ap.add_argument("--no-benchmark", action="store_true", help="skip SPY benchmark")
     ap.add_argument("--notify", action="store_true", help="push the verdict to registered devices")
+    ap.add_argument("--strict", action="store_true",
+                    help="exit non-zero unless verdict is GO (default: exit 0 whenever "
+                         "the scorecard is produced — verdict is data, not job health)")
     args = ap.parse_args()
 
     sc = build_scorecard(period=args.period, benchmark=not args.no_benchmark)
@@ -427,7 +430,14 @@ def main() -> int:
     verdict, _ = _verdict(sc)
     if args.notify:
         _notify(sc, verdict)
-    return 0 if verdict == "GO" else 1
+    # The scorecard built successfully — that is job success. The verdict
+    # (GO / NO-GO / TOO EARLY) is delivered via print + push, not the exit
+    # code; a WAIT/NO-GO is legitimate information, not a unit failure. Only
+    # a real data/compute failure exits non-zero (build_scorecard raises).
+    # --strict restores the old GO-only gate for callers that want it.
+    if args.strict:
+        return 0 if verdict == "GO" else 1
+    return 0
 
 
 if __name__ == "__main__":

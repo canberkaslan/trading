@@ -144,3 +144,45 @@ class TestWalkForward:
         sc = _sc(is_sharpe=1.8, oos_sharpe=1.6)
         note = _holdout_note(sc)
         assert note is not None and "stable" in note
+
+
+class TestMainExitCode:
+    """The weekly report job's exit code signals JOB health, not the verdict.
+    A WAIT/NO-GO is legitimate data (pushed + printed) — it must not mark the
+    systemd unit failed. Only --strict restores the old GO-only gate.
+    """
+
+    def _patch(self, monkeypatch, sc: Scorecard) -> None:
+        import scripts.eval_report as er
+
+        monkeypatch.setattr(er, "build_scorecard", lambda **kw: sc)
+        monkeypatch.setattr(er, "_print", lambda sc: None)
+        monkeypatch.setattr(er, "_notify", lambda sc, v: None)
+
+    def test_too_early_exits_zero(self, monkeypatch) -> None:
+        from scripts.eval_report import main
+
+        self._patch(monkeypatch, _sc(days=8))  # < MIN_TRADING_DAYS -> TOO EARLY
+        monkeypatch.setattr("sys.argv", ["eval_report"])
+        assert main() == 0
+
+    def test_no_go_exits_zero_by_default(self, monkeypatch) -> None:
+        from scripts.eval_report import main
+
+        self._patch(monkeypatch, _sc(days=20, sharpe=0.2))  # fails Sharpe gate -> NO-GO
+        monkeypatch.setattr("sys.argv", ["eval_report"])
+        assert main() == 0
+
+    def test_strict_no_go_exits_one(self, monkeypatch) -> None:
+        from scripts.eval_report import main
+
+        self._patch(monkeypatch, _sc(days=20, sharpe=0.2))
+        monkeypatch.setattr("sys.argv", ["eval_report", "--strict"])
+        assert main() == 1
+
+    def test_go_exits_zero(self, monkeypatch) -> None:
+        from scripts.eval_report import main
+
+        self._patch(monkeypatch, _sc(days=20, sharpe=1.5, max_dd=-0.05))
+        monkeypatch.setattr("sys.argv", ["eval_report", "--strict"])
+        assert main() == 0

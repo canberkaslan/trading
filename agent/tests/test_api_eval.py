@@ -80,6 +80,7 @@ def test_gates_and_countdown_serialized(
     b = client.get("/v1/eval").json()
     assert b["days_required"] == 10
     assert b["days_remaining"] == 0  # 20 days done
+    assert b["eval_complete"] is True  # min-days met, window closed
     gates = {g["name"]: g for g in b["gates"]}
     assert gates["Trading days"]["passed"] is True
     assert gates["Sharpe"]["passed"] is True
@@ -95,6 +96,7 @@ def test_gates_pending_below_min_days(
     )
     b = client.get("/v1/eval").json()
     assert b["days_remaining"] == 4
+    assert b["eval_complete"] is False  # still inside the window
     gates = {g["name"]: g for g in b["gates"]}
     assert gates["Trading days"]["passed"] is False
     assert gates["Sharpe"]["passed"] is None  # not evaluable yet

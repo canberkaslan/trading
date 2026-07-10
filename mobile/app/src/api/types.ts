@@ -72,6 +72,7 @@ export interface EvalResult {
   days: number;
   days_required: number;
   days_remaining: number;
+  eval_complete: boolean;
   total_return_pct: number;
   sharpe: number;
   sortino: number;

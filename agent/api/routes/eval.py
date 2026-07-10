@@ -45,6 +45,7 @@ class EvalResult(BaseModel):
     days: int
     days_required: int
     days_remaining: int
+    eval_complete: bool
     total_return_pct: float
     sharpe: float
     sortino: float
@@ -68,6 +69,7 @@ def _build(period: str, benchmark: bool) -> EvalResult:
         days=sc.days,
         days_required=MIN_TRADING_DAYS,
         days_remaining=max(0, MIN_TRADING_DAYS - sc.days),
+        eval_complete=sc.days >= MIN_TRADING_DAYS,
         total_return_pct=round(sc.total_return * 100, 2),
         sharpe=round(sc.sharpe, 2),
         sortino=round(sc.sortino, 2),

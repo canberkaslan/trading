@@ -142,6 +142,10 @@ export default function SettingsScreen() {
                 <Text style={styles.countdown}>
                   Karara {evalData.days_remaining} gün · {evalData.days}/{evalData.days_required} işlem günü
                 </Text>
+              ) : evalData.eval_complete ? (
+                <Text style={styles.countdown}>
+                  Eval tamamlandı · {evalData.days}/{evalData.days_required} işlem günü · karar kesin
+                </Text>
               ) : (
                 <Text style={styles.countdown}>
                   {evalData.days}/{evalData.days_required} işlem günü · karar penceresi açık

@@ -17,6 +17,11 @@ Each item: code → tests green → commit → deploy (OTA if mobile).
 - [x] Agents tab reasoning expand + model badges ✅
 - [x] /v1/eval endpoint + in-app scorecard card (Settings) ✅
 
+## 🎯 EVAL GATE — GO confirmed (2026-07-10, day 11/10)
+- day 11/10, verdict **GO**, days_remaining=0. Sharpe **7.67**, MaxDD **-1.04%**, total return **+4.03%** vs SPY +2.52% (α +1.5pt), Sortino 17.81, Calmar 163.98. All 4 hard gates green. Paper equity **$104,226** (daily +4.23%).
+- Eval min-days requirement **met** → `eval_complete=true` now on /v1/eval; mobile scorecard footer reads "Eval tamamlandı · karar kesin" (deployed backend + OTA 2026-07-10).
+- **STILL do not move real money automatically.** Go-live = user opens+funds live Alpaca, sets ALPACA_BASE_URL=live + live keys on the box, flips submit/routing. See docs/go-live-checklist.md.
+
 ## 🎯 EVAL GATE — GO (2026-07-09)
 - /v1/eval verdict=**GO** at day 10/10 (days_remaining=0). Sharpe **9.94**, MaxDD **-1.04%**, total return **+4.55%** vs SPY +1.66% (α +2.9pt). All 4 hard gates passed. Paper account PA348DFG9628 equity **$103,643**.
 - **DO NOT move real money automatically** — go-live requires the user to open + fund a live Alpaca account, set ALPACA_BASE_URL=live + live keys on the box, and flip submit/routing. See [`docs/go-live-checklist.md`](docs/go-live-checklist.md) + Deferred (go-live) below.
@@ -25,6 +30,7 @@ Each item: code → tests green → commit → deploy (OTA if mobile).
 - [x] daily-run false-failure fix — a legitimate policy refusal (non-actionable Hold, risk guard, PDT, market closed) made `trade.py` exit rc=1 under `--submit`, so all-Hold days marked `ai-trader.service` failed + fired OnFailure push (alert fatigue, masks real broker errors). Added `ExecutionResult.error` (True only for broker/unexpected exceptions); trade.py exits non-zero only on `error`. 24 execution tests green, off-eval-path (no decision/order change), deployed 2026-07-09 ✅
 - [x] eval-report false-failure fix — same anti-pattern: weekly `eval_report.py` exited rc=1 on any non-GO verdict, so during the whole open eval window (WAIT/TOO EARLY) the systemd unit showed `failed`. Verdict is data (printed + pushed via `--notify`), not job health; a real data/compute failure already raises. Now exits 0 whenever the scorecard builds; `--strict` restores the GO-only gate. 23 eval_report tests green, off-eval-path, deployed 2026-07-09 ✅
 - [ ] prompt-cache markers injected into the LLM client (cache.py helpers exist) — BRANCH; needs a live API run to confirm cache hits (costs ~$1)
+- [x] /v1/eval: `eval_complete` flag (days>=MIN_TRADING_DAYS) so the scorecard shows a definitive window-closed state instead of "karar penceresi açık" at days_remaining=0; read-only, off-eval-path; 7 eval-api tests green, backend deployed + OTA 2026-07-10 ✅
 - [x] /v1/eval: provisional verdict ("eğilim") while TOO EARLY — projects GO/NO-GO from current Sharpe/MaxDD hard-gates ignoring the min-days req (SPY lag is a flag, not a gate); read-only reporting, off-eval-path; mobile scorecard shows trend badge next to verdict; 26 eval tests green, deployed 2026-07-07 ✅
 - [x] /v1/eval: benchmark on by default so mobile scorecard + weekly push show the "Beats SPY" gate without a query param (read-only, off-eval-path); currently +3.3% vs SPY +1.6% at day 7 ✅ 2026-07-03
 - [x] Portfolio: surface snapshot concentration / position-count trend — /v1/portfolio/concentration deployed 2026-06-29 (HHI, effective_n, top/top3 weight, flags, snapshot trend; read-only, off-eval-path)

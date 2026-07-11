@@ -43,6 +43,34 @@ Each item: code → tests green → commit → deploy (OTA if mobile).
 
 ## Eval CLOSED 2026-07-11 — verdict GO (12/10 days; Sharpe 8.68, MaxDD 1.0%, +4.8% vs SPY +3.0%)
 
+## Round 4 — pre-go-live hardening + mobile UI (full-system scan 2026-07-11, 41 ideas → ranked)
+Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast item gets tests + a supervised paper run first. Order matters: 6 before new screens; 2/3 before any real money.
+
+### Critical correctness (found by scan — real bugs)
+- [ ] **1. PAPER/LIVE mode badge + degraded banner** (S) — `trading_mode` field on /healthz (from ALPACA_BASE_URL) in agent/api/main.py; mobile health poll → /readyz (alpaca/db degraded flags); shared `<StatusBanner>` in app/(tabs)/_layout.tsx: amber PAPER / persistent red "LIVE — gerçek para" / degraded strip; last-updated ts on Portfolio hero from snapshot.timestamp_utc
+- [ ] **2. Kill-switch REAL wiring** (M, HIGH blast) — FileKillSwitchReader reading KILL_SWITCH_PATH (API already writes it) replaces hardcoded StaticKillSwitchReader('RUN') at agent/scripts/trade.py:216; pre-run check in daily_run.sh; FLATTEN_ALL → AlpacaClient.close_all_positions() (alpaca_broker.py:165, implemented-unreachable) + DB audit row; fail-to-PAUSE_NEW on read error; drill all 3 states on paper. Mobile switch is currently theater.
+- [ ] **3. Execution integrity trio** (M, HIGH blast) — executor.py: (a) line 193 `if tp and sl:` drops the STOP leg when price_target missing → attach stop alone (OTO) so no naked positions (this is why live positions show stop_loss 0.0); (b) line 213 status mapping false-REJECTs `partially_filled` → explicit allowlist + NEEDS_RECONCILE; (c) derive_client_order_id from (ticker, trade_date, side) not per-run UUID + query-before-submit idempotency. test_execution.py + supervised paper run.
+- [ ] **8. Delete fake "Auto-execute trades" switch** (S) — settings.tsx local useState controls nothing; replace with honest read-only card "Her emir manuel onay gerektirir". If it returns, it returns as a real backend flag w/ ADR-005 gates.
+- [ ] **9. Honest daily P&L + intraday DD** (S) — portfolio.py:113 daily_pnl = equity−100000 (inception!) and :122 max_drawdown_today=0.0 hardcoded; parse Alpaca last_equity into Account model, daily_pnl = equity − last_equity, DD from intraday portfolio_history. Mobile renders these fields already. Bonus: last_equity is the circuit-breaker daily-DD input.
+- [ ] **10. Dead-man switch + preflight fix** (S) — healthchecks.io check + HEALTHCHECK_URL into /opt/ai-trader/secrets.env (ping code shipped 07-04, never configured); OnFailure= on eval-report.service; preflight.py:37 hardcoded paper-assert → EXPECTED_TRADING_MODE env (else go-live day = false-alarm storm)
+
+### Trust/safety UX (mobile, before real money)
+- [ ] **4. Approve-flow hardening** (M) — approve/[orderId].tsx: gate false "Order not in pending list anymore" on usePendingOrders.isLoading (push deep-link races fetch); biometric.ts: OS passcode fallback (no-biometric devices are permanently locked out of approving today); expo-haptics on approve/reject/kill-switch; hold-to-approve friction; delete dead "Approve (TBD)"/Reject stubs on trade/[ticker].tsx
+- [ ] **5. Order history + fills + cancel** (M) — Orders tab segmented Pending|Geçmiş; consume orphaned useOrders hook (GET /v1/orders) rendering broker_status/filled_qty/avg_fill_price/submitted_at/rejection_reasons (none rendered today); wire api.cancelOrder (zero callers) confirm-gated; backend: cancel_order persist OrderUpdate row; delete dead `notional` var orders.tsx:50
+- [ ] **11. API auth hardening** (M) — deps.py:77 delete unverified-JWT ImportError fallback (fail closed); :144 secrets.compare_digest; CORS allow_origins!='*'; rate limit /v1/*; rotate DEV_API_TOKEN + stop baking into public OTA bundle (per-device token or CF Access); notifications/test → only auth'd user's tokens
+- [ ] **12. Notifications inbox + contextual permission** (M) — persist pushes (listeners exist in _layout.tsx) → zustand+AsyncStorage inbox w/ unread badge + same deep-links; move permission request from startup to first pending order / Settings row; clear badge on open
+
+### Mobile UI polish (the "arayüz" work)
+- [ ] **6. Design-system extraction FIRST** (M) — src/components/: Card, Stat, RatingBadge, Money (formatUsd ×3 copies), ErrorState w/ retry, Skeleton (kills bare "Loading…"); raw hexes → theme/colors.ts; REMOVE dev CLI commands leaking in user error states (portfolio.tsx:47 uvicorn cmd, orders.tsx:45, agents.tsx:65)
+- [ ] **7. Home dashboard: equity curve + drawdown** (M) — wrap GET /v1/portfolio/history (backend DONE, absent from endpoints.ts); portfolio.tsx → real home: equity area chart + DD ribbon, period selector, GO verdict hero badge (now buried in Settings), optional SPY overlay via /v1/prices/SPY + α chip
+- [ ] Quick UI wins: tab bar icons + userInterfaceStyle 'dark' (light-mode device → white tab bar under dark screens bug); WCAG contrast (textMuted #666 on #0a0a0a fails AA) + 44pt touch targets + accessibilityLabels on money actions; render already-fetched debate_transcript/take_profit/tokens_in/out+latency on trade/[ticker] + agents; sortino/calmar on scorecard; sector card from Position.sector + /v1/portfolio/concentration wrap
+
+### Round 4 later (post-go-live)
+- Fill reconciliation + realized P&L ledger (scripts/reconcile.py hourly, closed_trades table, GET /v1/trades, win-rate/expectancy) → THEN reflection memory on realized fills
+- Circuit breaker real inputs (5/7 gates placeholder-fed) — first supervised live week, uses last_equity from #9
+- Position detail screen + per-ticker history from snapshot JSONL; kill-switch audit trail + header pill (after #2); LLM cost panel (after pipeline.py tokens_in/out=0 stub fix); TR-primary language sweep; paper lane as permanent staging (templated units + EXPECTED_ALPACA_ACCOUNT interlock); ws.ts is implemented-unused (+ close() reconnect bug) — decide: wire realtime or delete; backup restore drill; secrets → /etc/ai-trader/
+- Dropped: /v1/limits risk panel (protection theater until real caps merge)
+
 ## Deferred (go-live)
 - HTTPS (cloudflared/caddy) — needs domain decision; low risk on paper.
 - Merge `feat/cost-opt-adr006` + flip routing flag — eval window now CLOSED. Branch rebased

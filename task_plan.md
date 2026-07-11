@@ -41,9 +41,14 @@ Each item: code → tests green → commit → deploy (OTA if mobile).
 
 - [x] scorecard: α vs SPY stat (portfolio return − SPY total return) as 4th grid card — makes the "Beats SPY" gate legible as a number ahead of GO/NO-GO; read-only, off-eval-path; OTA preview 2026-07-08 ✅
 
+## Eval CLOSED 2026-07-11 — verdict GO (12/10 days; Sharpe 8.68, MaxDD 1.0%, +4.8% vs SPY +3.0%)
+
 ## Deferred (go-live)
 - HTTPS (cloudflared/caddy) — needs domain decision; low risk on paper.
-- Merge `feat/cost-opt-adr006` + flip routing flag — AFTER eval window closes.
+- Merge `feat/cost-opt-adr006` + flip routing flag — eval window now CLOSED. Branch rebased
+  clean on today's main, 167 tests green, default-OFF proven. Merge + flag-flip left for human
+  (go-live decision) — see [docs/cost-opt-merge-readiness.md](docs/cost-opt-merge-readiness.md).
+  Blocker before flip: refresh stale model IDs (opus-4-7/sonnet-4-6 → 4.8/5).
 
 ## Done (2026-06-24)
 - accumulation fix, universe 3→11, clean book, timeout 150min

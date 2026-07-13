@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, Switch, Pressable, Alert, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Alert, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useState } from 'react';
 
@@ -37,7 +37,6 @@ function GateRow({ name, passed, detail }: { name: string; passed: boolean | nul
 }
 
 export default function SettingsScreen() {
-  const [autoExecute, setAutoExecute] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
   const { data: ks } = useKillSwitch();
   const setKs = useSetKillSwitch();
@@ -199,20 +198,16 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        <View style={styles.section}>
-          <Text style={styles.label}>Auto-execute trades</Text>
-          <Switch
-            value={autoExecute}
-            onValueChange={(v) => {
-              // TODO(5h+): biometric prompt + 24h cooldown before first auto-trade
-              setAutoExecute(v);
-            }}
-          />
+        <Text style={styles.subheading}>Emir gönderimi</Text>
+        <View style={styles.healthCard}>
+          <Text style={styles.label}>Günlük koşu otomatik gönderir (paper)</Text>
+          <Text style={styles.muted}>
+            Paper hesapta daily run, risk guard'lardan geçen emirleri bracket
+            (stop + take-profit) ile otomatik gönderir. Live'a geçişte emirler
+            mobil onaya düşer (hold → biometric approve, ADR-005). Bu davranış
+            uygulamadan değiştirilemez — tek kontrol yukarıdaki kill switch.
+          </Text>
         </View>
-        <Text style={styles.warning}>
-          Auto-execute requires biometric confirmation and a 24-hour cooldown before the
-          first auto-trade. See ADR-005.
-        </Text>
 
         <Text style={styles.subheading}>Notifications</Text>
         <Pressable style={styles.button} disabled={pushBusy} onPress={handleRegisterPush}>
@@ -232,14 +227,6 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   heading: { color: colors.textPrimary, fontSize: 24, fontWeight: '700', marginBottom: 16 },
   subheading: { color: colors.textPrimary, fontSize: 16, fontWeight: '600', marginTop: 24, marginBottom: 8 },
-  section: {
-    padding: 16,
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
   label: { color: colors.textPrimary, fontSize: 16 },
   muted: { color: colors.textMuted, fontSize: 13 },
   killRow: { flexDirection: 'row', gap: 8 },
@@ -264,13 +251,6 @@ const styles = StyleSheet.create({
   gateIcon: { fontSize: 13, fontWeight: '800', width: 16, textAlign: 'center' },
   gateName: { color: colors.textPrimary, fontSize: 13, flex: 1 },
   gateDetail: { color: colors.textMuted, fontSize: 12 },
-  warning: {
-    color: colors.warning,
-    fontSize: 12,
-    paddingHorizontal: 4,
-    paddingTop: 8,
-    fontStyle: 'italic',
-  },
   button: {
     backgroundColor: colors.surface,
     padding: 14,

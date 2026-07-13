@@ -1,0 +1,16 @@
+[Unit]
+Description=AI Trader API (mobile backend)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/opt/ai-trader/agent
+EnvironmentFile=/opt/ai-trader/secrets.env
+ExecStart=/opt/ai-trader/agent/.venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

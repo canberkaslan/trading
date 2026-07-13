@@ -12,7 +12,8 @@ export type OrderStatus =
   | 'PARTIAL'
   | 'FILLED'
   | 'REJECTED'
-  | 'CANCELLED';
+  | 'CANCELLED'
+  | 'NEEDS_RECONCILE';
 export type KillSwitchState = 'RUN' | 'PAUSE_NEW' | 'FLATTEN_ALL';
 
 export interface AgentReasoning {
@@ -118,6 +119,20 @@ export interface PortfolioSnapshot {
   daily_pnl_pct: number;
   max_drawdown_today: number;
   timestamp_utc: string;
+}
+
+export type TradingMode = 'paper' | 'live';
+
+export interface Health {
+  status: string;
+  trading_mode: TradingMode;
+}
+
+export interface Readiness {
+  status: 'ok' | 'degraded';
+  alpaca: boolean;
+  db: boolean;
+  trading_mode: TradingMode;
 }
 
 export interface OrderListItem {

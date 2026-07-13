@@ -15,7 +15,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..schemas import AgentDecision, AgentReasoning, OrderUpdate, TradeOrder
-from .models import AgentDecisionRow, Base, OrderUpdateRow, TradeOrderRow
+from .models import AgentDecisionRow, Base, KillSwitchEventRow, OrderUpdateRow, TradeOrderRow
 
 
 def make_engine(database_url: str | None = None) -> Engine:
@@ -96,6 +96,17 @@ class TradeLogRepository:
                 timestamp_utc=update.timestamp_utc,
             )
             s.add(row)
+
+    def append_kill_event(
+        self, state: str, actor: str, source: str, detail: str | None = None
+    ) -> None:
+        from datetime import datetime, timezone
+
+        with self.session() as s:
+            s.add(KillSwitchEventRow(
+                state=state, actor=actor, source=source, detail=detail,
+                timestamp_utc=datetime.now(timezone.utc),
+            ))
 
     # ------------------------- reads -------------------------
 

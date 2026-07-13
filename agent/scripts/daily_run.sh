@@ -45,9 +45,50 @@ mkdir -p "$LOG_DIR"
 DATE="$(date -u +%F)"
 RUN_LOG="${LOG_DIR}/daily_${DATE}.log"
 
+# Dead-man's switch ping — call on every HEALTHY outcome (full run, or a
+# deliberate kill-switch skip). A missed ping means the automation itself
+# died, which is exactly what healthchecks.io should page on.
+ping_healthcheck() {
+  if [[ -n "${HEALTHCHECK_URL:-}" ]]; then
+    curl -fsS -m 10 --retry 3 "$HEALTHCHECK_URL" >/dev/null 2>&1 \
+      || echo "  -> healthcheck ping failed (non-fatal)" | tee -a "$RUN_LOG"
+  fi
+}
+
 echo "===============================================" | tee -a "$RUN_LOG"
 echo "Daily run $(date -u +%FT%TZ)  universe=[$UNIVERSE]  submit=$SUBMIT" | tee -a "$RUN_LOG"
 echo "===============================================" | tee -a "$RUN_LOG"
+
+# Honor the mobile kill switch BEFORE the weekend guard and BEFORE burning
+# LLM tokens: an armed FLATTEN_ALL must execute even on a manual weekend
+# run (close orders queue for Monday's open). The API already attempts the
+# flatten at flip time; kill_check is the backstop. Exit 1 from kill_check
+# means a FAILED/PARTIAL flatten — fail safe: skip the run, alert loudly.
+run_snapshot_best_effort() {
+  # Keep the eval snapshot chain unbroken on skip days (read-only, cheap).
+  PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.snapshot 2>&1 | tee -a "$RUN_LOG" \
+    || echo "  -> snapshot failed (non-fatal)" | tee -a "$RUN_LOG"
+}
+
+set +e
+PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.kill_check 2>&1 | tee -a "$RUN_LOG"
+kc_rc=${PIPESTATUS[0]}
+set -e
+if [[ "$kc_rc" -ne 0 ]]; then
+  case "$kc_rc" in
+    75) echo "kill switch PAUSE_NEW — skipping daily run" | tee -a "$RUN_LOG"
+        run_snapshot_best_effort
+        ping_healthcheck ;;
+    76) echo "kill switch FLATTEN_ALL — close orders in, skipping daily run" | tee -a "$RUN_LOG"
+        run_snapshot_best_effort
+        ping_healthcheck ;;
+    *)  echo "kill_check failed (rc=$kc_rc) — failing safe, skipping daily run" | tee -a "$RUN_LOG"
+        PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.notify_ops \
+          --title "⚠️ kill_check FAILED — daily run skipped" \
+          --body "rc=$kc_rc @ ${DATE}; flatten may be PARTIAL — check positions + logs" 2>&1 | tee -a "$RUN_LOG" || true ;;
+  esac
+  exit 0
+fi
 
 # Skip weekends (US market closed). systemd timer also restricts to Mon-Fri,
 # but a manual run shouldn't burn LLM tokens on a Saturday.
@@ -102,12 +143,7 @@ if [[ "$rc_total" -gt 0 ]]; then
   exit 1
 fi
 
-# Dead-man's switch: ping only on a fully successful run. If HEALTHCHECK_URL
-# is set (healthchecks.io or similar), a missed ping means the run silently
-# died — the service alerts even when nothing here got to run.
-if [[ -n "${HEALTHCHECK_URL:-}" ]]; then
-  curl -fsS -m 10 --retry 3 "$HEALTHCHECK_URL" >/dev/null 2>&1 \
-    || echo "  -> healthcheck ping failed (non-fatal)" | tee -a "$RUN_LOG"
-fi
+# Dead-man's switch: ping only on a fully successful run.
+ping_healthcheck
 
 exit 0

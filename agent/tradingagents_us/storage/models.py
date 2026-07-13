@@ -68,6 +68,24 @@ class TradeOrderRow(Base):
     updates: Mapped[list["OrderUpdateRow"]] = relationship(back_populates="order", cascade="all, delete-orphan")
 
 
+class KillSwitchEventRow(Base):
+    """Append-only audit trail for kill-switch changes and executions.
+
+    `source` = who acted (api = mobile POST, daily_run = pre-run check),
+    `state` = requested/observed state, `detail` = freeform context (e.g.
+    flatten results). New table — created automatically by create_all().
+    """
+
+    __tablename__ = "kill_switch_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    state: Mapped[str] = mapped_column(String(16))
+    actor: Mapped[str] = mapped_column(String(64), default="unknown")
+    source: Mapped[str] = mapped_column(String(32), default="api")
+    detail: Mapped[str | None] = mapped_column(String, nullable=True)
+    timestamp_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
 class OrderUpdateRow(Base):
     __tablename__ = "order_updates"
 

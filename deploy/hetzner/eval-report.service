@@ -2,6 +2,7 @@
 Description=AI Trader — weekly eval scorecard + push
 After=network-online.target
 Wants=network-online.target
+OnFailure=ai-trader-alert.service
 
 [Service]
 Type=oneshot

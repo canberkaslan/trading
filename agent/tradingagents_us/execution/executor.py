@@ -16,16 +16,46 @@ Sanity guards (Phase 4g, after the 2026-06-01 AAPL stale-decision incident):
 from __future__ import annotations
 
 import logging
-import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
 from ..dataflows.alpaca_broker import AlpacaClient
-from ..schemas import AgentDecision, OrderUpdate, TradeOrder
+from ..schemas import AgentDecision, OrderStatus, OrderUpdate, TradeOrder
 
 log = logging.getLogger(__name__)
+
+# Alpaca order status -> our OrderStatus. Explicit allowlist: an unknown
+# broker status maps to NEEDS_RECONCILE, never to a false REJECTED (the
+# old `.upper()` passthrough made `partially_filled` fail OrderUpdate
+# validation, so a live order at the broker read back as an error).
+_BROKER_STATUS_MAP: dict[str, OrderStatus] = {
+    "accepted": "ACCEPTED",
+    "new": "ACCEPTED",
+    "pending_new": "ACCEPTED",
+    "accepted_for_bidding": "ACCEPTED",
+    "done_for_day": "ACCEPTED",
+    "calculated": "ACCEPTED",
+    "pending_replace": "ACCEPTED",
+    "partially_filled": "PARTIAL",
+    "filled": "FILLED",
+    "canceled": "CANCELLED",
+    "pending_cancel": "CANCELLED",
+    "expired": "CANCELLED",
+    "replaced": "CANCELLED",
+    "rejected": "REJECTED",
+    # NOTE: 'stopped' (fill guaranteed) and 'suspended' (parked but live)
+    # deliberately absent -> NEEDS_RECONCILE; both denote a live order.
+}
+
+# Broker statuses after which the previous attempt never became a working
+# order — hitting one of these in the duplicate check allows a resubmit.
+_RESUBMITTABLE = {"canceled", "expired", "rejected", "replaced"}
+
+
+def _map_broker_status(raw: str) -> OrderStatus:
+    return _BROKER_STATUS_MAP.get(raw.lower(), "NEEDS_RECONCILE")
 
 
 @dataclass(frozen=True)
@@ -59,6 +89,7 @@ def submit_order(
     config: ExecutionConfig = ExecutionConfig(),
     decision: AgentDecision | None = None,
     current_price: float | None = None,
+    trade_date: date | None = None,
 ) -> ExecutionResult:
     """Push a risk-approved TradeOrder to Alpaca (paper or live).
 
@@ -76,6 +107,11 @@ def submit_order(
         current_price: live last-trade price. Required when tp_headroom or
             stop_buffer guards are enabled (default ON). Pass None to skip
             those guards (e.g. backtests).
+        trade_date: the RUN's trading date for the idempotency key. The
+            daily run computes it once at start (22:30 UTC) — decision
+            timestamps stamped after midnight UTC must not shift the key
+            to the next day. Falls back to the decision date (mobile
+            approve path), then the order's submitted_at date.
     """
     refusals: list[str] = []
     now = datetime.now(timezone.utc)
@@ -179,19 +215,93 @@ def submit_order(
                 refusal_reasons=refusals,
             )
 
-        # Idempotency: deterministic client_order_id from decision_id + order_id
-        client_oid = f"tr-{order.decision_id[:8]}-{order.order_id[:8]}"
+        # Idempotency: client_order_id derived from (ticker, RUN date, side)
+        # — stable across process restarts. The old derivation hashed
+        # per-run UUIDs, so a crashed-and-retried run double-submitted.
+        # The run date is threaded in by the caller; decision timestamps
+        # stamped after midnight UTC must not shift the key a day forward.
+        run_date = trade_date or (
+            decision.timestamp_utc if decision else order.submitted_at_utc
+        ).date()
+        base_key = derive_client_order_id(order.ticker, run_date, order.side)
 
-        # Bracket: attach stop_loss as broker-side leg + (if available)
-        # take_profit from decision.price_target. Broker-side stop survives
-        # disconnects and process restarts — much safer than only tracking
-        # it in our risk layer.
+        # Duplicate / resubmit resolution. A prior LIVE order for this key
+        # refuses cleanly (no resubmit); a cancelled/rejected/expired prior
+        # attempt bumps to a fresh suffixed key (Alpaca rejects any reused
+        # client_order_id as non-unique, even for cancelled orders).
+        client_oid: str | None = None
+        existing_live = None
+        for attempt in range(1, 6):
+            key = base_key if attempt == 1 else f"{base_key}-r{attempt}"
+            found = cli.get_order_by_client_order_id(key)
+            if found is None:
+                client_oid = key
+                break
+            if found.status.lower() not in _RESUBMITTABLE:
+                existing_live = found
+                break
+            if found.filled_qty > 0:
+                # cancelled-after-partial-fill: resubmitting the full qty
+                # would double-buy the filled part — human must resolve.
+                reason = (
+                    f"needs_reconcile: prior attempt {key} is {found.status} "
+                    f"with filled_qty={found.filled_qty:g}"
+                )
+                return ExecutionResult(
+                    submitted=False,
+                    dry_run=False,
+                    update=OrderUpdate(
+                        order_id=order.order_id, status="NEEDS_RECONCILE",
+                        error_message=reason, timestamp_utc=now,
+                    ),
+                    refusal_reasons=[reason],
+                )
+
+        if existing_live is not None:
+            # Refuse as duplicate — and do NOT weld the old order's broker id
+            # or fill data onto THIS order's trade-log rows; the original
+            # order row already carries the real fill.
+            log.info(
+                "duplicate: %s already live at broker (id=%s status=%s) — refusing resubmit",
+                base_key, existing_live.id, existing_live.status,
+            )
+            reason = (
+                f"duplicate_client_order_id: {base_key} already at broker "
+                f"(broker_order_id={existing_live.id}, status={existing_live.status})"
+            )
+            return ExecutionResult(
+                submitted=False,
+                dry_run=False,
+                update=OrderUpdate(
+                    order_id=order.order_id, status="REJECTED",
+                    error_message=reason, timestamp_utc=now,
+                ),
+                refusal_reasons=[reason],
+            )
+
+        if client_oid is None:
+            reason = f"needs_reconcile: >4 prior cancelled attempts for {base_key}"
+            return ExecutionResult(
+                submitted=False,
+                dry_run=False,
+                update=OrderUpdate(
+                    order_id=order.order_id, status="NEEDS_RECONCILE",
+                    error_message=reason, timestamp_utc=now,
+                ),
+                refusal_reasons=[reason],
+            )
+
+        # Broker-side protective legs. Stop and take-profit attach
+        # INDEPENDENTLY (bracket when both, OTO when one) — a missing
+        # price_target must never drop the stop leg with it: broker-side
+        # stops are the only protection that survives box loss.
         bracket_kwargs: dict = {}
         if config.use_bracket and order.side == "BUY":
             tp = config.take_profit_price or (decision.price_target if decision else None)
             sl = order.stop_loss if order.stop_loss > 0 else None
-            if tp and sl:
+            if tp:
                 bracket_kwargs["take_profit_price"] = tp
+            if sl:
                 bracket_kwargs["stop_loss_price"] = sl
 
         broker = cli.submit_order(
@@ -199,20 +309,27 @@ def submit_order(
             qty=order.quantity,
             side=order.side.lower(),  # type: ignore[arg-type]
             order_type="limit" if order.order_type == "LIMIT" else "market",
-            time_in_force="day",
+            # Protective legs MUST survive overnight: day-TIF bracket legs
+            # expire at the close of entry day, leaving the position naked.
+            time_in_force="gtc" if bracket_kwargs else "day",
             limit_price=order.limit_price,
             client_order_id=client_oid,
             **bracket_kwargs,
         )
 
+        mapped = _map_broker_status(broker.status)
         return ExecutionResult(
             submitted=True,
             dry_run=False,
             update=OrderUpdate(
                 order_id=order.order_id,
-                status="ACCEPTED" if broker.status in {"accepted", "new", "pending_new"} else broker.status.upper(),
+                status=mapped,
                 filled_qty=int(broker.filled_qty),
                 avg_fill_price=broker.filled_avg_price,
+                error_message=(
+                    f"unrecognized broker status: {broker.status!r}"
+                    if mapped == "NEEDS_RECONCILE" else None
+                ),
                 timestamp_utc=now,
             ),
             broker_order_id=broker.id,
@@ -244,7 +361,9 @@ def submit_order(
             cli.close()
 
 
-def derive_client_order_id(decision_id: str, order_id: str | None = None) -> str:
-    """Stable per-decision client_order_id, used for idempotency."""
-    oid = order_id or str(uuid.uuid4())
-    return f"tr-{decision_id[:8]}-{oid[:8]}"
+def derive_client_order_id(ticker: str, trade_date: date, side: str) -> str:
+    """Deterministic idempotency key: one order per (ticker, decision date,
+    side). Survives crashes/retries — same inputs, same key, and the broker
+    lookup short-circuits the resubmit. Alpaca caps client_order_id at 48
+    chars; `tr-GOOGL-20260711-BUY` is well inside."""
+    return f"tr-{ticker.upper()}-{trade_date.strftime('%Y%m%d')}-{side.upper()}"

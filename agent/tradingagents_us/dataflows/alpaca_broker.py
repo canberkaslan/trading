@@ -35,6 +35,9 @@ class Account:
     pattern_day_trader: bool
     trading_blocked: bool
     currency: str
+    # Equity at the previous trading day's close — the correct baseline for
+    # "today's P&L" (portfolio_value - last_equity). 0.0 if Alpaca omits it.
+    last_equity: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -118,6 +121,7 @@ class AlpacaClient:
             pattern_day_trader=bool(d.get("pattern_day_trader", False)),
             trading_blocked=bool(d.get("trading_blocked", False)),
             currency=d.get("currency", "USD"),
+            last_equity=float(d.get("last_equity") or 0.0),
         )
 
     def clock(self) -> Clock:
@@ -217,9 +221,10 @@ class AlpacaClient:
         elif has_sl:
             body["order_class"] = "oto"
         if has_tp or has_sl:
-            # Bracket / OTO requires day or gtc; auto-promote 'day' is fine
-            # but for multi-day PT targets gtc is the right default.
-            if body["time_in_force"] not in ("day", "gtc"):
+            # Protective legs must survive overnight: a day-TIF bracket
+            # expires its children at the close of entry day, leaving the
+            # position naked. Promote everything to gtc when legs attach.
+            if body["time_in_force"] != "gtc":
                 body["time_in_force"] = "gtc"
         if has_tp:
             body["take_profit"] = {"limit_price": str(take_profit_price)}
@@ -234,6 +239,18 @@ class AlpacaClient:
 
     def get_order(self, order_id: str) -> Order:
         return _order_from_dict(self._get(f"/orders/{order_id}"))
+
+    def get_order_by_client_order_id(self, client_order_id: str) -> Order | None:
+        """Look up an order by our idempotency key. None if never submitted."""
+        r = self._http.get(
+            self.base_url + "/orders:by_client_order_id",
+            params={"client_order_id": client_order_id},
+        )
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        d = r.json()
+        return _order_from_dict(d) if d else None
 
     def list_orders(self, status: str = "open", limit: int = 50) -> list[Order]:
         return [_order_from_dict(o) for o in self._get(f"/orders?status={status}&limit={limit}")]

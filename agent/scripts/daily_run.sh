@@ -45,6 +45,16 @@ mkdir -p "$LOG_DIR"
 DATE="$(date -u +%F)"
 RUN_LOG="${LOG_DIR}/daily_${DATE}.log"
 
+# Dead-man's switch ping — call on every HEALTHY outcome (full run, or a
+# deliberate kill-switch skip). A missed ping means the automation itself
+# died, which is exactly what healthchecks.io should page on.
+ping_healthcheck() {
+  if [[ -n "${HEALTHCHECK_URL:-}" ]]; then
+    curl -fsS -m 10 --retry 3 "$HEALTHCHECK_URL" >/dev/null 2>&1 \
+      || echo "  -> healthcheck ping failed (non-fatal)" | tee -a "$RUN_LOG"
+  fi
+}
+
 echo "===============================================" | tee -a "$RUN_LOG"
 echo "Daily run $(date -u +%FT%TZ)  universe=[$UNIVERSE]  submit=$SUBMIT" | tee -a "$RUN_LOG"
 echo "===============================================" | tee -a "$RUN_LOG"
@@ -54,6 +64,27 @@ echo "===============================================" | tee -a "$RUN_LOG"
 DOW="$(date -u +%u)"   # 1=Mon .. 7=Sun
 if [[ "$DOW" -ge 6 ]]; then
   echo "weekend (dow=$DOW) — skipping, US market closed" | tee -a "$RUN_LOG"
+  exit 0
+fi
+
+# Honor the mobile kill switch BEFORE burning LLM tokens. PAUSE_NEW and
+# FLATTEN_ALL both skip the whole run (stops are broker-side GTC — nothing
+# to manage locally); FLATTEN_ALL additionally liquidates inside kill_check.
+set +e
+PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.kill_check 2>&1 | tee -a "$RUN_LOG"
+kc_rc=${PIPESTATUS[0]}
+set -e
+if [[ "$kc_rc" -ne 0 ]]; then
+  case "$kc_rc" in
+    75) echo "kill switch PAUSE_NEW — skipping daily run" | tee -a "$RUN_LOG"
+        ping_healthcheck ;;
+    76) echo "kill switch FLATTEN_ALL — book flattened, skipping daily run" | tee -a "$RUN_LOG"
+        ping_healthcheck ;;
+    *)  echo "kill_check errored (rc=$kc_rc) — failing safe, skipping daily run" | tee -a "$RUN_LOG"
+        PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.notify_ops \
+          --title "⚠️ kill_check error — daily run skipped" \
+          --body "rc=$kc_rc @ ${DATE}; check kill_switch.state + logs" 2>&1 | tee -a "$RUN_LOG" || true ;;
+  esac
   exit 0
 fi
 
@@ -102,12 +133,7 @@ if [[ "$rc_total" -gt 0 ]]; then
   exit 1
 fi
 
-# Dead-man's switch: ping only on a fully successful run. If HEALTHCHECK_URL
-# is set (healthchecks.io or similar), a missed ping means the run silently
-# died — the service alerts even when nothing here got to run.
-if [[ -n "${HEALTHCHECK_URL:-}" ]]; then
-  curl -fsS -m 10 --retry 3 "$HEALTHCHECK_URL" >/dev/null 2>&1 \
-    || echo "  -> healthcheck ping failed (non-fatal)" | tee -a "$RUN_LOG"
-fi
+# Dead-man's switch: ping only on a fully successful run.
+ping_healthcheck
 
 exit 0

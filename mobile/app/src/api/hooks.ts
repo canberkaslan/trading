@@ -131,3 +131,13 @@ export function useHealth() {
     retry: false,
   });
 }
+
+/** Broker/DB reachability + paper|live mode for the global status banner. */
+export function useReadiness() {
+  return useQuery({
+    queryKey: ['readiness'],
+    queryFn: api.readiness,
+    refetchInterval: 30_000,
+    retry: false,
+  });
+}

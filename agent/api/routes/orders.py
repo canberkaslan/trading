@@ -246,15 +246,22 @@ async def cancel_order(
 async def set_kill_switch(
     body: KillSwitchUpdate,
     user: str = Depends(require_token),
+    repo: TradeLogRepository = Depends(get_repo),
 ) -> dict[str, str]:
     """Mobile-controlled remote kill switch. See ADR-005.
 
-    Phase 5 dev: writes to a local flag file. Phase 4+ prod replaces with
-    DynamoDB so EC2 agents can poll it.
+    Enforced by FileKillSwitchReader in trade.py's circuit breaker and by
+    the daily_run.sh pre-check (which also executes FLATTEN_ALL). The
+    single-box file backend is fine while API + trader share a host; the
+    DynamoDB reader exists for a future multi-host split.
     """
     flag_path = os.environ.get("KILL_SWITCH_PATH", "./kill_switch.state")
     with open(flag_path, "w") as f:
         f.write(body.state)
+    try:
+        repo.append_kill_event(state=body.state, actor=user, source="api")
+    except Exception:
+        pass  # audit is best-effort; the state write above already took effect
     return {"state": body.state, "path": flag_path}
 
 

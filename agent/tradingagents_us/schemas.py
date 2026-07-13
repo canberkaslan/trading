@@ -14,7 +14,11 @@ Side = Literal["BUY", "SELL"]
 Currency = Literal["USD"]
 Rating = Literal["Buy", "Overweight", "Hold", "Underweight", "Sell"]
 OrderType = Literal["MARKET", "LIMIT"]
-OrderStatus = Literal["PENDING", "ACCEPTED", "PARTIAL", "FILLED", "REJECTED", "CANCELLED"]
+# NEEDS_RECONCILE: the broker accepted the order but reported a status we
+# don't recognize — the order IS live, a human/reconciler must resolve it.
+OrderStatus = Literal[
+    "PENDING", "ACCEPTED", "PARTIAL", "FILLED", "REJECTED", "CANCELLED", "NEEDS_RECONCILE"
+]
 KillSwitchState = Literal["RUN", "PAUSE_NEW", "FLATTEN_ALL"]
 
 

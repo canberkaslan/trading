@@ -67,6 +67,10 @@ export default function PortfolioScreen() {
           <Text style={styles.muted}>
             Cash: {formatUsd(data.cash_usd)}  •  {isFetching ? 'updating…' : 'live'}
           </Text>
+          <Text style={styles.timestamp}>
+            Son güncelleme:{' '}
+            {new Date(data.timestamp_utc).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          </Text>
         </View>
 
         <Text style={styles.section}>{t('portfolio.positions')}</Text>
@@ -115,6 +119,7 @@ const styles = StyleSheet.create({
   heroValue: { color: colors.textPrimary, fontSize: 36, fontWeight: '700', marginTop: 4 },
   heroChange: { fontSize: 16, marginTop: 8, fontWeight: '600' },
   muted: { color: colors.textMuted, marginTop: 4 },
+  timestamp: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
   err: { color: colors.danger, fontSize: 16, marginBottom: 8 },
   section: { color: colors.textPrimary, fontSize: 18, fontWeight: '600', paddingHorizontal: 24, marginTop: 16 },
   placeholder: { margin: 24, padding: 24, backgroundColor: colors.surface, borderRadius: 12 },

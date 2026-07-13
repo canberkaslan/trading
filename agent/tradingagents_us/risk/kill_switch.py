@@ -11,6 +11,7 @@ States:
 
 from __future__ import annotations
 
+import os
 import time
 from abc import ABC, abstractmethod
 from typing import Literal
@@ -50,6 +51,36 @@ class StaticKillSwitchReader(KillSwitchReader):
 
     def read(self) -> KillSwitchState:
         return self.state
+
+
+class FileKillSwitchReader(KillSwitchReader):
+    """Reads the flag file the mobile API writes (POST /v1/orders/kill-switch).
+
+    Both the API and the trading scripts run from agent/ on the same box, so
+    the default relative KILL_SWITCH_PATH resolves to the same file.
+
+    Failure semantics:
+    - missing file  -> RUN (switch was never armed; matches the API's GET)
+    - unreadable    -> PAUSE_NEW (fail safe: stop opening new positions)
+    - garbage value -> PAUSE_NEW (same)
+    """
+
+    def __init__(self, path: str | None = None) -> None:
+        self.path = path or os.environ.get("KILL_SWITCH_PATH", "./kill_switch.state")
+
+    def read(self) -> KillSwitchState:
+        try:
+            with open(self.path) as f:
+                raw = f.read().strip()
+        except FileNotFoundError:
+            return "RUN"
+        except OSError:
+            return "PAUSE_NEW"
+        if not raw:
+            return "RUN"
+        if raw not in ("RUN", "PAUSE_NEW", "FLATTEN_ALL"):
+            return "PAUSE_NEW"
+        return raw  # type: ignore[return-value]
 
 
 class DynamoDBKillSwitchReader(KillSwitchReader):

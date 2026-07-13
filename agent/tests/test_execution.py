@@ -89,6 +89,7 @@ class TestLiveSubmissionMocked:
         broker_order.filled_avg_price = None
         cli.submit_order.return_value = broker_order
 
+        cli.get_order_by_client_order_id.return_value = None  # no duplicate
         cli.close = MagicMock()
         return cli
 
@@ -98,9 +99,11 @@ class TestLiveSubmissionMocked:
         assert result.submitted
         assert result.broker_order_id == "broker-order-id-xyz"
         assert result.update.status == "ACCEPTED"
-        # Idempotency: client_order_id derived deterministically from ids
+        # Idempotency: client_order_id derived from (ticker, date, side) —
+        # stable across process restarts, unlike the old per-run-UUID hash.
         sent_kwargs = cli.submit_order.call_args.kwargs
-        assert sent_kwargs["client_order_id"].startswith("tr-dec-8765-ord-1234".replace("dec-8765", "dec-8765"))
+        assert sent_kwargs["client_order_id"].startswith("tr-AAPL-")
+        assert sent_kwargs["client_order_id"].endswith("-BUY")
 
     def test_refuses_pdt_when_configured(self) -> None:
         cli = self._mock_client(pdt=True)
@@ -153,6 +156,7 @@ class TestBracketOrder:
         broker.filled_qty = 0
         broker.filled_avg_price = None
         cli.submit_order.return_value = broker
+        cli.get_order_by_client_order_id.return_value = None  # no duplicate
         cli.close = MagicMock()
         return cli
 
@@ -179,8 +183,9 @@ class TestBracketOrder:
         assert "take_profit_price" not in sent
         assert "stop_loss_price" not in sent
 
-    def test_no_bracket_when_decision_missing(self) -> None:
-        # Without a decision (or without a PT) we can't form a bracket
+    def test_stop_still_attaches_without_decision(self) -> None:
+        # No decision -> no TP, but the protective stop leg must STILL
+        # attach (OTO). The old `if tp and sl` dropped both together.
         cli = self._mock_client_for_bracket()
         submit_order(
             _order(), client=cli,
@@ -189,7 +194,20 @@ class TestBracketOrder:
         )
         sent = cli.submit_order.call_args.kwargs
         assert "take_profit_price" not in sent
-        assert "stop_loss_price" not in sent
+        assert sent["stop_loss_price"] == 229.0
+
+    def test_stop_still_attaches_without_price_target(self) -> None:
+        # Decision present but the PM produced no PT -> stop-only OTO.
+        cli = self._mock_client_for_bracket()
+        decision = _decision_with_pt().model_copy(update={"price_target": None})
+        submit_order(
+            _order(), client=cli,
+            config=ExecutionConfig(dry_run=False, use_bracket=True, tp_headroom=0),
+            decision=decision,
+        )
+        sent = cli.submit_order.call_args.kwargs
+        assert "take_profit_price" not in sent
+        assert sent["stop_loss_price"] == 229.0
 
     def test_explicit_tp_override(self) -> None:
         cli = self._mock_client_for_bracket()
@@ -294,6 +312,7 @@ class TestErrorFlag:
         clock.is_open = True
         clock.next_open = "2026-05-23T13:30:00Z"
         cli.clock.return_value = clock
+        cli.get_order_by_client_order_id.return_value = None  # no duplicate
         cli.close = MagicMock()
         return cli
 
@@ -344,7 +363,102 @@ class TestErrorFlag:
 
 class TestIdempotencyKey:
     def test_client_order_id_is_deterministic(self) -> None:
-        a = derive_client_order_id("decision-abc-12345", "order-xyz-67890")
-        b = derive_client_order_id("decision-abc-12345", "order-xyz-67890")
-        assert a == b
-        assert a.startswith("tr-decision-")
+        from datetime import date
+
+        a = derive_client_order_id("aapl", date(2026, 7, 11), "buy")
+        b = derive_client_order_id("AAPL", date(2026, 7, 11), "BUY")
+        assert a == b == "tr-AAPL-20260711-BUY"
+        assert len(a) <= 48  # Alpaca client_order_id cap
+
+    def test_different_day_different_key(self) -> None:
+        from datetime import date
+
+        a = derive_client_order_id("AAPL", date(2026, 7, 11), "BUY")
+        b = derive_client_order_id("AAPL", date(2026, 7, 14), "BUY")
+        assert a != b
+
+
+class TestBrokerStatusMapping:
+    def _mock_client(self, broker_status: str):
+        cli = MagicMock()
+        acct = MagicMock()
+        acct.trading_blocked = False
+        acct.pattern_day_trader = False
+        cli.account.return_value = acct
+        broker = MagicMock()
+        broker.id = "oid-1"
+        broker.status = broker_status
+        broker.filled_qty = 3
+        broker.filled_avg_price = 271.5
+        cli.submit_order.return_value = broker
+        cli.get_order_by_client_order_id.return_value = None
+        cli.close = MagicMock()
+        return cli
+
+    def test_partially_filled_maps_to_partial(self) -> None:
+        # The old `.upper()` passthrough made this fail OrderUpdate
+        # validation and read back as a REJECTED error.
+        cli = self._mock_client("partially_filled")
+        result = submit_order(_order(), client=cli, config=ExecutionConfig(dry_run=False))
+        assert result.submitted
+        assert result.error is False
+        assert result.update.status == "PARTIAL"
+        assert result.update.filled_qty == 3
+
+    def test_filled_maps_to_filled(self) -> None:
+        cli = self._mock_client("filled")
+        result = submit_order(_order(), client=cli, config=ExecutionConfig(dry_run=False))
+        assert result.update.status == "FILLED"
+
+    def test_unknown_status_maps_to_needs_reconcile(self) -> None:
+        cli = self._mock_client("held_for_review")  # not in the allowlist
+        result = submit_order(_order(), client=cli, config=ExecutionConfig(dry_run=False))
+        assert result.submitted  # the order IS at the broker
+        assert result.error is False
+        assert result.update.status == "NEEDS_RECONCILE"
+        assert "held_for_review" in (result.update.error_message or "")
+
+
+class TestDuplicateSubmission:
+    def _mock_client(self, existing_status: str | None):
+        cli = MagicMock()
+        acct = MagicMock()
+        acct.trading_blocked = False
+        acct.pattern_day_trader = False
+        cli.account.return_value = acct
+        if existing_status is None:
+            cli.get_order_by_client_order_id.return_value = None
+        else:
+            existing = MagicMock()
+            existing.id = "existing-broker-id"
+            existing.status = existing_status
+            existing.filled_qty = 10
+            existing.filled_avg_price = 270.0
+            cli.get_order_by_client_order_id.return_value = existing
+        broker = MagicMock()
+        broker.id = "fresh-broker-id"
+        broker.status = "accepted"
+        broker.filled_qty = 0
+        broker.filled_avg_price = None
+        cli.submit_order.return_value = broker
+        cli.close = MagicMock()
+        return cli
+
+    def test_live_duplicate_short_circuits(self) -> None:
+        # Same (ticker, date, side) already at the broker -> do NOT resubmit;
+        # surface the existing order instead. Not an error.
+        cli = self._mock_client("filled")
+        result = submit_order(_order(), client=cli, config=ExecutionConfig(dry_run=False))
+        assert not result.submitted
+        assert result.error is False
+        assert result.broker_order_id == "existing-broker-id"
+        assert result.update.status == "FILLED"
+        assert any("duplicate" in r for r in (result.refusal_reasons or []))
+        cli.submit_order.assert_not_called()
+
+    def test_cancelled_previous_attempt_allows_resubmit(self) -> None:
+        cli = self._mock_client("canceled")
+        result = submit_order(_order(), client=cli, config=ExecutionConfig(dry_run=False))
+        assert result.submitted
+        assert result.broker_order_id == "fresh-broker-id"
+        cli.submit_order.assert_called_once()

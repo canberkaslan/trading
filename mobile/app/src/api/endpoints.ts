@@ -7,10 +7,12 @@ import type {
   AgentDecision,
   AnalyzeJob,
   EvalResult,
+  Health,
   KillSwitchState,
   OrderListItem,
   PortfolioSnapshot,
   PriceSeries,
+  Readiness,
 } from './types';
 
 export const api = {
@@ -75,5 +77,8 @@ export const api = {
     apiClient.post('v1/notifications/test').json<{ status: string; sent: number }>(),
 
   // Health
-  health: () => apiClient.get('healthz').json<{ status: string }>(),
+  health: () => apiClient.get('healthz').json<Health>(),
+  // Readiness: broker/DB reachability + paper|live mode — feeds the
+  // global status banner.
+  readiness: () => apiClient.get('readyz').json<Readiness>(),
 };

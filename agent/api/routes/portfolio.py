@@ -79,6 +79,23 @@ def _load_snapshot_records() -> list[dict]:
     return records
 
 
+def _intraday_max_dd(history: dict) -> float:
+    """Max drawdown (<= 0, fraction) over today's intraday equity bars.
+    Alpaca returns parallel arrays; zero/None equity points (pre-open
+    padding) are skipped. Empty/malformed payload -> 0.0."""
+    equities = [
+        float(e) for e in (history.get("equity") or []) if e and float(e) > 0
+    ]
+    if len(equities) < 2:
+        return 0.0
+    peak = equities[0]
+    max_dd = 0.0
+    for eq in equities:
+        peak = max(peak, eq)
+        max_dd = min(max_dd, eq / peak - 1.0)
+    return round(max_dd, 6)
+
+
 @router.get("/snapshot", response_model=PortfolioSnapshot)
 async def get_snapshot(
     user: str = Depends(require_token),
@@ -88,6 +105,12 @@ async def get_snapshot(
     try:
         acct = alpaca.account()
         positions_raw = alpaca.list_positions()
+        # Intraday equity curve for today's max drawdown. Best-effort — a
+        # history hiccup must not take down the whole snapshot.
+        try:
+            intraday = alpaca.portfolio_history(period="1D", timeframe="5Min")
+        except Exception:
+            intraday = {}
     except Exception as e:
         raise HTTPException(502, f"alpaca_error: {e}") from e
     finally:
@@ -109,9 +132,16 @@ async def get_snapshot(
         for p in positions_raw
     ]
 
-    # Alpaca account.cash is settled cash; equity is portfolio_value
-    daily_pnl = acct.portfolio_value - 100_000.0  # paper starts at $100k; close enough for dev
-    daily_pnl_pct = daily_pnl / 100_000.0
+    # Alpaca account.cash is settled cash; equity is portfolio_value.
+    # Daily P&L baseline is last_equity (previous close) — NOT the $100k
+    # inception value, which reported cumulative P&L as "today's".
+    if acct.last_equity > 0:
+        daily_pnl = acct.portfolio_value - acct.last_equity
+        daily_pnl_pct = daily_pnl / acct.last_equity
+    else:
+        daily_pnl = 0.0
+        daily_pnl_pct = 0.0
+
     return PortfolioSnapshot(
         user_id=user,
         cash_usd=acct.cash,
@@ -119,7 +149,7 @@ async def get_snapshot(
         total_equity_usd=acct.portfolio_value,
         daily_pnl_usd=daily_pnl,
         daily_pnl_pct=daily_pnl_pct,
-        max_drawdown_today=0.0,  # computed once we have intraday equity series in DB
+        max_drawdown_today=_intraday_max_dd(intraday),
         timestamp_utc=datetime.now(timezone.utc),
     )
 

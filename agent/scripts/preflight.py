@@ -34,8 +34,14 @@ def _check_alpaca(failures: list[Failure]) -> None:
             # Check the RESOLVED base the client actually routes to (the env
             # var may be unset — the client defaults to paper).
             base = str(getattr(ac, "base_url", os.environ.get("ALPACA_BASE_URL", "")))
-        if "paper" not in base:
-            failures.append(("alpaca", f"base URL is NOT paper: {base!r}"))
+        # Assert routing matches the DECLARED mode, not hardcoded paper —
+        # otherwise go-live day turns this canary into a daily false alarm.
+        expected = os.environ.get("EXPECTED_TRADING_MODE", "paper").strip().lower()
+        is_paper = "paper" in base
+        if expected == "live" and is_paper:
+            failures.append(("alpaca", f"EXPECTED_TRADING_MODE=live but routing to paper: {base!r}"))
+        elif expected != "live" and not is_paper:
+            failures.append(("alpaca", f"base URL is NOT paper: {base!r} (EXPECTED_TRADING_MODE={expected})"))
         status = getattr(acct, "status", "")
         if status and str(status).upper() != "ACTIVE":
             failures.append(("alpaca", f"account status={status}"))

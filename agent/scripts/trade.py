@@ -42,7 +42,10 @@ from tradingagents_us.graph.pipeline import (  # noqa: E402
     propagate,
 )
 from tradingagents_us.risk.circuit_breaker import CircuitBreaker  # noqa: E402
-from tradingagents_us.risk.kill_switch import StaticKillSwitchReader  # noqa: E402
+from tradingagents_us.risk.kill_switch import (  # noqa: E402
+    CachedKillSwitchReader,
+    FileKillSwitchReader,
+)
 from tradingagents_us.risk.portfolio_limits import PortfolioContext, PortfolioLimits  # noqa: E402
 from tradingagents_us.risk.sizer import MarketContext, size_from_decision  # noqa: E402
 from tradingagents_us.schemas import AgentDecision, AgentReasoning  # noqa: E402
@@ -213,7 +216,10 @@ def main() -> int:
         existing_position_values_by_sector={},
         high_correlation_count=0,
     )
-    cb = CircuitBreaker(kill_switch=StaticKillSwitchReader("RUN"))  # type: ignore[arg-type]
+    # Real mobile kill switch (was a hardcoded RUN stub): the API writes
+    # KILL_SWITCH_PATH; PAUSE_NEW / FLATTEN_ALL blocks this trade at the
+    # circuit breaker. daily_run.sh additionally pre-checks + flattens.
+    cb = CircuitBreaker(kill_switch=CachedKillSwitchReader(FileKillSwitchReader()))
 
     # 3. Risk sizing -> TradeOrder
     order = size_from_decision(

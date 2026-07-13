@@ -120,6 +120,20 @@ export interface PortfolioSnapshot {
   timestamp_utc: string;
 }
 
+export type TradingMode = 'paper' | 'live';
+
+export interface Health {
+  status: string;
+  trading_mode: TradingMode;
+}
+
+export interface Readiness {
+  status: 'ok' | 'degraded';
+  alpaca: boolean;
+  db: boolean;
+  trading_mode: TradingMode;
+}
+
 export interface OrderListItem {
   order_id: string;
   decision_id: string;

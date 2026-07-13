@@ -15,6 +15,7 @@ def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("COGNITO_USER_POOL_ID", raising=False)
     monkeypatch.delenv("COGNITO_APP_CLIENT_ID", raising=False)
     monkeypatch.delenv("DEV_API_TOKEN", raising=False)
+    monkeypatch.delenv("ALLOW_UNVERIFIED_JWT", raising=False)
 
 
 async def _call(authorization: str | None = None) -> str:
@@ -57,19 +58,32 @@ async def test_cognito_path_requires_bearer(monkeypatch: pytest.MonkeyPatch) -> 
     assert exc.value.status_code == 401
 
 
-@pytest.mark.asyncio
-async def test_cognito_path_unsigned_fallback_extracts_sub(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When python-jose is missing the fallback parses claims unverified —
-    keeps local dev unblocked but never reaches production (CI pins jose)."""
-    monkeypatch.setenv("COGNITO_USER_POOL_ID", "us-east-1_dummy")
-    # Build a fake JWT: header.payload.signature
+def _fake_jwt() -> str:
     header = base64.urlsafe_b64encode(json.dumps({"alg": "RS256", "kid": "x"}).encode()).rstrip(b"=")
     payload = base64.urlsafe_b64encode(json.dumps({"sub": "user-1234"}).encode()).rstrip(b"=")
-    token = f"{header.decode()}.{payload.decode()}.fakesig"
+    return f"{header.decode()}.{payload.decode()}.fakesig"
 
-    # Pre-emptively block python-jose import to exercise the fallback
+
+@pytest.mark.asyncio
+async def test_cognito_missing_jose_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Production default: python-jose absent → fail closed (500), never trust
+    unsigned claims. Otherwise anyone could forge a `sub`."""
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", "us-east-1_dummy")
     import sys
     monkeypatch.setitem(sys.modules, "jose", None)
 
-    result = await _call(f"Bearer {token}")
+    with pytest.raises(HTTPException) as exc:
+        await _call(f"Bearer {_fake_jwt()}")
+    assert exc.value.status_code == 500
+
+
+@pytest.mark.asyncio
+async def test_cognito_unsigned_fallback_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Local dev may opt into the unverified parse with ALLOW_UNVERIFIED_JWT=1."""
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", "us-east-1_dummy")
+    monkeypatch.setenv("ALLOW_UNVERIFIED_JWT", "1")
+    import sys
+    monkeypatch.setitem(sys.modules, "jose", None)
+
+    result = await _call(f"Bearer {_fake_jwt()}")
     assert result == "user-1234"

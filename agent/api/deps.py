@@ -13,6 +13,7 @@ Auth modes (mutually exclusive, selected by env):
 from __future__ import annotations
 
 import os
+import secrets
 import time
 from functools import lru_cache
 from typing import Any
@@ -74,10 +75,16 @@ def _validate_cognito_jwt(token: str) -> str:
     try:
         from jose import jwt  # type: ignore[import-untyped]
         from jose.utils import base64url_decode  # noqa: F401  (used by jose)
-    except ImportError:
-        # Soft-fail in dev: still parse claims without signature check so
-        # the rest of the stack can wire up. Production deployments MUST
-        # have python-jose installed; the agent-ci pipeline pins it.
+    except ImportError as import_err:
+        # python-jose absent. In production (Cognito configured) this is a
+        # misconfiguration and we MUST fail closed rather than trust unsigned
+        # claims — otherwise anyone can forge a `sub`. Local dev may opt into
+        # the unverified parse with ALLOW_UNVERIFIED_JWT=1.
+        if os.environ.get("ALLOW_UNVERIFIED_JWT") != "1":
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "jwt verification unavailable (python-jose not installed)",
+            ) from import_err
         import base64
         import json
         try:
@@ -141,7 +148,10 @@ async def require_token(authorization: str | None = Header(default=None)) -> str
     if expected:
         if not authorization or not authorization.lower().startswith("bearer "):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing bearer token")
-        if authorization.split(" ", 1)[1].strip() != expected:
+        presented = authorization.split(" ", 1)[1].strip()
+        # Constant-time compare so an attacker can't recover the token byte by
+        # byte from response-timing differences.
+        if not secrets.compare_digest(presented, expected):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid token")
         return "dev-user"
 

@@ -33,13 +33,22 @@ app = FastAPI(
     description="AI-powered multi-agent trading system — mobile backend",
 )
 
-# CORS for Expo dev / web preview. Restrict in production.
+# CORS for Expo dev / web preview. Native mobile (fetch) and server-side
+# clients (curl) are unaffected by CORS — it only gates browser origins — so
+# tightening the allowlist costs nothing for the app while closing the
+# wildcard. Override on the box with CORS_ALLOW_ORIGINS (comma-separated).
+_DEFAULT_CORS_ORIGINS = "http://localhost:8081,http://localhost:19006,http://localhost:19000"
+_cors_origins = [
+    o.strip()
+    for o in os.environ.get("CORS_ALLOW_ORIGINS", _DEFAULT_CORS_ORIGINS).split(",")
+    if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 app.include_router(portfolio.router, prefix="/v1/portfolio", tags=["portfolio"])

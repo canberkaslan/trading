@@ -4,6 +4,18 @@ Survives context resets. Rule: never deploy decision-quality changes to the
 eval timer until the eval window closes. Commit as Canberk, no AI attribution.
 Each item: code → tests green → commit → deploy (OTA if mobile).
 
+## EVAL CLOSED — verdict GO (2026-07-13)
+Window closed at day 13/10. All hard gates passed:
+Sharpe 9.91 > 1.0 · MaxDD 1.04% < 15% · +5.9% vs SPY +3.0% · Sortino 23.65.
+Next phase = go-live prep (docs/go-live-checklist.md). NO real money is moved
+autonomously: user must open + fund their own live Alpaca account.
+
+### Pre-go-live safety work → branch `feat/pre-golive-safety` (NOT on main)
+Round-4 items 2/3/9/6 implemented + green (192 tests) but HIGH-blast on the
+live execution path. Held off main/deploy until drilled:
+GATE = drill kill-switch RUN/PAUSE_NEW/FLATTEN_ALL on paper, supervised, then
+merge → deploy. Undrilled execution code must not reach the running trader.
+
 ## Backlog
 - [x] **1. Charts tab** — backend `/v1/prices/{ticker}` (Polygon daily bars) + mobile area/line chart (react-native-svg). OTA. ✅
 - [x] **2. "Analiz Et" quick action** — portfolio positions + Charts button → deep-link Ask, auto-run. OTA. ✅

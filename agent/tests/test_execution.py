@@ -418,6 +418,14 @@ class TestBrokerStatusMapping:
         assert result.update.status == "NEEDS_RECONCILE"
         assert "held_for_review" in (result.update.error_message or "")
 
+    def test_stopped_and_suspended_are_live_not_rejected(self) -> None:
+        # 'stopped' = fill guaranteed, 'suspended' = parked but live — a
+        # REJECTED mapping would hide a position that WILL exist.
+        for raw in ("stopped", "suspended"):
+            cli = self._mock_client(raw)
+            result = submit_order(_order(), client=cli, config=ExecutionConfig(dry_run=False))
+            assert result.update.status == "NEEDS_RECONCILE", raw
+
 
 class TestDuplicateSubmission:
     def _mock_client(self, existing_status: str | None):
@@ -444,21 +452,105 @@ class TestDuplicateSubmission:
         cli.close = MagicMock()
         return cli
 
-    def test_live_duplicate_short_circuits(self) -> None:
-        # Same (ticker, date, side) already at the broker -> do NOT resubmit;
-        # surface the existing order instead. Not an error.
+    def test_live_duplicate_refuses_without_welding(self) -> None:
+        # Same (ticker, date, side) already live at the broker -> refuse the
+        # NEW order; the old order's broker id / fill data must NOT be
+        # written under this order_id (the original row already has them).
         cli = self._mock_client("filled")
         result = submit_order(_order(), client=cli, config=ExecutionConfig(dry_run=False))
         assert not result.submitted
         assert result.error is False
-        assert result.broker_order_id == "existing-broker-id"
-        assert result.update.status == "FILLED"
+        assert result.broker_order_id is None
+        assert result.update.status == "REJECTED"
+        assert result.update.filled_qty == 0
+        assert "existing-broker-id" in (result.update.error_message or "")
         assert any("duplicate" in r for r in (result.refusal_reasons or []))
         cli.submit_order.assert_not_called()
 
-    def test_cancelled_previous_attempt_allows_resubmit(self) -> None:
-        cli = self._mock_client("canceled")
+    def test_cancelled_previous_attempt_resubmits_with_fresh_key(self) -> None:
+        # Alpaca rejects any REUSED client_order_id (even for cancelled
+        # orders) — the retry must carry a suffixed key, not the same one.
+        cli = self._mock_client(None)
+        cancelled = MagicMock()
+        cancelled.id = "old-cancelled-id"
+        cancelled.status = "canceled"
+        cancelled.filled_qty = 0
+        cancelled.filled_avg_price = None
+        cli.get_order_by_client_order_id.side_effect = [cancelled, None]
         result = submit_order(_order(), client=cli, config=ExecutionConfig(dry_run=False))
         assert result.submitted
         assert result.broker_order_id == "fresh-broker-id"
-        cli.submit_order.assert_called_once()
+        sent_key = cli.submit_order.call_args.kwargs["client_order_id"]
+        assert sent_key.endswith("-r2")
+
+    def test_cancelled_after_partial_fill_needs_reconcile(self) -> None:
+        # Resubmitting the full quantity would double-buy the filled part.
+        cli = self._mock_client(None)
+        part = MagicMock()
+        part.id = "old-partial-id"
+        part.status = "canceled"
+        part.filled_qty = 4
+        part.filled_avg_price = 270.0
+        cli.get_order_by_client_order_id.side_effect = [part]
+        result = submit_order(_order(), client=cli, config=ExecutionConfig(dry_run=False))
+        assert not result.submitted
+        assert result.update.status == "NEEDS_RECONCILE"
+        cli.submit_order.assert_not_called()
+
+
+class TestRunDateKey:
+    def _mock_client(self):
+        cli = MagicMock()
+        acct = MagicMock()
+        acct.trading_blocked = False
+        acct.pattern_day_trader = False
+        cli.account.return_value = acct
+        broker = MagicMock()
+        broker.id = "oid"
+        broker.status = "accepted"
+        broker.filled_qty = 0
+        broker.filled_avg_price = None
+        cli.submit_order.return_value = broker
+        cli.get_order_by_client_order_id.return_value = None
+        cli.close = MagicMock()
+        return cli
+
+    def test_trade_date_overrides_decision_timestamp(self) -> None:
+        # Daily run starts 22:30 UTC; tail tickers finish AFTER midnight.
+        # The key must stay on the RUN's date or tomorrow's legitimate
+        # trade is silently blocked as a duplicate.
+        from datetime import date
+
+        cli = self._mock_client()
+        decision = _decision_with_pt().model_copy(
+            update={"timestamp_utc": datetime(2026, 7, 14, 0, 15, tzinfo=timezone.utc)}
+        )
+        submit_order(
+            _order(), client=cli,
+            config=ExecutionConfig(dry_run=False, decision_max_age_hours=0,
+                                   tp_headroom=0, stop_buffer=0),
+            decision=decision,
+            trade_date=date(2026, 7, 13),
+        )
+        sent_key = cli.submit_order.call_args.kwargs["client_order_id"]
+        assert sent_key == "tr-AAPL-20260713-BUY"
+
+    def test_bracket_legs_force_gtc(self) -> None:
+        # Day-TIF bracket legs expire at the close of entry day, leaving the
+        # position naked overnight — protective legs must be GTC.
+        cli = self._mock_client()
+        submit_order(
+            _order(), client=cli,
+            config=ExecutionConfig(dry_run=False, use_bracket=True),
+            decision=_decision_with_pt(),
+        )
+        sent = cli.submit_order.call_args.kwargs
+        assert "stop_loss_price" in sent
+        assert sent["time_in_force"] == "gtc"
+
+    def test_no_legs_stays_day(self) -> None:
+        cli = self._mock_client()
+        order = _order()
+        order = order.model_copy(update={"stop_loss": 0.0})
+        submit_order(order, client=cli, config=ExecutionConfig(dry_run=False, use_bracket=False))
+        assert cli.submit_order.call_args.kwargs["time_in_force"] == "day"

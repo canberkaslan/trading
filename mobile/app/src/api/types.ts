@@ -12,7 +12,8 @@ export type OrderStatus =
   | 'PARTIAL'
   | 'FILLED'
   | 'REJECTED'
-  | 'CANCELLED';
+  | 'CANCELLED'
+  | 'NEEDS_RECONCILE';
 export type KillSwitchState = 'RUN' | 'PAUSE_NEW' | 'FLATTEN_ALL';
 
 export interface AgentReasoning {

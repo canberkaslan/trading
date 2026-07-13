@@ -85,6 +85,15 @@ PYTHON=/opt/ai-trader/agent/.venv/bin/python
 
 # Local trade-log DB (sqlite on the box)
 TRADE_LOG_DB_URL=sqlite:////opt/ai-trader/agent/local.db
+
+# Kill-switch flag file — MUST be the same absolute path for the API
+# (writer) and the trading scripts (readers). Code defaults to the agent
+# root, but pin it explicitly so a relocated process can never split them.
+KILL_SWITCH_PATH=/opt/ai-trader/agent/kill_switch.state
+
+# Trading mode the preflight canary asserts against ('paper' | 'live').
+# Flip to live TOGETHER with ALPACA_BASE_URL on go-live day.
+EXPECTED_TRADING_MODE=paper
 EOF
   chmod 600 "${APP_DIR}/secrets.env"
 else
@@ -112,7 +121,8 @@ fi
 echo "==> installing systemd units"
 for unit in ai-trader.service ai-trader.timer ai-trader-alert.service \
             ai-trader-preflight.service ai-trader-preflight.timer \
-            ai-trader-backup.service ai-trader-backup.timer; do
+            ai-trader-backup.service ai-trader-backup.timer \
+            ai-trader-api.service eval-report.service eval-report.timer; do
   sudo cp "${APP_DIR}/deploy/hetzner/${unit}" "/etc/systemd/system/${unit}"
 done
 sudo systemctl daemon-reload

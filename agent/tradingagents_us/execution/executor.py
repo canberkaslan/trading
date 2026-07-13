@@ -45,8 +45,8 @@ _BROKER_STATUS_MAP: dict[str, OrderStatus] = {
     "expired": "CANCELLED",
     "replaced": "CANCELLED",
     "rejected": "REJECTED",
-    "stopped": "REJECTED",
-    "suspended": "REJECTED",
+    # NOTE: 'stopped' (fill guaranteed) and 'suspended' (parked but live)
+    # deliberately absent -> NEEDS_RECONCILE; both denote a live order.
 }
 
 # Broker statuses after which the previous attempt never became a working
@@ -89,6 +89,7 @@ def submit_order(
     config: ExecutionConfig = ExecutionConfig(),
     decision: AgentDecision | None = None,
     current_price: float | None = None,
+    trade_date: date | None = None,
 ) -> ExecutionResult:
     """Push a risk-approved TradeOrder to Alpaca (paper or live).
 
@@ -106,6 +107,11 @@ def submit_order(
         current_price: live last-trade price. Required when tp_headroom or
             stop_buffer guards are enabled (default ON). Pass None to skip
             those guards (e.g. backtests).
+        trade_date: the RUN's trading date for the idempotency key. The
+            daily run computes it once at start (22:30 UTC) — decision
+            timestamps stamped after midnight UTC must not shift the key
+            to the next day. Falls back to the decision date (mobile
+            approve path), then the order's submitted_at date.
     """
     refusals: list[str] = []
     now = datetime.now(timezone.utc)
@@ -209,39 +215,86 @@ def submit_order(
                 refusal_reasons=refusals,
             )
 
-        # Idempotency: client_order_id derived from (ticker, decision date,
-        # side) — stable across process restarts. The old derivation hashed
+        # Idempotency: client_order_id derived from (ticker, RUN date, side)
+        # — stable across process restarts. The old derivation hashed
         # per-run UUIDs, so a crashed-and-retried run double-submitted.
-        trade_date = (decision.timestamp_utc if decision else order.submitted_at_utc).date()
-        client_oid = derive_client_order_id(order.ticker, trade_date, order.side)
+        # The run date is threaded in by the caller; decision timestamps
+        # stamped after midnight UTC must not shift the key a day forward.
+        run_date = trade_date or (
+            decision.timestamp_utc if decision else order.submitted_at_utc
+        ).date()
+        base_key = derive_client_order_id(order.ticker, run_date, order.side)
 
-        # Duplicate check: if a previous attempt already placed this
-        # (ticker, date, side) order, surface IT instead of resubmitting.
-        existing = cli.get_order_by_client_order_id(client_oid)
-        if existing is not None and existing.status.lower() not in _RESUBMITTABLE:
+        # Duplicate / resubmit resolution. A prior LIVE order for this key
+        # refuses cleanly (no resubmit); a cancelled/rejected/expired prior
+        # attempt bumps to a fresh suffixed key (Alpaca rejects any reused
+        # client_order_id as non-unique, even for cancelled orders).
+        client_oid: str | None = None
+        existing_live = None
+        for attempt in range(1, 6):
+            key = base_key if attempt == 1 else f"{base_key}-r{attempt}"
+            found = cli.get_order_by_client_order_id(key)
+            if found is None:
+                client_oid = key
+                break
+            if found.status.lower() not in _RESUBMITTABLE:
+                existing_live = found
+                break
+            if found.filled_qty > 0:
+                # cancelled-after-partial-fill: resubmitting the full qty
+                # would double-buy the filled part — human must resolve.
+                reason = (
+                    f"needs_reconcile: prior attempt {key} is {found.status} "
+                    f"with filled_qty={found.filled_qty:g}"
+                )
+                return ExecutionResult(
+                    submitted=False,
+                    dry_run=False,
+                    update=OrderUpdate(
+                        order_id=order.order_id, status="NEEDS_RECONCILE",
+                        error_message=reason, timestamp_utc=now,
+                    ),
+                    refusal_reasons=[reason],
+                )
+
+        if existing_live is not None:
+            # Refuse as duplicate — and do NOT weld the old order's broker id
+            # or fill data onto THIS order's trade-log rows; the original
+            # order row already carries the real fill.
             log.info(
-                "duplicate client_order_id %s already at broker (status=%s) — not resubmitting",
-                client_oid, existing.status,
+                "duplicate: %s already live at broker (id=%s status=%s) — refusing resubmit",
+                base_key, existing_live.id, existing_live.status,
+            )
+            reason = (
+                f"duplicate_client_order_id: {base_key} already at broker "
+                f"(broker_order_id={existing_live.id}, status={existing_live.status})"
             )
             return ExecutionResult(
                 submitted=False,
                 dry_run=False,
                 update=OrderUpdate(
-                    order_id=order.order_id,
-                    status=_map_broker_status(existing.status),
-                    filled_qty=int(existing.filled_qty),
-                    avg_fill_price=existing.filled_avg_price,
-                    error_message=f"duplicate: client_order_id {client_oid} already at broker",
-                    timestamp_utc=now,
+                    order_id=order.order_id, status="REJECTED",
+                    error_message=reason, timestamp_utc=now,
                 ),
-                broker_order_id=existing.id,
-                refusal_reasons=[f"duplicate_client_order_id: {client_oid}"],
+                refusal_reasons=[reason],
+            )
+
+        if client_oid is None:
+            reason = f"needs_reconcile: >4 prior cancelled attempts for {base_key}"
+            return ExecutionResult(
+                submitted=False,
+                dry_run=False,
+                update=OrderUpdate(
+                    order_id=order.order_id, status="NEEDS_RECONCILE",
+                    error_message=reason, timestamp_utc=now,
+                ),
+                refusal_reasons=[reason],
             )
 
         # Broker-side protective legs. Stop and take-profit attach
         # INDEPENDENTLY (bracket when both, OTO when one) — a missing
         # price_target must never drop the stop leg with it: broker-side
-        # GTC stops are the only protection that survives box loss.
+        # stops are the only protection that survives box loss.
         bracket_kwargs: dict = {}
         if config.use_bracket and order.side == "BUY":
             tp = config.take_profit_price or (decision.price_target if decision else None)
@@ -256,7 +309,9 @@ def submit_order(
             qty=order.quantity,
             side=order.side.lower(),  # type: ignore[arg-type]
             order_type="limit" if order.order_type == "LIMIT" else "market",
-            time_in_force="day",
+            # Protective legs MUST survive overnight: day-TIF bracket legs
+            # expire at the close of entry day, leaving the position naked.
+            time_in_force="gtc" if bracket_kwargs else "day",
             limit_price=order.limit_price,
             client_order_id=client_oid,
             **bracket_kwargs,

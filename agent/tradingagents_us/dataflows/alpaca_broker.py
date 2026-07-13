@@ -221,9 +221,10 @@ class AlpacaClient:
         elif has_sl:
             body["order_class"] = "oto"
         if has_tp or has_sl:
-            # Bracket / OTO requires day or gtc; auto-promote 'day' is fine
-            # but for multi-day PT targets gtc is the right default.
-            if body["time_in_force"] not in ("day", "gtc"):
+            # Protective legs must survive overnight: a day-TIF bracket
+            # expires its children at the close of entry day, leaving the
+            # position naked. Promote everything to gtc when legs attach.
+            if body["time_in_force"] != "gtc":
                 body["time_in_force"] = "gtc"
         if has_tp:
             body["take_profit"] = {"limit_price": str(take_profit_price)}

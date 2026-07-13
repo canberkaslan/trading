@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
-"""Pre-run kill-switch check — the enforcement half of the mobile switch.
+"""Pre-run kill-switch check — the daily-run backstop of the mobile switch.
 
-daily_run.sh calls this BEFORE burning any LLM tokens. Exit codes:
+The IMMEDIATE FLATTEN_ALL execution lives in the API handler (POST
+/v1/orders/kill-switch runs the flatten at flip time). This script is the
+backstop: daily_run.sh calls it BEFORE burning any LLM tokens, so an armed
+switch is always enforced even if the API-side attempt failed. Exit codes:
 
     0   RUN          — proceed with the daily run
-    75  PAUSE_NEW    — skip the run (no new entries; broker-side GTC stops
-                       keep managing existing positions)
-    76  FLATTEN_ALL  — all positions closed + open orders cancelled here;
-                       skip the run
-    1   unexpected error — caller should fail safe (skip the run + alert)
+    75  PAUSE_NEW    — skip the run (no new entries)
+    76  FLATTEN_ALL  — close orders submitted (or book already flat); skip
+    1   flatten failed / partial — caller fail-safes (skip run + alert)
 
-FLATTEN_ALL is executed exactly as the mobile app promises: cancel all open
-orders, then liquidate every position at market via Alpaca's
-close_all_positions. The state file is left as-is — flipping back to RUN is
-a deliberate human action in the app, and re-running flatten on an already
-flat book is a no-op.
-
-Every action is recorded in the kill_switch_events audit table and pushed
-to registered devices (best-effort).
+Per-position failures inside Alpaca's 207 multi-status response count as
+FAILURE: cancel_orders=true has already cancelled protective stop legs, so
+a partially-flattened book reported as flat would hide an unprotected
+position. The state file is left as-is; on days the book is already flat
+the audit row is written but no push is sent (no alert fatigue).
 """
 
 from __future__ import annotations
@@ -70,20 +68,6 @@ def _notify(title: str, body: str) -> None:
         print(f"kill_check: notify failed: {exc}", file=sys.stderr)
 
 
-def _flatten() -> str:
-    """Cancel open orders, liquidate all positions. Returns a summary string."""
-    from tradingagents_us.dataflows.alpaca_broker import AlpacaClient
-
-    with AlpacaClient() as cli:
-        positions = cli.list_positions()
-        if not positions:
-            cli.cancel_all_orders()
-            return "book already flat; open orders cancelled"
-        tickers = ", ".join(f"{p.symbol}:{p.qty:g}" for p in positions)
-        results = cli.close_all_positions(cancel_orders=True)
-        return f"closed {len(positions)} position(s) [{tickers}]; broker responses: {len(results)}"
-
-
 def main() -> int:
     state = FileKillSwitchReader().read()
     print(f"kill_check: state={state}")
@@ -95,9 +79,11 @@ def main() -> int:
         _audit("PAUSE_NEW", "daily run skipped (no new entries)")
         return EXIT_PAUSE
 
-    # FLATTEN_ALL
+    # FLATTEN_ALL — backstop execution (API already tried at flip time)
+    from tradingagents_us.execution.flatten import flatten_all
+
     try:
-        summary = _flatten()
+        result = flatten_all()
     except Exception as exc:
         detail = f"flatten FAILED: {exc}"
         print(f"kill_check: {detail}", file=sys.stderr)
@@ -105,9 +91,19 @@ def main() -> int:
         _notify("🛑 FLATTEN_ALL failed", detail)
         return 1
 
-    print(f"kill_check: FLATTEN_ALL executed — {summary}")
-    _audit("FLATTEN_ALL", f"executed: {summary}")
-    _notify("🛑 FLATTEN_ALL executed", summary)
+    if not result.ok:
+        # Partial flatten: failed symbols may be open WITHOUT stop legs.
+        print(f"kill_check: {result.summary}", file=sys.stderr)
+        _audit("FLATTEN_ALL", f"partial: {result.summary}")
+        _notify("🛑 FLATTEN_ALL PARTIAL — positions may be unprotected", result.summary)
+        return 1
+
+    print(f"kill_check: FLATTEN_ALL — {result.summary}")
+    _audit("FLATTEN_ALL", ("noop: " if result.noop else "executed: ") + result.summary)
+    if not result.noop:
+        # Push only when something actually got closed — a still-armed
+        # switch on an already-flat book must not page every day.
+        _notify("🛑 FLATTEN_ALL executed", result.summary)
     return EXIT_FLATTENED
 
 

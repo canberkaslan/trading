@@ -12,6 +12,8 @@ from sqlalchemy import select
 
 from tradingagents_us.dataflows.alpaca_broker import AlpacaClient
 from tradingagents_us.execution import ExecutionConfig, submit_order
+from tradingagents_us.execution.flatten import flatten_all
+from tradingagents_us.risk.kill_switch import FileKillSwitchReader, default_kill_switch_path
 from tradingagents_us.schemas import KillSwitchState, OrderUpdate, TradeOrder
 from tradingagents_us.storage import TradeLogRepository
 from tradingagents_us.storage.models import AgentDecisionRow, TradeOrderRow
@@ -141,6 +143,19 @@ async def approve_order(
     """Mobile-approved submission. Re-runs the executor with dry_run=False so
     the stale + entry sanity guards re-evaluate against the *current* market
     state — not the one captured when the order was held."""
+    # Kill switch gates THIS path too — an armed PAUSE_NEW/FLATTEN_ALL must
+    # block a stale Approve tap the same way it blocks the daily run.
+    ks_state = FileKillSwitchReader().read()
+    if ks_state != "RUN":
+        try:
+            repo.append_kill_event(
+                state=ks_state, actor=user, source="api",
+                detail=f"blocked approve of order {order_id}",
+            )
+        except Exception:
+            pass
+        raise HTTPException(409, f"kill switch is {ks_state} — approvals disabled")
+
     # Load order + decision rows
     with repo.session() as s:
         order_row = s.get(TradeOrderRow, order_id)
@@ -255,21 +270,71 @@ async def set_kill_switch(
     single-box file backend is fine while API + trader share a host; the
     DynamoDB reader exists for a future multi-host split.
     """
-    flag_path = os.environ.get("KILL_SWITCH_PATH", "./kill_switch.state")
-    with open(flag_path, "w") as f:
+    flag_path = default_kill_switch_path()
+    # Atomic replace — a crash mid-write must never leave a truncated file
+    # (the reader treats empty as PAUSE_NEW, but never risk it).
+    tmp_path = f"{flag_path}.tmp"
+    with open(tmp_path, "w") as f:
         f.write(body.state)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp_path, flag_path)
+
     try:
         repo.append_kill_event(state=body.state, actor=user, source="api")
     except Exception:
         pass  # audit is best-effort; the state write above already took effect
-    return {"state": body.state, "path": flag_path}
+
+    # FLATTEN_ALL executes NOW, not at the next 22:30 UTC run — the switch
+    # is a panic button, hours of latency defeats it. kill_check remains
+    # the daily backstop if this attempt fails.
+    flatten_summary: str | None = None
+    if body.state == "FLATTEN_ALL":
+        try:
+            result = flatten_all()
+        except Exception as exc:
+            try:
+                repo.append_kill_event(
+                    state="FLATTEN_ALL", actor=user, source="api",
+                    detail=f"immediate flatten FAILED: {exc}",
+                )
+            except Exception:
+                pass
+            raise HTTPException(
+                502,
+                f"kill switch armed, but immediate flatten failed: {exc} — "
+                f"the daily-run backstop will retry",
+            ) from exc
+        try:
+            repo.append_kill_event(
+                state="FLATTEN_ALL", actor=user, source="api",
+                detail=("noop: " if result.noop else ("executed: " if result.ok else "partial: "))
+                + result.summary,
+            )
+        except Exception:
+            pass
+        if not result.ok:
+            raise HTTPException(
+                502,
+                f"kill switch armed, but flatten was PARTIAL: {result.summary}",
+            )
+        flatten_summary = result.summary
+
+    resp = {"state": body.state, "path": flag_path}
+    if flatten_summary is not None:
+        resp["flatten"] = flatten_summary
+    return resp
 
 
 @router.get("/kill-switch")
 async def get_kill_switch(user: str = Depends(require_token)) -> dict[str, str]:
-    flag_path = os.environ.get("KILL_SWITCH_PATH", "./kill_switch.state")
+    flag_path = default_kill_switch_path()
     try:
         with open(flag_path) as f:
-            return {"state": f.read().strip() or "RUN"}
+            raw = f.read().strip()
     except FileNotFoundError:
         return {"state": "RUN"}
+    # Mirror FileKillSwitchReader: an armed-then-emptied file fails safe.
+    if raw not in ("RUN", "PAUSE_NEW", "FLATTEN_ALL"):
+        return {"state": "PAUSE_NEW"}
+    return {"state": raw}

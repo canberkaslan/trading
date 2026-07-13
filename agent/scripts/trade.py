@@ -23,7 +23,7 @@ import logging
 import os
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 # Make package + vendor importable when running as a script
@@ -165,6 +165,14 @@ def main() -> int:
     from sqlalchemy import create_engine
     repo = None if args.no_persist else TradeLogRepository(engine=create_engine(args.db_url, future=True))
 
+    # The RUN's trading date anchors the idempotency key. Decisions finishing
+    # after midnight UTC must not shift the key to the next day (silent
+    # duplicate-block tomorrow / missed dedupe on retry).
+    try:
+        run_date = date.fromisoformat(args.date)
+    except ValueError:
+        run_date = datetime.now(timezone.utc).date()
+
     # 1. Get decision
     if args.use_cached:
         log.info("loading cached decision for %s", args.ticker)
@@ -255,7 +263,8 @@ def main() -> int:
         from tradingagents_us.schemas import OrderUpdate
 
         guard_config = ExecutionConfig(dry_run=True, refuse_outside_hours=False)
-        guard_result = submit_order(order, config=guard_config, decision=decision, current_price=current_price)
+        guard_result = submit_order(order, config=guard_config, decision=decision,
+                                    current_price=current_price, trade_date=run_date)
         if not guard_result.dry_run or guard_result.update.status == "REJECTED":
             # Guards failed even in dry-run -> reject before persisting
             if repo is not None:
@@ -278,7 +287,8 @@ def main() -> int:
         return 0
 
     config = ExecutionConfig(dry_run=not args.submit, refuse_outside_hours=args.refuse_outside_hours)
-    result = submit_order(order, config=config, decision=decision, current_price=current_price)
+    result = submit_order(order, config=config, decision=decision,
+                          current_price=current_price, trade_date=run_date)
 
     if repo is not None:
         repo.save_order(order, broker_order_id=result.broker_order_id)

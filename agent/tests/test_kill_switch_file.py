@@ -31,10 +31,22 @@ class TestFileKillSwitchReader:
         f.write_text("  PAUSE_NEW\n")
         assert FileKillSwitchReader(path=str(f)).read() == "PAUSE_NEW"
 
-    def test_empty_file_is_run(self, tmp_path: Path) -> None:
+    def test_empty_file_fails_to_pause(self, tmp_path: Path) -> None:
+        # An armed-then-truncated file (crashed write, ENOSPC) must never
+        # fail open — "never armed" is the missing-file case, not this one.
         f = tmp_path / "kill.state"
         f.write_text("")
-        assert FileKillSwitchReader(path=str(f)).read() == "RUN"
+        assert FileKillSwitchReader(path=str(f)).read() == "PAUSE_NEW"
+
+    def test_default_path_is_absolute_not_cwd(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Writer (API, hand-startable from anywhere) and readers must agree
+        # on one file — the default anchors to the agent root, never CWD.
+        monkeypatch.delenv("KILL_SWITCH_PATH", raising=False)
+        from tradingagents_us.risk.kill_switch import default_kill_switch_path
+
+        path = default_kill_switch_path()
+        assert path.startswith("/")
+        assert path.endswith("agent/kill_switch.state")
 
     def test_garbage_fails_to_pause(self, tmp_path: Path) -> None:
         f = tmp_path / "kill.state"
@@ -81,21 +93,26 @@ class TestKillCheckExitCodes:
         audit.assert_called_once()
         assert audit.call_args.args[0] == "PAUSE_NEW"
 
-    def test_flatten_closes_positions_and_exits_76(
+    def _flatten_cli(self, positions, close_results):
+        cli = MagicMock()
+        cli.list_positions.return_value = positions
+        cli.close_all_positions.return_value = close_results
+        cli.close = MagicMock()
+        return cli
+
+    def _pos(self, symbol: str):
+        pos = MagicMock()
+        pos.symbol = symbol
+        pos.qty = 10.0
+        return pos
+
+    def test_flatten_submits_and_exits_76(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         kc = self._run_main(tmp_path, monkeypatch, "FLATTEN_ALL")
-
-        pos = MagicMock()
-        pos.symbol, pos.qty = "AAPL", 33.0
-        cli = MagicMock()
-        cli.list_positions.return_value = [pos]
-        cli.close_all_positions.return_value = [{"symbol": "AAPL", "status": 200}]
-        cli.__enter__ = MagicMock(return_value=cli)
-        cli.__exit__ = MagicMock(return_value=False)
-
+        cli = self._flatten_cli([self._pos("AAPL")], [{"symbol": "AAPL", "status": 200}])
         with (
-            patch("tradingagents_us.dataflows.alpaca_broker.AlpacaClient", return_value=cli),
+            patch("tradingagents_us.execution.flatten.AlpacaClient", return_value=cli),
             patch.object(kc, "_audit") as audit,
             patch.object(kc, "_notify") as notify,
         ):
@@ -105,14 +122,65 @@ class TestKillCheckExitCodes:
         assert "executed" in audit.call_args.args[1]
         notify.assert_called_once()
 
+    def test_partial_flatten_fails_loudly(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # One halted symbol inside Alpaca's 207 body: its stop leg is already
+        # cancelled, so reporting success would hide an UNPROTECTED position.
+        kc = self._run_main(tmp_path, monkeypatch, "FLATTEN_ALL")
+        cli = self._flatten_cli(
+            [self._pos("AAPL"), self._pos("NVDA")],
+            [{"symbol": "AAPL", "status": 200}, {"symbol": "NVDA", "status": 403}],
+        )
+        with (
+            patch("tradingagents_us.execution.flatten.AlpacaClient", return_value=cli),
+            patch.object(kc, "_audit") as audit,
+            patch.object(kc, "_notify") as notify,
+        ):
+            assert kc.main() == 1  # fail-safe: daily_run skips + alerts
+        assert "partial" in audit.call_args.args[1]
+        assert "NVDA" in notify.call_args.args[1]
+
+    def test_position_missing_from_response_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        kc = self._run_main(tmp_path, monkeypatch, "FLATTEN_ALL")
+        cli = self._flatten_cli(
+            [self._pos("AAPL"), self._pos("MSFT")],
+            [{"symbol": "AAPL", "status": 200}],  # MSFT never mentioned
+        )
+        with (
+            patch("tradingagents_us.execution.flatten.AlpacaClient", return_value=cli),
+            patch.object(kc, "_audit"),
+            patch.object(kc, "_notify") as notify,
+        ):
+            assert kc.main() == 1
+        assert "MSFT" in notify.call_args.args[1]
+
+    def test_already_flat_is_quiet_noop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A still-armed switch on a flat book must not page every day.
+        kc = self._run_main(tmp_path, monkeypatch, "FLATTEN_ALL")
+        cli = self._flatten_cli([], [])
+        with (
+            patch("tradingagents_us.execution.flatten.AlpacaClient", return_value=cli),
+            patch.object(kc, "_audit") as audit,
+            patch.object(kc, "_notify") as notify,
+        ):
+            assert kc.main() == 76
+        cli.cancel_all_orders.assert_called_once()
+        assert "noop" in audit.call_args.args[1]
+        notify.assert_not_called()
+
     def test_flatten_broker_error_exits_one(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         kc = self._run_main(tmp_path, monkeypatch, "FLATTEN_ALL")
         cli = MagicMock()
-        cli.__enter__ = MagicMock(side_effect=RuntimeError("alpaca down"))
+        cli.list_positions.side_effect = RuntimeError("alpaca down")
         with (
-            patch("tradingagents_us.dataflows.alpaca_broker.AlpacaClient", return_value=cli),
+            patch("tradingagents_us.execution.flatten.AlpacaClient", return_value=cli),
             patch.object(kc, "_audit") as audit,
             patch.object(kc, "_notify"),
         ):

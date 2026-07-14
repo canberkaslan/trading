@@ -6,6 +6,8 @@ import { useRouter } from 'expo-router';
 
 import { useDecisions } from '@/api/hooks';
 import { colors } from '@/theme/colors';
+import { ErrorState } from '@/components/ErrorState';
+import { EmptyState } from '@/components/EmptyState';
 import type { Rating } from '@/api/types';
 
 const RATING_COLOR: Record<Rating, string> = {
@@ -30,7 +32,7 @@ function formatTs(iso: string): string {
 
 export default function AgentsScreen() {
   const router = useRouter();
-  const { data, isLoading, isError, isFetching } = useDecisions({ limit: 25 });
+  const { data, isLoading, isError, isFetching, refetch } = useDecisions({ limit: 25 });
   const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -57,14 +59,9 @@ export default function AgentsScreen() {
         {isLoading ? (
           <Text style={styles.muted}>Loading…</Text>
         ) : isError ? (
-          <Text style={styles.err}>Backend unreachable</Text>
+          <ErrorState onRetry={refetch} />
         ) : !data || data.length === 0 ? (
-          <View style={styles.empty}>
-            <Text style={styles.muted}>No decisions yet.</Text>
-            <Text style={styles.muted}>
-              Run: ./.venv/bin/python -m scripts.trade --ticker AAPL --use-cached
-            </Text>
-          </View>
+          <EmptyState title="Henüz karar yok" hint="Ajan kararları günlük çalışmada üretilir ve burada listelenir." />
         ) : (
           data.map((d) => {
             const isOpen = !!expanded[d.decision_id];
@@ -136,6 +133,4 @@ const styles = StyleSheet.create({
   reasoningText: { color: colors.textSecondary, fontSize: 12, lineHeight: 17 },
   detailLink: { color: colors.accent, fontSize: 13, fontWeight: '600', marginTop: 4 },
   muted: { color: colors.textMuted, fontSize: 12 },
-  err: { color: colors.danger, fontSize: 14 },
-  empty: { padding: 24, backgroundColor: colors.surface, borderRadius: 12, gap: 6 },
 });

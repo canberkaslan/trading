@@ -7,6 +7,8 @@ import { useRouter } from 'expo-router';
 
 import { usePortfolio } from '@/api/hooks';
 import { colors } from '@/theme/colors';
+import { ErrorState } from '@/components/ErrorState';
+import { EmptyState } from '@/components/EmptyState';
 
 function formatUsd(n: number): string {
   return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -19,7 +21,7 @@ function formatPct(n: number): string {
 export default function PortfolioScreen() {
   const { t } = useTranslation();
   const router = useRouter();
-  const { data, isLoading, isError, error, isFetching } = usePortfolio();
+  const { data, isLoading, isError, error, isFetching, refetch } = usePortfolio();
   const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
 
@@ -40,13 +42,7 @@ export default function PortfolioScreen() {
   if (isError || !data) {
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
-        <View style={styles.center}>
-          <Text style={styles.err}>Backend unreachable</Text>
-          <Text style={styles.muted}>{String(error)}</Text>
-          <Text style={[styles.muted, { marginTop: 12 }]}>
-            Start it: cd agent && ./.venv/bin/uvicorn api.main:app --port 8000
-          </Text>
-        </View>
+        <ErrorState detail={error} onRetry={refetch} />
       </SafeAreaView>
     );
   }
@@ -75,9 +71,7 @@ export default function PortfolioScreen() {
 
         <Text style={styles.section}>{t('portfolio.positions')}</Text>
         {data.positions.length === 0 ? (
-          <View style={styles.placeholder}>
-            <Text style={styles.placeholderText}>No open positions.</Text>
-          </View>
+          <EmptyState title="Açık pozisyon yok" hint="Günlük çalışma yeni pozisyon açtığında burada görünür." />
         ) : (
           data.positions.map((p) => {
             const c = p.unrealized_pnl >= 0 ? colors.up : colors.down;
@@ -120,10 +114,7 @@ const styles = StyleSheet.create({
   heroChange: { fontSize: 16, marginTop: 8, fontWeight: '600' },
   muted: { color: colors.textMuted, marginTop: 4 },
   timestamp: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
-  err: { color: colors.danger, fontSize: 16, marginBottom: 8 },
   section: { color: colors.textPrimary, fontSize: 18, fontWeight: '600', paddingHorizontal: 24, marginTop: 16 },
-  placeholder: { margin: 24, padding: 24, backgroundColor: colors.surface, borderRadius: 12 },
-  placeholderText: { color: colors.textMuted, textAlign: 'center' },
   positionCard: { marginHorizontal: 24, marginTop: 12, padding: 16, backgroundColor: colors.surface, borderRadius: 12 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   posTicker: { color: colors.textPrimary, fontSize: 18, fontWeight: '600' },

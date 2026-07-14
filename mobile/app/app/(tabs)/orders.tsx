@@ -6,6 +6,8 @@ import { useRouter } from 'expo-router';
 
 import { usePendingOrders } from '@/api/hooks';
 import { colors } from '@/theme/colors';
+import { ErrorState } from '@/components/ErrorState';
+import { EmptyState } from '@/components/EmptyState';
 
 function formatUsd(n: number): string {
   return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -13,7 +15,7 @@ function formatUsd(n: number): string {
 
 export default function OrdersScreen() {
   const router = useRouter();
-  const { data, isLoading, isError, isFetching } = usePendingOrders();
+  const { data, isLoading, isError, isFetching, refetch } = usePendingOrders();
   const qc = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
 
@@ -37,17 +39,11 @@ export default function OrdersScreen() {
         {isLoading ? (
           <Text style={styles.muted}>Loading…</Text>
         ) : isError ? (
-          <Text style={styles.err}>Backend unreachable</Text>
+          <ErrorState onRetry={refetch} />
         ) : !data || data.length === 0 ? (
-          <View style={styles.empty}>
-            <Text style={styles.muted}>No pending orders.</Text>
-            <Text style={styles.muted}>
-              Generate one: cd agent && ./.venv/bin/python -m scripts.trade --ticker AAPL --use-cached --hold
-            </Text>
-          </View>
+          <EmptyState title="Onay bekleyen emir yok" hint="Günlük çalışma bir emri onaya düşürdüğünde burada görünür." />
         ) : (
           data.map((o) => {
-            const notional = o.quantity * (o.stop_loss || 0); // rough proxy; full price in detail
             const sideColor = o.side === 'BUY' ? colors.up : colors.down;
             return (
               <Pressable
@@ -81,6 +77,4 @@ const styles = StyleSheet.create({
   side: { fontSize: 15, fontWeight: '700' },
   muted: { color: colors.textMuted, fontSize: 12, marginTop: 6 },
   tapHint: { color: colors.accent, fontSize: 12, marginTop: 8 },
-  err: { color: colors.danger, fontSize: 14 },
-  empty: { padding: 24, backgroundColor: colors.surface, borderRadius: 12, gap: 6 },
 });

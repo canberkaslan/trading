@@ -95,3 +95,8 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - 7a eval scorecard, 7b /analyze, 7c Ask tab + OTA
 - 7e Charts, 7f Analiz-Et deep-link, 7g Settings kill-switch+health, snapshot logger
 - cost-opt routing on branch (opt-in, not deployed)
+
+## Daily loop 2026-07-16 (eval CLOSED — GO 15/10d)
+- [x] scorecard: Sortino + Calmar render (were typed+returned, never shown) → OTA preview (f885455)
+- Live: verdict GO, Sharpe 9.47, MaxDD 1.04%, +6.3% vs SPY +2.9%; equity $107.7k, net P&L +$8.3k
+- Next: item 7 home equity-curve dashboard (backend /v1/portfolio/history done, absent from endpoints.ts)

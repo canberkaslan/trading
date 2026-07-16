@@ -127,7 +127,9 @@ export default function SettingsScreen() {
               </View>
               <View style={styles.evalGrid}>
                 <EvalStat label="Sharpe" value={evalData.sharpe.toFixed(2)} gate={`>${evalData.gate_sharpe}`} />
+                <EvalStat label="Sortino" value={evalData.sortino.toFixed(2)} gate="downside" />
                 <EvalStat label="Max DD" value={`${evalData.max_dd_pct.toFixed(1)}%`} gate={`<${evalData.gate_max_dd_pct}%`} />
+                <EvalStat label="Calmar" value={evalData.calmar.toFixed(2)} gate="getiri/DD" />
                 <EvalStat label="Getiri" value={`${evalData.total_return_pct >= 0 ? '+' : ''}${evalData.total_return_pct.toFixed(1)}%`} gate={`${evalData.days}g`} />
                 {evalData.spy_return_pct != null ? (
                   <EvalStat

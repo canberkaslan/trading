@@ -9,14 +9,7 @@ import { usePortfolio } from '@/api/hooks';
 import { colors } from '@/theme/colors';
 import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
-
-function formatUsd(n: number): string {
-  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-function formatPct(n: number): string {
-  return `${(n * 100).toFixed(2)}%`;
-}
+import { formatUsd, formatPct } from '@/utils/format';
 
 export default function PortfolioScreen() {
   const { t } = useTranslation();
@@ -58,7 +51,7 @@ export default function PortfolioScreen() {
           <Text style={styles.heroLabel}>{t('portfolio.totalEquity')}</Text>
           <Text style={styles.heroValue}>{formatUsd(data.total_equity_usd)}</Text>
           <Text style={[styles.heroChange, { color: pnlColor }]}>
-            {data.daily_pnl_usd >= 0 ? '+' : ''}{formatUsd(data.daily_pnl_usd)} ({formatPct(data.daily_pnl_pct)})
+            {formatUsd(data.daily_pnl_usd, { signed: true })} ({formatPct(data.daily_pnl_pct, { signed: true })})
           </Text>
           <Text style={styles.muted}>
             Cash: {formatUsd(data.cash_usd)}  •  {isFetching ? 'updating…' : 'live'}
@@ -84,8 +77,8 @@ export default function PortfolioScreen() {
                 <View style={styles.row}>
                   <Text style={styles.posTicker}>{p.ticker}</Text>
                   <Text style={[styles.posPnl, { color: c }]}>
-                    {p.unrealized_pnl >= 0 ? '+' : ''}{formatUsd(p.unrealized_pnl)}
-                    {'  '}({formatPct(p.unrealized_pnl_pct)})
+                    {formatUsd(p.unrealized_pnl, { signed: true })}
+                    {'  '}({formatPct(p.unrealized_pnl_pct, { signed: true })})
                   </Text>
                 </View>
                 <View style={styles.row}>

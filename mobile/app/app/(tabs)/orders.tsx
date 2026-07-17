@@ -8,10 +8,7 @@ import { usePendingOrders } from '@/api/hooks';
 import { colors } from '@/theme/colors';
 import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
-
-function formatUsd(n: number): string {
-  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
+import { formatUsd } from '@/utils/format';
 
 export default function OrdersScreen() {
   const router = useRouter();

@@ -7,11 +7,8 @@ import { useApproveOrder, usePendingOrders, useRejectOrder } from '@/api/hooks';
 import { api } from '@/api/endpoints';
 import { colors } from '@/theme/colors';
 import { authenticateBiometric } from '@/auth/biometric';
+import { formatUsd } from '@/utils/format';
 import type { AgentDecision, OrderListItem } from '@/api/types';
-
-function formatUsd(n: number | null | undefined): string {
-  return n == null ? '—' : `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
 
 export default function ApproveOrderScreen() {
   const { orderId } = useLocalSearchParams<{ orderId: string }>();

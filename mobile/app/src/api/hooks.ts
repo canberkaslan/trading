@@ -18,6 +18,16 @@ export function usePortfolio() {
   });
 }
 
+export function usePortfolioHistory(period = '1M') {
+  return useQuery({
+    queryKey: ['portfolio', 'history', period],
+    queryFn: () => api.getPortfolioHistory(period),
+    refetchInterval: REFETCH_INTERVAL_MS * 6, // the daily curve barely moves intraday
+    staleTime: 30_000,
+    retry: false,
+  });
+}
+
 export function useDecisions(params?: { ticker?: string; limit?: number }) {
   return useQuery({
     queryKey: ['agents', 'decisions', params],

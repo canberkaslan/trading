@@ -6,6 +6,7 @@ import { apiClient } from './client';
 import type {
   AgentDecision,
   AnalyzeJob,
+  EquityHistory,
   EvalResult,
   Health,
   KillSwitchState,
@@ -18,6 +19,11 @@ import type {
 export const api = {
   // Portfolio
   getPortfolio: () => apiClient.get('v1/portfolio/snapshot').json<PortfolioSnapshot>(),
+
+  // Cleaned daily equity curve — same series/cutoff as the eval scorecard, so
+  // the home chart and the GO/NO-GO numbers agree.
+  getPortfolioHistory: (period = '1M') =>
+    apiClient.get(`v1/portfolio/history?period=${period}`).json<EquityHistory>(),
 
   // Agents
   listDecisions: (params?: { ticker?: string; limit?: number }) => {

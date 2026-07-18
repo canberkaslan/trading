@@ -110,6 +110,23 @@ export interface Position {
   opened_at_utc: string;
 }
 
+export interface EquityPoint {
+  date: string;
+  equity: number;
+  return_pct: number;
+  drawdown_pct: number;
+}
+
+export interface EquityHistory {
+  period: string;
+  days: number;
+  start_equity: number;
+  end_equity: number;
+  total_return_pct: number;
+  max_drawdown_pct: number;
+  points: EquityPoint[];
+}
+
 export interface PortfolioSnapshot {
   user_id: string;
   cash_usd: number;

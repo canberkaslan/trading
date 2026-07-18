@@ -5,22 +5,27 @@ import { useState, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 
-import { usePortfolio } from '@/api/hooks';
+import { usePortfolio, useEval, usePortfolioHistory } from '@/api/hooks';
 import { colors } from '@/theme/colors';
 import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
+import { EquityChart } from '@/components/EquityChart';
 import { formatUsd, formatPct } from '@/utils/format';
+import { verdictTheme } from '@/utils/equity';
 
 export default function PortfolioScreen() {
   const { t } = useTranslation();
   const router = useRouter();
   const { data, isLoading, isError, error, isFetching, refetch } = usePortfolio();
+  const { data: evalData } = useEval('1M');
+  const { data: history } = usePortfolioHistory('1M');
   const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await queryClient.invalidateQueries({ queryKey: ['portfolio'] });
+    await queryClient.invalidateQueries({ queryKey: ['eval'] });
     setRefreshing(false);
   }, [queryClient]);
 
@@ -41,6 +46,7 @@ export default function PortfolioScreen() {
   }
 
   const pnlColor = data.daily_pnl_usd >= 0 ? colors.up : colors.down;
+  const badge = evalData ? verdictTheme(evalData.verdict, colors) : null;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -48,7 +54,16 @@ export default function PortfolioScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
       >
         <View style={styles.hero}>
-          <Text style={styles.heroLabel}>{t('portfolio.totalEquity')}</Text>
+          <View style={styles.heroTop}>
+            <Text style={styles.heroLabel}>{t('portfolio.totalEquity')}</Text>
+            {badge && evalData ? (
+              <View style={[styles.badge, { borderColor: badge.color }]}>
+                <Text style={[styles.badgeText, { color: badge.color }]}>
+                  {badge.emoji} {evalData.verdict}
+                </Text>
+              </View>
+            ) : null}
+          </View>
           <Text style={styles.heroValue}>{formatUsd(data.total_equity_usd)}</Text>
           <Text style={[styles.heroChange, { color: pnlColor }]}>
             {formatUsd(data.daily_pnl_usd, { signed: true })} ({formatPct(data.daily_pnl_pct, { signed: true })})
@@ -61,6 +76,8 @@ export default function PortfolioScreen() {
             {new Date(data.timestamp_utc).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
           </Text>
         </View>
+
+        {history && history.points.length > 1 ? <EquityChart history={history} /> : null}
 
         <Text style={styles.section}>{t('portfolio.positions')}</Text>
         {data.positions.length === 0 ? (
@@ -102,6 +119,9 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   hero: { padding: 24 },
+  heroTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  badge: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 4 },
+  badgeText: { fontSize: 13, fontWeight: '700', letterSpacing: 0.5 },
   heroLabel: { color: colors.textSecondary, fontSize: 14 },
   heroValue: { color: colors.textPrimary, fontSize: 36, fontWeight: '700', marginTop: 4 },
   heroChange: { fontSize: 16, marginTop: 8, fontWeight: '600' },

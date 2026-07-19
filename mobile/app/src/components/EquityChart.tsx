@@ -3,9 +3,10 @@ import { View, Text, StyleSheet, useWindowDimensions } from 'react-native';
 import type { EquityHistory } from '@/api/types';
 import { colors } from '@/theme/colors';
 import { formatUsd, formatPct } from '@/utils/format';
-import { equityScale, barHeight, worstDrawdown } from '@/utils/equity';
+import { equityScale, barHeight, worstDrawdown, ddIntensity } from '@/utils/equity';
 
 const CHART_H = 120;
+const RIBBON_H = 8;
 
 /**
  * Home equity curve — drawn with plain RN Views (no native chart lib) so it
@@ -51,6 +52,22 @@ export function EquityChart({ history }: { history: EquityHistory }) {
         ))}
       </View>
 
+      {/* Drawdown ribbon — each cell tinted by its depth relative to the worst
+          point, so underwater stretches read at a glance under the curve. */}
+      <View style={[styles.ribbon, { width: chartW, height: RIBBON_H }]}>
+        {pts.map((p) => (
+          <View
+            key={p.date}
+            style={{
+              width: slot,
+              height: RIBBON_H,
+              backgroundColor: colors.down,
+              opacity: 0.12 + 0.68 * ddIntensity(p.drawdown_pct, maxDd),
+            }}
+          />
+        ))}
+      </View>
+
       <View style={styles.footRow}>
         <Text style={styles.muted}>{formatUsd(history.start_equity)}</Text>
         <Text style={styles.muted}>
@@ -74,6 +91,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.surfaceElevated,
   },
+  ribbon: { flexDirection: 'row', marginTop: 3, borderRadius: 2, overflow: 'hidden' },
   footRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 },
   muted: { color: colors.textMuted, fontSize: 12 },
 });

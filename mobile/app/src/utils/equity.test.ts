@@ -1,7 +1,7 @@
 import { describe, it, expect } from '@jest/globals';
 
 import type { EquityPoint } from '@/api/types';
-import { verdictTheme, equityScale, barHeight, worstDrawdown } from './equity';
+import { verdictTheme, equityScale, barHeight, worstDrawdown, ddIntensity } from './equity';
 
 const palette = { up: '#22c55e', down: '#ef4444', warning: '#f59e0b' };
 
@@ -66,5 +66,29 @@ describe('worstDrawdown', () => {
 
   it('returns the most negative drawdown', () => {
     expect(worstDrawdown([pt(100, -0.5), pt(99, -1.2), pt(101, -0.3)])).toBe(-1.2);
+  });
+});
+
+describe('ddIntensity', () => {
+  it('is 0 at no drawdown', () => {
+    expect(ddIntensity(0, -5)).toBe(0);
+  });
+
+  it('is 1 at the series worst', () => {
+    expect(ddIntensity(-5, -5)).toBe(1);
+  });
+
+  it('scales proportionally between', () => {
+    expect(ddIntensity(-2.5, -5)).toBe(0.5);
+  });
+
+  it('guards a flat series (worst >= 0) to 0', () => {
+    expect(ddIntensity(0, 0)).toBe(0);
+    expect(ddIntensity(-1, 0)).toBe(0);
+  });
+
+  it('clamps a positive/over-range value into [0, 1]', () => {
+    expect(ddIntensity(0.3, -5)).toBe(0);
+    expect(ddIntensity(-6, -5)).toBe(1);
   });
 });

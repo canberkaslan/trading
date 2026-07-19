@@ -11,14 +11,15 @@ import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
 import { EquityChart } from '@/components/EquityChart';
 import { formatUsd, formatPct } from '@/utils/format';
-import { verdictTheme } from '@/utils/equity';
+import { verdictTheme, PERIODS, type Period } from '@/utils/equity';
 
 export default function PortfolioScreen() {
   const { t } = useTranslation();
   const router = useRouter();
   const { data, isLoading, isError, error, isFetching, refetch } = usePortfolio();
-  const { data: evalData } = useEval('1M');
-  const { data: history } = usePortfolioHistory('1M');
+  const [period, setPeriod] = useState<Period>('1M');
+  const { data: evalData } = useEval(period);
+  const { data: history } = usePortfolioHistory(period);
   const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
 
@@ -26,6 +27,7 @@ export default function PortfolioScreen() {
     setRefreshing(true);
     await queryClient.invalidateQueries({ queryKey: ['portfolio'] });
     await queryClient.invalidateQueries({ queryKey: ['eval'] });
+    await queryClient.invalidateQueries({ queryKey: ['portfolio', 'history'] });
     setRefreshing(false);
   }, [queryClient]);
 
@@ -75,6 +77,23 @@ export default function PortfolioScreen() {
             Son güncelleme:{' '}
             {new Date(data.timestamp_utc).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
           </Text>
+        </View>
+
+        <View style={styles.periodRow}>
+          {PERIODS.map((p) => {
+            const active = p === period;
+            return (
+              <Pressable
+                key={p}
+                onPress={() => setPeriod(p)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                style={[styles.periodPill, active && styles.periodPillActive]}
+              >
+                <Text style={[styles.periodText, active && styles.periodTextActive]}>{p}</Text>
+              </Pressable>
+            );
+          })}
         </View>
 
         {history && history.points.length > 1 ? <EquityChart history={history} /> : null}
@@ -127,6 +146,11 @@ const styles = StyleSheet.create({
   heroChange: { fontSize: 16, marginTop: 8, fontWeight: '600' },
   muted: { color: colors.textMuted, marginTop: 4 },
   timestamp: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
+  periodRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 24, marginTop: 8 },
+  periodPill: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 999, backgroundColor: colors.surface },
+  periodPillActive: { backgroundColor: colors.surfaceElevated },
+  periodText: { color: colors.textMuted, fontSize: 13, fontWeight: '600' },
+  periodTextActive: { color: colors.textPrimary },
   section: { color: colors.textPrimary, fontSize: 18, fontWeight: '600', paddingHorizontal: 24, marginTop: 16 },
   positionCard: { marginHorizontal: 24, marginTop: 12, padding: 16, backgroundColor: colors.surface, borderRadius: 12 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },

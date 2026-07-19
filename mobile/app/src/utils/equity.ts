@@ -75,3 +75,22 @@ export function worstDrawdown(points: EquityPoint[]): number {
   }
   return dd;
 }
+
+/** Selectable lookback windows for the home equity curve. Each value is a
+ * period string the backend forwards straight to Alpaca's portfolio_history;
+ * the EVAL_START_DATE cutoff trims anything before the eval window. */
+export const PERIODS = ['1M', '3M', '6M'] as const;
+export type Period = (typeof PERIODS)[number];
+
+/**
+ * Relative depth (0..1) of a point's drawdown against the series worst, for
+ * shading the drawdown ribbon. 0 at no drawdown, 1 at the worst point. Guards
+ * a flat series (worst === 0) to 0 so the ribbon renders empty, not NaN.
+ * `worst` is expected negative (as from {@link worstDrawdown}); the ratio is
+ * clamped to [0, 1] so a stray positive value never over/under-shades.
+ */
+export function ddIntensity(drawdown_pct: number, worst: number): number {
+  if (worst >= 0) return 0;
+  const r = drawdown_pct / worst;
+  return r <= 0 ? 0 : r > 1 ? 1 : r;
+}

@@ -5,13 +5,13 @@ import { useState, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 
-import { usePortfolio, useEval, usePortfolioHistory } from '@/api/hooks';
+import { usePortfolio, useEval, usePortfolioHistory, usePrices } from '@/api/hooks';
 import { colors } from '@/theme/colors';
 import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
 import { EquityChart } from '@/components/EquityChart';
 import { formatUsd, formatPct } from '@/utils/format';
-import { verdictTheme, PERIODS, type Period } from '@/utils/equity';
+import { verdictTheme, PERIODS, PERIOD_DAYS, type Period } from '@/utils/equity';
 
 export default function PortfolioScreen() {
   const { t } = useTranslation();
@@ -20,6 +20,7 @@ export default function PortfolioScreen() {
   const [period, setPeriod] = useState<Period>('1M');
   const { data: evalData } = useEval(period);
   const { data: history } = usePortfolioHistory(period);
+  const { data: spy } = usePrices('SPY', PERIOD_DAYS[period]);
   const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
 
@@ -28,6 +29,7 @@ export default function PortfolioScreen() {
     await queryClient.invalidateQueries({ queryKey: ['portfolio'] });
     await queryClient.invalidateQueries({ queryKey: ['eval'] });
     await queryClient.invalidateQueries({ queryKey: ['portfolio', 'history'] });
+    await queryClient.invalidateQueries({ queryKey: ['prices', 'SPY'] });
     setRefreshing(false);
   }, [queryClient]);
 
@@ -96,7 +98,7 @@ export default function PortfolioScreen() {
           })}
         </View>
 
-        {history && history.points.length > 1 ? <EquityChart history={history} /> : null}
+        {history && history.points.length > 1 ? <EquityChart history={history} spy={spy} /> : null}
 
         <Text style={styles.section}>{t('portfolio.positions')}</Text>
         {data.positions.length === 0 ? (

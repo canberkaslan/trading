@@ -7,7 +7,7 @@
  * lib — same constraint as the price chart on the Charts tab.
  */
 
-import type { EquityPoint } from '@/api/types';
+import type { Bar, EquityPoint } from '@/api/types';
 
 export type Verdict = 'GO' | 'NO-GO' | 'TOO EARLY';
 
@@ -93,4 +93,68 @@ export function ddIntensity(drawdown_pct: number, worst: number): number {
   if (worst >= 0) return 0;
   const r = drawdown_pct / worst;
   return r <= 0 ? 0 : r > 1 ? 1 : r;
+}
+
+/** Trading-day bar counts to request per lookback window, so the SPY overlay
+ * covers the same span as the equity curve before date-alignment trims it. */
+export const PERIOD_DAYS: Record<Period, number> = { '1M': 23, '3M': 66, '6M': 132 };
+
+/** A rebased benchmark point, in the portfolio's dollar terms. */
+export interface SpyPoint {
+  date: string;
+  value: number;
+}
+
+/**
+ * Rebase SPY daily closes onto the portfolio's starting equity so the two
+ * curves share a dollar baseline and overlay honestly (same $ at day 0, then
+ * each grows on its own return). Bars are first trimmed to the equity window
+ * [firstDate, lastDate] — Polygon pads the request with extra history — and
+ * anchored to the first surviving bar's close. Returns [] if either series is
+ * empty or the anchor close is non-positive.
+ */
+export function rebaseSpy(bars: Bar[], equityPoints: EquityPoint[]): SpyPoint[] {
+  const first = equityPoints[0];
+  const last = equityPoints[equityPoints.length - 1];
+  if (!first || !last || !bars.length) return [];
+  const inWindow = bars.filter((b) => b.t >= first.date && b.t <= last.date);
+  const anchor = inWindow[0]?.c;
+  if (!anchor || anchor <= 0) return [];
+  const base = first.equity;
+  return inWindow.map((b) => ({ date: b.t, value: base * (b.c / anchor) }));
+}
+
+/**
+ * Total return (%) of a rebased benchmark series over its window, from the
+ * first and last point. Null on an empty or zero-base series.
+ */
+export function spyReturnPct(points: SpyPoint[]): number | null {
+  const a = points[0];
+  const b = points[points.length - 1];
+  if (!a || !b || a.value <= 0) return null;
+  return (b.value / a.value - 1) * 100;
+}
+
+/** Alpha (excess return, in percentage points) = portfolio − benchmark. Null
+ * when the benchmark return is unavailable, so callers hide the chip rather
+ * than show a misleading 0. */
+export function alphaPct(portfolioReturnPct: number, benchmarkReturnPct: number | null): number | null {
+  if (benchmarkReturnPct == null) return null;
+  return portfolioReturnPct - benchmarkReturnPct;
+}
+
+/**
+ * Min/max spanning BOTH the equity curve and a rebased benchmark overlay, so
+ * neither series clips when drawn against a shared scale. Falls back to the
+ * equity-only scale when there is no overlay.
+ */
+export function combinedScale(points: EquityPoint[], spy: SpyPoint[]): EquityScale {
+  const base = equityScale(points);
+  if (!spy.length) return base;
+  let { min, max } = base;
+  for (const p of spy) {
+    if (p.value < min) min = p.value;
+    if (p.value > max) max = p.value;
+  }
+  return { min, max, span: max - min || 1 };
 }

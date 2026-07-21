@@ -37,23 +37,10 @@ export default function TradeApproveScreen() {
               <Text style={styles.muted}>Size: {(decision.suggested_size_pct * 100).toFixed(2)}% of portfolio</Text>
             </View>
 
-            <View style={styles.actions}>
-              <Pressable
-                style={[styles.btn, styles.btnSecondary]}
-                onPress={() => router.back()}
-              >
-                <Text style={styles.btnSecondaryText}>Reject</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.btn, styles.btnPrimary]}
-                onPress={() => {
-                  // TODO(5d): biometric -> POST /v1/orders/{order_id}/approve
-                  router.back();
-                }}
-              >
-                <Text style={styles.btnPrimaryText}>Approve (TBD)</Text>
-              </Pressable>
-            </View>
+            <Text style={styles.note}>
+              Bu sadece son karar detayıdır. Onay/red işlemi, emir bekleyen listeye
+              düştüğünde Emirler sekmesinden yapılır.
+            </Text>
 
             <Text style={styles.section}>Portfolio Manager output</Text>
             <Text style={styles.body}>
@@ -91,12 +78,7 @@ const styles = StyleSheet.create({
   headlineValue: { color: colors.textPrimary, fontSize: 24, fontWeight: '700' },
   row: { flexDirection: 'row', gap: 16, marginTop: 8 },
   muted: { color: colors.textMuted, fontSize: 12 },
-  actions: { flexDirection: 'row', gap: 12, marginTop: 16 },
-  btn: { flex: 1, padding: 14, borderRadius: 8, alignItems: 'center' },
-  btnPrimary: { backgroundColor: colors.up },
-  btnPrimaryText: { color: '#000', fontWeight: '700' },
-  btnSecondary: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.textMuted },
-  btnSecondaryText: { color: colors.textPrimary, fontWeight: '600' },
+  note: { color: colors.textMuted, fontSize: 12, lineHeight: 18, marginTop: 16 },
   section: { color: colors.textPrimary, fontSize: 16, fontWeight: '600', marginTop: 24, marginBottom: 8 },
   body: { color: colors.textSecondary, fontSize: 13, lineHeight: 20 },
 });

@@ -6,14 +6,14 @@ import { useEffect, useState } from 'react';
 import { useApproveOrder, usePendingOrders, useRejectOrder } from '@/api/hooks';
 import { api } from '@/api/endpoints';
 import { colors } from '@/theme/colors';
-import { authenticateBiometric } from '@/auth/biometric';
+import { authenticate } from '@/auth/biometric';
 import { formatUsd } from '@/utils/format';
 import type { AgentDecision, OrderListItem } from '@/api/types';
 
 export default function ApproveOrderScreen() {
   const { orderId } = useLocalSearchParams<{ orderId: string }>();
   const router = useRouter();
-  const { data: orders } = usePendingOrders();
+  const { data: orders, isLoading: ordersLoading } = usePendingOrders();
   const approve = useApproveOrder();
   const reject = useRejectOrder();
   const [decision, setDecision] = useState<AgentDecision | null>(null);
@@ -34,13 +34,26 @@ export default function ApproveOrderScreen() {
 
   if (!orderId) return null;
 
+  // Push deep-links open this screen before the pending list has loaded; showing
+  // "not in pending list" during that race falsely tells the user the order is gone.
+  if (!order && ordersLoading) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top']}>
+        <View style={styles.center}>
+          <ActivityIndicator color={colors.accent} />
+          <Text style={styles.muted}>Emir yükleniyor…</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   if (!order) {
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
         <View style={styles.center}>
-          <Text style={styles.muted}>Order not in pending list anymore.</Text>
+          <Text style={styles.muted}>Bu emir artık bekleyen listesinde değil.</Text>
           <Pressable onPress={() => router.back()} style={styles.btnSecondary}>
-            <Text style={styles.btnSecondaryText}>Back</Text>
+            <Text style={styles.btnSecondaryText}>Geri</Text>
           </Pressable>
         </View>
       </SafeAreaView>
@@ -48,9 +61,15 @@ export default function ApproveOrderScreen() {
   }
 
   const handleApprove = async () => {
-    const ok = await authenticateBiometric(`Approve ${order.side} ${order.quantity} ${order.ticker}`);
-    if (!ok) {
-      Alert.alert('Biometric required', 'Cannot approve without authentication.');
+    const { success, mode } = await authenticate(
+      `${order.side} ${order.quantity} ${order.ticker} onayla`,
+    );
+    if (!success) {
+      const msg =
+        mode === 'none'
+          ? 'Cihazınızda ekran kilidi (Face/Touch ID veya şifre) tanımlı değil. Emir onayı için lütfen bir cihaz kilidi kurun.'
+          : 'Kimlik doğrulama olmadan emir onaylanamaz.';
+      Alert.alert('Doğrulama gerekli', msg);
       return;
     }
     try {
@@ -119,7 +138,7 @@ export default function ApproveOrderScreen() {
             onPress={handleApprove}
           >
             {submitting ? <ActivityIndicator color="#000" /> : (
-              <Text style={styles.btnPrimaryText}>Approve via FaceID</Text>
+              <Text style={styles.btnPrimaryText}>Doğrula ve Onayla</Text>
             )}
           </Pressable>
         </View>

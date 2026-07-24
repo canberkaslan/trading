@@ -5,7 +5,10 @@ export const colors = {
 
   textPrimary: '#ffffff',
   textSecondary: '#a3a3a3',
-  textMuted: '#666666',
+  // WCAG AA (4.5:1) on all app backgrounds — #666 was 3.4:1 (fail).
+  // #949494 → 5.0:1 on the lightest surface (#262626), 6.5:1 on #0a0a0a,
+  // still visibly dimmer than textSecondary. Guarded by utils/contrast.test.ts.
+  textMuted: '#949494',
 
   // P&L colors — US/TR convention (green=up, red=down)
   up: '#22c55e',

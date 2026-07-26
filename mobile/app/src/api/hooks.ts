@@ -28,6 +28,16 @@ export function usePortfolioHistory(period = '1M') {
   });
 }
 
+export function useConcentration() {
+  return useQuery({
+    queryKey: ['portfolio', 'concentration'],
+    queryFn: api.getConcentration,
+    refetchInterval: REFETCH_INTERVAL_MS * 3, // concentration shifts with fills, not ticks
+    staleTime: 15_000,
+    retry: false,
+  });
+}
+
 export function useDecisions(params?: { ticker?: string; limit?: number }) {
   return useQuery({
     queryKey: ['agents', 'decisions', params],

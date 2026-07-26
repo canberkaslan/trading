@@ -5,13 +5,25 @@ import { useState, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 
-import { usePortfolio, useEval, usePortfolioHistory, usePrices } from '@/api/hooks';
+import { usePortfolio, useEval, usePortfolioHistory, usePrices, useConcentration } from '@/api/hooks';
 import { colors } from '@/theme/colors';
 import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
 import { EquityChart } from '@/components/EquityChart';
 import { formatUsd, formatPct } from '@/utils/format';
 import { verdictTheme, PERIODS, PERIOD_DAYS, type Period } from '@/utils/equity';
+import {
+  sectorAllocation,
+  topWeightTone,
+  diversificationLabel,
+  type Tone,
+} from '@/utils/concentration';
+
+const TONE_COLORS: Record<Tone, string> = {
+  up: colors.up,
+  warning: colors.warning,
+  down: colors.down,
+};
 
 export default function PortfolioScreen() {
   const { t } = useTranslation();
@@ -21,6 +33,7 @@ export default function PortfolioScreen() {
   const { data: evalData } = useEval(period);
   const { data: history } = usePortfolioHistory(period);
   const { data: spy } = usePrices('SPY', PERIOD_DAYS[period]);
+  const { data: concentration } = useConcentration();
   const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
 
@@ -100,6 +113,65 @@ export default function PortfolioScreen() {
 
         {history && history.points.length > 1 ? <EquityChart history={history} spy={spy} /> : null}
 
+        {(() => {
+          const sectors = sectorAllocation(data.positions, data.total_equity_usd);
+          if (!concentration && sectors.length === 0) return null;
+          const maxWeight = sectors[0]?.weightPct ?? 0;
+          const div = concentration ? diversificationLabel(concentration.effective_n) : null;
+          const topTone = concentration ? topWeightTone(concentration.top_weight_pct) : 'up';
+          return (
+            <View style={styles.riskCard}>
+              <Text style={styles.cardTitle}>Risk & Dağılım</Text>
+              {concentration ? (
+                <View style={styles.statRow}>
+                  <View style={styles.stat}>
+                    <Text style={styles.statLabel}>Çeşitlilik</Text>
+                    <Text style={[styles.statValue, div ? { color: TONE_COLORS[div.tone] } : null]}>
+                      {div ? div.label : '—'}
+                    </Text>
+                    <Text style={styles.statSub}>{concentration.effective_n.toFixed(1)} etkin isim</Text>
+                  </View>
+                  <View style={styles.stat}>
+                    <Text style={styles.statLabel}>En yüksek</Text>
+                    <Text style={[styles.statValue, { color: TONE_COLORS[topTone] }]}>
+                      {formatPct(concentration.top_weight_pct / 100)}
+                    </Text>
+                    <Text style={styles.statSub}>tek isim</Text>
+                  </View>
+                  <View style={styles.stat}>
+                    <Text style={styles.statLabel}>İlk 3</Text>
+                    <Text style={styles.statValue}>{formatPct(concentration.top3_weight_pct / 100)}</Text>
+                    <Text style={styles.statSub}>toplam ağırlık</Text>
+                  </View>
+                </View>
+              ) : null}
+
+              {sectors.map((s) => (
+                <View key={s.label} style={styles.sectorRow}>
+                  <View style={styles.sectorHeader}>
+                    <Text style={styles.sectorLabel}>{s.label}</Text>
+                    <Text style={styles.sectorWeight}>{formatPct(s.weightPct / 100)}</Text>
+                  </View>
+                  <View style={styles.barTrack}>
+                    <View
+                      style={[
+                        styles.barFill,
+                        { width: `${maxWeight > 0 ? (s.weightPct / maxWeight) * 100 : 0}%` },
+                      ]}
+                    />
+                  </View>
+                </View>
+              ))}
+
+              {concentration && concentration.flags.length > 0 ? (
+                <Text style={styles.flagText}>
+                  ⚠︎ {concentration.flags.length} isim %10 tek-isim sınırının üzerinde
+                </Text>
+              ) : null}
+            </View>
+          );
+        })()}
+
         <Text style={styles.section}>{t('portfolio.positions')}</Text>
         {data.positions.length === 0 ? (
           <EmptyState title="Açık pozisyon yok" hint="Günlük çalışma yeni pozisyon açtığında burada görünür." />
@@ -154,6 +226,20 @@ const styles = StyleSheet.create({
   periodText: { color: colors.textMuted, fontSize: 13, fontWeight: '600' },
   periodTextActive: { color: colors.textPrimary },
   section: { color: colors.textPrimary, fontSize: 18, fontWeight: '600', paddingHorizontal: 24, marginTop: 16 },
+  riskCard: { marginHorizontal: 24, marginTop: 16, padding: 16, backgroundColor: colors.surface, borderRadius: 12 },
+  cardTitle: { color: colors.textPrimary, fontSize: 16, fontWeight: '600', marginBottom: 8 },
+  statRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4, marginBottom: 12 },
+  stat: { flex: 1 },
+  statLabel: { color: colors.textMuted, fontSize: 12 },
+  statValue: { color: colors.textPrimary, fontSize: 17, fontWeight: '700', marginTop: 2 },
+  statSub: { color: colors.textMuted, fontSize: 11, marginTop: 1 },
+  sectorRow: { marginTop: 10 },
+  sectorHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
+  sectorLabel: { color: colors.textSecondary, fontSize: 13 },
+  sectorWeight: { color: colors.textPrimary, fontSize: 13, fontWeight: '600' },
+  barTrack: { height: 6, backgroundColor: colors.surfaceElevated, borderRadius: 999, overflow: 'hidden' },
+  barFill: { height: 6, backgroundColor: colors.accent, borderRadius: 999 },
+  flagText: { color: colors.warning, fontSize: 12, marginTop: 12 },
   positionCard: { marginHorizontal: 24, marginTop: 12, padding: 16, backgroundColor: colors.surface, borderRadius: 12 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   posTicker: { color: colors.textPrimary, fontSize: 18, fontWeight: '600' },

@@ -6,6 +6,7 @@ import { apiClient } from './client';
 import type {
   AgentDecision,
   AnalyzeJob,
+  Concentration,
   EquityHistory,
   EvalResult,
   Health,
@@ -24,6 +25,11 @@ export const api = {
   // the home chart and the GO/NO-GO numbers agree.
   getPortfolioHistory: (period = '1M') =>
     apiClient.get(`v1/portfolio/history?period=${period}`).json<EquityHistory>(),
+
+  // Concentration risk (HHI, effective_n, per-name > 10% flags) — read-only,
+  // same series the weekly eval report eyeballs.
+  getConcentration: () =>
+    apiClient.get('v1/portfolio/concentration').json<Concentration>(),
 
   // Agents
   listDecisions: (params?: { ticker?: string; limit?: number }) => {

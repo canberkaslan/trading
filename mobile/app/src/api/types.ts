@@ -138,6 +138,25 @@ export interface PortfolioSnapshot {
   timestamp_utc: string;
 }
 
+export interface ConcentrationTrendPoint {
+  ts: string;
+  n_positions: number;
+  top_weight_pct: number;
+  equity: number;
+}
+
+export interface Concentration {
+  n_positions: number;
+  gross_exposure_pct: number;
+  cash_pct: number;
+  top_weight_pct: number;
+  top3_weight_pct: number;
+  hhi: number;
+  effective_n: number;
+  flags: string[];
+  trend: ConcentrationTrendPoint[];
+}
+
 export type TradingMode = 'paper' | 'live';
 
 export interface Health {

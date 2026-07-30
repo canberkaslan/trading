@@ -20,9 +20,11 @@ Endpoints:
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from .deps import get_alpaca, get_repo
 from .routes import agents, analyze, eval, notifications, orders, portfolio, prices
@@ -58,6 +60,17 @@ app.include_router(analyze.router, prefix="/v1/analyze", tags=["analyze"])
 app.include_router(prices.router, prefix="/v1/prices", tags=["prices"])
 app.include_router(eval.router, prefix="/v1/eval", tags=["eval"])
 app.include_router(notifications.router, prefix="/v1/notifications", tags=["notifications"])
+
+
+_STATIC = Path(__file__).resolve().parent / "static"
+
+
+@app.get("/dashboard", include_in_schema=False)
+async def dashboard() -> FileResponse:
+    """Web dashboard. The HTML itself is public (no data in it); every data
+    call it makes goes through the bearer-token API. Token is entered once in
+    the page and kept in localStorage — never embedded here."""
+    return FileResponse(_STATIC / "dashboard.html", media_type="text/html")
 
 
 def _trading_mode() -> str:

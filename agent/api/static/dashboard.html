@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Trader — Dashboard</title>
+<style>
+  :root{
+    color-scheme: dark;
+    --bg:#101216; --card:#181b22; --card2:#1f232c; --line:#262b35;
+    --ink:#f2f3f5; --ink2:#aab0bc; --ink3:#6b7280;
+    --s1:#3987e5; --s2:#d95926;           /* series: AI / SPY (CVD-validated) */
+    --good:#0ca30c; --bad:#e66767; --warn:#fab219;
+    --r:16px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--bg);color:var(--ink);
+    font-family:-apple-system,"SF Pro Text",Inter,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  body{padding:22px 18px 60px;max-width:1060px;margin:0 auto}
+  .num{font-variant-numeric:tabular-nums}
+  header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px}
+  header h1{font-size:19px;font-weight:650;letter-spacing:.2px}
+  header .sub{color:var(--ink3);font-size:12.5px}
+  .pill{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:650;
+    padding:6px 13px;border-radius:999px;border:1px solid var(--line);background:var(--card)}
+  .pill .dot{width:8px;height:8px;border-radius:50%}
+  .pill.go{color:#7bd97b;border-color:#1d4d1d}.pill.go .dot{background:var(--good)}
+  .pill.nogo{color:var(--bad);border-color:#5b2727}.pill.nogo .dot{background:var(--bad)}
+  .pill.wait{color:var(--warn);border-color:#5b4a17}.pill.wait .dot{background:var(--warn)}
+  .spacer{flex:1}
+  button.rf{background:var(--card);border:1px solid var(--line);color:var(--ink2);
+    padding:7px 14px;border-radius:10px;font-size:12.5px;cursor:pointer}
+  button.rf:hover{color:var(--ink);border-color:#39404d}
+
+  .grid{display:grid;gap:14px}
+  .tiles{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+  .cols2{grid-template-columns:1fr 1fr}
+  @media(max-width:760px){.cols2{grid-template-columns:1fr}}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:18px 20px}
+  .tile .lbl{font-size:11.5px;color:var(--ink3);letter-spacing:.4px;text-transform:uppercase;font-weight:600}
+  .tile .val{font-size:26px;font-weight:700;margin-top:7px;letter-spacing:-.3px}
+  .tile .sub{font-size:12px;color:var(--ink2);margin-top:5px}
+  .pos{color:#7bd97b}.neg{color:var(--bad)}
+  .card h2{font-size:13px;font-weight:650;color:var(--ink2);margin-bottom:14px;
+    display:flex;align-items:center;gap:8px}
+  .card h2 .hint{font-weight:400;color:var(--ink3);font-size:11.5px;margin-left:auto}
+
+  /* chart */
+  #chartwrap{position:relative}
+  #tip{position:absolute;pointer-events:none;background:var(--card2);border:1px solid var(--line);
+    border-radius:10px;padding:8px 11px;font-size:12px;display:none;white-space:nowrap;z-index:5;
+    box-shadow:0 6px 24px rgba(0,0,0,.45)}
+  #tip .d{color:var(--ink3);font-size:11px;margin-bottom:3px}
+  #tip .row{display:flex;align-items:center;gap:6px}
+  #tip .sw{width:8px;height:8px;border-radius:2px}
+  .legend{display:flex;gap:16px;font-size:12px;color:var(--ink2);margin-top:10px}
+  .legend .sw{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+
+  /* gates */
+  .gate{display:flex;align-items:center;gap:11px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13.5px}
+  .gate:last-child{border-bottom:0}
+  .gate .ic{width:20px;height:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;
+    font-size:12px;flex:0 0 20px}
+  .gate.ok .ic{background:#123d12;color:#7bd97b}
+  .gate.no .ic{background:#4a1f1f;color:var(--bad)}
+  .gate.na .ic{background:#3c3413;color:var(--warn)}
+  .gate .dt{margin-left:auto;color:var(--ink3);font-size:12.5px}
+
+  /* positions */
+  .prow{display:grid;grid-template-columns:56px 1fr 88px;align-items:center;gap:10px;
+    padding:7px 0;font-size:13px}
+  .prow:hover{background:rgba(255,255,255,.02);border-radius:8px}
+  .prow .tk{font-weight:650}
+  .prow .qty{color:var(--ink3);font-size:11px;font-weight:400;display:block}
+  .barbox{position:relative;height:16px}
+  .barbox .zero{position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:var(--line)}
+  .barbox .bar{position:absolute;top:2px;height:12px;border-radius:4px;min-width:2px}
+  .prow .pl{text-align:right;font-weight:600;font-size:12.5px}
+  .prow .pl small{display:block;font-weight:400;color:var(--ink3)}
+
+  /* decisions */
+  .dec{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .dec:last-child{border-bottom:0}
+  .rchip{font-size:11px;font-weight:650;padding:3px 9px;border-radius:999px;border:1px solid}
+  .r-Buy,.r-Overweight{color:#7bd97b;border-color:#1d4d1d}
+  .r-Hold{color:var(--ink2);border-color:var(--line)}
+  .r-Underweight,.r-Sell{color:var(--bad);border-color:#5b2727}
+  .dec .when{margin-left:auto;color:var(--ink3);font-size:11.5px}
+
+  .mini{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:6px}
+  .mini div{background:var(--card2);border-radius:12px;padding:10px 12px}
+  .mini .l{font-size:10.5px;color:var(--ink3);text-transform:uppercase;letter-spacing:.4px}
+  .mini .v{font-size:16px;font-weight:650;margin-top:3px}
+
+  /* token gate */
+  #gate{max-width:380px;margin:12vh auto;text-align:center}
+  #gate input{width:100%;margin:14px 0;background:var(--card2);border:1px solid var(--line);
+    color:var(--ink);padding:11px 14px;border-radius:10px;font-size:14px}
+  #gate button{width:100%;background:var(--s1);border:0;color:#fff;padding:11px;border-radius:10px;
+    font-size:14px;font-weight:650;cursor:pointer}
+  .err{color:var(--bad);font-size:13px;margin-top:10px;display:none}
+  #app{display:none}
+  footer{margin-top:26px;color:var(--ink3);font-size:11.5px;text-align:center}
+</style>
+</head>
+<body>
+
+<div id="gate" class="card">
+  <h1 style="font-size:17px">🤖 AI Trader</h1>
+  <p style="color:var(--ink2);font-size:13px;margin-top:8px">Erişim token'ını gir (bir kez — bu cihazda saklanır)</p>
+  <input id="tok" type="password" placeholder="API token" autocomplete="off">
+  <button onclick="saveTok()">Bağlan</button>
+  <div class="err" id="gerr">Token geçersiz — tekrar dene.</div>
+</div>
+
+<div id="app">
+<header>
+  <h1>🤖 AI Trader</h1>
+  <span class="pill" id="verdict"><span class="dot"></span><span id="vtext">…</span></span>
+  <span class="sub num" id="asof"></span>
+  <span class="spacer"></span>
+  <button class="rf" onclick="loadAll()">Yenile</button>
+</header>
+
+<div class="grid tiles" id="tiles"></div>
+
+<div class="card" style="margin-top:14px">
+  <h2>Equity vs SPY <span class="hint num" id="alphachip"></span></h2>
+  <div id="chartwrap"><div id="chart"></div><div id="tip"></div></div>
+  <div class="legend">
+    <span><span class="sw" style="background:var(--s1)"></span>AI Trader</span>
+    <span><span class="sw" style="background:var(--s2)"></span>SPY</span>
+    <span style="margin-left:auto;color:var(--ink3)" class="num" id="ddnote"></span>
+  </div>
+</div>
+
+<div class="grid cols2" style="margin-top:14px">
+  <div class="card">
+    <h2>Go-live kapıları <span class="hint num" id="gdays"></span></h2>
+    <div id="gates"></div>
+  </div>
+  <div class="card">
+    <h2>Risk &amp; konsantrasyon</h2>
+    <div class="mini" id="conc"></div>
+    <div id="flags" style="margin-top:10px;font-size:12px;color:var(--warn)"></div>
+  </div>
+</div>
+
+<div class="grid cols2" style="margin-top:14px">
+  <div class="card">
+    <h2>Pozisyonlar <span class="hint num" id="pcount"></span></h2>
+    <div id="positions"></div>
+  </div>
+  <div class="card">
+    <h2>Son ajan kararları</h2>
+    <div id="decisions"></div>
+  </div>
+</div>
+
+<footer>paper trading · Hetzner · yalnızca bilgi amaçlı — yatırım tavsiyesi değildir</footer>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+const fmt$=v=>'$'+v.toLocaleString('en-US',{maximumFractionDigits:0});
+const fmtP=(v,d=2)=>(v>=0?'+':'')+v.toFixed(d)+'%';
+
+let TOKEN=localStorage.getItem('trader_token')||'';
+const h=location.hash.match(/[#&]t=([^&]+)/); if(h){TOKEN=h[1];localStorage.setItem('trader_token',TOKEN);history.replaceState(null,'',location.pathname);}
+
+async function api(p){
+  const r=await fetch(p,{headers:{Authorization:'Bearer '+TOKEN}});
+  if(r.status===401) throw new Error('auth');
+  if(!r.ok) throw new Error('http '+r.status);
+  return r.json();
+}
+function saveTok(){TOKEN=$('#tok').value.trim();localStorage.setItem('trader_token',TOKEN);boot();}
+
+async function boot(){
+  try{ await api('/healthz-auth-probe').catch(()=>{}); await loadAll();
+    $('#gate').style.display='none'; $('#app').style.display='block';
+  }catch(e){
+    if((e&&e.message)==='auth'){ $('#gate').style.display='block'; $('#app').style.display='none'; $('#gerr').style.display=TOKEN?'block':'none'; }
+    else { $('#gate').style.display='none'; $('#app').style.display='block'; }
+  }
+}
+
+async function loadAll(){
+  const [snap,ev,hist,conc,decs]=await Promise.all([
+    api('/v1/portfolio/snapshot'), api('/v1/eval'),
+    api('/v1/portfolio/history?period=3M'), api('/v1/portfolio/concentration'),
+    api('/v1/agents/decisions?limit=7'),
+  ]);
+  let spy=null; try{ spy=await api('/v1/prices/SPY?days=95'); }catch(_){}
+  render(snap,ev,hist,conc,decs,spy);
+}
+
+function render(snap,ev,hist,conc,decs,spy){
+  const eq=snap.total_equity_usd, net=eq-100000;
+  $('#asof').textContent=new Date().toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'});
+
+  const v=ev.verdict, pv=ev.provisional_verdict;
+  const cls=v==='GO'?'go':(v==='NO-GO'?'nogo':'wait');
+  $('#verdict').className='pill '+cls;
+  $('#vtext').textContent=v==='TOO EARLY'?('BEKLEME · gün '+ev.days+'/'+ev.days_required+(pv?(' · eğilim '+pv):'')):v+' · gün '+ev.days;
+
+  $('#tiles').innerHTML=[
+    tile('Equity',fmt$(eq),(net>=0?'pos':'neg'),fmtP(net/1000)+' toplam'),
+    tile('Bugün',(snap.daily_pnl_usd>=0?'+':'')+fmt$(Math.abs(snap.daily_pnl_usd)).replace('$',snap.daily_pnl_usd>=0?'$':'-$'),(snap.daily_pnl_usd>=0?'pos':'neg'),fmtP(snap.daily_pnl_pct*100)),
+    tile('Sharpe',ev.sharpe.toFixed(2),ev.sharpe>=1?'pos':'neg','eşik > '+ev.gate_sharpe.toFixed(1)),
+    tile('Max DD',ev.max_dd_pct.toFixed(1)+'%',Math.abs(ev.max_dd_pct)<15?'pos':'neg','eşik < '+ev.gate_max_dd_pct.toFixed(0)+'%'),
+    tile('Cash',fmt$(snap.cash_usd),'', (100*snap.cash_usd/eq).toFixed(0)+'% likit'),
+  ].join('');
+
+  if(ev.spy_return_pct!=null) $('#alphachip').textContent='α '+fmtP(ev.total_return_pct-ev.spy_return_pct,1)+' vs SPY';
+  drawChart(hist.points, spy);
+  $('#ddnote').textContent='maks. düşüş '+hist.max_drawdown_pct.toFixed(1)+'%';
+
+  $('#gdays').textContent=ev.days+'/'+ev.days_required+' gün';
+  $('#gates').innerHTML=ev.gates.map(g=>{
+    const st=g.passed===true?'ok':(g.passed===false?'no':'na');
+    const ic=g.passed===true?'✓':(g.passed===false?'✕':'…');
+    return `<div class="gate ${st}"><span class="ic">${ic}</span>${g.name}<span class="dt num">${g.detail}</span></div>`;
+  }).join('');
+
+  $('#conc').innerHTML=[
+    mini('Pozisyon',conc.n_positions),
+    mini('Effective N',conc.effective_n.toFixed(1)),
+    mini('En büyük',conc.top_weight_pct.toFixed(1)+'%'),
+    mini('İlk 3',conc.top3_weight_pct.toFixed(1)+'%'),
+    mini('HHI',conc.hhi.toFixed(3)),
+    mini('Brüt',conc.gross_exposure_pct.toFixed(0)+'%'),
+  ].join('');
+  $('#flags').textContent=(conc.flags&&conc.flags.length)?('⚠ '+conc.flags.join(' · ')):'';
+
+  const ps=[...snap.positions].sort((a,b)=>b.unrealized_pnl-a.unrealized_pnl);
+  const maxAbs=Math.max(...ps.map(p=>Math.abs(p.unrealized_pnl)),1);
+  $('#pcount').textContent=ps.length+' açık';
+  $('#positions').innerHTML=ps.map(p=>{
+    const w=Math.abs(p.unrealized_pnl)/maxAbs*46;
+    const side=p.unrealized_pnl>=0
+      ?`left:50%;width:${w}%;background:var(--good)`
+      :`right:50%;width:${w}%;background:var(--bad)`;
+    return `<div class="prow" title="${p.ticker}: ${p.quantity} adet @ $${p.avg_entry_price.toFixed(2)} → $${p.current_price.toFixed(2)}">
+      <span class="tk">${p.ticker}<span class="qty num">${p.quantity} adet</span></span>
+      <span class="barbox"><span class="zero"></span><span class="bar" style="${side}"></span></span>
+      <span class="pl num ${p.unrealized_pnl>=0?'pos':'neg'}">${fmtP(p.unrealized_pnl_pct*100,1)}<small>${(p.unrealized_pnl>=0?'+':'−')+fmt$(Math.abs(p.unrealized_pnl))}</small></span>
+    </div>`;
+  }).join('');
+
+  $('#decisions').innerHTML=decs.map(d=>{
+    const t=new Date(d.timestamp_utc);
+    return `<div class="dec"><span class="rchip r-${d.rating}">${d.rating}</span>
+      <b>${d.ticker}</b>${d.price_target?`<span style="color:var(--ink3);font-size:12px" class="num">PT $${d.price_target}</span>`:''}
+      <span class="when num">${t.toLocaleDateString('tr-TR',{day:'numeric',month:'short'})}</span></div>`;
+  }).join('');
+}
+const tile=(l,v,c,s)=>`<div class="card tile"><div class="lbl">${l}</div><div class="val num ${c}">${v}</div><div class="sub num">${s}</div></div>`;
+const mini=(l,v)=>`<div><div class="l">${l}</div><div class="v num">${v}</div></div>`;
+
+/* ---- chart: cumulative % — AI (blue) vs SPY (orange), crosshair tooltip ---- */
+let CH=null;
+function drawChart(pts,spy){
+  const W=$('#chart').clientWidth||900, H=240, P={l:44,r:14,t:12,b:24};
+  const ai=pts.map(p=>({d:p.date,v:p.return_pct}));
+  let sp=[];
+  if(spy&&spy.bars&&spy.bars.length){
+    const first=ai.length?ai[0].d:null;
+    const bars=spy.bars.filter(b=>!first||b.t>=first);
+    if(bars.length){const b0=bars[0].c; sp=bars.map(b=>({d:b.t,v:(b.c/b0-1)*100}));}
+  }
+  const all=[...ai.map(p=>p.v),...sp.map(p=>p.v),0];
+  const lo=Math.min(...all), hi=Math.max(...all), pad=(hi-lo)*0.12||1;
+  const y=v=>P.t+(hi+pad-v)/(hi-lo+2*pad)*(H-P.t-P.b);
+  const xs=ai.map(p=>p.d);
+  const x=i=>P.l+i/(Math.max(xs.length-1,1))*(W-P.l-P.r);
+  const xOf=d=>{const i=xs.indexOf(d);return i<0?null:x(i);};
+  const path=(arr,useIdx)=>arr.map((p,i)=>{
+    const px=useIdx?x(i):xOf(p.d); return px==null?'':((i?'L':'M')+px.toFixed(1)+','+y(p.v).toFixed(1));
+  }).join(' ');
+
+  const gy=[];
+  const step=(hi-lo+2*pad)/4;
+  for(let g=0;g<5;g++){const v=hi+pad-g*step;gy.push(`<line x1="${P.l}" y1="${y(v)}" x2="${W-P.r}" y2="${y(v)}" stroke="var(--line)" stroke-width="1"/><text x="${P.l-8}" y="${y(v)+4}" text-anchor="end" font-size="10.5" fill="var(--ink3)" class="num">${v.toFixed(1)}%</text>`);}
+  const zero=`<line x1="${P.l}" y1="${y(0)}" x2="${W-P.r}" y2="${y(0)}" stroke="var(--ink3)" stroke-width="1" stroke-dasharray="3,4" opacity=".6"/>`;
+  const aiEnd=ai.length?`<circle cx="${x(ai.length-1)}" cy="${y(ai[ai.length-1].v)}" r="4" fill="var(--s1)"/><text x="${x(ai.length-1)-8}" y="${y(ai[ai.length-1].v)-10}" text-anchor="end" font-size="11" font-weight="600" fill="var(--s1)" class="num">${fmtP(ai[ai.length-1].v,1)}</text>`:'';
+  const spEnd=sp.length?`<text x="${W-P.r}" y="${y(sp[sp.length-1].v)-8}" text-anchor="end" font-size="10.5" fill="var(--s2)" class="num">${fmtP(sp[sp.length-1].v,1)}</text>`:'';
+
+  $('#chart').innerHTML=`<svg id="csvg" width="100%" viewBox="0 0 ${W} ${H}" style="display:block">
+    ${gy.join('')}${zero}
+    <path d="${path(sp,false)}" fill="none" stroke="var(--s2)" stroke-width="2" opacity=".85"/>
+    <path d="${path(ai,true)}" fill="none" stroke="var(--s1)" stroke-width="2.4"/>
+    ${aiEnd}${spEnd}
+    <line id="xh" y1="${P.t}" y2="${H-P.b}" stroke="var(--ink3)" stroke-width="1" opacity="0"/>
+  </svg>`;
+  CH={ai,sp,x,y,W,H,P,xs};
+  const svg=$('#csvg');
+  svg.addEventListener('mousemove',e=>{
+    const r=svg.getBoundingClientRect(); const mx=(e.clientX-r.left)*(W/r.width);
+    const i=Math.round((mx-P.l)/((W-P.l-P.r)/Math.max(xs.length-1,1)));
+    if(i<0||i>=xs.length) return;
+    const a=ai[i]; const s=sp.find(p=>p.d===a.d);
+    $('#xh').setAttribute('x1',x(i)); $('#xh').setAttribute('x2',x(i)); $('#xh').setAttribute('opacity','.5');
+    const tip=$('#tip');
+    tip.innerHTML=`<div class="d num">${a.d}</div>
+      <div class="row"><span class="sw" style="background:var(--s1)"></span><span class="num">AI ${fmtP(a.v,2)}</span></div>
+      ${s?`<div class="row"><span class="sw" style="background:var(--s2)"></span><span class="num">SPY ${fmtP(s.v,2)}</span></div>`:''}`;
+    tip.style.display='block';
+    const wrap=$('#chartwrap').getBoundingClientRect();
+    let lx=(x(i)/W)*r.width+14; if(lx+150>wrap.width) lx-=170;
+    tip.style.left=lx+'px'; tip.style.top='18px';
+  });
+  svg.addEventListener('mouseleave',()=>{$('#tip').style.display='none';$('#xh').setAttribute('opacity','0');});
+}
+
+boot();
+setInterval(()=>{ if($('#app').style.display!=='none') loadAll().catch(()=>{}); },60000);
+window.addEventListener('resize',()=>{ if(CH) loadAll().catch(()=>{}); });
+</script>
+</body>
+</html>

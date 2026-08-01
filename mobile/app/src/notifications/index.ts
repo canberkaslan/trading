@@ -1,13 +1,15 @@
 /**
  * Expo Push wiring.
  *
- * - Requests notification permission once.
- * - Gets the Expo push token (works in dev with Expo Go; in standalone
- *   builds requires an Apple Developer / FCM project tied to the app).
- * - Registers the token with the backend so it appears in
- *   /v1/notifications/register.
+ * Permission is NOT requested at startup any more. A cold-start OS prompt with
+ * no context is the classic way to get permanently denied — and a denial is
+ * sticky, which on this app means never seeing an approval request again. The
+ * prompt now happens where the value is obvious: the Settings row, or the first
+ * time an order is actually waiting for the user. Startup only *syncs* the push
+ * token when permission was already granted (silent, no prompt).
  *
- * Call `setupNotifications()` exactly once at app startup (root layout).
+ * Deep-link targets come from `@/utils/inbox.routeForType` so the tap handler
+ * and the in-app inbox can never drift apart.
  */
 
 import * as Notifications from 'expo-notifications';
@@ -15,8 +17,11 @@ import * as Device from 'expo-device';
 import { Platform } from 'react-native';
 
 import { api } from '@/api/endpoints';
+import { routeForType, toInboxItem, type InboxItem } from '@/utils/inbox';
 
-let registered = false;
+export type PushPermission = 'granted' | 'denied' | 'undetermined' | 'unsupported';
+
+let tokenRegistered = false;
 
 // Foreground behavior: show the banner + play sound + bump badge.
 Notifications.setNotificationHandler({
@@ -38,27 +43,20 @@ async function ensureAndroidChannel(): Promise<void> {
   });
 }
 
-export async function setupNotifications(): Promise<string | null> {
-  if (registered) return null;
-  registered = true;
-
-  await ensureAndroidChannel();
-
-  if (!Device.isDevice) {
-    // Notifications don't work on simulators reliably; skip silently.
-    return null;
+/** Current OS permission, without prompting. */
+export async function getPermissionStatus(): Promise<PushPermission> {
+  if (!Device.isDevice) return 'unsupported';
+  try {
+    const { status, canAskAgain } = await Notifications.getPermissionsAsync();
+    if (status === 'granted') return 'granted';
+    if (status === 'undetermined' || canAskAgain) return 'undetermined';
+    return 'denied';
+  } catch {
+    return 'unsupported';
   }
+}
 
-  const { status: existing } = await Notifications.getPermissionsAsync();
-  let status = existing;
-  if (existing !== 'granted') {
-    const res = await Notifications.requestPermissionsAsync();
-    status = res.status;
-  }
-  if (status !== 'granted') {
-    return null;
-  }
-
+async function registerToken(): Promise<string | null> {
   let token: string;
   try {
     const result = await Notifications.getExpoPushTokenAsync();
@@ -72,37 +70,92 @@ export async function setupNotifications(): Promise<string | null> {
 
   try {
     await api.registerPushToken(token, platform);
+    tokenRegistered = true;
   } catch {
     // Backend unreachable — fine in dev; user can retry from Settings.
   }
-
   return token;
 }
 
 /**
- * Hook a router into incoming notification taps. Call from root layout.
- * data.type drives the deep-link target:
- *   - 'decision_pending' -> /approve/{order_id}
- *   - 'order_submitted'  -> /(tabs)/orders
- *   - 'order_filled'     -> /(tabs)/portfolio
- *   - 'order_rejected'   -> /(tabs)/orders
+ * Contextual opt-in: prompts for permission (if it can) and registers the push
+ * token. Call from a user-initiated moment, never from app startup.
  */
-export function registerTapHandler(navigate: (path: string) => void): () => void {
+export async function requestAndRegisterPush(): Promise<string | null> {
+  await ensureAndroidChannel();
+  if (!Device.isDevice) {
+    // Push doesn't work reliably on simulators.
+    return null;
+  }
+
+  const { status: existing } = await Notifications.getPermissionsAsync();
+  let status = existing;
+  if (existing !== 'granted') {
+    const res = await Notifications.requestPermissionsAsync();
+    status = res.status;
+  }
+  if (status !== 'granted') return null;
+
+  return registerToken();
+}
+
+/**
+ * Startup path: keep the backend's token fresh when permission already exists.
+ * Silent — never prompts, never surfaces an error.
+ */
+export async function syncPushTokenIfGranted(): Promise<void> {
+  if (tokenRegistered) return;
+  await ensureAndroidChannel();
+  if ((await getPermissionStatus()) !== 'granted') return;
+  await registerToken();
+}
+
+/** Clear the springboard badge — called when the inbox is opened. */
+export async function clearBadge(): Promise<void> {
+  try {
+    await Notifications.setBadgeCountAsync(0);
+  } catch {
+    // Unsupported platform — nothing to clear.
+  }
+}
+
+function toItem(notification: Notifications.Notification): InboxItem {
+  const content = notification.request.content;
+  const receivedMs = typeof notification.date === 'number' ? notification.date : Date.now();
+  return toInboxItem({
+    id: notification.request.identifier,
+    title: content.title,
+    body: content.body,
+    data: content.data as Record<string, unknown> | undefined,
+    receivedAt: new Date(receivedMs).toISOString(),
+  });
+}
+
+/**
+ * Foreground deliveries — the banner is transient, the inbox row is not.
+ */
+export function registerReceivedHandler(onItem: (item: InboxItem) => void): () => void {
+  const sub = Notifications.addNotificationReceivedListener((notification) => {
+    onItem(toItem(notification));
+  });
+  return () => sub.remove();
+}
+
+/**
+ * Hook a router into incoming notification taps. Call from root layout.
+ * Every tapped notification is also filed in the inbox (already read — the
+ * user just saw it) so history is complete whether or not the app was open.
+ */
+export function registerTapHandler(
+  navigate: (path: string) => void,
+  onItem?: (item: InboxItem) => void,
+): () => void {
   const sub = Notifications.addNotificationResponseReceivedListener((response) => {
-    const data = response.notification.request.content.data as Record<string, string> | undefined;
-    if (!data) return;
-    switch (data.type) {
-      case 'decision_pending':
-        if (data.order_id) navigate(`/approve/${data.order_id}`);
-        break;
-      case 'order_submitted':
-      case 'order_rejected':
-        navigate('/(tabs)/orders');
-        break;
-      case 'order_filled':
-        navigate('/(tabs)/portfolio');
-        break;
-    }
+    const item = toItem(response.notification);
+    onItem?.({ ...item, read: true });
+    const data = response.notification.request.content.data as Record<string, unknown> | undefined;
+    const route = routeForType(data);
+    if (route) navigate(route);
   });
   return () => sub.remove();
 }

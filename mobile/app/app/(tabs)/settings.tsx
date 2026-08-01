@@ -1,12 +1,22 @@
 import { View, Text, StyleSheet, Pressable, Alert, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useState } from 'react';
+import { useRouter } from 'expo-router';
+import { useCallback, useEffect, useState } from 'react';
 
 import { api } from '@/api/endpoints';
 import { useKillSwitch, useSetKillSwitch, useHealth, useDecisions, useEval } from '@/api/hooks';
-import { setupNotifications } from '@/notifications';
+import { getPermissionStatus, requestAndRegisterPush, type PushPermission } from '@/notifications';
+import { useInboxStore } from '@/stores/notifications';
 import { colors } from '@/theme/colors';
+import { unreadCount } from '@/utils/inbox';
 import type { KillSwitchState } from '@/api/types';
+
+const PERMISSION_COPY: Record<PushPermission, { text: string; color: string }> = {
+  granted: { text: '● açık', color: colors.up },
+  denied: { text: '● kapalı (cihaz ayarları)', color: colors.down },
+  undetermined: { text: '● izin verilmedi', color: colors.warning },
+  unsupported: { text: '● bu cihazda çalışmaz', color: colors.textMuted },
+};
 
 const KILL_STATES: { state: KillSwitchState; label: string; desc: string; color: string }[] = [
   { state: 'RUN', label: 'RUN', desc: 'Normal işlem', color: colors.up },
@@ -37,7 +47,10 @@ function GateRow({ name, passed, detail }: { name: string; passed: boolean | nul
 }
 
 export default function SettingsScreen() {
+  const router = useRouter();
   const [pushBusy, setPushBusy] = useState(false);
+  const [permission, setPermission] = useState<PushPermission | null>(null);
+  const inbox = useInboxStore((s) => s.items);
   const { data: ks } = useKillSwitch();
   const setKs = useSetKillSwitch();
   const { data: health, isError: healthError } = useHealth();
@@ -71,20 +84,30 @@ export default function SettingsScreen() {
     ? new Date(decisions[0].timestamp_utc).toLocaleString()
     : '—';
 
+  const refreshPermission = useCallback(async () => {
+    setPermission(await getPermissionStatus());
+  }, []);
+
+  useEffect(() => {
+    void refreshPermission();
+  }, [refreshPermission]);
+
   const handleRegisterPush = async () => {
     setPushBusy(true);
     try {
-      const token = await setupNotifications();
+      const token = await requestAndRegisterPush();
+      await refreshPermission();
       if (token) {
-        Alert.alert('Push registered', `Token: ${token.slice(0, 28)}…`);
+        Alert.alert('Bildirimler açık', 'Bu cihaz emir ve karar bildirimlerine kayıtlı.');
       } else {
         Alert.alert(
-          'No token',
-          'Permission denied, or notifications only work on physical devices.',
+          'Bildirim açılamadı',
+          'İzin verilmedi ya da bu cihaz push desteklemiyor (simülatörlerde çalışmaz). ' +
+            'Daha önce reddettiysen cihaz ayarlarından açman gerekir.',
         );
       }
     } catch (e) {
-      Alert.alert('Failed', String(e));
+      Alert.alert('Hata', String(e));
     } finally {
       setPushBusy(false);
     }
@@ -93,9 +116,9 @@ export default function SettingsScreen() {
   const handleTestPush = async () => {
     try {
       const result = await api.testNotification();
-      Alert.alert('Sent', `${result.sent} device(s) — check your notifications.`);
+      Alert.alert('Gönderildi', `${result.sent} cihaza gönderildi — bildirimlerini kontrol et.`);
     } catch (e) {
-      Alert.alert('Failed', String(e));
+      Alert.alert('Hata', String(e));
     }
   };
 
@@ -211,14 +234,45 @@ export default function SettingsScreen() {
           </Text>
         </View>
 
-        <Text style={styles.subheading}>Notifications</Text>
-        <Pressable style={styles.button} disabled={pushBusy} onPress={handleRegisterPush}>
+        <Text style={styles.subheading}>Bildirimler</Text>
+        <View style={styles.healthCard}>
+          <View style={styles.healthRow}>
+            <Text style={styles.label}>Push izni</Text>
+            <Text style={{ color: PERMISSION_COPY[permission ?? 'undetermined'].color, fontWeight: '600' }}>
+              {permission ? PERMISSION_COPY[permission].text : '…'}
+            </Text>
+          </View>
+          <Text style={styles.muted}>
+            Onay bekleyen emirler ve gerçekleşen işlemler için bildirim gönderilir.
+            İzin sadece buradan ya da ilk emir onaya düştüğünde istenir.
+          </Text>
+        </View>
+        <Pressable
+          style={styles.button}
+          disabled={pushBusy}
+          onPress={handleRegisterPush}
+          accessibilityRole="button"
+        >
           <Text style={styles.buttonText}>
-            {pushBusy ? 'Registering…' : 'Register / refresh push token'}
+            {pushBusy ? 'Kaydediliyor…' : permission === 'granted' ? 'Kaydı yenile' : 'Bildirimlere izin ver'}
           </Text>
         </Pressable>
-        <Pressable style={[styles.button, styles.buttonSecondary]} onPress={handleTestPush}>
-          <Text style={styles.buttonSecondaryText}>Send test notification</Text>
+        <Pressable
+          style={[styles.button, styles.buttonSecondary]}
+          onPress={() => router.push('/notifications' as never)}
+          accessibilityRole="button"
+        >
+          <Text style={styles.buttonSecondaryText}>
+            Bildirim geçmişi ({inbox.length}
+            {unreadCount(inbox) > 0 ? ` · ${unreadCount(inbox)} okunmamış` : ''})
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[styles.button, styles.buttonSecondary]}
+          onPress={handleTestPush}
+          accessibilityRole="button"
+        >
+          <Text style={styles.buttonSecondaryText}>Test bildirimi gönder</Text>
         </Pressable>
       </ScrollView>
     </SafeAreaView>

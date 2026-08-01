@@ -1,10 +1,11 @@
-import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 
 import { usePendingOrders, useOrders } from '@/api/hooks';
+import { getPermissionStatus, requestAndRegisterPush } from '@/notifications';
 import { colors } from '@/theme/colors';
 import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
@@ -12,6 +13,29 @@ import { formatUsd } from '@/utils/format';
 import { orderStatusMeta, fillSummary, formatOrderDate, type OrderTone } from '@/utils/orders';
 
 type Tab = 'pending' | 'history';
+
+/** Ask at most once per app session, and only with a real order on screen. */
+let pushPromptShown = false;
+
+/**
+ * Contextual push opt-in: the OS prompt lands when there is actually an order
+ * waiting, so the ask is self-explanatory. A cold-start prompt gets denied, and
+ * a denial is permanent — which would mean never being told about an approval
+ * again.
+ */
+async function maybeAskForPush(): Promise<void> {
+  if (pushPromptShown) return;
+  pushPromptShown = true;
+  if ((await getPermissionStatus()) !== 'undetermined') return;
+  Alert.alert(
+    'Bu emirden haberdar ol',
+    'Bir emir onayını beklerken telefonuna bildirim gönderelim mi? Sadece onay bekleyen ve gerçekleşen emirler için.',
+    [
+      { text: 'Şimdi değil', style: 'cancel' },
+      { text: 'Bildirim aç', onPress: () => void requestAndRegisterPush() },
+    ],
+  );
+}
 
 const TONE_COLOR: Record<OrderTone, string> = {
   up: colors.up,
@@ -28,6 +52,11 @@ export default function OrdersScreen() {
   const active = tab === 'pending' ? pending : history;
   const qc = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
+
+  const pendingCount = pending.data?.length ?? 0;
+  useEffect(() => {
+    if (pendingCount > 0) void maybeAskForPush();
+  }, [pendingCount]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);

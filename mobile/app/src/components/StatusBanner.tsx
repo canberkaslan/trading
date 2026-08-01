@@ -15,15 +15,21 @@
  *   2+ consecutive failures (~60s at the 30s interval).
  */
 
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 
 import { useReadiness } from '@/api/hooks';
+import { useUnreadCount } from '@/stores/notifications';
 import { colors } from '@/theme/colors';
+import { badgeLabel } from '@/utils/inbox';
 
 export function StatusBanner() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const { data, isError, failureCount } = useReadiness();
+  const unread = useUnreadCount();
+  const badge = badgeLabel(unread);
 
   const mode = data?.trading_mode; // 'paper' | 'live' | undefined
   const live = mode === 'live';
@@ -81,6 +87,20 @@ export function StatusBanner() {
         <Text style={[styles.statusText, { color: statusColor }]} numberOfLines={1}>
           {statusText}
         </Text>
+        <Pressable
+          style={styles.bell}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          onPress={() => router.push('/notifications' as never)}
+          accessibilityRole="button"
+          accessibilityLabel={unread > 0 ? `Bildirimler, ${unread} okunmamış` : 'Bildirimler'}
+        >
+          <Text style={styles.bellIcon}>🔔</Text>
+          {badge ? (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{badge}</Text>
+            </View>
+          ) : null}
+        </Pressable>
       </View>
     </View>
   );
@@ -104,4 +124,21 @@ const styles = StyleSheet.create({
   modeTextLive: { color: colors.textPrimary },
   modeTextUnknown: { color: colors.textMuted },
   statusText: { fontSize: 11, fontWeight: '600', flexShrink: 1 },
+  // Kept inside the 24pt strip so the header height stays stable; hitSlop
+  // (not padding) buys the 44pt touch target.
+  bell: { marginLeft: 'auto', width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
+  bellIcon: { fontSize: 15 },
+  badge: {
+    position: 'absolute',
+    top: -2,
+    right: -4,
+    minWidth: 15,
+    height: 15,
+    borderRadius: 8,
+    paddingHorizontal: 3,
+    backgroundColor: colors.down,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  badgeText: { color: colors.textPrimary, fontSize: 9, fontWeight: '800' },
 });

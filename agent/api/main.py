@@ -70,7 +70,13 @@ async def dashboard() -> FileResponse:
     """Web dashboard. The HTML itself is public (no data in it); every data
     call it makes goes through the bearer-token API. Token is entered once in
     the page and kept in localStorage — never embedded here."""
-    return FileResponse(_STATIC / "dashboard.html", media_type="text/html")
+    return FileResponse(
+        _STATIC / "dashboard.html",
+        media_type="text/html",
+        # Always revalidate: browsers heuristically cached the old page and
+        # users kept seeing stale designs after deploys.
+        headers={"Cache-Control": "no-store, must-revalidate"},
+    )
 
 
 def _trading_mode() -> str:

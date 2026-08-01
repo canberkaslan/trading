@@ -136,8 +136,9 @@
   .chip.b{color:var(--up);background:var(--up-dim)}
   .chip.h{color:var(--ink2);background:var(--s3)}
   .chip.s{color:var(--down);background:var(--down-dim)}
-  .dec .pt{color:var(--ink3);font-size:12px}
-  .dec .when{color:var(--ink3);font-size:12px}
+  .dec .pt{color:var(--ink3);font-size:12px;min-width:92px;text-align:right}
+  .dec .when{color:var(--ink3);font-size:12px;min-width:52px;text-align:right}
+  .dim2{color:var(--ink3)}
 
   /* ---------- skeleton / states ---------- */
   .sk{border-radius:8px;background:linear-gradient(90deg,var(--s2) 25%,var(--s3) 50%,var(--s2) 75%);
@@ -207,6 +208,7 @@
     <div class="hd">
       <h2>Performans</h2>
       <span class="sub">kümülatif getiri</span>
+      <span class="sub mono" id="alpha" style="margin-left:14px"></span>
       <div class="ptabs" role="tablist" id="ptabs">
         <button role="tab" data-p="1M" aria-selected="false">1A</button>
         <button role="tab" data-p="3M" aria-selected="true">3A</button>
@@ -217,7 +219,6 @@
     <div class="lgd">
       <span><i style="background:var(--ai)"></i>Portföy</span>
       <span><i style="background:var(--bench)"></i>SPY</span>
-      <span style="margin-left:auto" class="mono" id="alpha"></span>
     </div>
   </section>
 
@@ -311,13 +312,22 @@ function render(){
     ?('DEĞERLENDİRME · '+ev.days+'/'+ev.days_required+(ev.provisional_verdict?' · eğilim '+ev.provisional_verdict:''))
     :(v+' · '+ev.days+' gün');
 
-  const dayPnl=snap.daily_pnl_usd, dayCls=dayPnl>=0?'up':'down';
+  /* values stay ink-neutral; only the delta line carries color */
+  const dayPnl=snap.daily_pnl_usd;
+  const dayZero=Math.abs(dayPnl)<0.005;
   $('#tiles').innerHTML=
-    tile('Equity',usd(eq),net>=0?'up':'down',pct(net/1000)+' · başlangıç $100k')+
-    tile('Bugün',(dayPnl>=0?'+':'−')+usd(Math.abs(dayPnl)).slice(1-0>0?0:0),dayCls,pct(snap.daily_pnl_pct*100))+
-    tile('Sharpe',ev.sharpe.toFixed(2),ev.sharpe>=ev.gate_sharpe?'up':'down','eşik '+ev.gate_sharpe.toFixed(1))+
-    tile('Maks. düşüş',ev.max_dd_pct.toFixed(1)+'%',Math.abs(ev.max_dd_pct)<ev.gate_max_dd_pct?'':'down','eşik '+ev.gate_max_dd_pct.toFixed(0)+'%')+
-    tile('Nakit',usd(snap.cash_usd),'',Math.round(100*snap.cash_usd/eq)+'% likit');
+    tile('Equity',usd(eq),
+      `<span class="${net>=0?'up':'down'}">${pct(net/1000)}</span> · başlangıç $100k`)+
+    tile('Bugün',dayZero?'$0':((dayPnl>0?'+':'−')+usd(Math.abs(dayPnl)).slice(0)),
+      dayZero?'<span class="dim2">değişim yok</span>'
+             :`<span class="${dayPnl>0?'up':'down'}">${pct(snap.daily_pnl_pct*100)}</span>`)+
+    tile('Sharpe',ev.sharpe.toFixed(2),
+      ev.sharpe>=ev.gate_sharpe?`<span class="up">eşik üstü</span> · ${ev.gate_sharpe.toFixed(1)}`
+                               :`<span class="down">eşik altı</span> · ${ev.gate_sharpe.toFixed(1)}`)+
+    tile('Maks. düşüş',ev.max_dd_pct.toFixed(1)+'%',
+      Math.abs(ev.max_dd_pct)<ev.gate_max_dd_pct?`<span class="up">sınır içinde</span> · %${ev.gate_max_dd_pct.toFixed(0)}`
+                                                :`<span class="down">sınır aşıldı</span> · %${ev.gate_max_dd_pct.toFixed(0)}`)+
+    tile('Nakit',usd(snap.cash_usd),Math.round(100*snap.cash_usd/eq)+'% likit');
 
   if(ev.spy_return_pct!=null)
     $('#alpha').textContent='α '+pct(ev.total_return_pct-ev.spy_return_pct,1)+' vs SPY';
@@ -337,7 +347,7 @@ function render(){
     kv('İlk 3 ağırlık',conc.top3_weight_pct.toFixed(1)+'%')+
     kv('HHI',conc.hhi.toFixed(3))+
     kv('Brüt maruziyet',conc.gross_exposure_pct.toFixed(0)+'%')+
-    (conc.flags&&conc.flags.length?`<div class="flags">${conc.flags.map(esc).join('<br>')}</div>`:'');
+    flagsHtml(conc.flags||[]);
 
   const ps=[...snap.positions].sort((a,b)=>b.unrealized_pnl-a.unrealized_pnl);
   const mx=Math.max(...ps.map(p=>Math.abs(p.unrealized_pnl)),1);
@@ -366,7 +376,19 @@ function render(){
       <span class="when">${t.toLocaleDateString('tr-TR',{day:'numeric',month:'short'})}</span>
     </div>`;}).join('');
 }
-const tile=(k,v,c,m)=>`<div class="tile"><div class="k">${k}</div><div class="v mono ${c}">${v}</div><div class="m mono">${m}</div></div>`;
+const tile=(k,v,m)=>`<div class="tile"><div class="k">${k}</div><div class="v mono">${v}</div><div class="m mono">${m}</div></div>`;
+function flagsHtml(flags){
+  if(!flags.length)return '';
+  const caps=[],rest=[];
+  flags.forEach(f=>{
+    const m=/^(\S+) is ([\d.]+)% of equity/.exec(f);
+    if(m)caps.push(m[1]+' %'+m[2]); else rest.push(f);
+  });
+  const lines=[];
+  if(caps.length)lines.push('Tek-isim cap üstü (&gt;%10): '+caps.map(esc).join(' · '));
+  rest.forEach(f=>lines.push(esc(f)));
+  return `<div class="flags">${lines.join('<br>')}</div>`;
+}
 const kv=(k,v)=>`<div class="kv"><span>${k}</span><b class="mono">${v}</b></div>`;
 const ok=()=>`<svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" stroke="var(--up)" stroke-width="1.4"/><path d="M5 8.2l2 2L11 6" stroke="var(--up)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 const bad=()=>`<svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" stroke="var(--down)" stroke-width="1.4"/><path d="M6 6l4 4M10 6l-4 4" stroke="var(--down)" stroke-width="1.6" stroke-linecap="round"/></svg>`;

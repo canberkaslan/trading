@@ -19,7 +19,8 @@ def test_dashboard_serves_html(client: TestClient) -> None:
     r = client.get("/dashboard")
     assert r.status_code == 200
     assert "text/html" in r.headers["content-type"]
-    assert "AI Trader" in r.text
+    assert "TRADER" in r.text  # wordmark
+    assert "Portföy" in r.text
 
 
 def test_dashboard_embeds_no_secrets(client: TestClient) -> None:

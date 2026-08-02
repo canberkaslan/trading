@@ -105,6 +105,25 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - Live: verdict GO, Sharpe 9.47, MaxDD 1.04%, +6.3% vs SPY +2.9%; equity $107.7k, net P&L +$8.3k
 - Next: item 7 home equity-curve dashboard (backend /v1/portfolio/history done, absent from endpoints.ts)
 
+## Daily loop 2026-08-02 (eval CLOSED — GO 22/10d)
+- [x] Quick UI wins KALAN: **44pt touch targets + accessibilityLabels on money actions** (OTA) —
+  new pure `utils/a11y.ts` (MIN_TOUCH_TARGET, hitSlopFor, sideLabelTr, orderActionLabel,
+  killSwitchLabel) + 12 jest. Approve screen: TR copy sweep (Back/Reject/Quantity/Stop/Type/
+  Rating/Entry/Target/Horizon/"Portfolio Manager output"/"Loading reasoning…" → TR), spoken
+  labels naming ticker+side+size on onayla/reddet, biometric hint, **reject confirm gate**
+  (was one-tap, irreversible for the day), 44pt min on both buttons + back link hitSlop.
+  Orders: pending card role+label+stop hint, segment tabs → role 'tab' + 44pt. Settings:
+  kill-switch chips get label/hint/selected + 44pt (RUN/PAUSE/FLATTEN was announced as bare
+  glyph text), push buttons 44pt. Portfolio/Charts/Ask/Agents: period pills, mode/range chips,
+  ticker chips, position + decision cards → labels and 44pt. Fixed inbox.test.ts missing
+  @jest/globals import (92 latent tsc errors) → tsc clean except 2 pre-existing unrelated.
+  128 jest + 213 backend green. Read-only, off-eval-path.
+- Live: verdict GO, Sharpe 2.88, Sortino 4.54, MaxDD -4.25%, Calmar 13.58, +3.87% vs SPY +0.30%
+  (α +3.57pt), 22/10 gün. Equity $106,743, cash $4,396, 10 pozisyon (hafta sonu → günlük P&L 0).
+  1M penceresi kaydıkça Sharpe 1.34 → 2.88 toparladı (zayıf günler pencereden çıktı).
+- Sıradaki: item 5 slice-2 (cancel order — backend persist + confirm gate; execution path, dikkat)
+  ya da NATIVE rebuild gerektiren kalanlar (tab bar icons + userInterfaceStyle 'dark').
+
 ## Daily loop 2026-08-01 (eval CLOSED — GO 21/10d)
 - [x] item 12 notification inbox + contextual push permission → OTA preview (d02b5e8)
 - Live: verdict GO, Sharpe 1.34, Sortino 1.85, MaxDD -4.25%, Calmar 5.46, +1.67% vs SPY +0.30% (α +1.37pt), 21/10 gün

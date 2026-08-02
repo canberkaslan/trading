@@ -14,6 +14,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 
 import { useStartAnalysis, useAnalysisJob } from '@/api/hooks';
 import { colors } from '@/theme/colors';
+import { MIN_TOUCH_TARGET } from '@/utils/a11y';
 import type { Rating } from '@/api/types';
 
 const RATING_COLOR: Record<Rating, string> = {
@@ -92,6 +93,9 @@ export default function AskScreen() {
             style={[styles.btn, busy && styles.btnDisabled]}
             onPress={onAnalyze}
             disabled={busy}
+            accessibilityRole="button"
+            accessibilityLabel="Girilen sembolü analiz et"
+            accessibilityState={{ disabled: busy, busy }}
           >
             {busy ? (
               <ActivityIndicator color="#fff" />
@@ -115,7 +119,13 @@ export default function AskScreen() {
             </Text>
             <View style={styles.chips}>
               {['AAPL', 'NVDA', 'MSFT', 'GOOGL', 'AMZN'].map((t) => (
-                <Pressable key={t} style={styles.chip} onPress={() => runAnalysis(t)}>
+                <Pressable
+                  key={t}
+                  style={styles.chip}
+                  onPress={() => runAnalysis(t)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${t} analiz et`}
+                >
                   <Text style={styles.chipText}>{t}</Text>
                 </Pressable>
               ))}
@@ -139,6 +149,8 @@ export default function AskScreen() {
           <Pressable
             style={styles.card}
             onPress={() => router.push(`/trade/${decision.ticker}` as never)}
+            accessibilityRole="button"
+            accessibilityLabel={`${decision.ticker} kararının tam detayı`}
           >
             <View style={styles.row}>
               <Text style={styles.ticker}>{decision.ticker}</Text>
@@ -247,6 +259,14 @@ const styles = StyleSheet.create({
   emptyTitle: { color: colors.textPrimary, fontSize: 17, fontWeight: '700' },
   emptyText: { color: colors.textSecondary, fontSize: 13, lineHeight: 19, textAlign: 'center', paddingHorizontal: 8 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center', marginTop: 8 },
-  chip: { paddingHorizontal: 18, paddingVertical: 8, borderRadius: 18, backgroundColor: colors.surfaceElevated },
+  chip: {
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    borderRadius: 18,
+    backgroundColor: colors.surfaceElevated,
+    minHeight: MIN_TOUCH_TARGET,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   chipText: { color: colors.textPrimary, fontSize: 14, fontWeight: '600', letterSpacing: 1 },
 });

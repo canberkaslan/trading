@@ -1,3 +1,5 @@
+import { describe, it, expect } from '@jest/globals';
+
 import {
   INBOX_CAP,
   badgeLabel,
@@ -110,13 +112,13 @@ describe('mergeInbox', () => {
   it('never flips a read row back to unread', () => {
     const stored = item({ id: 'dup', read: true });
     const redelivered = item({ id: 'dup', read: false });
-    expect(mergeInbox([stored], [redelivered])[0].read).toBe(true);
+    expect(mergeInbox([stored], [redelivered])[0]?.read).toBe(true);
   });
 
   it('promotes an unread row to read when the tap copy arrives', () => {
     const stored = item({ id: 'dup', read: false });
     const tapped = item({ id: 'dup', read: true });
-    expect(mergeInbox([stored], [tapped])[0].read).toBe(true);
+    expect(mergeInbox([stored], [tapped])[0]?.read).toBe(true);
   });
 
   it('caps the inbox', () => {
@@ -164,7 +166,7 @@ describe('serializeInbox', () => {
     expect(kept.length).toBeGreaterThan(0);
     expect(kept.length).toBeLessThan(items.length);
     // Newest survive; the tail is what gets dropped.
-    expect(kept[0].id).toBe('n0');
+    expect(kept[0]?.id).toBe('n0');
     expect(Buffer.byteLength(json, 'utf8')).toBeLessThanOrEqual(600);
   });
 

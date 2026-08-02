@@ -8,6 +8,7 @@ import { api } from '@/api/endpoints';
 import { colors } from '@/theme/colors';
 import { authenticate } from '@/auth/biometric';
 import { formatUsd } from '@/utils/format';
+import { MIN_TOUCH_TARGET, hitSlopFor, orderActionLabel } from '@/utils/a11y';
 import type { AgentDecision, OrderListItem } from '@/api/types';
 
 export default function ApproveOrderScreen() {
@@ -52,7 +53,12 @@ export default function ApproveOrderScreen() {
       <SafeAreaView style={styles.container} edges={['top']}>
         <View style={styles.center}>
           <Text style={styles.muted}>Bu emir artık bekleyen listesinde değil.</Text>
-          <Pressable onPress={() => router.back()} style={styles.btnSecondary}>
+          <Pressable
+            onPress={() => router.back()}
+            style={[styles.btnCompact, styles.btnSecondary]}
+            accessibilityRole="button"
+            accessibilityLabel="Geri dön"
+          >
             <Text style={styles.btnSecondaryText}>Geri</Text>
           </Pressable>
         </View>
@@ -74,24 +80,36 @@ export default function ApproveOrderScreen() {
     }
     try {
       const result = await approve.mutateAsync(order.order_id);
-      Alert.alert('Submitted', `Broker order: ${result.broker_order_id}\nStatus: ${result.status}`);
+      Alert.alert('Emir gönderildi', `Broker emri: ${result.broker_order_id}\nDurum: ${result.status}`);
       router.back();
     } catch (e) {
       // 422 from backend means guards refused (stale, no_tp_headroom, too_close_to_stop)
       const msg = (e as Error & { response?: Response }).response
-        ? `Refused by guards. See server response.\n${String(e)}`
-        : `Failed: ${String(e)}`;
-      Alert.alert('Refused', msg);
+        ? `Risk guard reddetti. Sunucu yanıtına bakın.\n${String(e)}`
+        : `Gönderilemedi: ${String(e)}`;
+      Alert.alert('Reddedildi', msg);
     }
   };
 
-  const handleReject = async () => {
+  const doReject = async () => {
     try {
       await reject.mutateAsync(order.order_id);
       router.back();
     } catch (e) {
-      Alert.alert('Failed', String(e));
+      Alert.alert('Reddedilemedi', String(e));
     }
+  };
+
+  // Rejecting drops the order for good — the daily run won't re-propose it today.
+  const handleReject = () => {
+    Alert.alert(
+      'Emri reddet?',
+      `${order.side} ${order.quantity} ${order.ticker} emri gönderilmeyecek.`,
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        { text: 'Reddet', style: 'destructive', onPress: () => void doReject() },
+      ],
+    );
   };
 
   const submitting = approve.isPending;
@@ -99,28 +117,34 @@ export default function ApproveOrderScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <ScrollView contentContainerStyle={{ padding: 24 }}>
-        <Pressable onPress={() => router.back()} style={styles.back}>
-          <Text style={styles.backText}>← Back</Text>
+        <Pressable
+          onPress={() => router.back()}
+          style={styles.back}
+          hitSlop={hitSlopFor(18)}
+          accessibilityRole="button"
+          accessibilityLabel="Geri dön"
+        >
+          <Text style={styles.backText}>← Geri</Text>
         </Pressable>
 
         <Text style={styles.title}>{order.ticker}</Text>
-        <Text style={styles.subtitle}>{order.side} {order.quantity} shares — {order.order_type}</Text>
+        <Text style={styles.subtitle}>{order.side} {order.quantity} lot — {order.order_type}</Text>
 
         <View style={styles.headlineCard}>
           <View style={styles.row}>
-            <Stat label="Quantity" value={String(order.quantity)} />
+            <Stat label="Adet" value={String(order.quantity)} />
             <Stat label="Stop" value={formatUsd(order.stop_loss)} />
-            <Stat label="Type" value={order.order_type} />
+            <Stat label="Tür" value={order.order_type} />
           </View>
           {decision && (
             <View style={[styles.row, { marginTop: 12 }]}>
-              <Stat label="Rating" value={decision.rating} />
-              <Stat label="Entry" value={formatUsd(decision.entry_price)} />
-              <Stat label="Target" value={formatUsd(decision.price_target)} />
+              <Stat label="Puan" value={decision.rating} />
+              <Stat label="Giriş" value={formatUsd(decision.entry_price)} />
+              <Stat label="Hedef" value={formatUsd(decision.price_target)} />
             </View>
           )}
           {decision?.time_horizon && (
-            <Text style={styles.muted}>Horizon: {decision.time_horizon}</Text>
+            <Text style={styles.muted}>Vade: {decision.time_horizon}</Text>
           )}
         </View>
 
@@ -129,13 +153,20 @@ export default function ApproveOrderScreen() {
             disabled={submitting}
             style={[styles.btn, styles.btnSecondary, submitting && { opacity: 0.5 }]}
             onPress={handleReject}
+            accessibilityRole="button"
+            accessibilityLabel={orderActionLabel(order, 'reject')}
+            accessibilityState={{ disabled: submitting }}
           >
-            <Text style={styles.btnSecondaryText}>Reject</Text>
+            <Text style={styles.btnSecondaryText}>Reddet</Text>
           </Pressable>
           <Pressable
             disabled={submitting}
             style={[styles.btn, styles.btnPrimary, submitting && { opacity: 0.5 }]}
             onPress={handleApprove}
+            accessibilityRole="button"
+            accessibilityLabel={orderActionLabel(order, 'approve')}
+            accessibilityHint="Cihaz kilidi ile doğrulama ister"
+            accessibilityState={{ disabled: submitting, busy: submitting }}
           >
             {submitting ? <ActivityIndicator color="#000" /> : (
               <Text style={styles.btnPrimaryText}>Doğrula ve Onayla</Text>
@@ -143,13 +174,13 @@ export default function ApproveOrderScreen() {
           </Pressable>
         </View>
 
-        <Text style={styles.section}>Portfolio Manager output</Text>
+        <Text style={styles.section}>Portföy Yöneticisi gerekçesi</Text>
         {decisionError ? (
           <Text style={styles.err}>{decisionError}</Text>
         ) : decision ? (
-          <Text style={styles.body}>{decision.final_decision_text ?? '(no PM text)'}</Text>
+          <Text style={styles.body}>{decision.final_decision_text ?? 'Gerekçe metni yok.'}</Text>
         ) : (
-          <Text style={styles.muted}>Loading reasoning…</Text>
+          <Text style={styles.muted}>Gerekçe yükleniyor…</Text>
         )}
       </ScrollView>
     </SafeAreaView>
@@ -183,7 +214,21 @@ const styles = StyleSheet.create({
   muted: { color: colors.textMuted, fontSize: 12, marginTop: 4 },
   err: { color: colors.danger, fontSize: 13 },
   actions: { flexDirection: 'row', gap: 12, marginTop: 16 },
-  btn: { flex: 1, padding: 14, borderRadius: 8, alignItems: 'center' },
+  btn: {
+    flex: 1,
+    padding: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: MIN_TOUCH_TARGET,
+  },
+  btnCompact: {
+    paddingHorizontal: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 8,
+    minHeight: MIN_TOUCH_TARGET,
+  },
   btnPrimary: { backgroundColor: colors.up },
   btnPrimaryText: { color: '#000', fontWeight: '700' },
   btnSecondary: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.textMuted },

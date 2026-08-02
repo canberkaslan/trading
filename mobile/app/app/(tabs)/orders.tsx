@@ -11,6 +11,7 @@ import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
 import { formatUsd } from '@/utils/format';
 import { orderStatusMeta, fillSummary, formatOrderDate, type OrderTone } from '@/utils/orders';
+import { MIN_TOUCH_TARGET, orderActionLabel } from '@/utils/a11y';
 
 type Tab = 'pending' | 'history';
 
@@ -103,6 +104,9 @@ export default function OrdersScreen() {
                 key={o.order_id}
                 style={styles.card}
                 onPress={() => router.push(`/approve/${o.order_id}` as never)}
+                accessibilityRole="button"
+                accessibilityLabel={orderActionLabel(o, 'review')}
+                accessibilityHint={`Stop ${formatUsd(o.stop_loss)}, ${o.order_type}`}
               >
                 <View style={styles.row}>
                   <Text style={styles.ticker}>{o.ticker}</Text>
@@ -145,7 +149,8 @@ function SegmentButton({ label, active, onPress }: { label: string; active: bool
     <Pressable
       style={[styles.segBtn, active && styles.segBtnActive]}
       onPress={onPress}
-      accessibilityRole="button"
+      accessibilityRole="tab"
+      accessibilityLabel={`${label} emirler`}
       accessibilityState={{ selected: active }}
     >
       <Text style={[styles.segLabel, active && styles.segLabelActive]}>{label}</Text>
@@ -159,7 +164,15 @@ const styles = StyleSheet.create({
   heading: { color: colors.textPrimary, fontSize: 28, fontWeight: '700' },
   subheading: { color: colors.textSecondary, fontSize: 13, marginBottom: 16 },
   segment: { flexDirection: 'row', gap: 8, marginTop: 12 },
-  segBtn: { flex: 1, paddingVertical: 10, borderRadius: 10, backgroundColor: colors.surface, alignItems: 'center' },
+  segBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: MIN_TOUCH_TARGET,
+  },
   segBtnActive: { backgroundColor: colors.surfaceElevated },
   segLabel: { color: colors.textMuted, fontSize: 14, fontWeight: '600' },
   segLabelActive: { color: colors.textPrimary },

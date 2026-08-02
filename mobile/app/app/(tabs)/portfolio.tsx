@@ -7,6 +7,7 @@ import { useRouter } from 'expo-router';
 
 import { usePortfolio, useEval, usePortfolioHistory, usePrices, useConcentration } from '@/api/hooks';
 import { colors } from '@/theme/colors';
+import { MIN_TOUCH_TARGET } from '@/utils/a11y';
 import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
 import { EquityChart } from '@/components/EquityChart';
@@ -102,6 +103,7 @@ export default function PortfolioScreen() {
                 key={p}
                 onPress={() => setPeriod(p)}
                 accessibilityRole="button"
+                accessibilityLabel={`${p} dönem`}
                 accessibilityState={{ selected: active }}
                 style={[styles.periodPill, active && styles.periodPillActive]}
               >
@@ -183,6 +185,9 @@ export default function PortfolioScreen() {
                 key={p.ticker}
                 style={styles.positionCard}
                 onPress={() => router.push(`/(tabs)/ask?ticker=${p.ticker}` as never)}
+                accessibilityRole="button"
+                accessibilityLabel={`${p.ticker} pozisyonunu analiz et`}
+                accessibilityHint={`${p.quantity} lot, kâr/zarar ${formatUsd(p.unrealized_pnl, { signed: true })}`}
               >
                 <View style={styles.row}>
                   <Text style={styles.posTicker}>{p.ticker}</Text>
@@ -221,7 +226,16 @@ const styles = StyleSheet.create({
   muted: { color: colors.textMuted, marginTop: 4 },
   timestamp: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
   periodRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 24, marginTop: 8 },
-  periodPill: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 999, backgroundColor: colors.surface },
+  periodPill: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: colors.surface,
+    minHeight: MIN_TOUCH_TARGET,
+    minWidth: MIN_TOUCH_TARGET,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   periodPillActive: { backgroundColor: colors.surfaceElevated },
   periodText: { color: colors.textMuted, fontSize: 13, fontWeight: '600' },
   periodTextActive: { color: colors.textPrimary },

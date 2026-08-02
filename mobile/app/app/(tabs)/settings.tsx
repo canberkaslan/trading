@@ -9,6 +9,7 @@ import { getPermissionStatus, requestAndRegisterPush, type PushPermission } from
 import { useInboxStore } from '@/stores/notifications';
 import { colors } from '@/theme/colors';
 import { unreadCount } from '@/utils/inbox';
+import { MIN_TOUCH_TARGET, killSwitchLabel } from '@/utils/a11y';
 import type { KillSwitchState } from '@/api/types';
 
 const PERMISSION_COPY: Record<PushPermission, { text: string; color: string }> = {
@@ -199,6 +200,10 @@ export default function SettingsScreen() {
                 style={[styles.killChip, active && { backgroundColor: k.color }]}
                 onPress={() => applyKill(k.state)}
                 disabled={setKs.isPending}
+                accessibilityRole="button"
+                accessibilityLabel={killSwitchLabel(k.state)}
+                accessibilityHint={k.desc}
+                accessibilityState={{ selected: active, disabled: setKs.isPending }}
               >
                 <Text style={[styles.killLabel, active && { color: '#000' }]}>{k.label}</Text>
               </Pressable>
@@ -286,7 +291,15 @@ const styles = StyleSheet.create({
   label: { color: colors.textPrimary, fontSize: 16 },
   muted: { color: colors.textMuted, fontSize: 13 },
   killRow: { flexDirection: 'row', gap: 8 },
-  killChip: { flex: 1, paddingVertical: 14, borderRadius: 10, backgroundColor: colors.surface, alignItems: 'center' },
+  killChip: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 10,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: MIN_TOUCH_TARGET,
+  },
   killLabel: { color: colors.textPrimary, fontSize: 14, fontWeight: '700' },
   killDesc: { color: colors.textMuted, fontSize: 12, marginTop: 8, paddingHorizontal: 4 },
   healthCard: { backgroundColor: colors.surface, borderRadius: 12, padding: 16, gap: 12 },
@@ -312,6 +325,8 @@ const styles = StyleSheet.create({
     padding: 14,
     borderRadius: 8,
     alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: MIN_TOUCH_TARGET,
     marginTop: 8,
   },
   buttonText: { color: colors.textPrimary, fontSize: 14, fontWeight: '600' },

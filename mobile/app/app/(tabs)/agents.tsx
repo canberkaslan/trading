@@ -6,6 +6,7 @@ import { useRouter } from 'expo-router';
 
 import { useDecisions } from '@/api/hooks';
 import { colors } from '@/theme/colors';
+import { hitSlopFor } from '@/utils/a11y';
 import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
 import type { Rating } from '@/api/types';
@@ -57,7 +58,7 @@ export default function AgentsScreen() {
         </Text>
 
         {isLoading ? (
-          <Text style={styles.muted}>Loading…</Text>
+          <Text style={styles.muted}>Yükleniyor…</Text>
         ) : isError ? (
           <ErrorState onRetry={refetch} />
         ) : !data || data.length === 0 ? (
@@ -66,7 +67,15 @@ export default function AgentsScreen() {
           data.map((d) => {
             const isOpen = !!expanded[d.decision_id];
             return (
-              <Pressable key={d.decision_id} style={styles.card} onPress={() => toggle(d.decision_id)}>
+              <Pressable
+                key={d.decision_id}
+                style={styles.card}
+                onPress={() => toggle(d.decision_id)}
+                accessibilityRole="button"
+                accessibilityLabel={`${d.ticker} kararı, ${d.rating}`}
+                accessibilityHint={isOpen ? 'Ajan gerekçelerini gizle' : 'Ajan gerekçelerini göster'}
+                accessibilityState={{ expanded: isOpen }}
+              >
                 <View style={styles.row}>
                   <Text style={styles.ticker}>{d.ticker}</Text>
                   <Text style={[styles.rating, { color: RATING_COLOR[d.rating] }]}>{d.rating}</Text>
@@ -101,7 +110,12 @@ export default function AgentsScreen() {
                         </View>
                       );
                     })}
-                    <Pressable onPress={() => router.push(`/trade/${d.ticker}` as never)}>
+                    <Pressable
+                      onPress={() => router.push(`/trade/${d.ticker}` as never)}
+                      hitSlop={hitSlopFor(18)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${d.ticker} kararının tam detayı`}
+                    >
                       <Text style={styles.detailLink}>Tam detay →</Text>
                     </Pressable>
                   </View>

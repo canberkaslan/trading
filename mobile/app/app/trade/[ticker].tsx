@@ -11,6 +11,7 @@ import {
   debateEntries,
   debateRoleLabel,
 } from '@/utils/decision';
+import { hitSlopFor } from '@/utils/a11y';
 
 function modelBadge(model: string): { label: string; color: string } {
   if (model.includes('opus')) return { label: 'Opus', color: colors.accent };
@@ -34,7 +35,13 @@ export default function TradeApproveScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <ScrollView contentContainerStyle={{ padding: 24 }}>
-        <Pressable onPress={() => router.back()} style={styles.back}>
+        <Pressable
+          onPress={() => router.back()}
+          style={styles.back}
+          hitSlop={hitSlopFor(18)}
+          accessibilityRole="button"
+          accessibilityLabel="Geri dön"
+        >
           <Text style={styles.backText}>← Geri</Text>
         </Pressable>
 

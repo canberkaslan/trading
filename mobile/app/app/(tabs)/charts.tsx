@@ -16,6 +16,7 @@ import { useRouter } from 'expo-router';
 
 import { usePrices } from '@/api/hooks';
 import { colors } from '@/theme/colors';
+import { MIN_TOUCH_TARGET } from '@/utils/a11y';
 
 const RANGES = [
   { label: '1A', days: 30 },
@@ -84,7 +85,12 @@ export default function ChartsScreen() {
             returnKeyType="search"
             onSubmitEditing={onSubmit}
           />
-          <Pressable style={styles.go} onPress={onSubmit}>
+          <Pressable
+            style={styles.go}
+            onPress={onSubmit}
+            accessibilityRole="button"
+            accessibilityLabel="Girilen sembolün grafiğini göster"
+          >
             <Text style={styles.goText}>Göster</Text>
           </Pressable>
         </View>
@@ -107,6 +113,9 @@ export default function ChartsScreen() {
               key={m}
               style={[styles.modeChip, mode === m && styles.modeChipActive]}
               onPress={() => setMode(m)}
+              accessibilityRole="button"
+              accessibilityLabel={m === 'area' ? 'Alan grafiği' : 'Mum grafiği'}
+              accessibilityState={{ selected: mode === m }}
             >
               <Text style={[styles.modeText, mode === m && styles.modeTextActive]}>
                 {m === 'area' ? 'Alan' : 'Mum'}
@@ -194,6 +203,9 @@ export default function ChartsScreen() {
               key={r.days}
               style={[styles.rangeChip, days === r.days && styles.rangeChipActive]}
               onPress={() => setDays(r.days)}
+              accessibilityRole="button"
+              accessibilityLabel={`${r.label} aralık`}
+              accessibilityState={{ selected: days === r.days }}
             >
               <Text style={[styles.rangeText, days === r.days && styles.rangeTextActive]}>{r.label}</Text>
             </Pressable>
@@ -203,6 +215,8 @@ export default function ChartsScreen() {
         <Pressable
           style={styles.analyzeBtn}
           onPress={() => router.push(`/(tabs)/ask?ticker=${ticker}` as never)}
+          accessibilityRole="button"
+          accessibilityLabel={`${ticker} analiz et`}
         >
           <Text style={styles.analyzeBtnText}>🤖 {ticker} analiz et</Text>
         </Pressable>
@@ -233,7 +247,15 @@ const styles = StyleSheet.create({
   price: { color: colors.textPrimary, fontSize: 22, fontWeight: '700' },
   change: { fontSize: 14, fontWeight: '600', marginTop: 2 },
   modeRow: { flexDirection: 'row', gap: 8, alignSelf: 'flex-start' },
-  modeChip: { paddingHorizontal: 16, paddingVertical: 6, borderRadius: 16, backgroundColor: colors.surface },
+  modeChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: colors.surface,
+    minHeight: MIN_TOUCH_TARGET,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   modeChipActive: { backgroundColor: colors.surfaceElevated },
   modeText: { color: colors.textMuted, fontSize: 13, fontWeight: '600' },
   modeTextActive: { color: colors.textPrimary },
@@ -243,11 +265,26 @@ const styles = StyleSheet.create({
   minmax: { flexDirection: 'row', justifyContent: 'space-between' },
   muted: { color: colors.textMuted, fontSize: 12 },
   ranges: { flexDirection: 'row', gap: 10, justifyContent: 'center' },
-  rangeChip: { paddingHorizontal: 22, paddingVertical: 8, borderRadius: 20, backgroundColor: colors.surface },
+  rangeChip: {
+    paddingHorizontal: 22,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: colors.surface,
+    minHeight: MIN_TOUCH_TARGET,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   rangeChipActive: { backgroundColor: colors.accent },
   rangeText: { color: colors.textSecondary, fontWeight: '600' },
   rangeTextActive: { color: '#fff' },
   err: { color: colors.danger, fontSize: 14, textAlign: 'center' },
-  analyzeBtn: { backgroundColor: colors.surfaceElevated, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  analyzeBtn: {
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: 12,
+    paddingVertical: 14,
+    minHeight: MIN_TOUCH_TARGET,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   analyzeBtnText: { color: colors.textPrimary, fontSize: 15, fontWeight: '600' },
 });

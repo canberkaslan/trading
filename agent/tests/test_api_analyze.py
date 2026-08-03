@@ -43,14 +43,22 @@ class _NoOpRepo:
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.delenv("DEV_API_TOKEN", raising=False)
     monkeypatch.delenv("COGNITO_USER_POOL_ID", raising=False)
-    # Don't touch the real DB or LLM pipeline. _run imports get_repo lazily,
-    # so patching the name on api.deps is picked up at call time.
+    # Import the app BEFORE patching api.deps.get_repo. Every route module
+    # binds `from ..deps import get_repo` at import time and freezes it inside
+    # its `Depends(...)` for the life of the process — importing under the
+    # patch would make _NoOpRepo the permanent dependency key for the whole
+    # test session, and any later test that overrides get_repo would silently
+    # keep getting _NoOpRepo. (That is exactly what happened once.)
+    from api.main import app
+
+    # Don't touch the real DB or LLM pipeline. _run imports get_repo lazily
+    # inside its worker thread — outside request scope, so dependency_overrides
+    # can't reach it — hence patching the name on api.deps for that path.
     monkeypatch.setattr("api.routes.analyze.propagate", lambda t, d: _fake_decision(t))
     monkeypatch.setattr("api.deps.get_repo", lambda: _NoOpRepo())
     import api.routes.analyze as mod
 
     monkeypatch.setattr(mod, "_jobs", {})
-    from api.main import app
 
     return TestClient(app)
 

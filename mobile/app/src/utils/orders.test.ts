@@ -1,6 +1,12 @@
 import { describe, it, expect } from '@jest/globals';
 
-import { orderStatusMeta, fillSummary, formatOrderDate } from './orders';
+import {
+  orderStatusMeta,
+  fillSummary,
+  formatOrderDate,
+  isCancellable,
+  rejectionReasonTr,
+} from './orders';
 
 describe('orderStatusMeta', () => {
   it('maps filled to an up tone', () => {
@@ -71,5 +77,69 @@ describe('formatOrderDate', () => {
   it('returns an em dash for null/invalid input', () => {
     expect(formatOrderDate(null)).toBe('—');
     expect(formatOrderDate('not-a-date')).toBe('—');
+  });
+});
+
+describe('isCancellable', () => {
+  it('allows cancel for live broker statuses', () => {
+    for (const s of ['new', 'accepted', 'pending_new', 'held', 'partially_filled', 'ACCEPTED']) {
+      expect(isCancellable(s, 'bkr-1')).toBe(true);
+    }
+  });
+
+  it('refuses terminal statuses', () => {
+    for (const s of ['filled', 'canceled', 'cancelled', 'expired', 'rejected', 'done_for_day']) {
+      expect(isCancellable(s, 'bkr-1')).toBe(false);
+    }
+  });
+
+  it('refuses an in-flight cancel so the button cannot be double-tapped', () => {
+    expect(isCancellable('pending_cancel', 'bkr-1')).toBe(false);
+  });
+
+  it('refuses an order that never reached the broker (that is /reject)', () => {
+    expect(isCancellable('new', null)).toBe(false);
+    expect(isCancellable('new', '')).toBe(false);
+  });
+
+  it('refuses an unknown or missing status rather than offering a doomed action', () => {
+    expect(isCancellable('some_new_alpaca_status', 'bkr-1')).toBe(false);
+    expect(isCancellable(null, 'bkr-1')).toBe(false);
+    expect(isCancellable('', 'bkr-1')).toBe(false);
+  });
+});
+
+describe('rejectionReasonTr', () => {
+  it('translates the key and keeps the numbers verbatim', () => {
+    expect(rejectionReasonTr('position_pct=12.40% exceeds 10%')).toBe(
+      'Tek isim limiti (12.40% exceeds 10%)',
+    );
+    expect(rejectionReasonTr('kill_switch=PAUSE_NEW')).toBe('Kill switch devrede (PAUSE_NEW)');
+  });
+
+  it('translates bare keys with no detail', () => {
+    expect(rejectionReasonTr('risk_layer_rejected')).toBe('Risk katmanı reddetti');
+    expect(rejectionReasonTr('pattern_day_trader_active')).toBe('PDT kısıtı aktif');
+  });
+
+  it('handles colon-separated executor refusals', () => {
+    expect(rejectionReasonTr('stale_decision: age=30.2h exceeds 24.0h')).toBe(
+      'Karar bayatlamış (age=30.2h exceeds 24.0h)',
+    );
+  });
+
+  it('handles a space-separated key', () => {
+    expect(rejectionReasonTr('non-actionable rating=Hold')).toBe(
+      'Aksiyon gerektirmeyen karar (rating=Hold)',
+    );
+  });
+
+  it('passes an unknown reason through untouched rather than hiding it', () => {
+    expect(rejectionReasonTr('brand_new_guard=7')).toBe('brand_new_guard=7');
+  });
+
+  it('returns an empty string for null/blank input', () => {
+    expect(rejectionReasonTr(null)).toBe('');
+    expect(rejectionReasonTr('   ')).toBe('');
   });
 });

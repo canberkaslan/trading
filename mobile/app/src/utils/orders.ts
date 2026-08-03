@@ -74,6 +74,82 @@ const TR_MONTHS = [
   'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara',
 ];
 
+/**
+ * Can this order still be cancelled at the broker?
+ *
+ * Only orders that actually reached the broker are cancellable — a held order
+ * with no `broker_order_id` is /reject's business, and the backend answers 409
+ * for it. Terminal broker statuses (filled, canceled, expired, rejected) and
+ * in-flight cancels are excluded so the button never offers an action the
+ * broker will refuse.
+ *
+ * Unknown statuses fall through to *not* cancellable: an unrecognised status
+ * means we don't know what the order is doing, and a 502 on a money screen is
+ * worse than a missing button.
+ */
+const CANCELLABLE_STATUSES = new Set([
+  'new',
+  'accepted',
+  'pending_new',
+  'accepted_for_bidding',
+  'held',
+  'calculated',
+  'partially_filled',
+  'replaced',
+]);
+
+export function isCancellable(
+  brokerStatus: string | null | undefined,
+  brokerOrderId: string | null | undefined,
+): boolean {
+  if (!brokerOrderId) return false;
+  if (brokerStatus == null || brokerStatus === '') return false;
+  return CANCELLABLE_STATUSES.has(brokerStatus.toLowerCase());
+}
+
+/**
+ * Turn a raw risk/execution rejection reason into a Turkish sentence.
+ *
+ * The backend emits machine-keyed strings with the offending numbers attached
+ * (`position_pct=12.40% exceeds 10%`, `kill_switch=PAUSE_NEW`). We translate
+ * the key and keep the detail verbatim — the number is the useful half, and
+ * inventing a friendlier one would be a lie.
+ */
+const REJECTION_LABELS_TR: Record<string, string> = {
+  'non-actionable': 'Aksiyon gerektirmeyen karar',
+  risk_layer_rejected: 'Risk katmanı reddetti',
+  trimmed_to_zero_by_portfolio_caps: 'Portföy limitleri emri sıfıra indirdi',
+  zero_equity: 'Hesap özkaynağı sıfır',
+  kill_switch: 'Kill switch devrede',
+  daily_drawdown: 'Günlük drawdown limiti',
+  price_z_score: 'Aşırı volatilite',
+  api_error_rate: 'API hata oranı yüksek',
+  consecutive_losses: 'Üst üste zarar',
+  position_pct: 'Tek isim limiti',
+  sector_pct: 'Sektör limiti',
+  correlated_positions: 'Korelasyon limiti',
+  gross_exposure: 'Brüt maruziyet limiti',
+  adv_usd: 'Likidite yetersiz',
+  account_trading_blocked: 'Hesapta işlem engelli',
+  pattern_day_trader_active: 'PDT kısıtı aktif',
+  market_closed_until: 'Piyasa kapalı',
+  stale_decision: 'Karar bayatlamış',
+  no_tp_headroom: 'Hedef fiyata yer kalmamış',
+  too_close_to_stop: 'Stop seviyesine çok yakın',
+};
+
+export function rejectionReasonTr(raw: string | null | undefined): string {
+  const text = (raw ?? '').trim();
+  if (!text) return '';
+  // Key is everything before the first '=' or ':' or space, e.g.
+  // "position_pct=12.40% exceeds 10%" -> "position_pct".
+  const key = text.split(/[=:\s]/, 1)[0] ?? '';
+  const label = REJECTION_LABELS_TR[key];
+  if (!label) return text;
+  const detail = text.slice(key.length).replace(/^[=:\s]+/, '').trim();
+  return detail ? `${label} (${detail})` : label;
+}
+
 export function formatOrderDate(iso: string | null | undefined): string {
   if (!iso) return '—';
   const d = new Date(iso);

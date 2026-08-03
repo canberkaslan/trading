@@ -84,6 +84,22 @@ export function useRejectOrder() {
   });
 }
 
+/**
+ * Cancel an order that is already at the broker. Invalidates orders *and*
+ * portfolio: a cancel that loses the race to a fill changes the book, and the
+ * refetched broker status is what tells the user which way it went.
+ */
+export function useCancelOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (orderId: string) => api.cancelOrder(orderId),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['orders'] });
+      qc.invalidateQueries({ queryKey: ['portfolio'] });
+    },
+  });
+}
+
 export function usePrices(ticker: string | null, days = 60) {
   return useQuery({
     queryKey: ['prices', ticker, days],

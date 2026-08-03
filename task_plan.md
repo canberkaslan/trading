@@ -68,7 +68,7 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 
 ### Trust/safety UX (mobile, before real money)
 - [~] **4. Approve-flow hardening** (M) — ✅ 2026-07-21 slice-1 (OTA): (a) biometric.ts OS-passcode fallback — pure `resolveAuthMode(hasHardware, getEnrolledLevelAsync)` → biometric/passcode/none; SECRET-level devices (PIN, no Face/Touch ID) no longer permanently locked out of approving; `authenticate()` returns {success, mode}, 'none' → distinct "no device lock" alert; 4 authPolicy jest tests. (b) approve/[orderId].tsx gates the false "not in pending list" on usePendingOrders.isLoading → spinner during push deep-link fetch race. (c) deleted dead "Approve (TBD)"/Reject stubs on trade/[ticker].tsx → honest read-only decision-detail note (approve happens from Orders tab). TR copy on all touched strings. 36 mobile jest green. KALAN: expo-haptics (needs native rebuild, NOT OTA-safe — deferred to next dev build) + hold-to-approve friction.
-- [~] **5. Order history + fills + cancel** (M) — ✅ 2026-07-23 slice-1 (OTA, read-only): Orders tab segmented **Onay Bekleyen | Geçmiş**; consumes the orphaned `useOrders` hook (GET /v1/orders) — Geçmiş cards render broker_status (TR label + tone), fill progress (`filled_qty/quantity lot`), avg_fill_price, submitted_at. Pure helpers `utils/orders.ts` (orderStatusMeta/fillSummary/formatOrderDate — Alpaca status map, NaN clamps, UTC TR date), 14 jest green (50 total), tsc clean, TR copy sweep on tab. KALAN slice-2 (needs backend): wire api.cancelOrder (zero callers) confirm-gated + backend cancel_order persist OrderUpdate row; rejection_reasons render on rejected rows
+- [~] **5. Order history + fills + cancel** (M) — ✅ 2026-07-23 slice-1 (OTA, read-only): Orders tab segmented **Onay Bekleyen | Geçmiş**; consumes the orphaned `useOrders` hook (GET /v1/orders) — Geçmiş cards render broker_status (TR label + tone), fill progress (`filled_qty/quantity lot`), avg_fill_price, submitted_at. Pure helpers `utils/orders.ts` (orderStatusMeta/fillSummary/formatOrderDate — Alpaca status map, NaN clamps, UTC TR date), 14 jest green (50 total), tsc clean, TR copy sweep on tab. KALAN slice-2 (needs backend): wire api.cancelOrder (zero callers) confirm-gated + backend cancel_order persist OrderUpdate row; rejection_reasons render on rejected rows — ✅ 2026-08-03 slice-2 DONE (backend cancel rewrite + confirm-gated mobile cancel + TR rejection reasons); item 5 COMPLETE
 - [~] **11. API auth hardening** (M) — ✅ 2026-07-13 core (off-eval-path, deployed): fail-closed Cognito JWT when python-jose missing (was: parse unsigned claims → forgeable `sub`; now 500 unless ALLOW_UNVERIFIED_JWT=1 for local dev); `secrets.compare_digest` on dev-bearer (timing-safe); CORS `*` → env-driven allowlist (CORS_ALLOW_ORIGINS, default localhost Expo; native fetch/curl unaffected), methods/headers narrowed. 213 tests green. KALAN (deferred, higher blast/user step): rate limit /v1/* (needs slowapi + care not to throttle daily_run); rotate DEV_API_TOKEN + stop baking into public OTA bundle (per-device token / CF Access — user); notifications/test → only auth'd user's tokens
 - [x] **12. Notifications inbox + contextual permission** (M) — ✅ 2026-08-01 (OTA): zustand store `stores/notifications.ts` persisted via **expo-secure-store** (AsyncStorage would need a native rebuild → not OTA-safe), fed by BOTH `addNotificationReceivedListener` (foreground) and the tap handler (tap copy filed as read); bell + unread badge in the shared `StatusBanner` (inside the 24pt strip, hitSlop→44pt target) → new `app/notifications.tsx` history screen, rows deep-link via the SAME `routeForType` the tap handler uses (single source of truth, can't drift), open = markAllRead + `setBadgeCountAsync(0)`, confirm-gated Temizle. Permission moved off startup: `syncPushTokenIfGranted()` (silent, no prompt) at boot; the OS prompt now fires from the Settings row (live permission status + inbox link, TR copy) or `maybeAskForPush()` on the first pending order (once/session, explained first) — a cold-start denial is permanent and would mean never seeing an approval alert again. Pure helpers `utils/inbox.ts` (routeForType, toInboxItem w/ truncation, mergeInbox dedup that never resurrects a read row, UTF-8-aware byte-budget serializeInbox, tolerant parseInbox, TR relative dates, badgeLabel 9+), 27 new jest (117 total), tsc no new errors, 213 backend tests green. Read-only, off-eval-path.
 
@@ -104,6 +104,33 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - [x] scorecard: Sortino + Calmar render (were typed+returned, never shown) → OTA preview (f885455)
 - Live: verdict GO, Sharpe 9.47, MaxDD 1.04%, +6.3% vs SPY +2.9%; equity $107.7k, net P&L +$8.3k
 - Next: item 7 home equity-curve dashboard (backend /v1/portfolio/history done, absent from endpoints.ts)
+
+## Daily loop 2026-08-03 (eval CLOSED — GO 22/10d)
+- [x] **item 5 slice-2 — cancel order** (backend + OTA). Backend `POST /v1/orders/{id}/cancel` was
+  three lies in twelve lines: it answered `{"status":"cancelled"}` for orders that were never at the
+  broker (nothing cancelled), it never wrote an `OrderUpdate` (local DB kept the order live), and an
+  Alpaca refusal (422 "order is not cancelable" = it already filled) surfaced as an opaque 500 *after*
+  reporting success. Rewritten: `s.get(TradeOrderRow, id)` (was an O(n) scan of list_open_orders) →
+  404 unknown / 409 "not at broker, use /reject" / 502 with the broker message on refusal, and a
+  CANCELLED+`user_cancelled` update persisted ONLY after the broker acks. Deliberately no row on
+  failure — the order is still live and can still fill; the broker-enriched /v1/orders view stays SoT
+  (Alpaca acks with 204→`pending_cancel`, terminal `canceled` lands async).
+  Mobile: `useCancelOrder` (invalidates orders+portfolio — a cancel that loses the race to a fill
+  changes the book), Geçmiş cards get a confirm-gated destructive "Emri iptal et" (44pt, a11y label
+  naming ticker+side+size, error Alert says the order may still be open) rendered only when
+  `isCancellable(status, broker_order_id)`; unknown statuses → no button (a 502 on a money screen is
+  worse than a missing button). `rejection_reasons` now render on the card, TR-translated by key with
+  the numbers kept verbatim (`position_pct=12.40% exceeds 10%` → "Tek isim limiti (12.40% exceeds 10%)").
+  Pure helpers in `utils/orders.ts`, 13 new jest (139 total), tsc clean except the 2 known pre-existing.
+- [x] **latent test-isolation bug** found by the new tests: `tests/test_api_analyze.py` patched
+  `api.deps.get_repo` BEFORE first importing `api.main`, so every route module froze
+  `Depends(<_NoOpRepo lambda>)` for the whole session — any later test overriding `get_repo` silently
+  got _NoOpRepo (kill-switch tests only escaped because their repo calls are try/except'd). Fixed by
+  importing the app before the patch. 217 backend tests green.
+- Live: verdict GO, Sharpe 2.88, Sortino 4.54, MaxDD -4.25%, Calmar 13.58, +3.87% vs SPY +0.30%
+  (α +3.57pt), 22/10 gün, eval_complete. Equity $106,743 (cash $4,396 + 10 pozisyon).
+- Sıradaki: NATIVE rebuild kalanları (tab bar icons + userInterfaceStyle 'dark') ya da
+  cost-opt merge hazırlığı (önce stale model ID'leri tazele: opus-4-7/sonnet-4-6 → 4.8/5).
 
 ## Daily loop 2026-08-02 (eval CLOSED — GO 22/10d)
 - [x] Quick UI wins KALAN: **44pt touch targets + accessibilityLabels on money actions** (OTA) —

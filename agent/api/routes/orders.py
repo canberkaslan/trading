@@ -243,18 +243,54 @@ async def cancel_order(
     user: str = Depends(require_token),
     repo: TradeLogRepository = Depends(get_repo),
     alpaca: AlpacaClient = Depends(get_alpaca),
-) -> dict[str, str]:
-    """Cancel a pending order at the broker, mark it cancelled in local DB."""
+) -> dict[str, str | None]:
+    """Cancel an order that is already AT the broker; persist the outcome.
+
+    Three failure modes this path used to have, all of which lie to a money
+    screen:
+      - it answered `{"status": "cancelled"}` for an order with no
+        broker_order_id — nothing was cancelled, the order was never submitted
+        (that case is /reject's job);
+      - it never wrote an OrderUpdate, so the local DB kept the order live and
+        the history tab could never show a cancellation;
+      - a broker refusal (Alpaca 422 "order is not cancelable" — i.e. it filled
+        in the meantime) surfaced as an opaque 500 while still reporting
+        success to the caller.
+
+    Alpaca acks a cancel with 204 and moves the order to `pending_cancel`; the
+    terminal `canceled` status lands asynchronously, and a late fill can still
+    win the race. So the CANCELLED row records *the request*, and the
+    broker-enriched /v1/orders view stays the source of truth for what the
+    order actually did.
+    """
+    with repo.session() as s:
+        order_row = s.get(TradeOrderRow, order_id)
+        if order_row is None:
+            raise HTTPException(404, f"order not found: {order_id}")
+        broker_order_id = order_row.broker_order_id
+
+    if broker_order_id is None:
+        raise HTTPException(409, "order is not at the broker; use /reject")
+
     try:
-        # Look up our row to get the broker_order_id
-        for r in repo.list_open_orders():
-            if r.order_id == order_id:
-                if r.broker_order_id:
-                    alpaca.cancel_order(r.broker_order_id)
-                return {"status": "cancelled", "order_id": order_id}
-        raise HTTPException(404, f"order not found: {order_id}")
+        alpaca.cancel_order(broker_order_id)
+    except Exception as exc:
+        # Deliberately no CANCELLED row here: the order is still live at the
+        # broker and can still fill. Failing loud beats a comforting lie.
+        raise HTTPException(502, f"broker refused cancel: {exc}") from exc
     finally:
         alpaca.close()
+
+    repo.append_update(OrderUpdate(
+        order_id=order_id, status="CANCELLED",
+        error_message="user_cancelled",
+        timestamp_utc=datetime.now(timezone.utc),
+    ))
+    return {
+        "order_id": order_id,
+        "broker_order_id": broker_order_id,
+        "status": "CANCELLED",
+    }
 
 
 @router.post("/kill-switch")

@@ -4,13 +4,21 @@ import { useState, useCallback, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 
-import { usePendingOrders, useOrders } from '@/api/hooks';
+import { usePendingOrders, useOrders, useCancelOrder } from '@/api/hooks';
+import type { OrderListItem } from '@/api/types';
 import { getPermissionStatus, requestAndRegisterPush } from '@/notifications';
 import { colors } from '@/theme/colors';
 import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
 import { formatUsd } from '@/utils/format';
-import { orderStatusMeta, fillSummary, formatOrderDate, type OrderTone } from '@/utils/orders';
+import {
+  orderStatusMeta,
+  fillSummary,
+  formatOrderDate,
+  isCancellable,
+  rejectionReasonTr,
+  type OrderTone,
+} from '@/utils/orders';
 import { MIN_TOUCH_TARGET, orderActionLabel } from '@/utils/a11y';
 
 type Tab = 'pending' | 'history';
@@ -118,29 +126,89 @@ export default function OrdersScreen() {
             );
           })
         ) : (
-          active.data.map((o) => {
-            const sideColor = o.side === 'BUY' ? colors.up : colors.down;
-            const meta = orderStatusMeta(o.broker_status);
-            return (
-              <View key={o.order_id} style={styles.card}>
-                <View style={styles.row}>
-                  <Text style={styles.ticker}>{o.ticker}</Text>
-                  <Text style={[styles.side, { color: sideColor }]}>{o.side} {o.quantity}</Text>
-                </View>
-                <View style={styles.row}>
-                  <Text style={[styles.status, { color: TONE_COLOR[meta.tone] }]}>{meta.label}</Text>
-                  <Text style={styles.muted}>{fillSummary(o.filled_qty, o.quantity)}</Text>
-                </View>
-                <Text style={styles.muted}>
-                  {o.avg_fill_price != null ? `Ort. ${formatUsd(o.avg_fill_price)} • ` : ''}
-                  {formatOrderDate(o.submitted_at_utc)}
-                </Text>
-              </View>
-            );
-          })
+          active.data.map((o) => <HistoryCard key={o.order_id} order={o} />)
         )}
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+/**
+ * One broker-submitted order. Read-only except for the cancel action, which is
+ * only rendered while the broker can still act on it (see `isCancellable`) and
+ * is confirm-gated — a mis-tap here pulls a live order off the book.
+ */
+function HistoryCard({ order: o }: { order: OrderListItem }) {
+  const cancel = useCancelOrder();
+  const sideColor = o.side === 'BUY' ? colors.up : colors.down;
+  const meta = orderStatusMeta(o.broker_status);
+  const cancellable = isCancellable(o.broker_status, o.broker_order_id);
+  const reasons = o.rejection_reasons ?? [];
+
+  const onCancel = useCallback(() => {
+    Alert.alert(
+      'Emri iptal et',
+      `${o.ticker} ${o.side} ${o.quantity} lot emri broker'dan geri çekilsin mi? ` +
+        'Emir bu sırada dolarsa iptal edilemez.',
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'İptal et',
+          style: 'destructive',
+          onPress: () =>
+            cancel.mutate(o.order_id, {
+              onError: (e: unknown) =>
+                Alert.alert(
+                  'İptal edilemedi',
+                  e instanceof Error ? e.message : 'Broker isteği reddetti. Emir hâlâ açık olabilir.',
+                ),
+            }),
+        },
+      ],
+    );
+  }, [cancel, o.order_id, o.quantity, o.side, o.ticker]);
+
+  return (
+    <View style={styles.card}>
+      <View style={styles.row}>
+        <Text style={styles.ticker}>{o.ticker}</Text>
+        <Text style={[styles.side, { color: sideColor }]}>{o.side} {o.quantity}</Text>
+      </View>
+      <View style={styles.row}>
+        <Text style={[styles.status, { color: TONE_COLOR[meta.tone] }]}>{meta.label}</Text>
+        <Text style={styles.muted}>{fillSummary(o.filled_qty, o.quantity)}</Text>
+      </View>
+      <Text style={styles.muted}>
+        {o.avg_fill_price != null ? `Ort. ${formatUsd(o.avg_fill_price)} • ` : ''}
+        {formatOrderDate(o.submitted_at_utc)}
+      </Text>
+
+      {reasons.length > 0 && (
+        <View style={styles.reasons}>
+          {reasons.map((r, i) => (
+            <Text key={`${o.order_id}-r${i}`} style={styles.reason}>
+              • {rejectionReasonTr(r)}
+            </Text>
+          ))}
+        </View>
+      )}
+
+      {cancellable && (
+        <Pressable
+          style={styles.cancelBtn}
+          onPress={onCancel}
+          disabled={cancel.isPending}
+          accessibilityRole="button"
+          accessibilityLabel={orderActionLabel(o, 'cancel')}
+          accessibilityHint="Onay sorulur"
+          accessibilityState={{ disabled: cancel.isPending }}
+        >
+          <Text style={styles.cancelLabel}>
+            {cancel.isPending ? 'İptal ediliyor…' : 'Emri iptal et'}
+          </Text>
+        </Pressable>
+      )}
+    </View>
   );
 }
 
@@ -183,4 +251,16 @@ const styles = StyleSheet.create({
   status: { fontSize: 14, fontWeight: '700', marginTop: 6 },
   muted: { color: colors.textMuted, fontSize: 12, marginTop: 6 },
   tapHint: { color: colors.accent, fontSize: 12, marginTop: 8 },
+  reasons: { marginTop: 8, gap: 2 },
+  reason: { color: colors.textSecondary, fontSize: 12 },
+  cancelBtn: {
+    marginTop: 12,
+    minHeight: MIN_TOUCH_TARGET,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.down,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelLabel: { color: colors.down, fontSize: 14, fontWeight: '700' },
 });

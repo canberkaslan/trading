@@ -45,7 +45,7 @@ export type OrderA11yInput = {
   quantity: number;
 };
 
-export type OrderAction = 'review' | 'approve' | 'reject';
+export type OrderAction = 'review' | 'approve' | 'reject' | 'cancel';
 
 /**
  * Spoken label for an order action. Always names the ticker, side and size, so
@@ -62,6 +62,8 @@ export function orderActionLabel(order: OrderA11yInput, action: OrderAction): st
       return `${subject}, emri onayla`;
     case 'reject':
       return `${subject}, emri reddet`;
+    case 'cancel':
+      return `${subject}, broker'daki emri iptal et`;
   }
 }
 

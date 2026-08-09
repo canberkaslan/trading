@@ -82,7 +82,15 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - [~] Quick UI wins cont.: ✅ 2026-07-26 Portfolio risk & sector-allocation card (OTA) — wraps GET /v1/portfolio/concentration (useConcentration hook + Concentration type) into a Risk & Dağılım card on portfolio.tsx: diversification badge from effective_n, top-name + top3 weights (toned vs the 10% single-name cap), >10% flag count; sector split derived locally from snapshot Position.sector (market-value weighted, GICS→short TR labels, cash as remainder) rendered as horizontal weight bars. Pure helpers utils/concentration.ts (sectorLabelTr/sectorAllocation/topWeightTone/diversificationLabel), 13 new jest (90 total), tsc clean on touched files. Read-only, off-eval-path. KALAN: tab bar icons + userInterfaceStyle 'dark' (NATIVE); 44pt touch targets + accessibilityLabels on money actions.
 
 ### Round 4 later (post-go-live)
-- Fill reconciliation + realized P&L ledger (scripts/reconcile.py hourly, closed_trades table, GET /v1/trades, win-rate/expectancy) → THEN reflection memory on realized fills
+- [x] **Fill reconciliation + realized P&L ledger** ✅ 2026-08-09 — see the daily-loop entry below.
+      Reflection memory on realized fills is now UNBLOCKED (closed_trades is the input).
+- [ ] **Sizer has no cash / buying-power cap** (found 2026-08-09). `size_from_decision` sizes off
+      `account_equity` only (sizer.py:98), so a fully-invested long book drifts into margin as it
+      appreciates — the paper account sits at cash **-$510.54** on $109,574 equity (0.47% levered).
+      Harmless on paper; on a funded live account that is real leverage plus margin interest, and
+      nothing in the risk stack currently refuses it. Fix = cap notional at min(equity·pct, cash) or
+      an explicit `MAX_GROSS_EXPOSURE_PCT`. Decision-path change → tests + supervised run. This is
+      why `assert acct.cash >= 0` no longer lives in test_dataflows_smoke.py.
 - Circuit breaker real inputs (5/7 gates placeholder-fed) — first supervised live week, uses last_equity from #9
 - Position detail screen + per-ticker history from snapshot JSONL; kill-switch audit trail + header pill (after #2); LLM cost panel (after pipeline.py tokens_in/out=0 stub fix); TR-primary language sweep; paper lane as permanent staging (templated units + EXPECTED_ALPACA_ACCOUNT interlock); ws.ts is implemented-unused (+ close() reconnect bug) — decide: wire realtime or delete; backup restore drill; secrets → /etc/ai-trader/
 - Dropped: /v1/limits risk panel (protection theater until real caps merge)
@@ -104,6 +112,48 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - [x] scorecard: Sortino + Calmar render (were typed+returned, never shown) → OTA preview (f885455)
 - Live: verdict GO, Sharpe 9.47, MaxDD 1.04%, +6.3% vs SPY +2.9%; equity $107.7k, net P&L +$8.3k
 - Next: item 7 home equity-curve dashboard (backend /v1/portfolio/history done, absent from endpoints.ts)
+
+## Daily loop 2026-08-09 (eval CLOSED — GO 24/10d)
+- [x] **Realized P&L ledger** (backend + deployed, off-decision-path). The system reported
+  unrealized P&L from day one but could not say whether it *wins*: equity being up says nothing
+  about how many round trips paid, and win rate / expectancy are not computable from an open
+  position. Added: pure FIFO matcher `execution/reconcile.py` (shorts first-class; a fill crossing
+  zero splits into a close + an open; partials stay separate lots at their own prices; deterministic
+  trade ids = hash of entry+exit activity ids so a full replay converges instead of duplicating),
+  `AlpacaClient.list_fill_activities` (paginated `/account/activities/FILL` — the ORDER record
+  reports an average fill price and gets pruned, so the activities feed is the only correct input),
+  derived `closed_trades` table + `scripts/reconcile.py` + hourly `ai-trader-reconcile.timer`, and
+  `GET /v1/trades` (stats computed over exactly the rows returned, so a ticker filter yields that
+  name's record; `profit_factor` is None not ∞ with no losses yet). Full replay by design — a
+  "fills since last run" window mis-pairs every trade whose entry predates it.
+  **Matcher validated against live data:** 78 fills → 30 closed trades, and every symbol's leftover
+  open lots reconcile EXACTLY to the live position quantity (AAPL 11+4+17+1=33, NVDA 8+41+3+2+1=55,
+  all ten names). 33 new tests, 250 backend green.
+- ⚠️ **What the ledger immediately revealed** — realized and unrealized disagree sharply:
+
+  | | Equity curve (/v1/eval) | Realized ledger (/v1/trades) |
+  |---|---|---|
+  | Verdict | GO, 24/10 gün | — |
+  | Return / P&L | +5.38% (Sharpe 3.46) | **−$531.93 net** |
+  | Win rate | — | **26.7%** (8W / 22L) |
+  | Profit factor | — | **0.22** |
+  | Expectancy | — | **−$17.73/trade** |
+
+  Read it carefully before drawing conclusions: the 30 round trips are small trims (avg win $18,
+  avg loss $31, best $47, worst −$94) against a $109.5k book — the core thesis positions are ALL
+  still open, and 100% of the +$9.5k gain is unrealized mark-to-market. So this is not "the
+  strategy loses money"; it is **the trimming/exit discipline has had negative expectancy, and the
+  entire reported performance is unrealized**. The GO gates measure a fully-invested long book in a
+  rising tape. Worth weighing against the go-live decision; 30 trades is still a small sample.
+- Live: verdict GO, Sharpe 3.46, Sortino 6.02, MaxDD −4.25%, Calmar 18.23, +5.38% vs SPY +3.74%
+  (α +1.64pt), 24/10 gün, eval_complete. Equity $109,574, cash **−$510.54** (margin!), 10 pozisyon.
+- Found + filed, NOT silently fixed: sizer has no cash cap → the book is 0.47% levered (see the
+  Round-4-later item above). `assert acct.cash >= 0` removed from the Alpaca smoke test because it
+  was a portfolio-policy claim smuggled into an account-parse test, with the reason documented at
+  the call site.
+- Sıradaki: reflection memory on realized fills (now unblocked — closed_trades is the input), ya da
+  mobil "Gerçekleşen" kartı (/v1/trades wrap: win rate + expectancy on the scorecard), ya da sizer
+  cash cap (decision-path → tests + supervised run).
 
 ## Daily loop 2026-08-03 (eval CLOSED — GO 22/10d)
 - [x] **item 5 slice-2 — cancel order** (backend + OTA). Backend `POST /v1/orders/{id}/cancel` was

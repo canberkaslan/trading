@@ -1,0 +1,16 @@
+[Unit]
+Description=AI Trader reconcile — hourly realized-P&L refresh
+
+[Timer]
+# Hourly, all week. Fills land during RTH but stops and GTC protective legs
+# can trigger any session, and the ledger is a full replay — running it more
+# often than fills arrive costs one paginated GET and converges to the same
+# rows, so the cadence is chosen for freshness, not for correctness.
+OnCalendar=hourly
+Persistent=true
+# Spread off the top of the hour so this never lines up with the daily run's
+# broker calls.
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

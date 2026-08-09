@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 import httpx
@@ -63,6 +63,24 @@ class Order:
     status: str
     submitted_at: datetime
     filled_avg_price: float | None
+
+
+@dataclass(frozen=True)
+class FillActivity:
+    """One execution slice from `/v2/account/activities/FILL`.
+
+    `qty` is the quantity of THIS slice (not the order's cumulative fill), and
+    `price` is what that slice printed at — which is why the activities feed,
+    not the order record, is the input to FIFO round-trip matching.
+    """
+
+    id: str
+    symbol: str
+    side: Side
+    qty: float
+    price: float
+    transaction_time: datetime
+    order_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -261,6 +279,47 @@ class AlpacaClient:
     def cancel_all_orders(self) -> list[dict]:
         return self._delete("/orders")
 
+    # ---------------------- activities ----------------------
+
+    def list_fill_activities(
+        self,
+        after: datetime | None = None,
+        page_size: int = 100,
+        max_pages: int = 100,
+    ) -> list[FillActivity]:
+        """Every execution on the account, oldest first.
+
+        `/orders` is the wrong source for realized P&L: it reports an order's
+        *average* fill price and Alpaca prunes it, while the activities feed is
+        the account's permanent execution ledger — one entry per partial, with
+        the price each slice actually got. FIFO matching needs the slices.
+
+        Paginated by `page_token` (the previous page's last id), NOT by offset;
+        `direction=asc` keeps the token walking forward in time. `max_pages`
+        exists so a pagination bug can't spin forever — a truncated read is
+        surfaced by the caller comparing lengths, never silently trusted.
+        """
+        out: list[FillActivity] = []
+        params: dict[str, str | int] = {"page_size": page_size, "direction": "asc"}
+        if after is not None:
+            params["after"] = after.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+        page_token: str | None = None
+        for _ in range(max_pages):
+            q = dict(params)
+            if page_token is not None:
+                q["page_token"] = page_token
+            r = self._http.get(self.base_url + "/account/activities/FILL", params=q)
+            r.raise_for_status()
+            page = r.json()
+            if not isinstance(page, list) or not page:
+                break
+            out.extend(_fill_from_dict(d) for d in page)
+            if len(page) < page_size:
+                break
+            page_token = page[-1]["id"]
+        return out
+
     # ---------------------- http helpers ----------------------
 
     def _get(self, path: str) -> dict | list:
@@ -283,6 +342,20 @@ class AlpacaClient:
             return r.json()
         except Exception:
             return {}
+
+
+def _fill_from_dict(d: dict) -> FillActivity:
+    return FillActivity(
+        id=d["id"],
+        symbol=d["symbol"],
+        side=d["side"],
+        qty=float(d["qty"]),
+        price=float(d["price"]),
+        transaction_time=datetime.fromisoformat(
+            d["transaction_time"].replace("Z", "+00:00")
+        ),
+        order_id=d.get("order_id"),
+    )
 
 
 def _order_from_dict(d: dict) -> Order:

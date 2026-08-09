@@ -122,6 +122,7 @@ echo "==> installing systemd units"
 for unit in ai-trader.service ai-trader.timer ai-trader-alert.service \
             ai-trader-preflight.service ai-trader-preflight.timer \
             ai-trader-backup.service ai-trader-backup.timer \
+            ai-trader-reconcile.service ai-trader-reconcile.timer \
             ai-trader-api.service eval-report.service eval-report.timer; do
   sudo cp "${APP_DIR}/deploy/hetzner/${unit}" "/etc/systemd/system/${unit}"
 done
@@ -137,7 +138,8 @@ echo "   2. Test one ticker:   cd ${AGENT_DIR} && \\"
 echo "        set -a && source ${APP_DIR}/secrets.env && set +a && \\"
 echo "        UNIVERSE='AAPL' SUBMIT=0 bash scripts/daily_run.sh"
 echo "   3. Enable the timers: sudo systemctl enable --now ai-trader.timer \\"
-echo "        ai-trader-preflight.timer ai-trader-backup.timer"
+echo "        ai-trader-preflight.timer ai-trader-backup.timer \\"
+echo "        ai-trader-reconcile.timer"
 echo "   4. Check schedule:    systemctl list-timers 'ai-trader*'"
 echo "   5. Watch a run:       journalctl -u ai-trader.service -f"
 echo "============================================================"

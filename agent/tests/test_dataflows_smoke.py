@@ -85,7 +85,15 @@ def test_alpaca_account_active() -> None:
         acct = a.account()
     assert acct.status == "ACTIVE"
     assert acct.currency == "USD"
-    assert acct.cash >= 0
+    assert acct.portfolio_value > 0
+    assert isinstance(acct.cash, float)
+    # `cash >= 0` used to be asserted here. It is NOT an account-parse
+    # invariant, it is a portfolio-policy claim — and a false one: the sizer
+    # sizes off account EQUITY with no cash/buying-power cap (sizer.py:98), so
+    # a fully-invested long book drifts into margin as it appreciates. On
+    # 2026-08-09 the paper account sat at cash -$510.54 against $109,574
+    # equity (0.47% levered) and this assertion started failing. Silencing it
+    # here does not fix the gap — see the sizer cash-cap item in task_plan.md.
 
 
 @pytest.mark.skipif(

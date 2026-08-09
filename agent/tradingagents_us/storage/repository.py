@@ -8,14 +8,24 @@ from __future__ import annotations
 
 import os
 from contextlib import contextmanager
-from typing import Iterator
+from typing import TYPE_CHECKING, Iterator
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..schemas import AgentDecision, AgentReasoning, OrderUpdate, TradeOrder
-from .models import AgentDecisionRow, Base, KillSwitchEventRow, OrderUpdateRow, TradeOrderRow
+from .models import (
+    AgentDecisionRow,
+    Base,
+    ClosedTradeRow,
+    KillSwitchEventRow,
+    OrderUpdateRow,
+    TradeOrderRow,
+)
+
+if TYPE_CHECKING:  # avoids a storage → execution import at runtime
+    from ..execution.reconcile import ClosedTrade
 
 
 def make_engine(database_url: str | None = None) -> Engine:
@@ -108,7 +118,56 @@ class TradeLogRepository:
                 timestamp_utc=datetime.now(timezone.utc),
             ))
 
+    def upsert_closed_trades(self, trades: list["ClosedTrade"]) -> int:
+        """Persist reconciled round trips; returns the number of NEW rows.
+
+        `merge` on the deterministic trade_id makes a replay idempotent: the
+        reconciler re-derives the whole ledger from the fill feed each run, so
+        an already-known round trip is updated in place rather than appended.
+        The new-row count is what the caller reports — "wrote 40 rows" every
+        hour would hide the fact that nothing actually closed.
+        """
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        new_rows = 0
+        with self.session() as s:
+            for t in trades:
+                if s.get(ClosedTradeRow, t.trade_id) is None:
+                    new_rows += 1
+                s.merge(ClosedTradeRow(
+                    trade_id=t.trade_id,
+                    symbol=t.symbol,
+                    direction=t.direction,
+                    quantity=t.quantity,
+                    entry_price=t.entry_price,
+                    exit_price=t.exit_price,
+                    realized_pnl=t.realized_pnl,
+                    realized_pnl_pct=t.realized_pnl_pct,
+                    holding_days=t.holding_days,
+                    opened_at_utc=t.opened_at_utc,
+                    closed_at_utc=t.closed_at_utc,
+                    open_activity_id=t.open_activity_id,
+                    close_activity_id=t.close_activity_id,
+                    reconciled_at_utc=now,
+                ))
+        return new_rows
+
     # ------------------------- reads -------------------------
+
+    def list_closed_trades(
+        self, limit: int = 200, ticker: str | None = None
+    ) -> list[ClosedTradeRow]:
+        """Most recently closed round trips first."""
+        with self.session() as s:
+            stmt = (
+                select(ClosedTradeRow)
+                .order_by(ClosedTradeRow.closed_at_utc.desc())
+                .limit(limit)
+            )
+            if ticker:
+                stmt = stmt.where(ClosedTradeRow.symbol == ticker.upper())
+            return list(s.execute(stmt).scalars().all())
 
     def list_recent_decisions(self, limit: int = 50, ticker: str | None = None) -> list[AgentDecisionRow]:
         with self.session() as s:

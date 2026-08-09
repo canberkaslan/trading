@@ -27,7 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from .deps import get_alpaca, get_repo
-from .routes import agents, analyze, eval, notifications, orders, portfolio, prices
+from .routes import agents, analyze, eval, notifications, orders, portfolio, prices, trades
 
 app = FastAPI(
     title="Trading API",
@@ -60,6 +60,7 @@ app.include_router(analyze.router, prefix="/v1/analyze", tags=["analyze"])
 app.include_router(prices.router, prefix="/v1/prices", tags=["prices"])
 app.include_router(eval.router, prefix="/v1/eval", tags=["eval"])
 app.include_router(notifications.router, prefix="/v1/notifications", tags=["notifications"])
+app.include_router(trades.router, prefix="/v1/trades", tags=["trades"])
 
 
 _STATIC = Path(__file__).resolve().parent / "static"

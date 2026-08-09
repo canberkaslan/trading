@@ -86,6 +86,34 @@ class KillSwitchEventRow(Base):
     timestamp_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
+class ClosedTradeRow(Base):
+    """One realized round trip, derived from the broker's fill activities.
+
+    Not append-only like the tables above: `scripts/reconcile.py` replays the
+    whole fill history through the FIFO matcher and upserts by `trade_id` (a
+    hash of the entry+exit activity ids), so re-running converges instead of
+    duplicating. Rows are DERIVED — the broker's activity feed is the source
+    of truth, and this table can be dropped and rebuilt from it.
+    """
+
+    __tablename__ = "closed_trades"
+
+    trade_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    direction: Mapped[str] = mapped_column(String(8))        # "LONG" | "SHORT"
+    quantity: Mapped[float] = mapped_column(Float)
+    entry_price: Mapped[float] = mapped_column(Float)
+    exit_price: Mapped[float] = mapped_column(Float)
+    realized_pnl: Mapped[float] = mapped_column(Float)
+    realized_pnl_pct: Mapped[float] = mapped_column(Float)
+    holding_days: Mapped[float] = mapped_column(Float)
+    opened_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    closed_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    open_activity_id: Mapped[str] = mapped_column(String(64))
+    close_activity_id: Mapped[str] = mapped_column(String(64), index=True)
+    reconciled_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class OrderUpdateRow(Base):
     __tablename__ = "order_updates"
 

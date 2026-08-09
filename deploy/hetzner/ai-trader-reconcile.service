@@ -1,0 +1,21 @@
+[Unit]
+Description=AI Trader — reconcile broker fills into the realized P&L ledger
+After=network-online.target
+Wants=network-online.target
+# A ledger that stops updating quietly is how a losing record hides — page.
+OnFailure=ai-trader-alert.service
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/opt/ai-trader/agent
+EnvironmentFile=/opt/ai-trader/secrets.env
+Environment=PYTHONPATH=.:vendor/tradingagents
+ExecStart=/opt/ai-trader/agent/.venv/bin/python -m scripts.reconcile
+# Read-only at the broker (GET /v2/account/activities/FILL) and write-only to
+# the derived closed_trades table — it submits nothing and cannot move a
+# position, so it is safe to run alongside the trading window.
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

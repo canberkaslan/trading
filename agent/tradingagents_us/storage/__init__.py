@@ -10,6 +10,7 @@ generated from these declarative tables.
 from .models import (
     AgentDecisionRow,
     Base,
+    ClosedTradeRow,
     OrderUpdateRow,
     TradeOrderRow,
 )
@@ -18,6 +19,7 @@ from .repository import TradeLogRepository
 __all__ = [
     "AgentDecisionRow",
     "Base",
+    "ClosedTradeRow",
     "OrderUpdateRow",
     "TradeLogRepository",
     "TradeOrderRow",

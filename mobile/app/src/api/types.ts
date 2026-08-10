@@ -187,3 +187,50 @@ export interface OrderListItem {
   avg_fill_price: number | null;
   submitted_at_utc: string;
 }
+
+/** One closed round trip from the FIFO fill ledger (GET /v1/trades). */
+export interface ClosedTrade {
+  trade_id: string;
+  ticker: string;
+  direction: 'LONG' | 'SHORT';
+  quantity: number;
+  entry_price: number;
+  exit_price: number;
+  realized_pnl: number;
+  /** Fraction, not percent: 0.1729 = +17.29%. */
+  realized_pnl_pct: number;
+  holding_days: number;
+  opened_at_utc: string;
+  closed_at_utc: string;
+}
+
+/**
+ * Stats over exactly the trades returned by the same call (a ticker filter
+ * yields that name's record, not the account's).
+ */
+export interface TradeStats {
+  trades: number;
+  wins: number;
+  losses: number;
+  scratches: number;
+  /** Fraction, not percent. */
+  win_rate: number;
+  gross_profit: number;
+  gross_loss: number;
+  net_pnl: number;
+  avg_win: number;
+  avg_loss: number;
+  /** null while nothing has lost yet — an undefined ratio, never ∞. */
+  profit_factor: number | null;
+  expectancy: number;
+  avg_holding_days: number;
+  best_trade: number;
+  worst_trade: number;
+}
+
+export interface TradesResponse {
+  trades: ClosedTrade[];
+  stats: TradeStats;
+  /** null = the reconcile job has never run; show that, not a flat zero. */
+  reconciled_at_utc: string | null;
+}

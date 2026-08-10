@@ -5,7 +5,14 @@ import { useState, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 
-import { usePortfolio, useEval, usePortfolioHistory, usePrices, useConcentration } from '@/api/hooks';
+import {
+  usePortfolio,
+  useEval,
+  usePortfolioHistory,
+  usePrices,
+  useConcentration,
+  useTrades,
+} from '@/api/hooks';
 import { colors } from '@/theme/colors';
 import { MIN_TOUCH_TARGET } from '@/utils/a11y';
 import { ErrorState } from '@/components/ErrorState';
@@ -19,11 +26,28 @@ import {
   diversificationLabel,
   type Tone,
 } from '@/utils/concentration';
+import {
+  unrealizedTotal,
+  pnlTone,
+  sampleTone,
+  pnlSplit,
+  formatWinRate,
+  formatProfitFactor,
+  reconcileFreshness,
+  realizedCaveat,
+  type Tone as PnlToneName,
+} from '@/utils/realized';
 
 const TONE_COLORS: Record<Tone, string> = {
   up: colors.up,
   warning: colors.warning,
   down: colors.down,
+};
+
+const PNL_TONE_COLORS: Record<PnlToneName, string> = {
+  up: colors.up,
+  down: colors.down,
+  neutral: colors.textPrimary,
 };
 
 export default function PortfolioScreen() {
@@ -35,6 +59,7 @@ export default function PortfolioScreen() {
   const { data: history } = usePortfolioHistory(period);
   const { data: spy } = usePrices('SPY', PERIOD_DAYS[period]);
   const { data: concentration } = useConcentration();
+  const { data: realized } = useTrades();
   const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
 
@@ -44,6 +69,7 @@ export default function PortfolioScreen() {
     await queryClient.invalidateQueries({ queryKey: ['eval'] });
     await queryClient.invalidateQueries({ queryKey: ['portfolio', 'history'] });
     await queryClient.invalidateQueries({ queryKey: ['prices', 'SPY'] });
+    await queryClient.invalidateQueries({ queryKey: ['trades'] });
     setRefreshing(false);
   }, [queryClient]);
 
@@ -114,6 +140,100 @@ export default function PortfolioScreen() {
         </View>
 
         {history && history.points.length > 1 ? <EquityChart history={history} spy={spy} /> : null}
+
+        {realized ? (() => {
+          // Realized (banked) vs unrealized (mark-to-market). The hero number
+          // above is entirely unrealized, so the split bar is the point of this
+          // card — the stats are the supporting detail.
+          const s = realized.stats;
+          const open = unrealizedTotal(data.positions);
+          const split = pnlSplit(s.net_pnl, open);
+          const fresh = reconcileFreshness(realized.reconciled_at_utc, new Date());
+          const caveat = realizedCaveat(s, open);
+          const realizedPct = Math.round(split.realizedShare * 100);
+          return (
+            <View style={styles.riskCard}>
+              <View style={styles.row}>
+                <Text style={styles.cardTitle}>Gerçekleşen</Text>
+                <Text style={[styles.freshness, fresh.stale && { color: colors.warning }]}>
+                  {fresh.stale ? '⚠︎ ' : ''}{fresh.label}
+                </Text>
+              </View>
+
+              <Text
+                style={[styles.realizedValue, { color: PNL_TONE_COLORS[pnlTone(s.net_pnl)] }]}
+                accessibilityLabel={`Gerçekleşen net kâr zarar ${formatUsd(s.net_pnl, { signed: true })}, ${s.trades} kapanan işlem`}
+              >
+                {formatUsd(s.net_pnl, { signed: true })}
+              </Text>
+              <Text style={styles.statSub}>
+                {s.trades} kapanan işlem · {s.wins}K / {s.losses}Z
+                {s.scratches > 0 ? ` / ${s.scratches}B` : ''}
+              </Text>
+
+              <View style={[styles.statRow, { marginTop: 12 }]}>
+                <View style={styles.stat}>
+                  <Text style={styles.statLabel}>Kazanma</Text>
+                  <Text
+                    style={[
+                      styles.statValue,
+                      { color: PNL_TONE_COLORS[sampleTone(s.win_rate - 0.5, s.trades)] },
+                    ]}
+                  >
+                    {formatWinRate(s)}
+                  </Text>
+                  <Text style={styles.statSub}>oranı</Text>
+                </View>
+                <View style={styles.stat}>
+                  <Text style={styles.statLabel}>Beklenti</Text>
+                  <Text
+                    style={[
+                      styles.statValue,
+                      { color: PNL_TONE_COLORS[sampleTone(s.expectancy, s.trades)] },
+                    ]}
+                  >
+                    {formatUsd(s.expectancy, { signed: true })}
+                  </Text>
+                  <Text style={styles.statSub}>işlem başı</Text>
+                </View>
+                <View style={styles.stat}>
+                  <Text style={styles.statLabel}>Kâr faktörü</Text>
+                  <Text
+                    style={[
+                      styles.statValue,
+                      { color: PNL_TONE_COLORS[sampleTone(s.profit_factor == null ? null : s.profit_factor - 1, s.trades)] },
+                    ]}
+                  >
+                    {formatProfitFactor(s.profit_factor)}
+                  </Text>
+                  <Text style={styles.statSub}>brüt K/Z</Text>
+                </View>
+              </View>
+
+              {s.trades > 0 ? (
+                <>
+                  <View
+                    style={styles.splitTrack}
+                    accessibilityLabel={`Toplam kâr zararın yüzde ${realizedPct} kadarı gerçekleşti, kalanı açık pozisyonlarda`}
+                  >
+                    <View style={[styles.splitRealized, { flex: Math.max(split.realizedShare, 0.01) }]} />
+                    <View style={[styles.splitOpen, { flex: Math.max(1 - split.realizedShare, 0.01) }]} />
+                  </View>
+                  <View style={styles.row}>
+                    <Text style={styles.statSub}>
+                      Gerçekleşen {formatUsd(s.net_pnl, { signed: true })}
+                    </Text>
+                    <Text style={styles.statSub}>
+                      Açık {formatUsd(open, { signed: true })}
+                    </Text>
+                  </View>
+                </>
+              ) : null}
+
+              {caveat ? <Text style={styles.flagText}>{caveat}</Text> : null}
+            </View>
+          );
+        })() : null}
 
         {(() => {
           const sectors = sectorAllocation(data.positions, data.total_equity_usd);
@@ -254,6 +374,11 @@ const styles = StyleSheet.create({
   barTrack: { height: 6, backgroundColor: colors.surfaceElevated, borderRadius: 999, overflow: 'hidden' },
   barFill: { height: 6, backgroundColor: colors.accent, borderRadius: 999 },
   flagText: { color: colors.warning, fontSize: 12, marginTop: 12 },
+  freshness: { color: colors.textMuted, fontSize: 11 },
+  realizedValue: { fontSize: 26, fontWeight: '700', marginTop: 2 },
+  splitTrack: { flexDirection: 'row', height: 6, borderRadius: 999, overflow: 'hidden', marginTop: 14, marginBottom: 6 },
+  splitRealized: { backgroundColor: colors.accent },
+  splitOpen: { backgroundColor: colors.surfaceElevated },
   positionCard: { marginHorizontal: 24, marginTop: 12, padding: 16, backgroundColor: colors.surface, borderRadius: 12 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   posTicker: { color: colors.textPrimary, fontSize: 18, fontWeight: '600' },

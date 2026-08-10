@@ -209,3 +209,26 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
   4 hard gate hâlâ yeşil ama marj daralmış, Sharpe gate'e (1.0) yakın. İzlenecek.
 - Sıradaki: item 5 slice-2 (cancel order — backend + confirm gate, execution path → dikkat) ya da
   Quick UI wins KALAN (tab bar icons + userInterfaceStyle 'dark' = NATIVE rebuild, OTA değil)
+
+## Daily loop 2026-08-10 (eval CLOSED — GO 24/10d)
+- [x] **Mobil "Gerçekleşen" kartı** (OTA, off-decision-path). Dünkü ledger backend'de duruyordu ama
+  app hâlâ SADECE unrealized gösteriyordu: hero equity, günlük P&L, eval scorecard — hepsi açık
+  pozisyonların mark-to-market'i. Portfolio ekranına equity chart'ın hemen altına realized kart:
+  net gerçekleşen P&L (büyük, tonlu), kapanan işlem sayısı + K/Z/B dağılımı, win rate / expectancy /
+  profit factor, ve asıl mesele olan **realized-vs-unrealized split bar** (accent = bankaya yazılan,
+  gri = hâlâ değerlemede) + tek satırlık dürüst okuma.
+  Dürüstlük kuralları koda gömüldü (`utils/realized.ts`, saf + test edilebilir):
+  `MIN_SAMPLE=30` altında hiçbir istatistik yeşile/kırmızıya boyanmıyor (3 işlemde %100 win rate
+  gürültüdür, yeşile boyamak app'in olmayan bir edge'i iddia etmesidir) — değer yine render ediliyor,
+  sadece renksiz ve caveat satırıyla. `profit_factor: null` (henüz kayıp yok) em dash, asla ∞ veya
+  uydurma tavan. Split payı **net toplama değil, mutlak büyüklüklere** bölünüyor: realized −$532'ye
+  karşı unrealized +$9.5k'da net-paydalı oran "−%5 gerçekleşti" gibi anlamsız bir sayı verirdi.
+  `reconcileFreshness` naive backend timestamp'ini UTC olarak parse ediyor (cihaz saat farkı yaşı
+  kaydırıp stale bayrağını ters çevirirdi) ve saatlik timer 3 saati geçince ⚠︎ gösteriyor —
+  endpoint bilerek istek üzerine reconcile ETMİYOR, o yüzden bayatlık görünür olmak zorunda.
+  23 yeni jest (162 toplam), tsc temiz (2 bilinen pre-existing hariç), 250 backend yeşil.
+- Live: verdict GO, Sharpe 3.46, Sortino 6.02, MaxDD −4.25%, Calmar 18.23, +5.38% vs SPY +3.74%
+  (α +1.64pt), 24/10 gün, eval_complete. Equity $109,765, cash **−$510.54** (hâlâ margin), 10 pozisyon.
+  Realized ledger: 30 işlem, −$531.93 net, %26.7 win rate — yani app artık iki rakamı da gösteriyor.
+- Sıradaki: sizer cash cap (decision-path → test + supervised run; negatif cash 2. gün) ya da
+  reflection memory on realized fills (branch) ya da per-ticker realized alt kırılımı (trade detay).

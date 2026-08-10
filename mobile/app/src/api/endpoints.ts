@@ -15,6 +15,7 @@ import type {
   PortfolioSnapshot,
   PriceSeries,
   Readiness,
+  TradesResponse,
 } from './types';
 
 export const api = {
@@ -30,6 +31,17 @@ export const api = {
   // same series the weekly eval report eyeballs.
   getConcentration: () =>
     apiClient.get('v1/portfolio/concentration').json<Concentration>(),
+
+  // Realized round trips from the FIFO fill ledger. Read-only and does not
+  // trigger a reconcile — `reconciled_at_utc` is how the app knows the age of
+  // what it is showing.
+  getTrades: (params?: { ticker?: string; limit?: number }) => {
+    const searchParams = new URLSearchParams();
+    if (params?.ticker) searchParams.set('ticker', params.ticker);
+    if (params?.limit) searchParams.set('limit', String(params.limit));
+    const qs = searchParams.toString();
+    return apiClient.get(`v1/trades${qs ? `?${qs}` : ''}`).json<TradesResponse>();
+  },
 
   // Agents
   listDecisions: (params?: { ticker?: string; limit?: number }) => {

@@ -38,6 +38,21 @@ export function useConcentration() {
   });
 }
 
+/**
+ * Realized round trips. The ledger is rebuilt by an hourly timer, so polling
+ * faster than that only burns requests — refetch on the same cadence as the
+ * daily equity curve and let `reconciled_at_utc` carry the freshness.
+ */
+export function useTrades(params?: { ticker?: string; limit?: number }) {
+  return useQuery({
+    queryKey: ['trades', params],
+    queryFn: () => api.getTrades(params),
+    refetchInterval: REFETCH_INTERVAL_MS * 6,
+    staleTime: 30_000,
+    retry: false,
+  });
+}
+
 export function useDecisions(params?: { ticker?: string; limit?: number }) {
   return useQuery({
     queryKey: ['agents', 'decisions', params],

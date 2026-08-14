@@ -63,6 +63,9 @@ class Order:
     status: str
     submitted_at: datetime
     filled_avg_price: float | None
+    # Present on limit orders only; None for market orders. Cash budgeting needs it
+    # to price an open BUY that has not filled yet (see risk.cash_budget).
+    limit_price: float | None = None
 
 
 @dataclass(frozen=True)
@@ -370,4 +373,5 @@ def _order_from_dict(d: dict) -> Order:
         status=d["status"],
         submitted_at=datetime.fromisoformat(d["submitted_at"].replace("Z", "+00:00")),
         filled_avg_price=float(d["filled_avg_price"]) if d.get("filled_avg_price") else None,
+        limit_price=float(d["limit_price"]) if d.get("limit_price") else None,
     )

@@ -64,6 +64,28 @@ def vol_target_size(
     return int(notional / price)
 
 
+def apply_cash_cap(
+    suggested_shares: int,
+    price: float,
+    available_cash: float,
+    cash_utilization: float = 1.0,
+) -> int:
+    """Cap size so a new opening order cannot spend cash the account does not have.
+
+    Every other cap in this module is a fraction of *equity*, which keeps growing as
+    an already fully-invested book appreciates — so equity-only sizing quietly walks
+    a long book into margin. This is the only cap denominated in settled cash.
+
+    `cash_utilization` < 1.0 leaves dry powder (e.g. 0.9 = never spend the last 10%).
+    Negative cash (already levered) yields 0 — no new exposure until it is unwound.
+    """
+    if price <= 0 or cash_utilization <= 0:
+        return 0
+    budget = max(0.0, available_cash) * cash_utilization
+    max_new_shares = int(budget / price)
+    return min(suggested_shares, max_new_shares)
+
+
 def apply_portfolio_caps(
     suggested_shares: int,
     price: float,

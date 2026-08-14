@@ -25,7 +25,7 @@ from typing import Literal
 from ..schemas import AgentDecision, TradeOrder
 from .circuit_breaker import CircuitBreaker
 from .portfolio_limits import PortfolioContext, PortfolioLimits, check_limits
-from .position_sizing import apply_portfolio_caps, atr_position_size
+from .position_sizing import apply_cash_cap, apply_portfolio_caps, atr_position_size
 
 SizingMethod = Literal["atr", "llm_pct", "vol_tgt", "kelly"]
 
@@ -111,6 +111,26 @@ def size_from_decision(
         )
         if qty == 0:
             rejections.append("trimmed_to_zero_by_portfolio_caps")
+
+    # 3b. Cash cap — only caps a BUY, which is the only side that *spends* cash.
+    #     Every cap above is a fraction of equity, and equity of a fully-invested
+    #     long book keeps rising with the marks, so equity-only sizing walks the
+    #     account into margin one buy at a time. Skipped when the caller supplies
+    #     no cash figure: a missing input must not silently reject every order.
+    if qty > 0 and side == "BUY" and portfolio_ctx.available_cash is not None:
+        qty = apply_cash_cap(
+            suggested_shares=qty,
+            price=decision.entry_price,  # type: ignore[arg-type]
+            available_cash=portfolio_ctx.available_cash,
+            cash_utilization=portfolio_limits.max_cash_utilization,
+        )
+        if qty == 0:
+            # "spendable", not "cash": the caller nets pending BUYs out of settled
+            # cash and floors at zero, so this figure is the budget handed to the
+            # cap — not the raw account balance, which may well be negative.
+            rejections.append(
+                f"trimmed_to_zero_by_cash_cap (spendable=${portfolio_ctx.available_cash:,.2f})"
+            )
 
     # 4. Portfolio caps (per-sector + correlation + liquidity + gross exposure)
     #    Per-position cap already enforced above; re-check the trimmed value.

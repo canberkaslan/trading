@@ -41,6 +41,11 @@ from tradingagents_us.graph.pipeline import (  # noqa: E402
     _parse_trader_output,
     propagate,
 )
+from tradingagents_us.risk.cash_budget import (  # noqa: E402
+    PendingBuy,
+    reserved_cash_for_open_buys,
+    spendable_cash,
+)
 from tradingagents_us.risk.circuit_breaker import CircuitBreaker  # noqa: E402
 from tradingagents_us.risk.kill_switch import (  # noqa: E402
     CachedKillSwitchReader,
@@ -201,13 +206,35 @@ def main() -> int:
             existing_by_ticker[p.symbol] = abs(p.market_value)
             if p.symbol == args.ticker:
                 held_qty = int(p.qty)
+        # daily_run.sh runs this script once per ticker as a separate process, all
+        # before any of the post-close orders fill. Without reserving what earlier
+        # tickers already committed, all eleven size against the same cash balance
+        # and the sum blows straight through it.
+        open_buys = [
+            PendingBuy(
+                symbol=o.symbol,
+                unfilled_qty=o.qty - o.filled_qty,
+                limit_price=o.limit_price,
+            )
+            for o in ac.list_orders(status="open", limit=200)
+            if o.side.upper() == "BUY"
+        ]
         print("\n=== ALPACA ACCOUNT ===")
         print(f"  Number:    {acct.account_number} ({acct.status})")
         print(f"  Equity:    ${acct.portfolio_value:,.2f}")
+        print(f"  Cash:      ${acct.cash:,.2f}")
         print(f"  Buying pw: ${acct.buying_power:,.2f}")
         print(f"  PDT:       {acct.pattern_day_trader}")
         print(f"  Already holding {args.ticker}: {held_qty} shares "
               f"(${existing_by_ticker.get(args.ticker, 0.0):,.0f})")
+
+    reserved = reserved_cash_for_open_buys(open_buys, _fetch_current_price)
+    spendable = spendable_cash(acct.cash, reserved)
+    if reserved is None:
+        print(f"  Open BUYs: {len(open_buys)} — UNPRICEABLE, refusing new exposure")
+    else:
+        print(f"  Open BUYs: {len(open_buys)} reserving ${reserved:,.2f} "
+              f"-> spendable ${spendable:,.2f}")
 
     # Use entry as price proxy for sizing demo (real run would pull live quote)
     market_ctx = MarketContext(
@@ -223,6 +250,12 @@ def main() -> int:
         existing_position_values_by_ticker=existing_by_ticker,
         existing_position_values_by_sector={},
         high_correlation_count=0,
+        # Settled cash net of pending BUYs, so an order can't be sized off
+        # appreciating equity and borrow. The live paper book already drifted to
+        # negative cash on equity-only sizing (2026-08-13: -$856 on $108k).
+        # An unpriceable pending BUY collapses to 0.0 — refuse, never skip: passing
+        # None here means "no cash figure supplied" and would DISABLE the cap.
+        available_cash=0.0 if spendable is None else spendable,
     )
     # Real mobile kill switch (was a hardcoded RUN stub): the API writes
     # KILL_SWITCH_PATH; PAUSE_NEW / FLATTEN_ALL blocks this trade at the

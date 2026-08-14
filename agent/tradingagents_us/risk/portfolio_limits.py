@@ -15,6 +15,9 @@ class PortfolioLimits:
     max_correlated: int = 3
     max_gross_exposure: float = 1.5
     min_liquidity_adv: float = 100_000.0  # min average daily $ volume
+    # Fraction of settled cash a single new opening order may consume. 1.0 = may
+    # spend every dollar of cash but never borrow; < 1.0 keeps dry powder.
+    max_cash_utilization: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -23,6 +26,10 @@ class PortfolioContext:
     existing_position_values_by_ticker: dict[str, float]
     existing_position_values_by_sector: dict[str, float]
     high_correlation_count: int  # count of existing positions with |rho| > 0.7 vs candidate
+    # Settled cash. None = caller did not supply it, and the cash cap is then
+    # SKIPPED rather than assumed zero: a missing input must not silently become
+    # "refuse every order". Live callers must pass it (scripts/trade.py does).
+    available_cash: float | None = None
 
 
 def check_limits(

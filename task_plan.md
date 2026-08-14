@@ -210,6 +210,36 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - Sıradaki: item 5 slice-2 (cancel order — backend + confirm gate, execution path → dikkat) ya da
   Quick UI wins KALAN (tab bar icons + userInterfaceStyle 'dark' = NATIVE rebuild, OTA değil)
 
+## Daily loop 2026-08-14 (eval CLOSED — GO 23/10d, ama aşağıdaki NOT'u oku)
+- [x] **Sizer settled-cash cap** (decision-path, eval kapalı olduğu için deploy edildi — 6ebafe5).
+  `position_sizing` içindeki HER cap equity'nin bir yüzdesi; tam yatırımlı long bir kitabın equity'si
+  mark'larla birlikte büyüdüğü için her günün alımı zaten harcanmış parayla boyutlandırılıyordu.
+  Canlı paper hesap 3. gündür **cash −$856.29 / equity $109k** — Alpaca'nın 4x margin buying power'ı
+  ($304k) finanse ediyordu; strateji hiç margin istemedi. İki delik kapatıldı:
+  1. `apply_cash_cap` — settled cash cinsinden tek cap. Aşağı yuvarlar, negatif cash'te 0 verir
+     (levered kitap yeni exposure almaz). **SELL muaf**: satış cash üretir, onu cash'e bağlamak
+     pozisyonu tam da çıkılması gereken drawdown'da kilitlerdi.
+  2. `risk/cash_budget.py` — `daily_run.sh` trade.py'ı ticker başına AYRI process çalıştırıyor ve
+     post-close emirler dolmadan hepsi bitiyor; 11 process aynı `account.cash`'i okuyup her biri
+     "hepsini harcayabilirim" diyordu. Process'leri kapsayan tek state broker'ın **open order book**'u:
+     pending BUY notional'ı cash'ten rezerve ediliyor → 11 bütçe tek yürüyen bütçe olur, lock/DB yok.
+  Fiyatlanamayan pending BUY `None` döner (0.0 DEĞİL) ve çağıran bunu reddetmeye çevirir — bilinmeyen
+  taahhüdü "taahhüt yok" saymak düzeltilen iyimserliğin ta kendisi. `available_cash=None` hâlâ
+  "çağıran bir şey vermedi" demek ve cap'i atlar, yani eksik input her emri sessizce reddedemez.
+  21 yeni test (270 backend yeşil). Canlı dry-run doğrulandı: AAPL buy artık
+  `trimmed_to_zero_by_cash_cap (spendable=$0.00)` ile reddediliyor.
+- Live: verdict GO, Sharpe 2.23, Sortino 3.74, MaxDD −4.25%, Calmar 11.04, 23/10 gün, eval_complete.
+  Getiri **+3.42% vs SPY +3.46% → α −0.04pp**. Equity $109,095, cash −$856.29, 10 pozisyon.
+- **NOT (GO/NO-GO için asıl mesele):** verdict "GO" diyor ama `_verdict()` içinde "beats SPY"
+  bilerek *hard gate değil, flag* (kod yorumu: "not a hard gate, but a flag"). task_plan'ın kendi
+  GO tanımı ise Sharpe>1.0 **VE** MaxDD<15% **VE** SPY'ı yener. Bu tanıma göre dürüst sonuç **NO-GO**.
+  Üstüne realized ledger: **30 kapanmış işlem, net −$531.93, %27 win rate, profit factor 0.22,
+  expectancy −$17.73/işlem**. Yani +3.42%'nin tamamı hâlâ TUTULAN pozisyonların mark-to-market'i;
+  agent'ın fiilen KAPATTIĞI her şey para kaybetmiş. Gate semantiğini tek taraflı değiştirmedim —
+  gerçek para kararını çeviren bir tanım değişikliği, Canberk'in çağrısı.
+- Sıradaki: (a) SPY gate'i hard yap kararı, (b) realized negatif expectancy'nin kökü — exit mantığı
+  (bracket TP/SL seviyeleri erken kesiyor mu? avg_win $18 vs avg_loss $31), (c) reflection memory.
+
 ## Daily loop 2026-08-10 (eval CLOSED — GO 24/10d)
 - [x] **Mobil "Gerçekleşen" kartı** (OTA, off-decision-path). Dünkü ledger backend'de duruyordu ama
   app hâlâ SADECE unrealized gösteriyordu: hero equity, günlük P&L, eval scorecard — hepsi açık

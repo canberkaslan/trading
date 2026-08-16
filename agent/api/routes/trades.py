@@ -6,15 +6,23 @@ does NOT reconcile on request — a money screen that silently triggers a full
 fill replay would couple page loads to Alpaca's availability and latency, and
 an unreachable broker would render as "no trades" instead of stale-but-true
 numbers. Freshness is surfaced via `reconciled_at_utc` instead.
+
+Scoped to the eval window by default (`EVAL_START_DATE`, see
+`tradingagents_us.eval_window`), because /v1/eval has always been: reporting a
+win rate over bug-era trades next to a Sharpe that excludes them made the two
+numbers describe different books. `window=all` returns the full history, and
+`excluded_pre_eval` always reports how many rows the cutoff hides.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
+from tradingagents_us.eval_window import eval_start_utc
 from tradingagents_us.execution.reconcile import ClosedTrade, compute_stats
 from tradingagents_us.storage import TradeLogRepository
 
@@ -63,6 +71,13 @@ class TradesResponse(BaseModel):
     # When the ledger last ran. None = reconcile has never run, which the app
     # must show as "not yet reconciled" rather than as a flat, honest zero.
     reconciled_at_utc: datetime | None
+    # "eval" = only round trips ENTERED after the eval cutoff, matching what
+    # /v1/eval measures. "all_time" = everything (either window=all, or no
+    # EVAL_START_DATE is configured). The app labels the card from this — a
+    # filtered ledger must never render as the whole record.
+    window: Literal["eval", "all_time"] = "all_time"
+    eval_start_utc: datetime | None = None
+    excluded_pre_eval: int = 0
 
 
 @router.get("", response_model=TradesResponse)
@@ -71,6 +86,9 @@ async def list_trades(
     repo: TradeLogRepository = Depends(get_repo),
     limit: int = Query(200, ge=1, le=1000),
     ticker: str | None = Query(None, description="filter to one symbol"),
+    window: Literal["eval", "all"] = Query(
+        "eval", description="'eval' = entries after EVAL_START_DATE; 'all' = full history"
+    ),
 ) -> TradesResponse:
     """Closed round trips, newest first, with stats over the returned set.
 
@@ -79,7 +97,16 @@ async def list_trades(
     figure attached to a filtered list, which is how per-name stats end up
     quietly reporting the portfolio's.
     """
-    rows = repo.list_closed_trades(limit=limit, ticker=ticker)
+    cutoff = eval_start_utc()
+    scoped = window == "eval" and cutoff is not None
+    rows = repo.list_closed_trades(
+        limit=limit, ticker=ticker, opened_since=cutoff if scoped else None
+    )
+    excluded = (
+        repo.count_closed_trades_opened_before(cutoff, ticker=ticker)
+        if cutoff is not None
+        else 0
+    )
 
     trades = [
         ClosedTrade(
@@ -120,4 +147,10 @@ async def list_trades(
         ],
         stats=TradeStatsItem(**vars(stats)),
         reconciled_at_utc=max((r.reconciled_at_utc for r in rows), default=None),
+        window="eval" if scoped else "all_time",
+        eval_start_utc=cutoff,
+        # Reported even on window=all: the count is a property of the ledger,
+        # not of this request, and the app uses it to explain the gap between
+        # the two views.
+        excluded_pre_eval=excluded,
     )

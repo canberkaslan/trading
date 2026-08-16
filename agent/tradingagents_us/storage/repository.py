@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import os
 from contextlib import contextmanager
+from datetime import datetime
 from typing import TYPE_CHECKING, Iterator
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -156,9 +157,19 @@ class TradeLogRepository:
     # ------------------------- reads -------------------------
 
     def list_closed_trades(
-        self, limit: int = 200, ticker: str | None = None
+        self,
+        limit: int = 200,
+        ticker: str | None = None,
+        opened_since: datetime | None = None,
     ) -> list[ClosedTradeRow]:
-        """Most recently closed round trips first."""
+        """Most recently closed round trips first.
+
+        `opened_since` filters on the ENTRY, not the exit: a round trip whose
+        entry predates the eval window was chosen and sized by the pre-cutoff
+        agent, so judging the current book's exit discipline by it is wrong
+        even when the exit itself landed after the cutoff. Filtering happens in
+        SQL so `limit` counts rows the caller will actually see.
+        """
         with self.session() as s:
             stmt = (
                 select(ClosedTradeRow)
@@ -167,7 +178,28 @@ class TradeLogRepository:
             )
             if ticker:
                 stmt = stmt.where(ClosedTradeRow.symbol == ticker.upper())
+            if opened_since is not None:
+                stmt = stmt.where(ClosedTradeRow.opened_at_utc >= opened_since)
             return list(s.execute(stmt).scalars().all())
+
+    def count_closed_trades_opened_before(
+        self, cutoff: datetime, ticker: str | None = None
+    ) -> int:
+        """How many round trips the eval-window cutoff hides.
+
+        Rows dropped from a money screen have to stay countable — "30 trades,
+        −$532" quietly becoming "4 trades, +$131" with no explanation reads as
+        a bug or, worse, as cherry-picking.
+        """
+        with self.session() as s:
+            stmt = (
+                select(func.count())
+                .select_from(ClosedTradeRow)
+                .where(ClosedTradeRow.opened_at_utc < cutoff)
+            )
+            if ticker:
+                stmt = stmt.where(ClosedTradeRow.symbol == ticker.upper())
+            return int(s.execute(stmt).scalar_one())
 
     def list_recent_decisions(self, limit: int = 50, ticker: str | None = None) -> list[AgentDecisionRow]:
         with self.session() as s:

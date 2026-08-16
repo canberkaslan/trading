@@ -35,6 +35,7 @@ import {
   formatProfitFactor,
   reconcileFreshness,
   realizedCaveat,
+  evalWindowNote,
   type Tone as PnlToneName,
 } from '@/utils/realized';
 
@@ -150,6 +151,7 @@ export default function PortfolioScreen() {
           const split = pnlSplit(s.net_pnl, open);
           const fresh = reconcileFreshness(realized.reconciled_at_utc, new Date());
           const caveat = realizedCaveat(s, open);
+          const windowNote = evalWindowNote(realized);
           const realizedPct = Math.round(split.realizedShare * 100);
           return (
             <View style={styles.riskCard}>
@@ -170,6 +172,7 @@ export default function PortfolioScreen() {
                 {s.trades} kapanan işlem · {s.wins}K / {s.losses}Z
                 {s.scratches > 0 ? ` / ${s.scratches}B` : ''}
               </Text>
+              {windowNote ? <Text style={styles.statSub}>{windowNote}</Text> : null}
 
               <View style={[styles.statRow, { marginTop: 12 }]}>
                 <View style={styles.stat}>

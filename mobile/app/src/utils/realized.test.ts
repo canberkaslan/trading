@@ -10,8 +10,9 @@ import {
   formatProfitFactor,
   reconcileFreshness,
   realizedCaveat,
+  evalWindowNote,
 } from './realized';
-import type { Position, TradeStats } from '@/api/types';
+import type { Position, TradeStats, TradesResponse } from '@/api/types';
 
 function pos(unrealized: number): Position {
   return {
@@ -180,5 +181,42 @@ describe('realizedCaveat', () => {
 
   it('stays quiet when realized and unrealized agree', () => {
     expect(realizedCaveat(stats({ net_pnl: 1200 }), 9489)).toBeNull();
+  });
+});
+
+describe('evalWindowNote', () => {
+  function resp(over: Partial<TradesResponse> = {}): TradesResponse {
+    return {
+      trades: [],
+      stats: stats(),
+      reconciled_at_utc: '2026-08-16T06:00:00',
+      window: 'eval',
+      eval_start_utc: '2026-06-24T00:00:00Z',
+      excluded_pre_eval: 26,
+      ...over,
+    } as TradesResponse;
+  }
+
+  it('names the cutoff and how many trades it hides', () => {
+    // The live case: the record shrinks from 30 trades to 4 when the pre-clean-book
+    // flatten is excluded. Unexplained, that shrinkage reads as cherry-picking.
+    expect(evalWindowNote(resp())).toBe('Eval penceresi (2026-06-24): temiz kitap öncesi 26 işlem hariç.');
+  });
+
+  it('stays quiet when the cutoff hides nothing', () => {
+    expect(evalWindowNote(resp({ excluded_pre_eval: 0 }))).toBeNull();
+  });
+
+  it('stays quiet on the all-time view — nothing is being filtered there', () => {
+    expect(evalWindowNote(resp({ window: 'all_time' }))).toBeNull();
+  });
+
+  it('still names the exclusion when the API sends no cutoff date', () => {
+    expect(evalWindowNote(resp({ eval_start_utc: null }))).toBe('Eval penceresi: temiz kitap öncesi 26 işlem hariç.');
+  });
+
+  it('is null-safe for a screen that renders before the fetch lands', () => {
+    expect(evalWindowNote(null)).toBeNull();
+    expect(evalWindowNote(undefined)).toBeNull();
   });
 });

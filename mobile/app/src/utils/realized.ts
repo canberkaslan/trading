@@ -16,7 +16,7 @@
  *    as a very large number — same reason.
  */
 
-import type { Position, TradeStats } from '@/api/types';
+import type { Position, TradeStats, TradesResponse } from '@/api/types';
 
 export type Tone = 'up' | 'down' | 'neutral';
 
@@ -122,6 +122,29 @@ export function reconcileFreshness(
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return { label: `${hours} sa önce`, stale };
   return { label: `${Math.floor(hours / 24)} gün önce`, stale };
+}
+
+/**
+ * Which slice of history the ledger is reporting.
+ *
+ * The backend scopes /v1/trades to the eval window by default (entries after
+ * EVAL_START_DATE), the same cutoff the scorecard uses — before that the two
+ * cards on this screen measured different books. Rows dropped by the cutoff
+ * have to be named on a money screen: a record that silently shrank from 30
+ * trades to 4 reads as a bug, or as cherry-picking.
+ */
+export function evalWindowNote(
+  response:
+    | Pick<TradesResponse, 'window' | 'eval_start_utc' | 'excluded_pre_eval'>
+    | null
+    | undefined,
+): string | null {
+  if (!response || response.window !== 'eval') return null;
+  const excluded = response.excluded_pre_eval ?? 0;
+  if (excluded <= 0) return null;
+  const since = (response.eval_start_utc ?? '').slice(0, 10);
+  const when = since ? ` (${since})` : '';
+  return `Eval penceresi${when}: temiz kitap öncesi ${excluded} işlem hariç.`;
 }
 
 /**

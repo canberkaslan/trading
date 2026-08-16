@@ -233,4 +233,14 @@ export interface TradesResponse {
   stats: TradeStats;
   /** null = the reconcile job has never run; show that, not a flat zero. */
   reconciled_at_utc: string | null;
+  /**
+   * 'eval' = only round trips ENTERED after the eval cutoff, matching what the
+   * scorecard measures. 'all_time' = the full history. The card must label
+   * which one it is showing.
+   */
+  window: 'eval' | 'all_time';
+  /** The cutoff itself; null when the deployment configures no window. */
+  eval_start_utc: string | null;
+  /** How many round trips the cutoff hides (reported in both windows). */
+  excluded_pre_eval: number;
 }

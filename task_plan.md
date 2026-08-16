@@ -108,6 +108,54 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - 7e Charts, 7f Analiz-Et deep-link, 7g Settings kill-switch+health, snapshot logger
 - cost-opt routing on branch (opt-in, not deployed)
 
+## Daily loop 2026-08-16 (eval CLOSED — GO 24/10d)
+- [x] **Realized ledger eval penceresine göre kapsandı** (backend + OTA, off-decision-path — d1a3c5e).
+  Üç loop'tur "agent kapattığı her işlemde para kaybediyor" diye okunan tablo yanlış kitabı ölçüyormuş.
+  Forensic: 30 kapanmış round trip'in **24'ü tek gün** (2026-06-24 13:30–13:35 UTC, −$656.86) kapanmış.
+  Alpaca order feed'i net: `market SELL 99 AAPL` + `market SELL 103 MSFT`, `order_class=None`,
+  client_order_id broker-üretimi UUID, tüm bracket stop leg'leri aynı anda `canceled` →
+  bu bir `close_all_positions` (FLATTEN). Günlük run log'larında o gün hiç SELL kararı yok, box'ta
+  o saatte hiç aktivite yok. Yani strateji çıkışı değil: **over-buying bug'ı düzeltilirken
+  (2cf196a) biriken AAPL/MSFT lot'ları kasıtlı olarak flatten edilip kitap temizlendi**, universe
+  3→11'e çıktı ve ertesi gün `EVAL_START_DATE=2026-06-24` cutoff'u eklendi (78fadb3).
+  `/v1/eval` o günden beri cutoff'u uyguluyordu, ledger uygulamıyordu — iki kart iki farklı kitabı
+  ölçüyordu.
+
+  | | window=eval (yeni default) | window=all (eski davranış) |
+  |---|---|---|
+  | Kapanan işlem | 4 | 30 |
+  | Net realized | **+$130.56** | −$531.93 |
+  | Win rate | 4W / 0L (%100) | %26.7 |
+  | Expectancy | +$32.64 | −$17.73 |
+  | Profit factor | — (henüz kayıp yok) | 0.22 |
+  | Ort. tutma | 26.0 gün | 5.6 gün |
+
+  Cutoff **giriş** tarihine uygulanıyor, çıkışa değil: girişi temiz kitap öncesi olan bir round trip'i
+  bugünkü exit disiplininin kanıtı saymak yanlış — pozisyonu seçen ve boyutlandıran eski agent.
+  `eval_window.py` tek parser: naive değer UTC okunuyor (broker fill'leri UTC; local anchor cutoff
+  günündeki işlemleri yeniden sınıflandırırdı) ve bozuk değer **raise ediyor** — sessizce "cutoff yok"a
+  düşmek, all-time rakamları eval-penceresi etiketiyle göstermek olurdu. Filtre SQL'de (limit
+  kullanıcının göreceği satırları saysın diye), `excluded_pre_eval` her iki window'da da raporlanıyor;
+  mobil kart "Eval penceresi (2026-06-24): temiz kitap öncesi 26 işlem hariç." satırını gösteriyor —
+  30 işlemden 4'e sessizce düşen bir sicil cherry-picking gibi okunur. 4 işlem MIN_SAMPLE=30'un çok
+  altında olduğu için kart hâlâ renksiz + "anlamlı değil" caveat'ıyla render ediyor.
+  34 yeni test (291 backend, 167 jest), tsc temiz (2 bilinen pre-existing hariç).
+- Live: verdict GO, Sharpe 1.92, Sortino 3.20, MaxDD −4.25%, Calmar 9.11, 24/10 gün, eval_complete.
+  Getiri +3.03% vs SPY +2.85% → **α +0.18pp** (dün −0.04pp'den toparladı ama marj çok ince).
+  Equity $108,954, cash −$856.29 (dünkü ile birebir aynı → sizer cash cap tutuyor, yeni exposure yok),
+  10 pozisyon. Realized (eval penceresi): 4 işlem, +$130.56.
+- **GO/NO-GO durumu değişmedi ama zemini değişti:** 08-14'te "NO-GO" gerekçesi iki ayaktı —
+  (a) SPY gate'i hard yapılsa geçemez, (b) realized expectancy negatif. (b) artık geçersiz: negatif
+  expectancy pre-eval flatten'ın artefaktıydı. (a) hâlâ açık ve asıl mesele: α +0.18pp ile SPY'ı
+  "yenmek" gürültü seviyesinde, ayrıca eval penceresinde sadece 4 kapanmış işlem var → exit disiplini
+  hakkında hâlâ istatistiksel olarak hiçbir şey bilmiyoruz. Gerçek para kararı Canberk'in.
+- Not (bu değişiklikle ilgisiz, pre-existing): `tests/test_dataflows_smoke.py::test_sp500_history_survivor_safe`
+  temiz tree'de de fail — Wikipedia S&P 500 makalesinin "changes" tablosu artık bulunamıyor
+  (scraper selector'ı bayat). Sadece backtest universe reconstruction'ı etkiliyor, canlı karar
+  yolunda değil.
+- Sıradaki: (a) SPY hard-gate kararı, (b) reflection memory on realized fills (branch), ya da
+  (c) sp500_history scraper fix.
+
 ## Daily loop 2026-07-16 (eval CLOSED — GO 15/10d)
 - [x] scorecard: Sortino + Calmar render (were typed+returned, never shown) → OTA preview (f885455)
 - Live: verdict GO, Sharpe 9.47, MaxDD 1.04%, +6.3% vs SPY +2.9%; equity $107.7k, net P&L +$8.3k

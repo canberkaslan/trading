@@ -108,6 +108,40 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - 7e Charts, 7f Analiz-Et deep-link, 7g Settings kill-switch+health, snapshot logger
 - cost-opt routing on branch (opt-in, not deployed)
 
+## Daily loop 2026-08-17 (eval CLOSED — GO 24/10d)
+- [x] **sp500_history scraper fix** (backend, off-decision-path — 81f4976). Dün "bayat selector"
+  diye not düşülen test'in kökü: Wikipedia **additions/removals tablosunu ayrı bir makaleye taşımış**
+  ("List of S&P 500 companies" → "Historical components of the S&P 500", 1994'e kadar 408 satır).
+  Scraper sadece eski makaleye bakıyordu.
+  Asıl mesele test'in kırmızı olması değil, **kırmızı olmasaydı fark edilmeyecek olması**:
+  `fetch_changes()` tabloyu bulamayınca `log.warning` + **boş liste** dönüyordu. Boş change listesi
+  bozuk bir cevap değil, YANLIŞ bir cevap — `members_as_of()` geçmişi "bugünden geriye doğru her
+  değişikliği geri alarak" kuruyor, dolayısıyla hiç değişiklik yoksa **2007 için bugünün endeksini**
+  döndürüyor. Yani modülün var olma sebebi olan survivorship bias, hiçbir hata sinyali vermeden
+  geri geliyordu (LEH, WaMu, Bear Stearns hiç var olmamış gibi).
+  - `fetch_changes()` önce yeni makaleyi, sonra eskisini deniyor; ikisinde de tablo yoksa
+    **`SP500HistoryUnavailable` raise ediyor** ve mesajda iki URL'i de adıyla anıyor (bir sonraki
+    selector bayatlamasında sıfırdan başlanmasın diye).
+  - `parse_changes(html)` fetch'ten ayrıldı → layout drift'i **network'süz** test edilebiliyor;
+    pandas'ın spanning header hücrelerine verdiği `Unnamed: N_level_M` adları da temizleniyor
+    (yeni makale iki satırlı MultiIndex header kullanıyor).
+  - `members_as_of()` change listesinin **erişemediği tarihleri reddediyor** (boş liste ya da
+    as_of < en eski değişiklik). Geriye yürüyüş no-op olduğunda sessizce bugünün evrenini
+    "1990 evreni" diye vermek, veriyle desteklenmeyen bir cevabı emin görünümlü hale getiriyordu.
+  - Canlı smoke test artık `SP500HistoryUnavailable`'ı yutmuyor: **sadece offline makine skip**
+    (network probe'u constituents fetch'i), bayat selector fail eder.
+  12 offline test + canlı scrape yeşil (**304 backend**). Backtest universe reconstruction dışında
+  çağıranı yok — canlı karar yolunda değil. Box'a deploy + API restart, /healthz + /v1/eval 200.
+- Live: verdict GO, Sharpe 1.92, Sortino 3.20, MaxDD −4.25%, Calmar 9.11, 24/10 gün, eval_complete.
+  Getiri +3.03% vs SPY +2.85% → **α +0.18pp** (dünle birebir aynı — hafta sonu, yeni bar yok).
+  Equity $108,923, cash −$856.29 (3. gün sabit → sizer cash cap tutuyor, yeni exposure yok),
+  10 pozisyon, günlük −$30.70. Realized (eval penceresi): 4 işlem, +$130.56, 4W/0L.
+- GO/NO-GO durumu **değişmedi**: tek açık kalem SPY hard-gate kararı. α +0.18pp gürültü seviyesinde
+  ve eval penceresinde hâlâ sadece 4 kapanmış işlem var → exit disiplini hakkında istatistiksel
+  olarak hiçbir şey bilmiyoruz. Gerçek para kararı Canberk'in.
+- Sıradaki: (a) SPY hard-gate kararı, (b) reflection memory on realized fills (branch),
+  (c) cost-opt merge hazırlığı (önce stale model ID'leri tazele: opus-4-7/sonnet-4-6 → 4.8/5).
+
 ## Daily loop 2026-08-16 (eval CLOSED — GO 24/10d)
 - [x] **Realized ledger eval penceresine göre kapsandı** (backend + OTA, off-decision-path — d1a3c5e).
   Üç loop'tur "agent kapattığı her işlemde para kaybediyor" diye okunan tablo yanlış kitabı ölçüyormuş.

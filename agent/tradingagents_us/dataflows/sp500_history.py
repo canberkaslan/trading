@@ -1,8 +1,8 @@
 """Survivorship-safe historical S&P 500 constituents.
 
-Scrapes Wikipedia "List of S&P 500 companies" which has two tables:
-  - Current constituents (today's index)
-  - Selected changes (additions + removals with dates)
+Scrapes Wikipedia for two tables:
+  - Current constituents (today's index) — "List of S&P 500 companies"
+  - Additions + removals with dates — "Historical components of the S&P 500"
 
 Composes a point-in-time membership function: `members_as_of(date)`.
 
@@ -12,8 +12,16 @@ that went bankrupt (Lehman 2008, WaMu 2008, Bear Stearns 2008, etc.) are
 excluded entirely. Our scraper reconstructs the historical membership so
 backtests are honest.
 
+The changes table used to live in a "Selected changes" section of the
+constituents article; Wikipedia has since split it into its own page. Both
+locations are tried, and a missing table is an error rather than an empty
+list: silently reconstructing from zero changes hands back *today's* index
+labelled as history, which is precisely the survivorship bias this module
+exists to remove.
+
 Sources:
   - https://en.wikipedia.org/wiki/List_of_S%26P_500_companies
+  - https://en.wikipedia.org/wiki/Historical_components_of_the_S%26P_500
   - Polygon ticker_details(as_of=...) for delisted ticker survival metadata
 """
 
@@ -32,7 +40,19 @@ import pandas as pd
 log = logging.getLogger(__name__)
 
 WIKI_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+CHANGES_URL = "https://en.wikipedia.org/wiki/Historical_components_of_the_S%26P_500"
+# Ordered by where the additions/removals table currently lives. WIKI_URL stays
+# in the list because that is where it lived until Wikipedia split the article.
+CHANGES_URLS = (CHANGES_URL, WIKI_URL)
 USER_AGENT = "Trading Research (https://github.com/canberkaslan/trading)"
+
+
+class SP500HistoryUnavailable(RuntimeError):
+    """Historical membership could not be sourced (page moved, table gone, network down).
+
+    Raised instead of degrading to "no changes", because a caller that gets an
+    empty change list back reconstructs every historical date as today's index.
+    """
 
 
 @dataclass(frozen=True)
@@ -45,8 +65,8 @@ class IndexChange:
     reason: str | None = None
 
 
-def _fetch_html() -> str:
-    r = httpx.get(WIKI_URL, headers={"User-Agent": USER_AGENT}, timeout=30, follow_redirects=True)
+def _fetch_html(url: str = WIKI_URL) -> str:
+    r = httpx.get(url, headers={"User-Agent": USER_AGENT}, timeout=30, follow_redirects=True)
     r.raise_for_status()
     return r.text
 
@@ -87,15 +107,39 @@ def fetch_current_constituents() -> pd.DataFrame:
 
 
 def fetch_changes() -> list[IndexChange]:
-    """Return historical additions/removals from the 'Selected changes' table."""
-    html = _fetch_html()
+    """Return historical additions/removals, trying each known table location.
+
+    Raises SP500HistoryUnavailable if no page yields a usable changes table.
+    """
+    problems: list[str] = []
+    for url in CHANGES_URLS:
+        try:
+            html = _fetch_html(url)
+        except httpx.HTTPError as e:
+            problems.append(f"{url}: fetch failed ({e})")
+            continue
+        changes = parse_changes(html)
+        if changes:
+            return changes
+        problems.append(f"{url}: no additions/removals rows found")
+    raise SP500HistoryUnavailable(
+        "S&P 500 change history unavailable — " + "; ".join(problems)
+    )
+
+
+def parse_changes(html: str) -> list[IndexChange]:
+    """Parse the additions/removals table out of a Wikipedia article's HTML.
+
+    Returns [] when the page carries no such table — `fetch_changes` decides
+    what an empty result means across all candidate pages.
+    """
     tables = pd.read_html(StringIO(html))
-    # Table 1 is typically the changes table; defensive search
+    # Defensive search: the changes table is not at a fixed index on either page.
     changes_df: pd.DataFrame | None = None
-    for tbl in tables[1:]:
+    for tbl in tables:
         cols_str = " ".join(str(c).lower() for c in tbl.columns)
         if "added" in cols_str and "removed" in cols_str:
-            changes_df = tbl
+            changes_df = tbl.copy()
             break
     if changes_df is None:
         log.warning("could not locate changes table in Wikipedia article")
@@ -107,7 +151,9 @@ def fetch_changes() -> list[IndexChange]:
         for top, sub in changes_df.columns:
             top_s = str(top).strip().lower().replace(" ", "_")
             sub_s = str(sub).strip().lower().replace(" ", "_")
-            if sub_s and sub_s != top_s and sub_s != "nan":
+            # pandas names spanning/blank header cells "unnamed: N_level_M"
+            blank = not sub_s or sub_s == "nan" or sub_s.startswith("unnamed:")
+            if not blank and sub_s != top_s:
                 new_cols.append(f"{top_s}_{sub_s}")
             else:
                 new_cols.append(top_s)
@@ -165,6 +211,27 @@ def _clean_str(raw: object) -> str | None:
     return s if s and s.lower() not in ("nan",) else None
 
 
+def _assert_covers(changes: list[IndexChange], as_of: date) -> None:
+    """Refuse to reconstruct a date the change history cannot reach back to.
+
+    Reconstruction works by undoing every change between `as_of` and today, so
+    it is only valid from the oldest change forward. Outside that range the
+    walk is a no-op and the caller silently receives today's index — a
+    survivorship-biased universe that looks like a real answer.
+    """
+    if as_of >= date.today():
+        return  # nothing to undo; today's constituents are the answer
+    if not changes:
+        raise SP500HistoryUnavailable(
+            f"no index changes available — cannot reconstruct membership as of {as_of}"
+        )
+    oldest = min(c.effective_date for c in changes)
+    if as_of < oldest:
+        raise SP500HistoryUnavailable(
+            f"change history only reaches back to {oldest}; cannot reconstruct {as_of}"
+        )
+
+
 def members_as_of(as_of: date, changes: list[IndexChange] | None = None, current: pd.DataFrame | None = None) -> set[str]:
     """Reconstruct the S&P 500 constituent set on a given historical date.
 
@@ -176,6 +243,7 @@ def members_as_of(as_of: date, changes: list[IndexChange] | None = None, current
     """
     current_df = current if current is not None else fetch_current_constituents()
     ch = changes if changes is not None else fetch_changes()
+    _assert_covers(ch, as_of)
 
     members = set(current_df["symbol"].dropna().astype(str).tolist())
 

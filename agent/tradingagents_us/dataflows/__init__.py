@@ -5,14 +5,22 @@ from .alpaca_broker import AlpacaClient
 from .fred import FREDClient
 from .polygon import PolygonClient
 from .sec_edgar import EdgarClient
-from .sp500_history import fetch_changes, fetch_current_constituents, members_as_of
+from .sp500_history import (
+    SP500HistoryUnavailable,
+    fetch_changes,
+    fetch_current_constituents,
+    members_as_of,
+    parse_changes,
+)
 
 __all__ = [
     "AlpacaClient",
     "EdgarClient",
     "FREDClient",
     "PolygonClient",
+    "SP500HistoryUnavailable",
     "fetch_changes",
     "fetch_current_constituents",
     "members_as_of",
+    "parse_changes",
 ]

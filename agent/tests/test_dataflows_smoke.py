@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 from datetime import date, timedelta
 
+import httpx
 import pytest
 
 
@@ -119,10 +120,15 @@ def test_sp500_history_survivor_safe() -> None:
         members_as_of,
     )
 
+    # Only an offline machine is a skip, and the constituents fetch is the
+    # network probe that detects it (it lets httpx errors through). A page that
+    # loads but no longer holds the changes table raises SP500HistoryUnavailable
+    # — a stale selector, the exact regression this test exists to catch, so it
+    # is deliberately not swallowed here.
     try:
         current = fetch_current_constituents()
         changes = fetch_changes()
-    except Exception as e:
+    except httpx.HTTPError as e:
         pytest.skip(f"network/wiki fetch failed: {e}")
 
     # Sanity: current list is ~500 stocks

@@ -208,6 +208,23 @@ class TradeLogRepository:
                 stmt = stmt.where(AgentDecisionRow.ticker == ticker)
             return list(s.execute(stmt).scalars().all())
 
+    def list_orders_since(
+        self, since: datetime | None = None, limit: int = 2000
+    ) -> list[TradeOrderRow]:
+        """Every order row in the window — submitted AND refused, oldest first.
+
+        Deliberately not `list_open_orders`: the refused rows are the point.
+        The default limit is generous because the daily run writes one row per
+        ticker per day (~11/day), so a month is ~250 rows; a limit that cut in
+        mid-window would silently understate the refusal counts computed on top.
+        """
+        with self.session() as s:
+            stmt = select(TradeOrderRow).order_by(TradeOrderRow.submitted_at_utc.desc()).limit(limit)
+            if since is not None:
+                stmt = stmt.where(TradeOrderRow.submitted_at_utc >= since)
+            rows = list(s.execute(stmt).scalars().all())
+            return sorted(rows, key=lambda r: r.submitted_at_utc)
+
     def list_open_orders(self) -> list[TradeOrderRow]:
         with self.session() as s:
             # "Open" = no FILLED or REJECTED update yet. Conservative join.

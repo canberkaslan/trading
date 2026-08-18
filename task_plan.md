@@ -108,6 +108,42 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - 7e Charts, 7f Analiz-Et deep-link, 7g Settings kill-switch+health, snapshot logger
 - cost-opt routing on branch (opt-in, not deployed)
 
+## Daily loop 2026-08-18 (eval CLOSED — GO 21/10d, ama kitap DONMUŞ)
+- [x] **`/v1/diagnostics/actionability`** (read-only, DB-only, off-decision-path — deployed 44d1df5).
+  /v1/eval equity curve'ü ölçüyor; tamamen yatırımlı, kendi sizing cap'lerini artık geçemeyen bir
+  sepetin de equity curve'ü var. Yani "strateji çalışıyor" ile "strateji donmuş" bugüne kadarki
+  HER metrikte aynı görünüyordu. Yeni endpoint eksik soruyu emir satırlarından cevaplıyor:
+  kaç emir broker'a ulaştı, geri kalanını ne engelledi, kaç ardışık **run günü** sıfır gönderimle
+  kapandı. İki kasıtlı kural: `submitted` = broker ack'i, `risk_approved` DEĞİL (risk_approved
+  ajanın kendine verdiği not; niyeti icra saymak tam da bu endpoint'in yakalamak için var olduğu
+  iyimserlik). `inert_run_days` **run günü** sayıyor, takvim günü değil — hafta sonu satır
+  üretmediği için takvimle sayarsak her pazartesi 2 gün atalet raporlanır; boş pencere ise
+  "idle", asla "inert" (run hiç olmamış olabilir, bu stratejinin suçu değil). Reason'lardaki
+  canlı değer parantezi normalize ediliyor (`(spendable=$0.00)` / `(spendable=$18.40)` → tek
+  bucket), yoksa kalıcı bir blocker tek tek anomalilere dağılıp görünmez oluyor.
+  23 yeni test (327 backend yeşil).
+- **CANLI TEŞHİS (asıl mesele):** 30 günde **224 emir, sadece 7'si broker'a ulaştı** (%3.1),
+  217 reddedildi. Son gönderim **08-11** → `inert_run_days=6`, verdict **inert**.
+  Reddedilme nedenleri (30g): `non-actionable rating=Hold` 121 · **`trimmed_to_zero_by_portfolio_caps` 91**
+  · `non-actionable rating=Underweight` 2 · `trimmed_to_zero_by_cash_cap` 1.
+  Yani kitap 10 isimde, her biri %10 per-position cap'inde ya da üstünde (MSFT %12.0, NVDA %11.4,
+  JPM %10.4, V %10.0) → her Overweight konviksiyonu sıfıra kırpılıyor. Sharpe 2.59 / GO verdict'i
+  bir STRATEJİYİ değil, donmuş bir buy-and-hold sepetinin mark-to-market'ini ölçüyor.
+- **KÖK NEDEN — FİLED, KASITLI DÜZELTİLMEDİ (decision-path, HIGH blast, Canberk'in kararı):**
+  `risk/sizer.py:45 _side_from_rating` → `Underweight` **None** dönüyor, yorumu "caller decides"
+  ama **hiçbir caller karar vermiyor** — trade.py sadece reddi kaydediyor. Sistemdeki TEK çıkış
+  yolu en sert tier olan `Sell`. Ajanın fiilen ürettiği "azalt" sinyali (60 günde 6 kez) yere
+  düşüyor. Sonuç zinciri: trim yok → pozisyonlar %10 cap'in altına inmiyor → yeni BUY sonsuza
+  kadar bloke; ayrıca negatif cash (−$856.29, 5. gün) hiç geri ödenmiyor.
+  Fix = Underweight → kısmi SELL (cap'e geri kırp). Bunu tek taraflı deploy ETMEDİM: gerçek emir
+  üreten bir exit politikası, tests + supervised paper run kuralına tabi ve boyutlandırma
+  politikası (ne kadar trim?) Canberk'in çağrısı.
+- Live: verdict GO (gates: Sharpe 2.59>1.0 ✅, MaxDD −2.69%<15% ✅, 21/10 gün ✅, SPY ❌ +3.29% vs
+  +4.62% → α −1.33pt). Equity $107,352, cash −$856.29, 10 pozisyon, günlük −$1,602 (−1.47%).
+  Realized (eval penceresi): 4 işlem, +$130.56, 4/0 — ama son fill 07-31.
+- Sıradaki: (a) Underweight→SELL exit path (supervised, Canberk onayı), (b) actionability'yi
+  mobil Settings/scorecard'a bağla + günlük push (inert>=3 gün), (c) SPY gate'i hard yapma kararı.
+
 ## Daily loop 2026-08-17 (eval CLOSED — GO 24/10d)
 - [x] **sp500_history scraper fix** (backend, off-decision-path — 81f4976). Dün "bayat selector"
   diye not düşülen test'in kökü: Wikipedia **additions/removals tablosunu ayrı bir makaleye taşımış**

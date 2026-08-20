@@ -53,6 +53,22 @@ export function useTrades(params?: { ticker?: string; limit?: number }) {
   });
 }
 
+/**
+ * Order-flow health. Derived from order rows written once per daily run, so it
+ * changes at most daily — poll on the slow cadence and never let a failure
+ * take a screen down (`retry: false`, callers render the card only when data
+ * is present).
+ */
+export function useActionability(days = 30) {
+  return useQuery({
+    queryKey: ['diagnostics', 'actionability', days],
+    queryFn: () => api.getActionability(days),
+    refetchInterval: REFETCH_INTERVAL_MS * 6,
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
 export function useDecisions(params?: { ticker?: string; limit?: number }) {
   return useQuery({
     queryKey: ['agents', 'decisions', params],

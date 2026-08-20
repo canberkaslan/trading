@@ -12,6 +12,7 @@ import {
   usePrices,
   useConcentration,
   useTrades,
+  useActionability,
 } from '@/api/hooks';
 import { colors } from '@/theme/colors';
 import { MIN_TOUCH_TARGET } from '@/utils/a11y';
@@ -38,6 +39,16 @@ import {
   evalWindowNote,
   type Tone as PnlToneName,
 } from '@/utils/realized';
+import {
+  actionabilityVerdictMeta,
+  inertiaNote,
+  lastSubmitLabel,
+  submitRate,
+  submitRatioLabel,
+  topReasons,
+  verdictQualifier,
+  type ActionabilityTone,
+} from '@/utils/actionability';
 
 const TONE_COLORS: Record<Tone, string> = {
   up: colors.up,
@@ -51,6 +62,12 @@ const PNL_TONE_COLORS: Record<PnlToneName, string> = {
   neutral: colors.textPrimary,
 };
 
+const FLOW_TONE_COLORS: Record<ActionabilityTone, string> = {
+  up: colors.up,
+  warning: colors.warning,
+  muted: colors.textMuted,
+};
+
 export default function PortfolioScreen() {
   const { t } = useTranslation();
   const router = useRouter();
@@ -61,6 +78,7 @@ export default function PortfolioScreen() {
   const { data: spy } = usePrices('SPY', PERIOD_DAYS[period]);
   const { data: concentration } = useConcentration();
   const { data: realized } = useTrades();
+  const { data: flow } = useActionability();
   const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
 
@@ -71,6 +89,7 @@ export default function PortfolioScreen() {
     await queryClient.invalidateQueries({ queryKey: ['portfolio', 'history'] });
     await queryClient.invalidateQueries({ queryKey: ['prices', 'SPY'] });
     await queryClient.invalidateQueries({ queryKey: ['trades'] });
+    await queryClient.invalidateQueries({ queryKey: ['diagnostics', 'actionability'] });
     setRefreshing(false);
   }, [queryClient]);
 
@@ -92,6 +111,9 @@ export default function PortfolioScreen() {
 
   const pnlColor = data.daily_pnl_usd >= 0 ? colors.up : colors.down;
   const badge = evalData ? verdictTheme(evalData.verdict, colors) : null;
+  // A GO badge over a book that has submitted nothing for days is the single
+  // most misleading thing on this screen — qualify it where it is read.
+  const badgeQualifier = verdictQualifier(flow);
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -102,10 +124,22 @@ export default function PortfolioScreen() {
           <View style={styles.heroTop}>
             <Text style={styles.heroLabel}>{t('portfolio.totalEquity')}</Text>
             {badge && evalData ? (
-              <View style={[styles.badge, { borderColor: badge.color }]}>
-                <Text style={[styles.badgeText, { color: badge.color }]}>
-                  {badge.emoji} {evalData.verdict}
-                </Text>
+              <View style={styles.badgeWrap}>
+                <View style={[styles.badge, { borderColor: badge.color }]}>
+                  <Text
+                    style={[styles.badgeText, { color: badge.color }]}
+                    accessibilityLabel={
+                      badgeQualifier
+                        ? `Eval kararı ${evalData.verdict}, ancak kitap ${flow?.inert_run_days} çalışma günüdür donmuş`
+                        : `Eval kararı ${evalData.verdict}`
+                    }
+                  >
+                    {badge.emoji} {evalData.verdict}
+                  </Text>
+                </View>
+                {badgeQualifier ? (
+                  <Text style={styles.badgeQualifier}>⚠︎ {badgeQualifier}</Text>
+                ) : null}
               </View>
             ) : null}
           </View>
@@ -141,6 +175,68 @@ export default function PortfolioScreen() {
         </View>
 
         {history && history.points.length > 1 ? <EquityChart history={history} spy={spy} /> : null}
+
+        {flow ? (() => {
+          // Every number above this card is computed from equity, and a frozen
+          // basket still has an equity curve. This card is the only thing on
+          // the screen that can tell "working" apart from "stuck".
+          const meta = actionabilityVerdictMeta(flow.verdict);
+          const rate = submitRate(flow);
+          const reasons = topReasons(flow.by_reason);
+          const note = inertiaNote(flow);
+          return (
+            <View style={styles.riskCard}>
+              <View style={styles.row}>
+                <Text style={styles.cardTitle}>Emir akışı</Text>
+                <Text style={styles.freshness}>son {flow.window_days} gün</Text>
+              </View>
+
+              <View style={styles.statRow}>
+                <View style={styles.stat}>
+                  <Text style={styles.statLabel}>Durum</Text>
+                  <Text
+                    style={[styles.statValue, { color: FLOW_TONE_COLORS[meta.tone] }]}
+                    accessibilityLabel={`Emir akışı durumu: ${meta.label}`}
+                  >
+                    {meta.label}
+                  </Text>
+                  <Text style={styles.statSub}>{flow.run_days} çalışma günü</Text>
+                </View>
+                <View style={styles.stat}>
+                  <Text style={styles.statLabel}>Broker'a giden</Text>
+                  <Text style={styles.statValue}>{submitRatioLabel(flow)}</Text>
+                  <Text style={styles.statSub}>{rate == null ? 'emir yok' : formatPct(rate)}</Text>
+                </View>
+                <View style={styles.stat}>
+                  <Text style={styles.statLabel}>Son gönderim</Text>
+                  <Text
+                    style={[
+                      styles.statValue,
+                      flow.verdict === 'inert' ? { color: colors.warning } : null,
+                    ]}
+                  >
+                    {lastSubmitLabel(flow.last_submitted_at_utc, new Date())}
+                  </Text>
+                  <Text style={styles.statSub}>ack alınan</Text>
+                </View>
+              </View>
+
+              {reasons.map((r) => (
+                <View key={r.reason} style={styles.sectorRow}>
+                  <View style={styles.sectorHeader}>
+                    <Text style={styles.sectorLabel} numberOfLines={2}>{r.label}</Text>
+                    <Text style={styles.sectorWeight}>{r.count}</Text>
+                  </View>
+                  <View style={styles.barTrack}>
+                    <View style={[styles.barBlocked, { width: `${r.share * 100}%` }]} />
+                  </View>
+                </View>
+              ))}
+
+              {note ? <Text style={styles.flagText}>⚠︎ {note}</Text> : null}
+            </View>
+          );
+        })() : null}
 
         {realized ? (() => {
           // Realized (banked) vs unrealized (mark-to-market). The hero number
@@ -341,8 +437,10 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   hero: { padding: 24 },
   heroTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  badgeWrap: { alignItems: 'flex-end' },
   badge: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 4 },
   badgeText: { fontSize: 13, fontWeight: '700', letterSpacing: 0.5 },
+  badgeQualifier: { color: colors.warning, fontSize: 11, marginTop: 4 },
   heroLabel: { color: colors.textSecondary, fontSize: 14 },
   heroValue: { color: colors.textPrimary, fontSize: 36, fontWeight: '700', marginTop: 4 },
   heroChange: { fontSize: 16, marginTop: 8, fontWeight: '600' },
@@ -376,6 +474,9 @@ const styles = StyleSheet.create({
   sectorWeight: { color: colors.textPrimary, fontSize: 13, fontWeight: '600' },
   barTrack: { height: 6, backgroundColor: colors.surfaceElevated, borderRadius: 999, overflow: 'hidden' },
   barFill: { height: 6, backgroundColor: colors.accent, borderRadius: 999 },
+  // Blocked order flow is not an allocation — it gets the warning tone, not
+  // the accent one, so the two bar lists on this screen don't read alike.
+  barBlocked: { height: 6, backgroundColor: colors.warning, borderRadius: 999 },
   flagText: { color: colors.warning, fontSize: 12, marginTop: 12 },
   freshness: { color: colors.textMuted, fontSize: 11 },
   realizedValue: { fontSize: 26, fontWeight: '700', marginTop: 2 },

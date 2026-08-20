@@ -4,6 +4,7 @@
 
 import { apiClient } from './client';
 import type {
+  Actionability,
   AgentDecision,
   AnalyzeJob,
   Concentration,
@@ -42,6 +43,12 @@ export const api = {
     const qs = searchParams.toString();
     return apiClient.get(`v1/trades${qs ? `?${qs}` : ''}`).json<TradesResponse>();
   },
+
+  // Order-flow health: what reached the broker and what blocked the rest.
+  // DB-only by design — a diagnostic that calls Alpaca reports "unreachable"
+  // exactly when a broker outage is the thing being diagnosed.
+  getActionability: (days = 30) =>
+    apiClient.get(`v1/diagnostics/actionability?days=${days}`).json<Actionability>(),
 
   // Agents
   listDecisions: (params?: { ticker?: string; limit?: number }) => {

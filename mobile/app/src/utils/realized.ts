@@ -17,6 +17,7 @@
  */
 
 import type { Position, TradeStats, TradesResponse } from '@/api/types';
+import { parseUtc, relativeAgeTr } from './format';
 
 export type Tone = 'up' | 'down' | 'neutral';
 
@@ -112,16 +113,10 @@ export function reconcileFreshness(
   now: Date,
 ): Freshness {
   if (!reconciledAtUtc) return { label: 'hiç çalışmadı', stale: true };
-  const then = new Date(reconciledAtUtc.endsWith('Z') ? reconciledAtUtc : `${reconciledAtUtc}Z`);
+  const then = parseUtc(reconciledAtUtc);
+  if (!then) return { label: 'bilinmiyor', stale: true };
   const ms = now.getTime() - then.getTime();
-  if (!Number.isFinite(ms)) return { label: 'bilinmiyor', stale: true };
-  const stale = ms > STALE_AFTER_MS;
-  if (ms < 60_000) return { label: 'az önce', stale };
-  const minutes = Math.floor(ms / 60_000);
-  if (minutes < 60) return { label: `${minutes} dk önce`, stale };
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return { label: `${hours} sa önce`, stale };
-  return { label: `${Math.floor(hours / 24)} gün önce`, stale };
+  return { label: relativeAgeTr(ms), stale: ms > STALE_AFTER_MS };
 }
 
 /**

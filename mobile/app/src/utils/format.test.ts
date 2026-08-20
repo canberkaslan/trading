@@ -1,6 +1,42 @@
 import { describe, it, expect } from '@jest/globals';
 
-import { formatUsd, formatPct } from './format';
+import { formatUsd, formatPct, parseUtc, relativeAgeTr } from './format';
+
+describe('relativeAgeTr', () => {
+  it('walks the TR age ladder', () => {
+    expect(relativeAgeTr(30_000)).toBe('az önce');
+    expect(relativeAgeTr(12 * 60_000)).toBe('12 dk önce');
+    expect(relativeAgeTr(3 * 60 * 60_000)).toBe('3 sa önce');
+    expect(relativeAgeTr(9 * 24 * 60 * 60_000)).toBe('9 gün önce');
+  });
+
+  it('does not render a negative age when the device clock runs ahead', () => {
+    expect(relativeAgeTr(-2 * 60 * 60_000)).toBe('az önce');
+  });
+
+  it('renders a non-finite age as an em dash', () => {
+    expect(relativeAgeTr(NaN)).toBe('—');
+  });
+});
+
+describe('parseUtc', () => {
+  it('reads a naive backend timestamp as UTC, not device-local', () => {
+    expect(parseUtc('2026-08-11T23:30:04.470376')?.toISOString()).toBe(
+      '2026-08-11T23:30:04.470Z',
+    );
+  });
+
+  it('leaves an explicit zone alone', () => {
+    expect(parseUtc('2026-08-11T23:30:04Z')?.toISOString()).toBe('2026-08-11T23:30:04.000Z');
+    expect(parseUtc('2026-08-12T02:30:04+03:00')?.toISOString()).toBe('2026-08-11T23:30:04.000Z');
+  });
+
+  it('returns null for missing/unparseable input instead of an Invalid Date', () => {
+    expect(parseUtc(null)).toBeNull();
+    expect(parseUtc('')).toBeNull();
+    expect(parseUtc('not-a-date')).toBeNull();
+  });
+});
 
 describe('formatUsd', () => {
   it('formats with two decimals and a dollar sign', () => {

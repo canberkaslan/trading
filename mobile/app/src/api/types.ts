@@ -244,3 +244,31 @@ export interface TradesResponse {
   /** How many round trips the cutoff hides (reported in both windows). */
   excluded_pre_eval: number;
 }
+
+/**
+ * GET /v1/diagnostics/actionability — the companion to the eval scorecard.
+ * The scorecard says how the book did; this says whether the book still had a
+ * choice. They can disagree: a frozen basket keeps posting the tape's Sharpe.
+ */
+export interface Actionability {
+  /**
+   * 'active' | 'inert' | 'idle'. 'idle' = no order rows at all in the window
+   * (the run may not have happened), which is NOT the strategy going quiet.
+   */
+  verdict: string;
+  window_days: number;
+  orders: number;
+  /** Broker-acknowledged. Deliberately not `risk_approved` (intent ≠ action). */
+  submitted: number;
+  refused: number;
+  /** Normalized reason -> count. Sums to >= `refused`: reasons can stack. */
+  by_reason: Record<string, number>;
+  dominant_reason: string | null;
+  /** Consecutive most-recent RUN days that submitted nothing (not calendar). */
+  inert_run_days: number;
+  run_days: number;
+  inert_threshold_run_days: number;
+  last_submitted_at_utc: string | null;
+  first_order_at_utc: string | null;
+  last_order_at_utc: string | null;
+}

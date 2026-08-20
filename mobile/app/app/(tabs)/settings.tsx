@@ -4,7 +4,15 @@ import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 
 import { api } from '@/api/endpoints';
-import { useKillSwitch, useSetKillSwitch, useHealth, useDecisions, useEval } from '@/api/hooks';
+import {
+  useKillSwitch,
+  useSetKillSwitch,
+  useHealth,
+  useDecisions,
+  useEval,
+  useActionability,
+} from '@/api/hooks';
+import { inertiaNote } from '@/utils/actionability';
 import { getPermissionStatus, requestAndRegisterPush, type PushPermission } from '@/notifications';
 import { useInboxStore } from '@/stores/notifications';
 import { colors } from '@/theme/colors';
@@ -57,6 +65,7 @@ export default function SettingsScreen() {
   const { data: health, isError: healthError } = useHealth();
   const { data: decisions } = useDecisions({ limit: 1 });
   const { data: evalData, isLoading: evalLoading } = useEval('1M');
+  const { data: flow } = useActionability();
 
   const VERDICT_COLOR: Record<string, string> = {
     GO: colors.up,
@@ -186,6 +195,15 @@ export default function SettingsScreen() {
               {evalData.reasons.length ? (
                 <Text style={styles.evalReason}>{evalData.reasons.join(' · ')}</Text>
               ) : null}
+              {/*
+                Every gate above is computed from the equity curve, which a
+                book that stopped trading still has. When order flow says the
+                book is frozen, that caveat belongs next to the verdict — not
+                one screen away.
+              */}
+              {inertiaNote(flow) ? (
+                <Text style={styles.flowCaveat}>⚠︎ {inertiaNote(flow)}</Text>
+              ) : null}
             </>
           )}
         </View>
@@ -314,6 +332,7 @@ const styles = StyleSheet.create({
   evalStatValue: { color: colors.textPrimary, fontSize: 17, fontWeight: '700', marginTop: 2 },
   evalStatGate: { color: colors.textMuted, fontSize: 10, marginTop: 1 },
   evalReason: { color: colors.warning, fontSize: 11, fontStyle: 'italic' },
+  flowCaveat: { color: colors.warning, fontSize: 11, marginTop: 8, lineHeight: 16 },
   countdown: { color: colors.textMuted, fontSize: 12, fontWeight: '600' },
   gateList: { gap: 6, borderTopWidth: 1, borderTopColor: colors.surfaceElevated, paddingTop: 10 },
   gateRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },

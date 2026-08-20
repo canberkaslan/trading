@@ -119,6 +119,7 @@ const REJECTION_LABELS_TR: Record<string, string> = {
   'non-actionable': 'Aksiyon gerektirmeyen karar',
   risk_layer_rejected: 'Risk katmanı reddetti',
   trimmed_to_zero_by_portfolio_caps: 'Portföy limitleri emri sıfıra indirdi',
+  trimmed_to_zero_by_cash_cap: 'Harcanabilir nakit kalmadı',
   zero_equity: 'Hesap özkaynağı sıfır',
   kill_switch: 'Kill switch devrede',
   daily_drawdown: 'Günlük drawdown limiti',

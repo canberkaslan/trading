@@ -108,6 +108,40 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - 7e Charts, 7f Analiz-Et deep-link, 7g Settings kill-switch+health, snapshot logger
 - cost-opt routing on branch (opt-in, not deployed)
 
+## Daily loop 2026-08-20 (eval CLOSED — GO 22/10d, kitap 8 run günüdür DONMUŞ)
+- [x] **Actionability mobile'a bağlandı** (OTA + commit 596bd2c, read-only, off-decision-path).
+  Dün eklenen `/v1/diagnostics/actionability` sadece curl'de yaşıyordu; verdict'in fiilen OKUNDUĞU
+  iki yere taşındı. Mesele şu: karnedeki HER gate equity curve'den hesaplanıyor ve kendi sizing
+  cap'lerini artık geçemeyen, tam yatırımlı bir sepetin de equity curve'ü var — "çalışıyor" ile
+  "donmuş" app'te birebir aynı görünüyordu (8 run günüdür GO rozeti, son broker ack'i 08-11).
+  - Portfolio → **"Emir akışı" kartı**: durum, üretilen emirlerin broker'a ulaşan payı
+    (bugün **6/234 = %2.56**), son ack'in yaşı, red nedenleri bar olarak.
+  - Portfolio hero rozeti + Settings karnesi: GO rozetinin yanına `⚠︎ donmuş kitap · 8g`,
+    karneye tek satır caveat — **sadece** akış inert'ken. Her zaman uyaran rozet, uyarıyı öğretmez.
+  Dürüstlük kuralları saf helper'larda (`utils/actionability.ts`), yani test edilebilir:
+  0 emir "hiç denenmedi"dir, "%0 gönderildi" DEĞİL (ikisi stratejiye dair zıt şeyler söyler);
+  boş pencere **idle** (eksik cron), asla inert; bilinmeyen verdict verbatim render ediliyor;
+  bar'lar `refused`'a değil **en sık nedene** göre ölçekleniyor (bir emir aynı anda birden çok
+  nedenle reddedilebildiği için toplam refused'ı aşar, refused-paydalı bar %100'ü geçerdi);
+  atalet **run günü** sayıyor, pazartesi hafta sonunu 2 günlük sessizlik diye raporlamasın diye.
+  Yan iş: `relativeAgeTr`/`parseUtc` → `utils/format` (realized kartıyla tek yaş merdiveni + tek
+  naive-timestamp kuralı; cihaz-local parse her yaşı UTC offset'i kadar kaydırır — İstanbul'da 3sa,
+  bir stale bayrağını ters çevirmeye yeter) ve `trimmed_to_zero_by_cash_cap` TR etiketi eklendi
+  (08-14'ten beri ham İngilizce render ediliyordu). 22 yeni jest (**189**), **327 backend** yeşil,
+  tsc temiz (2 bilinen pre-existing hariç).
+- **CANLI TEŞHİS kötüleşti:** 30 günde **234 emir, 6'sı broker'a ulaştı (%2.56)**, 228 red.
+  Son gönderim **08-11** → `inert_run_days` 6 → **8**. Nedenler: `non-actionable rating=Hold` 130 ·
+  `trimmed_to_zero_by_portfolio_caps` 93 · `rating=Underweight` 2 · `cash_cap` 1.
+  Cash **−$856.29** (7. gün, hiç geri ödenmiyor), 10 pozisyon, hepsi %10 cap'te ya da üstünde.
+- Live: verdict GO — Sharpe 1.14, Sortino 1.83, MaxDD −2.69%, Calmar 8.15, 22/10 gün.
+  Getiri **+1.67% vs SPY +2.78% → α −1.11pp** (SPY gate ❌). Equity $107,864, günlük +$345 (+0.32%).
+  **Sharpe 1.14, gate'in (1.0) hemen üstünde** — 1M penceresi kaydıkça eriyor (08-16: 1.92 → bugün 1.14).
+- Sıradaki: (a) **Underweight→SELL exit path** (sizer.py:45 `_side_from_rating` None dönüyor,
+  hiçbir caller karar vermiyor → tek çıkış yolu `Sell`; trim yok → cap altına inilmiyor → yeni BUY
+  sonsuza kadar bloke). Decision-path + HIGH blast, boyutlandırma politikası Canberk'in çağrısı —
+  supervised paper run şart. (b) inert>=3 run günü için günlük push (backend, off-decision-path).
+  (c) SPY hard-gate kararı.
+
 ## Daily loop 2026-08-18 (eval CLOSED — GO 21/10d, ama kitap DONMUŞ)
 - [x] **`/v1/diagnostics/actionability`** (read-only, DB-only, off-decision-path — deployed 44d1df5).
   /v1/eval equity curve'ü ölçüyor; tamamen yatırımlı, kendi sizing cap'lerini artık geçemeyen bir

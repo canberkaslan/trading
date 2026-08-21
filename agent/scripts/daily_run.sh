@@ -132,6 +132,14 @@ else
 fi
 
 echo "" | tee -a "$RUN_LOG"
+# Order-flow health check. A run where every decision is refused exits 0 and
+# logs clean — a policy refusal is a success by design — so nothing else in
+# this script would ever mention that the book stopped reaching the broker.
+# Deliberately below the kill-switch exits: a PAUSE_NEW/FLATTEN_ALL book is
+# inert on purpose and must not page. Always exits 0 (see the script).
+PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.inert_alert 2>&1 | tee -a "$RUN_LOG" || true
+
+echo "" | tee -a "$RUN_LOG"
 echo "Daily run complete. $rc_total ticker(s) errored." | tee -a "$RUN_LOG"
 
 if [[ "$rc_total" -gt 0 ]]; then

@@ -37,6 +37,12 @@ from datetime import date, datetime
 # which is how a dominant, persistent blocker renders as a scatter of one-offs.
 _DETAIL_SUFFIX = re.compile(r"\s*\(.*\)\s*$")
 
+# Consecutive run days with nothing reaching the broker before this counts as a
+# pattern rather than a quiet day. One all-Hold day is normal; three is not.
+# Lives here, not in the route, so the API badge and the push alert cannot drift
+# into disagreeing about whether the book is frozen.
+INERT_THRESHOLD_RUN_DAYS = 3
+
 
 @dataclass(frozen=True)
 class OrderRecord:
@@ -71,7 +77,7 @@ class ActionabilityReport:
         """The single reason blocking the most orders, or None if nothing was refused."""
         return next(iter(self.by_reason), None)
 
-    def verdict(self, inert_threshold: int = 3) -> str:
+    def verdict(self, inert_threshold: int = INERT_THRESHOLD_RUN_DAYS) -> str:
         """'active' | 'inert' | 'idle'.
 
         'idle' is the honest answer when the window holds no order rows at all:

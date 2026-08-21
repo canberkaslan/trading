@@ -18,16 +18,21 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from tradingagents_us.execution.actionability import OrderRecord, build_report
+from tradingagents_us.execution.actionability import (
+    INERT_THRESHOLD_RUN_DAYS,
+    OrderRecord,
+    build_report,
+)
 from tradingagents_us.storage import TradeLogRepository
 
 from ..deps import get_repo, require_token
 
 router = APIRouter()
 
-# 3 consecutive run days with nothing reaching the broker. One day is a normal
-# all-Hold day; three is a pattern worth a human looking at it.
-INERT_THRESHOLD_RUN_DAYS = 3
+# Threshold lives in the actionability module — the push alerter
+# (scripts/inert_alert.py) reads the same constant, so the badge in the app and
+# the notification can never disagree about what "frozen" means.
+__all__ = ["router", "INERT_THRESHOLD_RUN_DAYS"]
 
 
 class ActionabilityResponse(BaseModel):

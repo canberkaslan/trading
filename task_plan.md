@@ -108,6 +108,47 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - 7e Charts, 7f Analiz-Et deep-link, 7g Settings kill-switch+health, snapshot logger
 - cost-opt routing on branch (opt-in, not deployed)
 
+## Daily loop 2026-08-21 (eval CLOSED — GO 23/10d, kitap 9 run günüdür DONMUŞ)
+- [x] **Inert order-flow push alert** (backend, off-decision-path — deployed 28a9e28).
+  Dünkü iş teşhisi app'e taşıdı; ama teşhisin bütün mesele olduğu durumda (donmuş kitap her
+  metrikte sağlıklı görünür) kimsenin app'i açmak için bir sebebi yok. Kanıt: kitap **08-11'den
+  beri** inert, GO rozeti 9 run günüdür render ediliyor ve hiçbir şey kimseyi uyandırmadı.
+  `scripts/inert_alert.py` artık `daily_run.sh`'ın kuyruğunda: aynı order row'ları, aynı eşik
+  (`INERT_THRESHOLD_RUN_DAYS` route'tan actionability modülüne taşındı — rozet ile push'un
+  "donmuş" tanımı hakkında ayrışması mümkün olmasın), run günü başına **en fazla bir** push.
+  Politika saf ve test edilebilir (`notifications/inert_alert.py`), asıl kararlar SUSMA
+  kararları:
+  - **`idle` asla uyarmaz.** Boş pencere = run hiç olmadı; bu cron'un arızası ve zaten
+    daily_run'ın exit code'u + healthchecks dead-man's switch'i sahipleniyor. Burada
+    raporlamak stratejiyi scheduler'ın suçuyla itham etmek olurdu — ve yanlış subsystem için
+    bağıran bir alert, insanların swipe etmeyi öğrendiği alerttir.
+  - Bilinen bir freeze yalnızca **5 run günü daha derinleşince** ya da **dominant blocker
+    değişince** tekrar uyarır (aynı derinlikte yeni bir sebep yeni bilgidir). Pencere kayarken
+    `inert_run_days` düşebiliyor — bu bir çözülme değil, o yüzden re-alert tetiklemiyor.
+  - **Recovery bir kez** push'lanır, sadece freeze'i gerçekten raporladıysak: donduğu söylenen
+    birinin çözüldüğünü öğrenmesinin başka yolu yok.
+  - State **sadece teslim edilen push'tan sonra** yazılır (`_send` → `(delivered, detail)`;
+    cihaz yok / `PUSH_DISABLED` / Expo hatası hepsi False döner). Teslim edilmemiş bir alert'i
+    "raporlandı" diye kaydetmek bu script'i sessizliğe çeviren tek bug. Bozuk state dosyası ise
+    "hiç uyarılmadı" okunur — fazladan bir push, donmuş kitap hakkında sessizlikten iyidir.
+  Her koşulda exit 0 (daily run'ın kendi exit code'unu maskelemesin) ve kill-switch skip
+  yollarının ALTINDA duruyor — PAUSE_NEW/FLATTEN_ALL kitabı kasıtlı olarak inert'tir, page etmez.
+  21 yeni test (**348 backend** yeşil). Box'a deploy + API restart, /healthz 200. Canlı dry-run:
+  `verdict=inert inert_run_days=9 submitted=6/234 → ⚠️ ... top blocker: rating=Hold (131)`.
+- **YENİ BULGU — push kanalının abonesi YOK:** `device_tokens` tablosunda **0 satır**. Yani bu
+  alert de, **kill_check'in FLATTEN_ALL PARTIAL alarmı da, daily run failure alarmı da** bugüne
+  kadar hiçbir yere gitmedi (`notify_ops` "no registered devices" deyip 0 dönüyor — best-effort
+  tasarımı gereği sessiz). Kanal ancak Canberk app'i açıp bildirim izni verince (mobile →
+  `POST /v1/notifications/register`) canlanır. Yeni alert bunu doğru ele alıyor: teslim
+  edilmedi → state yazılmadı → cihaz kaydolduğu ilk gün 9 günlük freeze'i anlatarak ateşler.
+- Live: verdict GO — Sharpe 1.23, Sortino 1.98, MaxDD −2.69%, Calmar 8.58, 23/10 gün.
+  Getiri **+1.83% vs SPY +1.91% → α −0.08pp** (SPY gate ❌). Equity $106,990, günlük −$703 (−0.65%),
+  cash $3,378 (negatif değil — 08-14 cash cap tutuyor), 10 pozisyon.
+  Order flow: 30 günde **234 emir, 6 submitted (%2.56)**, `inert_run_days` **9**, son ack 08-11.
+- Sıradaki: (a) **Underweight→SELL exit path** — hâlâ kök neden, hâlâ Canberk'in çağrısı
+  (decision-path, HIGH blast, supervised paper run şart). (b) SPY hard-gate kararı.
+  (c) push kanalını canlandır (app'te bildirim izni) — aksi halde tüm ops alarmları teorik.
+
 ## Daily loop 2026-08-20 (eval CLOSED — GO 22/10d, kitap 8 run günüdür DONMUŞ)
 - [x] **Actionability mobile'a bağlandı** (OTA + commit 596bd2c, read-only, off-decision-path).
   Dün eklenen `/v1/diagnostics/actionability` sadece curl'de yaşıyordu; verdict'in fiilen OKUNDUĞU

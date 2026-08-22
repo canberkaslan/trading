@@ -147,8 +147,25 @@ export function rejectionReasonTr(raw: string | null | undefined): string {
   const key = text.split(/[=:\s]/, 1)[0] ?? '';
   const label = REJECTION_LABELS_TR[key];
   if (!label) return text;
-  const detail = text.slice(key.length).replace(/^[=:\s]+/, '').trim();
+  const detail = unwrapParens(text.slice(key.length).replace(/^[=:\s]+/, '').trim());
   return detail ? `${label} (${detail})` : label;
+}
+
+/**
+ * Drop one wrapping paren pair, if the whole detail is inside it.
+ *
+ * Some backend reasons carry their numbers already parenthesized
+ * (`trimmed_to_zero_by_cash_cap (spendable=$0.00)`), others bare
+ * (`position_pct=12.40% exceeds 10%`). Re-wrapping the first kind printed a
+ * double paren on the money screen. Only an outer pair that encloses the entire
+ * detail is stripped — `foo (a) bar (b)` is left alone, because removing the
+ * first and last paren there would splice two separate asides into one.
+ */
+function unwrapParens(detail: string): string {
+  if (!detail.startsWith('(') || !detail.endsWith(')')) return detail;
+  const inner = detail.slice(1, -1);
+  if (inner.includes('(') || inner.includes(')')) return detail;
+  return inner.trim();
 }
 
 export function formatOrderDate(iso: string | null | undefined): string {

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from tradingagents_us.execution.actionability import normalize_reason
 from tradingagents_us.risk.circuit_breaker import CircuitBreaker
 from tradingagents_us.risk.kill_switch import StaticKillSwitchReader
 from tradingagents_us.risk.portfolio_limits import PortfolioContext, PortfolioLimits
@@ -125,6 +126,54 @@ class TestRejections:
         )
         assert not order.risk_approved
         assert any("position_pct" in r or "trimmed_to_zero" in r for r in order.rejection_reasons)
+
+    def test_cap_refusal_records_which_constraint_bound_and_by_how_much(self) -> None:
+        # A saturated name: the order log must say the book is at the cap, not
+        # merely that "portfolio limits" trimmed something. The two live blockers
+        # look identical without it.
+        ctx = PortfolioContext(
+            equity=100_000.0,
+            existing_position_values_by_ticker={"AAPL": 10_000.0},
+            existing_position_values_by_sector={"Tech": 10_000.0},
+            high_correlation_count=0,
+        )
+        order = size_from_decision(
+            decision=_decision("Overweight"),
+            account_equity=100_000.0,
+            market_ctx=_market(),
+            portfolio_ctx=ctx,
+            circuit_breaker=_cb(),
+            portfolio_limits=PortfolioLimits(max_position_pct=0.10),
+        )
+        reason = next(r for r in order.rejection_reasons if r.startswith("trimmed_to_zero_by_portfolio_caps"))
+        assert reason == (
+            "trimmed_to_zero_by_portfolio_caps "
+            "(AAPL at 10.0% of equity, cap 10.0%, headroom=$0.00)"
+        )
+        # Bucketing is unchanged: the inert alert re-pages when the dominant
+        # blocker *changes*, and a new key here would have paged about a freeze
+        # that had not moved.
+        assert normalize_reason(reason) == "trimmed_to_zero_by_portfolio_caps"
+
+    def test_cap_refusal_distinguishes_sub_share_headroom_from_saturation(self) -> None:
+        # $271 room against a $271 share... one short. Not a saturated name.
+        ctx = PortfolioContext(
+            equity=100_000.0,
+            existing_position_values_by_ticker={"AAPL": 9_800.0},
+            existing_position_values_by_sector={"Tech": 9_800.0},
+            high_correlation_count=0,
+        )
+        order = size_from_decision(
+            decision=_decision("Overweight"),
+            account_equity=100_000.0,
+            market_ctx=_market(),
+            portfolio_ctx=ctx,
+            circuit_breaker=_cb(),
+            portfolio_limits=PortfolioLimits(max_position_pct=0.10),
+        )
+        reason = next(r for r in order.rejection_reasons if r.startswith("trimmed_to_zero_by_portfolio_caps"))
+        assert "below 1 share @ $271.00" in reason
+        assert "at 9.8% of equity" not in reason  # that phrasing is reserved for at-cap
 
     def test_no_entry_price_no_quantity(self) -> None:
         order = size_from_decision(

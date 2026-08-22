@@ -8,7 +8,7 @@ The LLM proposes entry / stop / size %. This module:
      - "kelly"    → fractional_kelly (when p_win and b are provided)
      - "vol_tgt"  → vol_target_size
      - "llm_pct"  → trust the LLM's suggested_size_pct as-is, clipped
-3. Caps with apply_portfolio_caps + portfolio_limits
+3. Caps with position_cap_headroom (single name) + apply_cash_cap + portfolio_limits
 4. Runs through circuit_breaker.check
 5. Emits a TradeOrder (with risk_approved + rejection_reasons populated)
 
@@ -25,7 +25,12 @@ from typing import Literal
 from ..schemas import AgentDecision, TradeOrder
 from .circuit_breaker import CircuitBreaker
 from .portfolio_limits import PortfolioContext, PortfolioLimits, check_limits
-from .position_sizing import apply_cash_cap, apply_portfolio_caps, atr_position_size
+from .position_sizing import (
+    apply_cash_cap,
+    atr_position_size,
+    describe_position_cap_trim,
+    position_cap_headroom,
+)
 
 SizingMethod = Literal["atr", "llm_pct", "vol_tgt", "kelly"]
 
@@ -102,15 +107,25 @@ def size_from_decision(
     # 3. Per-position cap trim FIRST (so check_limits sees the actual proposed value)
     if qty > 0:
         existing = portfolio_ctx.existing_position_values_by_ticker.get(decision.ticker, 0.0)
-        qty = apply_portfolio_caps(
-            suggested_shares=qty,
+        headroom = position_cap_headroom(
             price=decision.entry_price,  # type: ignore[arg-type]
             equity=account_equity,
             existing_position_value=existing,
             max_position_pct=portfolio_limits.max_position_pct,
         )
+        qty = min(qty, headroom.max_new_shares)
         if qty == 0:
-            rejections.append("trimmed_to_zero_by_portfolio_caps")
+            # The bucket key stays byte-identical: the actionability report groups
+            # on the reason with its trailing parenthetical stripped, and the inert
+            # alert re-pages when the dominant blocker *changes*. Renaming this key
+            # to carry the detail would have read as a new cause and paged about a
+            # freeze that had not moved.
+            detail = describe_position_cap_trim(
+                decision.ticker,
+                decision.entry_price,  # type: ignore[arg-type]
+                headroom,
+            )
+            rejections.append(f"trimmed_to_zero_by_portfolio_caps ({detail})")
 
     # 3b. Cash cap — only caps a BUY, which is the only side that *spends* cash.
     #     Every cap above is a fraction of equity, and equity of a fully-invested

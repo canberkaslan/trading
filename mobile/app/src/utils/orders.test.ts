@@ -134,6 +134,30 @@ describe('rejectionReasonTr', () => {
     );
   });
 
+  it('does not double-wrap a detail the backend already parenthesized', () => {
+    expect(rejectionReasonTr('trimmed_to_zero_by_cash_cap (spendable=$0.00)')).toBe(
+      'Harcanabilir nakit kalmadı (spendable=$0.00)',
+    );
+    expect(
+      rejectionReasonTr(
+        'trimmed_to_zero_by_portfolio_caps (AAPL at 10.4% of equity, cap 10.0%, headroom=$0.00)',
+      ),
+    ).toBe('Portföy limitleri emri sıfıra indirdi (AAPL at 10.4% of equity, cap 10.0%, headroom=$0.00)');
+  });
+
+  it('keeps the cap detail that says the name is saturated distinct from a sub-share trim', () => {
+    expect(
+      rejectionReasonTr(
+        'trimmed_to_zero_by_portfolio_caps (AAPL headroom=$210.00, cap 10.0%, below 1 share @ $309.35)',
+      ),
+    ).toContain('below 1 share @ $309.35');
+  });
+
+  it('leaves two separate parenthesized asides alone', () => {
+    // Stripping the first and last paren here would splice unrelated fragments.
+    expect(rejectionReasonTr('kill_switch=(a) and (b)')).toBe('Kill switch devrede ((a) and (b))');
+  });
+
   it('passes an unknown reason through untouched rather than hiding it', () => {
     expect(rejectionReasonTr('brand_new_guard=7')).toBe('brand_new_guard=7');
   });

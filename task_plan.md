@@ -108,6 +108,55 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - 7e Charts, 7f Analiz-Et deep-link, 7g Settings kill-switch+health, snapshot logger
 - cost-opt routing on branch (opt-in, not deployed)
 
+## Daily loop 2026-08-22 (eval CLOSED — **NO-GO** 23/10d; kitap çözüldü, sebebi tesadüf)
+- [x] **Cap reddi artık hangi kısıtın bağladığını söylüyor** (risk katmanı, karar-yolu DEĞİL —
+  deployed 6640d1a + OTA). 30 günde 227 reddin **91'i** order log'una çıplak
+  `trimmed_to_zero_by_portfolio_caps` olarak düşüyordu; bu string iki bambaşka durumu aynı
+  yazıyor: (a) isim zaten %10 cap'inde — o isme bir daha ASLA BUY geçmez, ta ki pozisyon
+  kırpılana ya da equity büyüyene kadar (yapısal donma), (b) gerçek headroom var ama bir
+  hisseyi almaya yetmiyor (granülerlik; bir sonraki yukarı harekette kendi kendine çözülür).
+  `position_cap_headroom()` `apply_portfolio_caps`'in attığı gerekçeyi döndürüyor (headroom,
+  mevcut ağırlık, `at_cap`, `priceable`); `apply_portfolio_caps` artık onun üstünde bir `min()` —
+  **aritmetik aynı, hiçbir karar değişmedi**.
+  - **Bucket anahtarı bilerek harfi harfine aynı bırakıldı.** Detay, actionability raporunun
+    zaten soyduğu trailing parantezde gidiyor. Anahtarı yeniden adlandırmak inert alert'e
+    "dominant blocker değişti" diye okunur ve **hiç kıpırdamamış** bir freeze için tekrar page
+    ederdi.
+  - `priceable=False` (fiyat ≤ 0) üçüncü bir dal: hisse sayısı hakkında hiçbir şey söylemez,
+    "cap'te" demek olmaz. `at_cap` ile `max_new_shares == 0` ayrı kavramlar — ikincisi
+    sub-share durumunda da doğru.
+  - Detayda **iç içe parantez yok** (test'le sabitlendi): normalize_reason tek bir trailing
+    `(...)` soyuyor, iç içe bir çift artık parça bırakıp tek sebebi birden çok bucket'a dağıtırdı —
+    yani bu detayın önlemek için var olduğu şeyi yapardı.
+  - Mobil: `rejectionReasonTr` backend'in zaten parantezlediği detayı **çift sarıyordu** —
+    `Harcanabilir nakit kalmadı ((spendable=$0.00))`; cash cap 08-14'ten beri bu şekilde
+    yayınlanıyor, yani bug canlıydı. Sadece tüm detayı çevreleyen tek dış çift soyuluyor
+    (`foo (a) bar (b)` dokunulmadan geçiyor — ilk/son parantezi atmak iki ayrı ara cümleyi
+    birbirine yapıştırırdı). 16 backend testi (**364 yeşil**), 7 mobil (**192 yeşil**), tsc
+    2 bilinen pre-existing hariç temiz.
+- **Canlı doğrulama (box, deploy sonrası, gerçek kitap rakamlarıyla):** MSFT **%12.2** (cap'in
+  ÜSTÜNDE), V %10.4, JPM %10.2, AMZN %10.1 → hepsi `at ... of equity, headroom=$0.00`;
+  GOOGL `headroom=$12.78 ... below 1 share @ $344.82`; META headroom $804 → **1 hisse geçiyor**.
+  Yani dün gece kitabı çözen tek emir (META BUY 1 lot, 23:55, broker accepted) bir strateji
+  sinyali değil, **cap headroom'unun tek bir hisse fiyatını aşan tek isim olması**. Kitap 10 gün
+  donduktan sonra tesadüfen kıpırdadı.
+- **Yapısal tespit (Canberk'in kararı, kod DEĞİŞMEDİ):** 10 isimlik kitap + %10 tek-isim cap =
+  toplam %100 → tanım gereği doygun. Cap sadece EKLEMEYİ durduruyor, kırpmayı zorlamıyor; bu
+  yüzden MSFT %12.2'ye çıkabildi ve orada kalıyor. Underweight→SELL exit path olmadığı sürece
+  kitap sadece TUTABİLİR: 227 reddin 132'si Hold, 91'i cap. GO/NO-GO'nun ölçtüğü şey bu.
+- Live: verdict **NO-GO** (ilk kez) — Sharpe **0.50** (gate 1.0 ❌), MaxDD −2.86% ✅, getiri
+  **+0.9% vs SPY +2.45%** → α **−1.55pp** ❌, Sortino 0.79, Calmar 3.79, 23/10 gün, eval_complete.
+  Equity **$107,022**, cash $3,378, günlük +$196 (+0.18%), 10 pozisyon.
+  Order flow: 30 günde 233 emir / **6 submitted (%2.6)**, `inert_run_days` **1** (verdict `active`),
+  son broker ack 2026-08-21T23:55.
+- **Push kanalı hâlâ abonesiz** (`device_tokens` = 0 satır) → freeze de recovery de kimseye
+  gitmedi. inert_alert bunu doğru ele alıyor (teslim edilmeden state yazmıyor) ama alarmlar
+  Canberk app'te bildirim izni verene kadar teorik.
+- Sıradaki: (a) **Underweight→SELL exit path** — kök neden, HIGH blast, supervised paper run şart,
+  Canberk'in çağrısı. (b) Cap semantiği: %10 tek-isim cap'i AŞAN isim (MSFT %12.2) için rebalance/
+  trim politikası var mı? (c) SPY gate'i hard yapma kararı — /v1/eval zaten NO-GO diyor ama
+  Sharpe yüzünden; ikisi de kırmızı.
+
 ## Daily loop 2026-08-21 (eval CLOSED — GO 23/10d, kitap 9 run günüdür DONMUŞ)
 - [x] **Inert order-flow push alert** (backend, off-decision-path — deployed 28a9e28).
   Dünkü iş teşhisi app'e taşıdı; ama teşhisin bütün mesele olduğu durumda (donmuş kitap her

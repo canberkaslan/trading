@@ -151,9 +151,21 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
     çalışan alerting yolunu da götürebilmemeli. `GITHUB_TOKEN` dışında secret istemiyor.
     Box dark olsa bile exit 0 — issue sinyaldir; kırmızı run üstüne aynı haberin ikinci bildirimi
     olur ve bozuk watchdog'la ayırt edilemez.
-  - 32 yeni test (`test_liveness.py` 16 + `test_watchdog.py` 16), **396 backend yeşil**.
+  - 34 yeni test (`test_liveness.py` 16 + `test_watchdog.py` 18), **398 backend yeşil**.
   - Canlı dry-run bugünkü gerçek outage'ı doğru teşhis etti: `state=dark`, health `HTTP 530
     (tunnel not reached)`, backup `28.0h ago`.
+- **⚠️ KALAN (tek kullanıcı adımı, 2 dk):** ilk gerçek workflow koşusu backup sinyalini
+  okuyamadı — `trading-backups` **private** ve workflow'un built-in `GITHUB_TOKEN`'ı sadece bu
+  repo'ya scope'lu, GitHub da private repo'yu 404 diye saklıyor. Watchdog bunu doğru ele aldı
+  (tek sinyalle `dark` demedi, `edge_down` dedi) ama o hâliyle tek gözlü: "erişilemiyor" der,
+  ölü tünelle ölü host'u ayıramaz. 404/403'ü artık "no read access — set WATCHDOG_BACKUP_TOKEN"
+  diye yazıyor (GitHub kesintisi sanılıp status.github.com'a gidilmesin diye).
+  **Yapılacak:** `canberkaslan/trading-backups` üstünde Contents:read olan fine-grained bir PAT
+  üret, `trading` repo'suna `WATCHDOG_BACKUP_TOKEN` secret'i olarak koy. Secret'i ben koymadım —
+  credential üretmek/yerleştirmek Canberk'in işi.
+- **NOT: `agent-ci` kırmızı ama benim yüzümden değil** — `vendor/tradingagents/` ağacında
+  900 pre-existing ruff bulgusu var, aynı hata 08-22 commit'inde de vardı. Yeni dosyalar temiz
+  (eklediğim 2 UP017 bulgusu `datetime.UTC`'ye çevrilerek kapatıldı).
 - **🔴 Kitabın %78'inde canlı stop yok (broker'dan doğrudan sayıldı).** Box ölü olduğu için
   Alpaca'ya lokalden read-only sorduk. 339 hissenin **265'i korumasız**: sadece UNH (15/15) ve
   XOM (56/56) tam kapalı, GOOGL 2/31, META 1/19; AAPL/AMZN/JPM/MSFT/NVDA/V **tamamen çıplak**.

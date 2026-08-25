@@ -30,7 +30,7 @@ import os
 import sys
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 _AGENT_ROOT = Path(__file__).resolve().parent.parent
@@ -80,6 +80,12 @@ def probe_backup(repo: str, token: str | None, now: datetime) -> BackupSignal:
 
     Failures here return `age_hours=None` rather than a large age: a GitHub
     outage must never be able to declare the host dead.
+
+    The backup repo is private and the workflow's built-in `GITHUB_TOKEN` is
+    scoped to this repository alone, so it reads as 404 (GitHub hides private
+    repos rather than admitting they exist). That is a configuration gap, not a
+    GitHub problem, and the two want completely different responses from whoever
+    reads the alert — so name it, with the fix in the text.
     """
     url = f"https://api.github.com/repos/{repo}/commits?per_page=1"
     try:
@@ -88,6 +94,16 @@ def probe_backup(repo: str, token: str | None, now: datetime) -> BackupSignal:
         when = datetime.fromisoformat(newest.replace("Z", "+00:00"))
         age = (now - when).total_seconds() / 3600.0
         return BackupSignal(age_hours=age, newest_commit_utc=newest)
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403, 404):
+            return BackupSignal(
+                age_hours=None,
+                error=(
+                    f"no read access to {repo} (HTTP {exc.code}) — set a WATCHDOG_BACKUP_TOKEN "
+                    "secret with read access to that private repo"
+                ),
+            )
+        return BackupSignal(age_hours=None, error=f"HTTP {exc.code}")
     except Exception as exc:
         return BackupSignal(age_hours=None, error=f"{type(exc).__name__}: {exc}")
 
@@ -205,14 +221,19 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="print the verdict, write nothing")
     args = parser.parse_args()
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     token = os.environ.get("GITHUB_TOKEN")
     health_url = os.environ.get("WATCHDOG_HEALTH_URL", DEFAULT_HEALTH_URL)
     backup_repo = os.environ.get("WATCHDOG_BACKUP_REPO", DEFAULT_BACKUP_REPO)
     issue_repo = os.environ.get("GITHUB_REPOSITORY", DEFAULT_ISSUE_REPO)
 
+    # The backup repo is private and lives outside this repository, so the
+    # built-in token cannot see it. Prefer a PAT when one is configured; fall
+    # back to GITHUB_TOKEN so the health half still works with no setup at all.
+    backup_token = os.environ.get("WATCHDOG_BACKUP_TOKEN") or token
+
     health = probe_health(health_url)
-    backup = probe_backup(backup_repo, token, now)
+    backup = probe_backup(backup_repo, backup_token, now)
     verdict = classify(health, backup)
 
     print(json.dumps({

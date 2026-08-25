@@ -47,6 +47,12 @@ jobs:
       - name: Probe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The backup repo is private and in another repository, which the
+          # built-in token cannot read. Without this secret the watchdog still
+          # works, but on one signal: it can report "unreachable" and never
+          # distinguish a dead tunnel from a dead host. Create a fine-grained
+          # PAT with Contents:read on canberkaslan/trading-backups.
+          WATCHDOG_BACKUP_TOKEN: ${{ secrets.WATCHDOG_BACKUP_TOKEN }}
           WATCHDOG_HEALTH_URL: https://trader.fusapp.com/healthz
           WATCHDOG_BACKUP_REPO: canberkaslan/trading-backups
         run: |

@@ -9,7 +9,7 @@ times a day about a single outage, and by day two nobody reads it.
 from __future__ import annotations
 
 import urllib.error
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -23,7 +23,7 @@ from tradingagents_us.monitoring.liveness import (
     classify,
 )
 
-NOW = datetime(2026, 8, 25, 6, 30, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 25, 6, 30, tzinfo=UTC)
 REPO = "canberkaslan/trading"
 
 
@@ -177,6 +177,37 @@ class TestBackupProbe:
         monkeypatch.setattr(watchdog, "_github_request", boom)
         signal = watchdog.probe_backup("owner/repo", None, NOW)
         assert signal.age_hours is None
+        assert not signal.stale
+
+    def test_missing_access_names_the_fix_instead_of_looking_like_an_outage(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """GitHub hides private repos as 404. That is our misconfiguration, not their fault.
+
+        The live first run hit exactly this: the built-in GITHUB_TOKEN cannot
+        read the private backups repo, so the second signal was permanently
+        unavailable. An alert that says "GitHub error" sends somebody to
+        status.github.com; one that says "no read access, set the secret" gets
+        the watchdog its second eye back.
+        """
+
+        def denied(*_args: object, **_kwargs: object) -> object:
+            raise urllib.error.HTTPError("u", 404, "Not Found", {}, None)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(watchdog, "_github_request", denied)
+        signal = watchdog.probe_backup("owner/private-repo", None, NOW)
+        assert signal.age_hours is None
+        assert not signal.stale
+        assert "no read access" in (signal.error or "")
+        assert "WATCHDOG_BACKUP_TOKEN" in (signal.error or "")
+
+    def test_other_http_errors_stay_generic(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def boom(*_args: object, **_kwargs: object) -> object:
+            raise urllib.error.HTTPError("u", 500, "oops", {}, None)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(watchdog, "_github_request", boom)
+        signal = watchdog.probe_backup("owner/repo", None, NOW)
+        assert signal.error == "HTTP 500"
         assert not signal.stale
 
     def test_age_is_measured_from_the_commit_timestamp(

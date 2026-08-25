@@ -1,0 +1,53 @@
+name: watchdog
+
+# Liveness for the trading box, evaluated somewhere the box cannot influence.
+#
+# Every other alert this project has runs on the Hetzner host, so when the host
+# died on 2026-08-24 nothing fired. GitHub's scheduler has no dependency on that
+# machine, which is the only property that matters here.
+#
+# Scheduled runs are best-effort on GitHub's side and can be delayed under load —
+# fine for a 30-minute watchdog, and a reason not to make the cadence tighter
+# than the thing it watches actually needs.
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Print the verdict without opening or closing an incident'
+        type: boolean
+        default: false
+
+# Only what filing an incident needs. The watchdog reads no code beyond its own
+# checkout and must never be a path to anything else in the repo.
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: watchdog
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # No `uv sync`, no dependencies: the watchdog is stdlib-only so that a
+      # broken lockfile or a registry outage cannot take the last working
+      # alerting path down with it.
+      - name: Probe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WATCHDOG_HEALTH_URL: https://trader.fusapp.com/healthz
+          WATCHDOG_BACKUP_REPO: canberkaslan/trading-backups
+        run: |
+          python agent/scripts/watchdog.py ${{ inputs.dry_run && '--dry-run' || '' }}

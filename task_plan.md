@@ -108,6 +108,71 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - 7e Charts, 7f Analiz-Et deep-link, 7g Settings kill-switch+health, snapshot logger
 - cost-opt routing on branch (opt-in, not deployed)
 
+## Daily loop 2026-08-25 (🔴 BOX DARK — trader çalışmıyor, hiçbir alarm ötmedi)
+- **Olay:** Hetzner box (167.233.102.179) yanıt vermiyor — SSH timeout, ICMP yok, Cloudflare
+  tüneli 530/1033. Traceroute Hetzner FSN1 core'una kadar gidiyor, son hop'ta ölüyor → ağ
+  Hetzner'a ulaşıyor, **host cevap vermiyor**. `trader.fusapp.com` down, `/v1/eval` ve
+  `/v1/portfolio/snapshot` alınamıyor. rover/n8n de aynı box'ta, onlar da down.
+- **Ölüm penceresi (kanıt):** son emir 2026-08-24T08:00 UTC'de gönderildi ve 13:34'te doldu
+  (`tr-META-20260821-BUY`), yani dün sabahki daily run **çalıştı**. Ama off-box backup repo'sunun
+  (`canberkaslan/trading-backups`) en yeni commit'i **2026-08-24T02:16 UTC** — bugünkü 02:15 UTC
+  backup timer'ı HİÇ ÇALIŞMADI. Yani box 08-24 ~13:34 UTC ile 08-25 02:15 UTC arasında öldü.
+- **Asıl bulgu — hiçbir alarm ötmedi ve ötemezdi.** Sahip olduğumuz her alerting yolu o box'ta
+  çalışan bir process: daily run'ın exit code'u, systemd `OnFailure=`, `scripts/inert_alert`,
+  healthchecks.io dead-man ping'i (zaten hiç konfigüre edilmemişti, item 10 KALAN). Watchdog'un
+  izlediği makinede yaşaması demek, izleyebildiği sürece "sağlıklı" deyip sonra hiçbir şey
+  dememesi demek. Outage sabah elle bulundu.
+- [x] **Off-box watchdog** (monitoring, karar-yolu DIŞI, box'a deploy GEREKTİRMEZ — bu yüzden
+  bugün ship edilebilen tek iş). `.github/workflows/watchdog.yml` her 30 dk GitHub runner'da
+  koşuyor; GitHub'ın scheduler'ı o host'a hiçbir şekilde bağlı değil, tek önemli özellik bu.
+  - **İki bağımsız sinyal**, çünkü "erişilemiyor"un birden çok sebebi var: (a) public health
+    endpoint — Cloudflare edge → tünel → cloudflared → uvicorn yolunu kat eder; (b) backup
+    repo'sunun en yeni commit'i — 02:15 UTC timer'ı düz outbound HTTPS ile push'lar, tünel
+    yoluyla **host dışında hiçbir şey paylaşmaz**. İkisi birlikte, tarayıcıdan aynı görünen iki
+    outage'ı ayırıyor: tünel ölü + backup'lar geliyorsa host ayakta (`systemctl restart
+    cloudflared` yeter), ikisi de sessizse **host gitmiş** (sadece konsol/power-cycle çözer).
+    Birini diğerinden ayırmak değerin çoğu — "site down" diye 3'te uyanıp ölü tünel bulmak
+    insanların pager'ı susturmayı öğrenme şekli.
+  - **Cloudflare'in kendi hata sayfaları origin'in cevabı DEĞİL.** 530/1033/502 edge'in "tünele
+    ulaşamadım" demesi → "ulaşılamadı" sayılıyor, "API cevap verdi ama mutsuz" değil. 500'ün
+    altındaki her şey (404 dahil) origin'in kendi kurduğu bir cevap = uvicorn ayakta.
+  - **GitHub okunamazsa `age_hours=None`, asla "çok eski" değil.** Bir GitHub kesintisinin host'u
+    ölü ilan edebilmesi, outage uyduran bir alarm sistemi demek — kaçıran bir sistemden beter,
+    çünkü bir sonraki gerçek olan görmezden gelinir. Tek sinyalle `dark` denmez.
+  - 24h + 2h grace: timer jitter'ı yüzünden (02:41'de koştu diye) page eden watchdog kapatılan
+    watchdog'dur.
+  - **Sessizlik dedup'ı:** 30 dk'da bir koşuyor → aynı outage için tek issue, yorum SADECE
+    kötüye giderken (severity artışı). Her koşuda yorum atsa günde 48 bildirim eder ve ikinci
+    gün kimse okumaz. Recovery bir kez yorum + issue kapanış. Tanınmayan state en kötü sıralanır.
+  - **Repo public** → issue gövdesi sadece liveness gerçeği taşır, asla equity/pozisyon/hesap.
+    Bir test bunu construction olarak sabitliyor (birisi sonra "alarmı zenginleştirmek" için
+    broker verisi geçirirse ilk o patlar).
+  - Stdlib-only, bağımlılık yok, `uv sync` yok: bozuk bir lockfile ya da registry kesintisi son
+    çalışan alerting yolunu da götürebilmemeli. `GITHUB_TOKEN` dışında secret istemiyor.
+    Box dark olsa bile exit 0 — issue sinyaldir; kırmızı run üstüne aynı haberin ikinci bildirimi
+    olur ve bozuk watchdog'la ayırt edilemez.
+  - 32 yeni test (`test_liveness.py` 16 + `test_watchdog.py` 16), **396 backend yeşil**.
+  - Canlı dry-run bugünkü gerçek outage'ı doğru teşhis etti: `state=dark`, health `HTTP 530
+    (tunnel not reached)`, backup `28.0h ago`.
+- **🔴 Kitabın %78'inde canlı stop yok (broker'dan doğrudan sayıldı).** Box ölü olduğu için
+  Alpaca'ya lokalden read-only sorduk. 339 hissenin **265'i korumasız**: sadece UNH (15/15) ve
+  XOM (56/56) tam kapalı, GOOGL 2/31, META 1/19; AAPL/AMZN/JPM/MSFT/NVDA/V **tamamen çıplak**.
+  Sebep: item 3'ün GTC protective leg fix'i (2026-07-13) sadece YENİ emirlere uygulanıyor;
+  Haziran/Temmuz'da alınan büyük lotların `day` leg'leri kapanışta expire etti ve kimse mevcut
+  kitabı backfill etmedi. Sonraki alımlar 1-2 lot olduğu için kapsama kıpırdamıyor.
+  **Emir GEÇİLMEDİ** — kill-switch'i ve agent'ın kendi mantığını bypass ederek laptop'tan
+  execution path'e emir yazmak tam da bu planın tekrar tekrar reddettiği şey, üstelik koordine
+  edecek box da ölü. Canberk'in çağrısı.
+- Live: **alınamadı** (API down). Broker'dan doğrudan: equity **$107,916.69**, last_equity
+  $107,022, cash $2,829.17, 10 pozisyon, toplam unrealized **+$8,857.93**. Hesap ACTIVE,
+  `trading_blocked=false`. Bugünkü 08:00 UTC run'ı box ölü olduğu için **kaçacak**.
+- Sıradaki: (a) box'u ayağa kaldır (Hetzner konsolu; sonra `ai-trader.timer`, `ai-trader-api`,
+  `cloudflared` doğrula) — watchdog artık bunu kendisi söyleyecek. (b) **Stop backfill politikası**:
+  mevcut kitaba koruyucu GTC stop takan, agent'ın içinde yaşayan bir reconcile adımı
+  (`scripts/reconcile.py` zaten var) — HIGH blast, supervised. (c) `HEALTHCHECK_URL` hâlâ boş;
+  watchdog onun yerini büyük ölçüde tutuyor ama dead-man ping ucuz. (d) 08-22'den devreden:
+  underweight→SELL exit path.
+
 ## Daily loop 2026-08-22 (eval CLOSED — **NO-GO** 23/10d; kitap çözüldü, sebebi tesadüf)
 - [x] **Cap reddi artık hangi kısıtın bağladığını söylüyor** (risk katmanı, karar-yolu DEĞİL —
   deployed 6640d1a + OTA). 30 günde 227 reddin **91'i** order log'una çıplak

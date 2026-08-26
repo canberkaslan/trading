@@ -142,6 +142,24 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
     tek başına hiçbir alarm sesini değiştirmiyor; sadece secret kurulunca kör nokta kapanıyor.
   - 22 yeni test (**420 backend yeşil**), ruff temiz. Canlı dry-run gerçek outage'a karşı doğrulandı:
     verdict artık *"iki bağımsız yol da sessiz → dead host'a meylediyor, önce konsola bak"* diyor.
+- [x] **CI hiç çalışmamış — aynı hastalık, ikinci vaka** (infra, off-eval-path). Watchdog'u push
+  ederken fark ettim: `agent-ci` **bu repo'nun tarihinde hiç yeşil olmamış**, her push'ta Ruff'ta
+  patlamış. Ruff ilk adım olduğu için **Pytest ve image build BİR KEZ BİLE ÇALIŞMAMIŞ** — yani 420
+  test main'i hiç gate'lememiş, sadece benim local'imde koşmuş. Hiç yeşil olmamış bir gate gate
+  değildir; insanların scroll'layıp geçmeyi öğrendiği kırmızı bir karedir (watchdog'la birebir
+  aynı failure mode: alarm var, sinyal yok).
+  - Sıra değişti: **önce suite**, sonra linter'lar. Ruff, mypy'ın yanına *advisory* olarak geçti —
+    aynı gerekçe, aynı geçicilik: kendi kodumuzda bu workflow'dan ESKİ ~337 finding var, testleri
+    açan commit'te onları temizlemek testleri kimsenin okuyamayacağı bir diff'in altına gömerdi.
+    **Borç burada kayıtlı; sayı sıfırlanınca `continue-on-error` kalkacak** — kimsenin uymak
+    zorunda olmadığı linter de okunmamaya başlar.
+  - `vendor/` susturulmadı, **hariç tutuldu**: 898 finding'in 561'i oradaydı, upstream
+    TradingAgents'ın stilini biz belirlemiyoruz ve yeniden formatlamak her rebase'i conflict yapardı.
+  - İlk kez koşan build job da anında patladı: Dockerfile `tradingagents_tr/` kopyalıyordu —
+    `_tr`→`_us` rename'inden beri **image build edilemez durumdaydı**, ama kontrol hiç
+    çalışmadığı için görünmemişti. Tek satır düzeltildi. **Prod etkilenmedi**: box git'ten
+    çalışıyor, bu image hiçbir yere deploy edilmiyor — bozuk olan üretim değil, kontroldü.
+  - Sonuç: agent-ci **repo tarihinde ilk kez yeşil** (a3b95d6) — 420 test + image build CI'da doğrulandı.
 - **Canberk'e kalan (ikisi de secret/konsol işi, ben yapamam):**
   1. Hetzner/Scaleway konsolundan box'a bak → ayaktaysa `ssh agentmesh` + `journalctl -b -1 -e`,
      değilse power-cycle; sonra `ai-trader.timer`, `ai-trader-api.service`, `cloudflared` doğrula.

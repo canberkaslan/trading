@@ -15,11 +15,15 @@ from tradingagents_us.monitoring.liveness import (
     STATE_DEGRADED,
     STATE_EDGE_DOWN,
     STATE_UP,
+    STATE_WEDGED,
     BackupSignal,
     HealthProbe,
+    HostProbe,
     classify,
     severity,
 )
+
+ORIGIN_IP = "203.0.113.10"  # stand-in for the real origin, which is a secret
 
 
 def _fresh() -> BackupSignal:
@@ -32,6 +36,18 @@ def _stale() -> BackupSignal:
 
 def _unknown() -> BackupSignal:
     return BackupSignal(age_hours=None, error="HTTPError: 403")
+
+
+def _host_alive() -> HostProbe:
+    return HostProbe(configured=True, answered=True, detail="connection accepted")
+
+
+def _host_silent() -> HostProbe:
+    return HostProbe(configured=True, answered=False, detail="timed out or filtered")
+
+
+def _host_absent() -> HostProbe:
+    return HostProbe(configured=False)
 
 
 class TestTruthTable:
@@ -104,12 +120,107 @@ class TestUnknownBackupSignal:
         verdict = classify(HealthProbe(reached_origin=False, status=530), _unknown())
         assert verdict.state == STATE_EDGE_DOWN
         assert "unavailable" in verdict.headline
-        assert any("only one of the two signals" in r.lower() for r in verdict.reasons)
+        assert any("only one of the two primary signals" in r.lower() for r in verdict.reasons)
+        assert "console" not in verdict.remedy.lower()
+
+
+class TestDirectHostProbe:
+    """The third signal, added because the first real incident sat blind for a day.
+
+    From 2026-08-25 the backup repo could not be read at all, so the verdict was
+    stuck at "cannot tell a dead tunnel from a dead host" while the host was in
+    fact dark. A TCP connect needs no credential, so it is the one signal that
+    cannot be misconfigured into silence — and unlike the other two it can prove
+    the machine is up even when everything running on it is gone.
+    """
+
+    def test_a_live_host_settles_the_unreadable_backup_case(self) -> None:
+        """The stuck state resolves into an instruction, without the missing token."""
+        verdict = classify(HealthProbe(reached_origin=False, status=530), _unknown(), _host_alive())
+        assert verdict.state == STATE_EDGE_DOWN
+        assert "host is alive" in verdict.headline
+        assert "cloudflared" in verdict.remedy
+        assert "cannot" not in verdict.headline.lower()
+
+    def test_silence_leans_dark_without_calling_it(self) -> None:
+        """A dropping firewall and an unplugged machine are the same from outside."""
+        verdict = classify(
+            HealthProbe(reached_origin=False, status=530), _unknown(), _host_silent()
+        )
+        assert verdict.state == STATE_EDGE_DOWN, "silence alone must not manufacture an outage"
+        assert any("leans toward a dead host" in r for r in verdict.reasons)
+        assert "console" in verdict.remedy.lower()
+
+    def test_answering_host_with_both_paths_dead_is_wedged_not_dark(self) -> None:
+        """Kernel up, userspace gone: a shell fixes this, a console trip does not."""
+        verdict = classify(HealthProbe(reached_origin=False, status=530), _stale(), _host_alive())
+        assert verdict.state == STATE_WEDGED
+        assert "ssh" in verdict.remedy.lower()
+        assert "unattended" in verdict.body(), "the book is no less unattended than when dark"
+
+    def test_silent_host_corroborates_dark(self) -> None:
+        verdict = classify(HealthProbe(reached_origin=False, status=530), _stale(), _host_silent())
+        assert verdict.state == STATE_DARK
+        assert any("third path" in r for r in verdict.reasons)
+
+    def test_probe_never_downgrades_a_confident_verdict(self) -> None:
+        """A live host does not make a landed backup or a healthy API less true."""
+        assert classify(HealthProbe(True, 200), _fresh(), _host_alive()).state == STATE_UP
+        assert classify(HealthProbe(True, 200), _fresh(), _host_silent()).state == STATE_UP
+        assert classify(HealthProbe(True, 200), _stale(), _host_silent()).state == STATE_DEGRADED
+
+    def test_omitting_the_probe_reproduces_the_old_behaviour_exactly(self) -> None:
+        """Deployments with no origin address configured must not change at all."""
+        for health in (HealthProbe(True, 200), HealthProbe(False, 530)):
+            for backup in (_fresh(), _stale(), _unknown()):
+                without = classify(health, backup)
+                with_absent = classify(health, backup, _host_absent())
+                assert without.state == with_absent.state
+                assert without.body() == with_absent.body()
+
+    def test_unconfigured_case_names_both_ways_out(self) -> None:
+        """Being blind twice in a row is a setup gap; the alert should say which."""
+        verdict = classify(
+            HealthProbe(reached_origin=False, status=530), _unknown(), _host_absent()
+        )
+        assert verdict.state == STATE_EDGE_DOWN
+        body = verdict.body()
+        assert "WATCHDOG_BACKUP_TOKEN" in body and "WATCHDOG_HOST" in body
+
+    def test_a_refused_connection_counts_as_the_host_answering(self) -> None:
+        """An RST is the kernel talking. The question is about the host, not the port."""
+        refused = HostProbe(configured=True, answered=True, detail="connection refused")
+        assert "answered" in refused.describe()
+        assert classify(HealthProbe(False, 530), _unknown(), refused).state == STATE_EDGE_DOWN
+
+    def test_absent_signal_reads_as_absent_not_negative(self) -> None:
+        assert "not checked" in _host_absent().describe()
+
+
+class TestOriginAddressStaysSecret:
+    """The repo is public and so are the issues this fills in. The origin IP is not.
+
+    Cloudflare's proxy is worth nothing if the address behind it is printed in an
+    incident, so the address is never carried on the probe object at all — there
+    is nothing for the incident text to accidentally interpolate.
+    """
+
+    def test_probe_object_holds_no_address(self) -> None:
+        for probe in (_host_alive(), _host_silent(), _host_absent()):
+            assert ORIGIN_IP not in repr(probe)
+            assert ORIGIN_IP not in probe.describe()
+
+    def test_no_verdict_body_can_carry_it(self) -> None:
+        for health in (HealthProbe(True, 200), HealthProbe(False, 530)):
+            for backup in (_fresh(), _stale(), _unknown()):
+                for host in (_host_alive(), _host_silent(), _host_absent()):
+                    assert ORIGIN_IP not in classify(health, backup, host).body()
 
 
 class TestSeverityOrdering:
     def test_orders_worst_first(self) -> None:
-        assert severity(STATE_DARK) > severity(STATE_EDGE_DOWN)
+        assert severity(STATE_DARK) > severity(STATE_WEDGED)
+        assert severity(STATE_WEDGED) > severity(STATE_EDGE_DOWN)
         assert severity(STATE_EDGE_DOWN) > severity(STATE_DEGRADED)
         assert severity(STATE_DEGRADED) > severity(STATE_UP)
 

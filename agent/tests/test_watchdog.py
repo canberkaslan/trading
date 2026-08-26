@@ -165,6 +165,100 @@ class TestHealthProbe:
         assert probe.error == "TimeoutError"
 
 
+class TestHostProbe:
+    """The credential-free signal: does the origin's kernel answer a socket.
+
+    Everything else the watchdog reads can be revoked, rate-limited or 404'd.
+    This one needs an address and nothing more, which is why it is the tiebreak
+    when the others go quiet.
+    """
+
+    @pytest.mark.parametrize(
+        ("spec", "expected"),
+        [
+            ("203.0.113.10", [("203.0.113.10", 22)]),
+            ("203.0.113.10:2222", [("203.0.113.10", 2222)]),
+            (" 203.0.113.10:22 , 203.0.113.10:443 ", [("203.0.113.10", 22), ("203.0.113.10", 443)]),
+            ("box.example:notaport", [("box.example:notaport", 22)]),
+            ("", []),
+        ],
+    )
+    def test_parses_targets(self, spec: str, expected: list[tuple[str, int]]) -> None:
+        assert watchdog._parse_targets(spec) == expected
+
+    def test_unset_means_absent_not_unreachable(self) -> None:
+        """No address configured is a signal that was never taken — not a bad one."""
+        probe = watchdog.probe_host(None)
+        assert not probe.configured
+        assert not probe.answered
+
+    def test_accepted_connection_proves_the_host(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class Sock:
+            def __enter__(self) -> Sock:
+                return self
+
+            def __exit__(self, *_exc: object) -> None:
+                return None
+
+        monkeypatch.setattr(watchdog.socket, "create_connection", lambda *a, **k: Sock())
+        probe = watchdog.probe_host("203.0.113.10:22")
+        assert probe.answered
+
+    def test_refused_connection_also_proves_the_host(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def refuse(*_a: object, **_k: object) -> object:
+            raise ConnectionRefusedError
+
+        monkeypatch.setattr(watchdog.socket, "create_connection", refuse)
+        probe = watchdog.probe_host("203.0.113.10:22")
+        assert probe.answered, "an RST is the kernel answering — that is the whole question"
+
+    def test_timeout_is_silence_not_proof_of_death(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def drop(*_a: object, **_k: object) -> object:
+            raise TimeoutError
+
+        monkeypatch.setattr(watchdog.socket, "create_connection", drop)
+        probe = watchdog.probe_host("203.0.113.10:22")
+        assert probe.configured and not probe.answered
+
+    def test_tries_every_target_before_concluding_silence(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One firewalled port must not be able to declare the machine gone."""
+        seen: list[tuple[str, int]] = []
+
+        def maybe(addr: tuple[str, int], **_k: object) -> object:
+            seen.append(addr)
+            if addr[1] == 22:
+                raise TimeoutError
+            raise ConnectionRefusedError
+
+        monkeypatch.setattr(watchdog.socket, "create_connection", maybe)
+        probe = watchdog.probe_host("203.0.113.10:22,203.0.113.10:443")
+        assert probe.answered
+        assert seen == [("203.0.113.10", 22), ("203.0.113.10", 443)]
+
+    def test_reports_no_address_and_no_exception_text(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The incident issues are public; the address behind Cloudflare is not.
+
+        Exception strings are the usual way an address escapes into a log — a
+        `gaierror` carries the hostname — so the probe reports fixed categories
+        and never the error it caught.
+        """
+
+        def leak(*_a: object, **_k: object) -> object:
+            raise OSError("no route to host 203.0.113.10:22")
+
+        monkeypatch.setattr(watchdog.socket, "create_connection", leak)
+        probe = watchdog.probe_host("203.0.113.10:22")
+        assert "203.0.113.10" not in probe.describe()
+        assert "203.0.113.10" not in repr(probe)
+        assert "no route" not in (probe.detail or "")
+
+
 class TestBackupProbe:
     def test_github_failure_yields_unknown_not_stale(
         self, monkeypatch: pytest.MonkeyPatch

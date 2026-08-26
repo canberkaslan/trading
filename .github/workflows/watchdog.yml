@@ -53,6 +53,13 @@ jobs:
           # distinguish a dead tunnel from a dead host. Create a fine-grained
           # PAT with Contents:read on canberkaslan/trading-backups.
           WATCHDOG_BACKUP_TOKEN: ${{ secrets.WATCHDOG_BACKUP_TOKEN }}
+          # The other way out of "cannot tell": a direct TCP connect to the
+          # origin, which needs no credential and can prove the host is up on
+          # its own. `host` or `host:port` (default 22), comma-separated for
+          # several. It is a *secret* rather than a literal here on purpose —
+          # this repo and the issues this workflow files are public, and the
+          # origin IP behind Cloudflare is precisely what the proxy is hiding.
+          WATCHDOG_HOST: ${{ secrets.WATCHDOG_HOST }}
           WATCHDOG_HEALTH_URL: https://trader.fusapp.com/healthz
           WATCHDOG_BACKUP_REPO: canberkaslan/trading-backups
         run: |

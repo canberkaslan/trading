@@ -8,10 +8,17 @@ run's exit code, `OnFailure=`, `scripts/inert_alert`, the healthchecks.io ping �
 was a process on that same host, so nobody was told. The outage was found the
 next morning by hand.
 
-Stdlib only, no repo dependencies, no secrets: it needs `GITHUB_TOKEN` (which
-Actions injects) and an HTTPS GET. Anything more would be another thing that can
-be misconfigured into silence, and this is the one alerter that has to work when
+Stdlib only, no repo dependencies: it needs `GITHUB_TOKEN` (which Actions
+injects) and an HTTPS GET. Anything more would be another thing that can be
+misconfigured into silence, and this is the one alerter that has to work when
 everything else is already broken.
+
+Two optional secrets sharpen the verdict, and it degrades to the previous
+behaviour without either: `WATCHDOG_BACKUP_TOKEN` (read access to the private
+backups repo) and `WATCHDOG_HOST` (`host[:port]`, comma-separated, for a direct
+TCP probe of the origin). Either one is enough to tell a dead tunnel from a dead
+host; with neither, the watchdog can only report that it cannot tell — which is
+exactly what it did for a day and a half in the 2026-08-25 incident.
 
     python scripts/watchdog.py --dry-run    # print the verdict, write nothing
     python scripts/watchdog.py              # ...and open/update/close the incident
@@ -27,6 +34,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
 import sys
 import urllib.error
 import urllib.request
@@ -40,6 +48,7 @@ if str(_AGENT_ROOT) not in sys.path:
 from tradingagents_us.monitoring.liveness import (  # noqa: E402
     BackupSignal,
     HealthProbe,
+    HostProbe,
     Verdict,
     classify,
     severity,
@@ -50,6 +59,11 @@ DEFAULT_BACKUP_REPO = "canberkaslan/trading-backups"
 DEFAULT_ISSUE_REPO = "canberkaslan/trading"
 ISSUE_LABEL = "watchdog"
 PROBE_TIMEOUT_S = 15
+
+# Shorter than the HTTP probe: a TCP handshake either happens in a moment or is
+# being dropped, and there is no third outcome worth waiting fifteen seconds for.
+TCP_TIMEOUT_S = 5
+DEFAULT_TCP_PORT = 22
 
 # Written into the issue body so a later run can read back what it already
 # reported. Issue state is the only memory this thing has — there is no box to
@@ -106,6 +120,62 @@ def probe_backup(repo: str, token: str | None, now: datetime) -> BackupSignal:
         return BackupSignal(age_hours=None, error=f"HTTP {exc.code}")
     except Exception as exc:
         return BackupSignal(age_hours=None, error=f"{type(exc).__name__}: {exc}")
+
+
+def _parse_targets(spec: str) -> list[tuple[str, int]]:
+    """Read `host[:port][,host[:port]...]` into connect targets.
+
+    Bad entries are skipped rather than raised on: this runs in the one alerter
+    that has to work when everything else is broken, and a typo in an optional
+    signal must not be able to take the whole watchdog down with it.
+    """
+    targets: list[tuple[str, int]] = []
+    for raw in spec.split(","):
+        entry = raw.strip()
+        if not entry:
+            continue
+        host, _, port = entry.rpartition(":")
+        if not host:  # no colon at all — the whole entry is the address
+            targets.append((entry, DEFAULT_TCP_PORT))
+        elif port.isdigit():
+            targets.append((host, int(port)))
+        else:
+            targets.append((entry, DEFAULT_TCP_PORT))
+    return targets
+
+
+def probe_host(spec: str | None) -> HostProbe:
+    """Ask the origin's own IP stack whether it is there, bypassing every proxy.
+
+    A refused connection counts as an answer and is arguably the better one: an
+    RST is the host's kernel talking, with nothing else on the machine involved.
+    A timeout is not evidence of death — a firewall told to drop produces exactly
+    the same silence — so it is reported as "no answer" and the policy in
+    `liveness` refuses to promote it to an outage on its own.
+
+    The address comes from `WATCHDOG_HOST` (a secret) and never leaves this
+    function: the repo and the incident issues it files are public, and the
+    origin IP behind Cloudflare is the one fact that must not be published there.
+    Only fixed category strings are handed back.
+    """
+    if not spec:
+        return HostProbe(configured=False)
+
+    targets = _parse_targets(spec)
+    if not targets:
+        return HostProbe(configured=False)
+
+    for host, port in targets:
+        try:
+            with socket.create_connection((host, port), timeout=TCP_TIMEOUT_S):
+                return HostProbe(configured=True, answered=True, detail="connection accepted")
+        except ConnectionRefusedError:
+            # Nothing listening, but something is home. That is the question asked.
+            return HostProbe(configured=True, answered=True, detail="connection refused")
+        except (TimeoutError, OSError):
+            continue  # try the next target before concluding silence
+
+    return HostProbe(configured=True, answered=False, detail="timed out or filtered")
 
 
 def _github_request(
@@ -232,9 +302,16 @@ def main() -> int:
     # back to GITHUB_TOKEN so the health half still works with no setup at all.
     backup_token = os.environ.get("WATCHDOG_BACKUP_TOKEN") or token
 
+    # Optional and secret. Without it the watchdog behaves exactly as it did
+    # before the probe existed; with it, "the host is up" becomes provable
+    # without any credential at all. Never defaulted to a literal address —
+    # the origin IP behind Cloudflare does not belong in a public repo.
+    host_spec = os.environ.get("WATCHDOG_HOST")
+
     health = probe_health(health_url)
     backup = probe_backup(backup_repo, backup_token, now)
-    verdict = classify(health, backup)
+    host = probe_host(host_spec)
+    verdict = classify(health, backup, host)
 
     print(json.dumps({
         "checked_at": now.isoformat(),
@@ -242,6 +319,7 @@ def main() -> int:
         "headline": verdict.headline,
         "health": health.describe(),
         "backup": backup.describe(),
+        "host": host.describe(),
         "reasons": list(verdict.reasons),
     }, indent=2))
 

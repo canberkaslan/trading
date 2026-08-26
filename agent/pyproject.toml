@@ -60,6 +60,11 @@ packages = ["tradingagents_us", "api"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# Upstream TradingAgents, vendored rather than authored here. Its style is not
+# ours to hold an opinion about, and reformatting it would make every future
+# rebase against upstream a merge conflict. It was 561 of the 898 findings that
+# kept this repo's lint step red — noise loud enough to hide our own 337.
+exclude = ["vendor"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "A", "RET", "SIM", "PL"]

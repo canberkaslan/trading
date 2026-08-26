@@ -31,7 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /opt/venv /opt/venv
 
 WORKDIR /app
-COPY --chown=app:app tradingagents_tr/ ./tradingagents_tr/
+COPY --chown=app:app tradingagents_us/ ./tradingagents_us/
 COPY --chown=app:app api/ ./api/
 
 USER app

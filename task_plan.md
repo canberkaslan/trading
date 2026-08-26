@@ -108,6 +108,50 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - 7e Charts, 7f Analiz-Et deep-link, 7g Settings kill-switch+health, snapshot logger
 - cost-opt routing on branch (opt-in, not deployed)
 
+## Daily loop 2026-08-26 (🔴 BOX HÂLÂ DARK — 2. gün; watchdog 30 dk'da bir "bilemiyorum" diyordu)
+- **Canlı durum:** box 08-24 ~13:34 UTC'den beri ölü, **~40 saat**. SSH timeout, ICMP yok, CF
+  530/1033. `trader.fusapp.com` down → `/v1/eval` ve `/v1/portfolio/snapshot` ALINAMIYOR (dünkü
+  rakamlar son bilinen değer). Ağım sağlam: aynı anda başka bir Scaleway box'a SSH açılıyor.
+  Provider konsolu bende yok (hcloud/scw CLI ve credential yok) → **reboot Canberk'in aksiyonu**.
+- **Asıl bulgu — watchdog çalıştı ama 40 saattir bir şey SÖYLEYEMEDİ.** Incident #1 08-25 07:24'te
+  açıldı ve o gün bugündür `edge_down` = *"tünel mi öldü host mu, ayırt edemiyorum"* durumunda
+  takılı. Sebep: ikinci sinyal (private backup repo) `WATCHDOG_BACKUP_TOKEN` secret'ı kurulmadığı
+  için **404** okuyor. Yani iki sinyalden biri kalıcı olarak kör, ve tek kör sinyal bütün verdict'i
+  köreltti — host gerçekten dark'ken alarm "emin değilim" demeyi sürdürdü.
+- [x] **Üçüncü sinyal: origin'e direkt TCP probe** (monitoring, karar-yolu DIŞI, box'a deploy
+  GEREKTİRMEZ — GitHub runner'da koşuyor; box zaten ölü olduğu için ship edilebilen tek iş sınıfı).
+  - **Hiçbir credential istemiyor.** Diğer iki sinyal revoke/rate-limit/404 edilebilir; bir socket
+    edilemez. Ve diğer ikisinin yapamadığı şeyi yapabiliyor: **makinenin ayakta olduğunu
+    kanıtlamak** (sustuktan sonra health probe da backup da bunu kanıtlayamaz).
+  - **Asimetri bilinçli:** connect kabul edildi **veya RST ile reddedildi** → kernel konuştu, host
+    ayakta (soru host hakkında, portta ne dinlediği hakkında değil). Timeout → **kanıt değil**;
+    drop eden bir firewall ile fişi çekilmiş makine dışarıdan birebir aynı görünür. Bu yüzden
+    sessizlik sadece diğer sinyallerin zaten kurduğu davayı **destekler**, tek başına asla `dark`
+    ilan etmez. Outage uyduran alarm, kaçıran alarmdan beterdir.
+  - **Yeni state `wedged`** (`dark` ile `edge_down` arası): kernel cevap veriyor ama tünel de backup
+    da ölü = dolu disk / OOM / yarım boot. Kitap `dark`'taki kadar sahipsiz, ama ilk hamle farklı —
+    ssh muhtemelen çalışır. Bir shell'in çözeceği şey için kimseyi datacenter konsoluna yollamak,
+    remedy'nin okunmamaya başladığı andır. Severity'ler 10'ar aralıklı: araya state girerse
+    yeniden numaralama gerekmiyor, bilinmeyen state hâlâ en kötü sıralanıyor (99).
+  - **Adres literal değil SECRET** (`WATCHDOG_HOST`, `host[:port]`, virgüllü liste). Bu repo ve
+    açtığı issue'lar **public**; Cloudflare'in arkasındaki origin IP tam da proxy'nin sakladığı şey.
+    Adres probe objesinde hiç taşınmıyor → incident metninin yanlışlıkla interpolate edeceği bir
+    şey yok. Exception string'i de asla basılmıyor (`gaierror` hostname taşır), sadece sabit
+    kategoriler ("connection accepted/refused", "timed out or filtered"). İki test bunu pinliyor.
+  - **Secret yoksa davranış bit-bit eskisi** (test: aynı state **ve** aynı body). Yani bu commit
+    tek başına hiçbir alarm sesini değiştirmiyor; sadece secret kurulunca kör nokta kapanıyor.
+  - 22 yeni test (**420 backend yeşil**), ruff temiz. Canlı dry-run gerçek outage'a karşı doğrulandı:
+    verdict artık *"iki bağımsız yol da sessiz → dead host'a meylediyor, önce konsola bak"* diyor.
+- **Canberk'e kalan (ikisi de secret/konsol işi, ben yapamam):**
+  1. Hetzner/Scaleway konsolundan box'a bak → ayaktaysa `ssh agentmesh` + `journalctl -b -1 -e`,
+     değilse power-cycle; sonra `ai-trader.timer`, `ai-trader-api.service`, `cloudflared` doğrula.
+  2. Repo secret'larından **biri** watchdog'un kör noktasını kapatır: `WATCHDOG_HOST`
+     (`167.233.102.179:22`, en kolayı) veya `WATCHDOG_BACKUP_TOKEN` (trading-backups'a Contents:read
+     fine-grained PAT).
+- Live: **ALINAMADI** (box down). Eval durumu 08-22 itibarıyla **NO-GO** olarak duruyor.
+- Sıradaki: box ayağa kalkınca (a) ölüm sebebi post-mortem (`journalctl -b -1`), (b) 08-22'den kalan
+  realized negatif expectancy / exit mantığı, (c) reflection-memory wiring (branch).
+
 ## Daily loop 2026-08-25 (🔴 BOX DARK — trader çalışmıyor, hiçbir alarm ötmedi)
 - **Olay:** Hetzner box (167.233.102.179) yanıt vermiyor — SSH timeout, ICMP yok, Cloudflare
   tüneli 530/1033. Traceroute Hetzner FSN1 core'una kadar gidiyor, son hop'ta ölüyor → ağ

@@ -13,7 +13,7 @@ thing you are trying to diagnose.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -65,7 +65,7 @@ async def actionability(
     days: int = Query(30, ge=1, le=365, description="lookback window in calendar days"),
 ) -> ActionabilityResponse:
     """Order-flow health over the last `days`: what got submitted, and what blocked the rest."""
-    since = datetime.now(timezone.utc) - timedelta(days=days)
+    since = datetime.now(UTC) - timedelta(days=days)
     rows = repo.list_orders_since(since=since)
 
     report = build_report(

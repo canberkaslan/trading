@@ -93,15 +93,21 @@ class TestSnapshotDailyPnl:
 
 
 class TestTradingModeField:
-    def test_healthz_paper_by_default(self, client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_healthz_paper_by_default(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.delenv("ALPACA_BASE_URL", raising=False)
         b = client.get("/healthz").json()
         assert b == {"status": "ok", "trading_mode": "paper"}
 
-    def test_healthz_paper_when_paper_url(self, client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_healthz_paper_when_paper_url(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets/v2")
         assert client.get("/healthz").json()["trading_mode"] == "paper"
 
-    def test_healthz_live_when_live_url(self, client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_healthz_live_when_live_url(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("ALPACA_BASE_URL", "https://api.alpaca.markets/v2")
         assert client.get("/healthz").json()["trading_mode"] == "live"

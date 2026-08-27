@@ -10,7 +10,7 @@ dollar because none of them could see the others' pending orders.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from tradingagents_us.risk.cash_budget import (
     PendingBuy,
@@ -25,7 +25,9 @@ from tradingagents_us.risk.sizer import MarketContext, size_from_decision
 from tradingagents_us.schemas import AgentDecision, AgentReasoning
 
 
-def _decision(rating: str = "Overweight", entry: float = 100.0, stop: float = 90.0) -> AgentDecision:
+def _decision(
+    rating: str = "Overweight", entry: float = 100.0, stop: float = 90.0
+) -> AgentDecision:
     return AgentDecision(
         ticker="AAPL",
         market="US",
@@ -39,7 +41,7 @@ def _decision(rating: str = "Overweight", entry: float = 100.0, stop: float = 90
                 agent="pm", model="m", summary="x", tokens_in=0, tokens_out=0, latency_ms=0
             )
         ],
-        timestamp_utc=datetime.now(timezone.utc),
+        timestamp_utc=datetime.now(UTC),
         decision_id="dec-cash",
     )
 

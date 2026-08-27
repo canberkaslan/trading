@@ -20,7 +20,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 # Make package + vendor importable when running as a script
@@ -72,7 +72,7 @@ def _report(days: int):
 
     url = os.environ.get("TRADE_LOG_DB_URL", "sqlite:///./local.db")
     repo = TradeLogRepository(engine=create_engine(url, future=True))
-    since = datetime.now(timezone.utc) - timedelta(days=days)
+    since = datetime.now(UTC) - timedelta(days=days)
     rows = repo.list_orders_since(since=since)
     return build_report(
         [

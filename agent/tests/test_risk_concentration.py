@@ -59,9 +59,15 @@ def test_empty_and_zero_equity_are_safe() -> None:
 
 def test_parse_trend_skips_malformed_and_respects_limit() -> None:
     records = [
-        {"ts": "2026-06-26T00:00:00Z", "n_positions": 5, "top_weight_pct": 12.0, "equity": 99_000.0},
+        {
+            "ts": "2026-06-26T00:00:00Z", "n_positions": 5,
+            "top_weight_pct": 12.0, "equity": 99_000.0,
+        },
         {"bad": "row"},  # missing ts -> skipped
-        {"ts": "2026-06-27T00:00:00Z", "n_positions": 8, "top_weight_pct": 9.5, "equity": 100_000.0},
+        {
+            "ts": "2026-06-27T00:00:00Z", "n_positions": 8,
+            "top_weight_pct": 9.5, "equity": 100_000.0,
+        },
     ]
     points = parse_trend(records, limit=2)
     assert [p.n_positions for p in points] == [5, 8]

@@ -156,7 +156,12 @@ def _reconcile_symbol(
         remaining = abs(fill.qty)
 
         # Close against opposing inventory first, oldest lot first.
-        while remaining > QTY_EPSILON and pos_dir != 0 and fill_dir != pos_dir and lots:
+        # PLR1714 waived below: "holds no inventory" and "holds inventory on
+        # the same side as this fill" are different facts about the book, and
+        # collapsing them into one membership test reads as if they were one.
+        while (
+            remaining > QTY_EPSILON and pos_dir != 0 and fill_dir != pos_dir and lots  # noqa: PLR1714
+        ):
             lot = lots[0]
             matched = min(lot.qty, remaining)
 

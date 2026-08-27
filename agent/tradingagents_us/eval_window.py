@@ -21,8 +21,8 @@ self-flattery the ledger was built to prevent.
 from __future__ import annotations
 
 import os
-from datetime import date, datetime, timezone
-from typing import Mapping
+from collections.abc import Mapping
+from datetime import UTC, date, datetime
 
 ENV_VAR = "EVAL_START_DATE"
 
@@ -51,7 +51,7 @@ def parse_eval_start(raw: str | None) -> datetime | None:
     # A naive value is a calendar date the operator wrote in UTC terms; the
     # broker's fill timestamps are UTC, so anchoring anywhere else would shift
     # the boundary by hours and reclassify trades on the cutoff day itself.
-    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
 
 
 def eval_start_utc(env: Mapping[str, str] | None = None) -> datetime | None:

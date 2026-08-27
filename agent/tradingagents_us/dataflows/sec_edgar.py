@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date
 from typing import Literal
 
 import httpx

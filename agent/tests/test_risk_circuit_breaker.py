@@ -18,7 +18,9 @@ class TestKillSwitch:
 
     def test_pause_new_blocks(self) -> None:
         cb = make_breaker("PAUSE_NEW")
-        ok, reasons = cb.check(equity_now=100, equity_open=100, price=10, rolling_mean=10, rolling_std=1)
+        ok, reasons = cb.check(
+            equity_now=100, equity_open=100, price=10, rolling_mean=10, rolling_std=1
+        )
         assert not ok
         assert any("kill_switch" in r for r in reasons)
 
@@ -37,7 +39,9 @@ class TestDrawdown:
 
     def test_exceeds_dd_blocks(self) -> None:
         cb = make_breaker()
-        ok, reasons = cb.check(equity_now=96, equity_open=100, price=10, rolling_mean=10, rolling_std=1)
+        ok, reasons = cb.check(
+            equity_now=96, equity_open=100, price=10, rolling_mean=10, rolling_std=1
+        )
         assert not ok
         assert any("drawdown" in r for r in reasons)
 
@@ -51,7 +55,9 @@ class TestPriceAnomaly:
     def test_spike_blocks(self) -> None:
         cb = make_breaker()
         # price 15, mean 10, std 1 → z=5 > 3
-        ok, reasons = cb.check(equity_now=100, equity_open=100, price=15, rolling_mean=10, rolling_std=1)
+        ok, reasons = cb.check(
+            equity_now=100, equity_open=100, price=15, rolling_mean=10, rolling_std=1
+        )
         assert not ok
         assert any("z_score" in r for r in reasons)
 
@@ -61,7 +67,9 @@ class TestErrorRate:
         cb = make_breaker()
         for _ in range(30):
             cb.record_api_call(error=True)
-        ok, reasons = cb.check(equity_now=100, equity_open=100, price=10, rolling_mean=10, rolling_std=1)
+        ok, reasons = cb.check(
+            equity_now=100, equity_open=100, price=10, rolling_mean=10, rolling_std=1
+        )
         assert not ok
         assert any("error_rate" in r for r in reasons)
 
@@ -71,6 +79,8 @@ class TestConsecutiveLosses:
         cb = make_breaker()
         for _ in range(5):
             cb.record_trade_result(profitable=False)
-        ok, reasons = cb.check(equity_now=100, equity_open=100, price=10, rolling_mean=10, rolling_std=1)
+        ok, reasons = cb.check(
+            equity_now=100, equity_open=100, price=10, rolling_mean=10, rolling_std=1
+        )
         assert not ok
         assert any("consecutive_losses" in r for r in reasons)

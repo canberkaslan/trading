@@ -51,7 +51,8 @@ def check_limits(
     total_in_ticker = existing_in_ticker + new_position_value
     if total_in_ticker / ctx.equity > limits.max_position_pct:
         reasons.append(
-            f"position_pct={(total_in_ticker / ctx.equity):.2%} exceeds {limits.max_position_pct:.0%}"
+            f"position_pct={(total_in_ticker / ctx.equity):.2%} "
+            f"exceeds {limits.max_position_pct:.0%}"
         )
 
     # 2. Per-sector cap
@@ -60,7 +61,8 @@ def check_limits(
         total_in_sector = existing_in_sector + new_position_value
         if total_in_sector / ctx.equity > limits.max_sector_pct:
             reasons.append(
-                f"sector_pct={(total_in_sector / ctx.equity):.2%} exceeds {limits.max_sector_pct:.0%}"
+                f"sector_pct={(total_in_sector / ctx.equity):.2%} "
+                f"exceeds {limits.max_sector_pct:.0%}"
             )
 
     # 3. Correlation cap

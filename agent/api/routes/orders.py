@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
-import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -147,13 +147,12 @@ async def approve_order(
     # block a stale Approve tap the same way it blocks the daily run.
     ks_state = FileKillSwitchReader().read()
     if ks_state != "RUN":
-        try:
+        # Audit is best-effort: the block below happens either way.
+        with contextlib.suppress(Exception):
             repo.append_kill_event(
                 state=ks_state, actor=user, source="api",
                 detail=f"blocked approve of order {order_id}",
             )
-        except Exception:
-            pass
         raise HTTPException(409, f"kill switch is {ks_state} — approvals disabled")
 
     # Load order + decision rows
@@ -232,7 +231,7 @@ async def reject_order(
     repo.append_update(OrderUpdate(
         order_id=order_id, status="REJECTED",
         error_message="user_rejected",
-        timestamp_utc=datetime.now(timezone.utc),
+        timestamp_utc=datetime.now(UTC),
     ))
     return {"order_id": order_id, "status": "REJECTED"}
 
@@ -284,7 +283,7 @@ async def cancel_order(
     repo.append_update(OrderUpdate(
         order_id=order_id, status="CANCELLED",
         error_message="user_cancelled",
-        timestamp_utc=datetime.now(timezone.utc),
+        timestamp_utc=datetime.now(UTC),
     ))
     return {
         "order_id": order_id,
@@ -316,10 +315,9 @@ async def set_kill_switch(
         os.fsync(f.fileno())
     os.replace(tmp_path, flag_path)
 
-    try:
+    # Audit is best-effort; the state write above already took effect.
+    with contextlib.suppress(Exception):
         repo.append_kill_event(state=body.state, actor=user, source="api")
-    except Exception:
-        pass  # audit is best-effort; the state write above already took effect
 
     # FLATTEN_ALL executes NOW, not at the next 22:30 UTC run — the switch
     # is a panic button, hours of latency defeats it. kill_check remains
@@ -329,26 +327,22 @@ async def set_kill_switch(
         try:
             result = flatten_all()
         except Exception as exc:
-            try:
+            with contextlib.suppress(Exception):
                 repo.append_kill_event(
                     state="FLATTEN_ALL", actor=user, source="api",
                     detail=f"immediate flatten FAILED: {exc}",
                 )
-            except Exception:
-                pass
             raise HTTPException(
                 502,
                 f"kill switch armed, but immediate flatten failed: {exc} — "
                 f"the daily-run backstop will retry",
             ) from exc
-        try:
+        with contextlib.suppress(Exception):
             repo.append_kill_event(
                 state="FLATTEN_ALL", actor=user, source="api",
                 detail=("noop: " if result.noop else ("executed: " if result.ok else "partial: "))
                 + result.summary,
             )
-        except Exception:
-            pass
         if not result.ok:
             raise HTTPException(
                 502,

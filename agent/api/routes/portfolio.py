@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -68,8 +68,8 @@ def _load_snapshot_records() -> list[dict]:
     if not path.exists():
         return []
     records: list[dict] = []
-    for line in path.read_text().splitlines():
-        line = line.strip()
+    for raw in path.read_text().splitlines():
+        line = raw.strip()
         if not line:
             continue
         try:
@@ -127,7 +127,7 @@ async def get_snapshot(
             unrealized_pnl_pct=p.unrealized_plpc,
             stop_loss=0.0,                # broker-side leg lives on order, not position
             sector=sector_for(p.symbol),  # static GICS map, display-only (off trading path)
-            opened_at_utc=datetime.now(timezone.utc),  # Alpaca doesn't expose open ts on position
+            opened_at_utc=datetime.now(UTC),  # Alpaca doesn't expose open ts on position
         )
         for p in positions_raw
     ]
@@ -150,7 +150,7 @@ async def get_snapshot(
         daily_pnl_usd=daily_pnl,
         daily_pnl_pct=daily_pnl_pct,
         max_drawdown_today=_intraday_max_dd(intraday),
-        timestamp_utc=datetime.now(timezone.utc),
+        timestamp_utc=datetime.now(UTC),
     )
 
 

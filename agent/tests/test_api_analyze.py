@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -29,7 +29,7 @@ def _fake_decision(ticker: str) -> AgentDecision:
                 latency_ms=1,
             )
         ],
-        timestamp_utc=datetime.now(timezone.utc),
+        timestamp_utc=datetime.now(UTC),
         decision_id="test-123",
     )
 
@@ -55,7 +55,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     # inside its worker thread — outside request scope, so dependency_overrides
     # can't reach it — hence patching the name on api.deps for that path.
     monkeypatch.setattr("api.routes.analyze.propagate", lambda t, d: _fake_decision(t))
-    monkeypatch.setattr("api.deps.get_repo", lambda: _NoOpRepo())
+    monkeypatch.setattr("api.deps.get_repo", _NoOpRepo)
     import api.routes.analyze as mod
 
     monkeypatch.setattr(mod, "_jobs", {})
@@ -93,7 +93,9 @@ def test_analyze_rejects_non_alpha_ticker(client: TestClient) -> None:
     assert r.status_code == 422
 
 
-def test_analyze_dedupes_inflight_same_ticker(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_analyze_dedupes_inflight_same_ticker(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Make the pipeline slow so both POSTs land while the first is in-flight.
     def _slow(t: str, d: str) -> AgentDecision:
         time.sleep(0.3)
@@ -110,7 +112,9 @@ def test_get_unknown_job_404(client: TestClient) -> None:
     assert client.get("/v1/analyze/nope").status_code == 404
 
 
-def test_pipeline_error_surfaces_as_error_status(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pipeline_error_surfaces_as_error_status(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     def _boom(t: str, d: str) -> AgentDecision:
         raise RuntimeError("polygon down")
 

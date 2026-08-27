@@ -55,7 +55,9 @@ class TestCouncilReview:
             return "RATING: Buy"
 
         monkeypatch.setattr(council, "_call_openrouter", flaky)
-        monkeypatch.setattr(council, "_call_anthropic", lambda m, s, u: "RATING: Buy\nCONFIDENCE: 80")
+        monkeypatch.setattr(
+            council, "_call_anthropic", lambda m, s, u: "RATING: Buy\nCONFIDENCE: 80"
+        )
         r = council_review("AAPL", "digest", "Buy", "house")
         assert r is not None
         assert len(r.votes) == 1  # one voter dropped, one survived

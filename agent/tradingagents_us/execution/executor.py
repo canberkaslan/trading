@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 import httpx
 
@@ -114,7 +114,7 @@ def submit_order(
             approve path), then the order's submitted_at date.
     """
     refusals: list[str] = []
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # 1. Risk approval gate
     if not order.risk_approved:
@@ -134,7 +134,7 @@ def submit_order(
         # SQLite drops tzinfo on roundtrip; assume UTC if naive
         dts = decision.timestamp_utc
         if dts.tzinfo is None:
-            dts = dts.replace(tzinfo=timezone.utc)
+            dts = dts.replace(tzinfo=UTC)
         age = now - dts
         if age > timedelta(hours=config.decision_max_age_hours):
             refusals.append(

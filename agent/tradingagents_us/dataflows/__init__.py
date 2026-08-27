@@ -6,7 +6,7 @@ from .fred import FREDClient
 from .polygon import PolygonClient
 from .sec_edgar import EdgarClient
 from .sp500_history import (
-    SP500HistoryUnavailable,
+    SP500HistoryUnavailableError,
     fetch_changes,
     fetch_current_constituents,
     members_as_of,
@@ -18,7 +18,7 @@ __all__ = [
     "EdgarClient",
     "FREDClient",
     "PolygonClient",
-    "SP500HistoryUnavailable",
+    "SP500HistoryUnavailableError",
     "fetch_changes",
     "fetch_current_constituents",
     "members_as_of",

@@ -64,7 +64,7 @@ class AlertState:
         }
 
     @classmethod
-    def from_dict(cls, raw: object) -> "AlertState":
+    def from_dict(cls, raw: object) -> AlertState:
         """Tolerant parse — a corrupt or hand-edited state file must not stop alerting.
 
         The failure mode of an unreadable state file is one extra push, which is

@@ -6,10 +6,8 @@ the broker. A live paper-submit smoke test lives in tests/test_execution_paper.p
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
-
-import pytest
 
 from tradingagents_us.execution.executor import (
     ExecutionConfig,
@@ -27,7 +25,7 @@ def _decision_with_pt(price_target: float = 310.0) -> AgentDecision:
         time_horizon="12-18 months", suggested_size_pct=0.045,
         reasoning=[AgentReasoning(agent="pm", model="claude-opus-4-7", summary="x",
                                   tokens_in=0, tokens_out=0, latency_ms=0)],
-        timestamp_utc=datetime.now(timezone.utc),
+        timestamp_utc=datetime.now(UTC),
         decision_id="dec-bracket-test",
     )
 
@@ -45,7 +43,7 @@ def _order(approved: bool = True, reasons: list[str] | None = None) -> TradeOrde
         stop_loss=229.0,
         risk_approved=approved,
         rejection_reasons=reasons or [],
-        submitted_at_utc=datetime.now(timezone.utc),
+        submitted_at_utc=datetime.now(UTC),
     )
 
 
@@ -69,7 +67,13 @@ class TestDryRun:
 
 
 class TestLiveSubmissionMocked:
-    def _mock_client(self, account_active: bool = True, pdt: bool = False, blocked: bool = False, market_open: bool = True):
+    def _mock_client(
+        self,
+        account_active: bool = True,
+        pdt: bool = False,
+        blocked: bool = False,
+        market_open: bool = True,
+    ):
         cli = MagicMock()
         acct = MagicMock()
         acct.trading_blocked = blocked
@@ -226,7 +230,7 @@ class TestStaleAndEntryGuards:
     def test_stale_decision_rejected(self) -> None:
         decision = _decision_with_pt()
         # Force the decision to be 48h old (default max age is 24h)
-        old = datetime.now(timezone.utc) - timedelta(hours=48)
+        old = datetime.now(UTC) - timedelta(hours=48)
         decision = decision.model_copy(update={"timestamp_utc": old})
 
         # Dry-run so we don't need the broker. Stale check runs before dry-run path.
@@ -275,7 +279,7 @@ class TestStaleAndEntryGuards:
 
     def test_guards_disabled_when_zero(self) -> None:
         decision = _decision_with_pt().model_copy(
-            update={"timestamp_utc": datetime.now(timezone.utc) - timedelta(days=30)}
+            update={"timestamp_utc": datetime.now(UTC) - timedelta(days=30)}
         )
         result = submit_order(
             _order(), decision=decision, current_price=309.0,  # would normally trip headroom
@@ -523,7 +527,7 @@ class TestRunDateKey:
 
         cli = self._mock_client()
         decision = _decision_with_pt().model_copy(
-            update={"timestamp_utc": datetime(2026, 7, 14, 0, 15, tzinfo=timezone.utc)}
+            update={"timestamp_utc": datetime(2026, 7, 14, 0, 15, tzinfo=UTC)}
         )
         submit_order(
             _order(), client=cli,

@@ -17,10 +17,10 @@ from scripts.eval_report import (
     GATE_MAX_DD,
     GATE_SHARPE,
     MIN_TRADING_DAYS,
-    build_gates,
-    build_scorecard,
     _provisional_verdict,
     _verdict,
+    build_gates,
+    build_scorecard,
 )
 
 from ..deps import require_token
@@ -28,7 +28,7 @@ from ..deps import require_token
 router = APIRouter()
 
 _CACHE_TTL_S = 60.0
-_cache: dict[str, tuple[float, "EvalResult"]] = {}
+_cache: dict[str, tuple[float, EvalResult]] = {}
 _lock = Lock()
 
 

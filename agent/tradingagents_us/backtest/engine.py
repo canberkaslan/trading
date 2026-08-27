@@ -80,7 +80,9 @@ def run_signal_backtest(
         # Multi-column → aggregate across tickers
         equity = equity.sum(axis=1)
     returns = equity.pct_change().fillna(0.0)
-    return BacktestResult(portfolio=portfolio, stats=portfolio.stats(), equity_curve=equity, returns=returns)
+    return BacktestResult(
+        portfolio=portfolio, stats=portfolio.stats(), equity_curve=equity, returns=returns
+    )
 
 
 def summary_stats(portfolio: vbt.Portfolio) -> dict[str, float | int | str]:

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 import httpx
@@ -109,7 +109,11 @@ class AlpacaClient:
         self.base_url = base_url or os.environ.get("ALPACA_BASE_URL", DEFAULT_BASE)
         if not self.base_url.endswith("/v2"):
             # Tolerate users supplying the bare host
-            self.base_url = self.base_url.rstrip("/") + "/v2" if "/v2" not in self.base_url else self.base_url
+            self.base_url = (
+                self.base_url.rstrip("/") + "/v2"
+                if "/v2" not in self.base_url
+                else self.base_url
+            )
         self._http = httpx.Client(
             timeout=timeout_s,
             headers={
@@ -241,12 +245,11 @@ class AlpacaClient:
             body["order_class"] = "oto"  # one-triggers-other (take-profit only)
         elif has_sl:
             body["order_class"] = "oto"
-        if has_tp or has_sl:
-            # Protective legs must survive overnight: a day-TIF bracket
-            # expires its children at the close of entry day, leaving the
-            # position naked. Promote everything to gtc when legs attach.
-            if body["time_in_force"] != "gtc":
-                body["time_in_force"] = "gtc"
+        # Protective legs must survive overnight: a day-TIF bracket expires
+        # its children at the close of entry day, leaving the position naked.
+        # Promote everything to gtc when legs attach.
+        if (has_tp or has_sl) and body["time_in_force"] != "gtc":
+            body["time_in_force"] = "gtc"
         if has_tp:
             body["take_profit"] = {"limit_price": str(take_profit_price)}
         if has_sl:
@@ -305,7 +308,7 @@ class AlpacaClient:
         out: list[FillActivity] = []
         params: dict[str, str | int] = {"page_size": page_size, "direction": "asc"}
         if after is not None:
-            params["after"] = after.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            params["after"] = after.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
         page_token: str | None = None
         for _ in range(max_pages):

@@ -21,7 +21,7 @@ from ..deps import require_token
 router = APIRouter()
 
 _CACHE_TTL_S = 300.0
-_cache: dict[str, tuple[float, "PriceSeries"]] = {}
+_cache: dict[str, tuple[float, PriceSeries]] = {}
 _lock = Lock()
 
 
@@ -29,7 +29,7 @@ class Bar(BaseModel):
     t: str  # ISO date
     o: float
     h: float
-    l: float
+    l: float  # noqa: E741 — Polygon's OHLCV key, and the mobile chart reads it by this name
     c: float
     v: float
 

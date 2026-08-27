@@ -38,7 +38,10 @@ _RATINGS = ("Buy", "Overweight", "Hold", "Underweight", "Sell")
 VOTERS = [
     {"name": "deepseek", "provider": "openrouter", "model": "deepseek/deepseek-chat"},
     {"name": "glm", "provider": "openrouter", "model": "z-ai/glm-4.6"},
-    {"name": "qwen-local", "provider": "ollama", "model": os.environ.get("OLLAMA_COUNCIL_MODEL", "qwen2.5:7b")},
+    {
+        "name": "qwen-local", "provider": "ollama",
+        "model": os.environ.get("OLLAMA_COUNCIL_MODEL", "qwen2.5:7b"),
+    },
 ]
 CHAIR_MODEL = os.environ.get("LLM_COUNCIL_CHAIR", "claude-opus-4-8")
 

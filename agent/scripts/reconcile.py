@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from tradingagents_us.dataflows.alpaca_broker import AlpacaClient, FillActivity
 from tradingagents_us.execution.reconcile import (
@@ -54,7 +54,7 @@ def summary_payload(
     trades: list[ClosedTrade], stats: TradeStats, n_fills: int, new_rows: int
 ) -> dict:
     return {
-        "reconciled_at_utc": datetime.now(timezone.utc).isoformat(),
+        "reconciled_at_utc": datetime.now(UTC).isoformat(),
         "fills_read": n_fills,
         "closed_trades": stats.trades,
         "new_rows": new_rows,

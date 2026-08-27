@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 from ..schemas import AgentDecision, TradeOrder
@@ -176,5 +176,5 @@ def size_from_decision(
         stop_loss=decision.stop_loss or 0.01,
         risk_approved=risk_approved,
         rejection_reasons=rejections,
-        submitted_at_utc=datetime.now(timezone.utc),
+        submitted_at_utc=datetime.now(UTC),
     )

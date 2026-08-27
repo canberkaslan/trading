@@ -9,7 +9,7 @@ pinned against a hand-built fill stream here.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from tradingagents_us.execution.reconcile import (
     Fill,
@@ -17,7 +17,7 @@ from tradingagents_us.execution.reconcile import (
     reconcile_fills,
 )
 
-T0 = datetime(2026, 8, 1, 14, 30, tzinfo=timezone.utc)
+T0 = datetime(2026, 8, 1, 14, 30, tzinfo=UTC)
 
 
 def _fill(

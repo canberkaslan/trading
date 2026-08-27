@@ -10,7 +10,9 @@ from typing import Literal
 StopType = Literal["fixed_pct", "atr_trailing", "time_based", "vol_adjusted"]
 
 
-def fixed_pct_stop(entry_price: float, pct: float = 0.02, side: Literal["LONG", "SHORT"] = "LONG") -> float:
+def fixed_pct_stop(
+    entry_price: float, pct: float = 0.02, side: Literal["LONG", "SHORT"] = "LONG"
+) -> float:
     """Simple fixed-percent stop. Default 2%."""
     if entry_price <= 0:
         raise ValueError("entry_price must be positive")

@@ -8,7 +8,7 @@ on the scorecard. These tests pin the endpoint that tells them apart.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -19,7 +19,7 @@ from tradingagents_us.storage import TradeLogRepository
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 @pytest.fixture()
@@ -155,7 +155,9 @@ class TestActionability:
         self, client: TestClient, repo: TradeLogRepository
     ) -> None:
         _persist(repo, key="ancient", ticker="AAPL", days_ago=45, broker_id="brk-old")
-        _persist(repo, key="recent", ticker="AAPL", days_ago=1, reasons=["non-actionable rating=Hold"])
+        _persist(
+            repo, key="recent", ticker="AAPL", days_ago=1, reasons=["non-actionable rating=Hold"]
+        )
 
         wide = client.get("/v1/diagnostics/actionability", params={"days": 90}).json()
         narrow = client.get("/v1/diagnostics/actionability", params={"days": 7}).json()

@@ -45,7 +45,10 @@ dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
-    "ruff>=0.8.0",
+    # Pinned to a minor range now that Ruff is a hard CI gate: an unbounded
+    # linter turns someone else's release into a red main branch on a morning
+    # nobody touched the code. Bump deliberately, with the findings read.
+    "ruff>=0.16.4,<0.17",
     "mypy>=1.13.0",
     "ipython>=8.30.0",
 ]
@@ -68,7 +71,54 @@ exclude = ["vendor"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "A", "RET", "SIM", "PL"]
-ignore = ["PLR0913", "PLR2004"]
+ignore = [
+    "PLR0913",
+    "PLR2004",
+    # import-outside-top-level. 123 findings, and reviewing them found no debt:
+    # they are optional dependencies imported where their absence is *handled*
+    # (`jose` in api/deps.py fails closed, `boto3` only on the S3 backup path),
+    # and heavy imports deferred in scripts that must stay startup-cheap. The
+    # watchdog is the sharpest case — it is stdlib-only on purpose so that a
+    # broken lockfile cannot take the last alerting path down with it, and this
+    # rule would push its imports somewhere that breaks that property. A rule
+    # that is wrong for the design belongs in this list, not in a backlog.
+    "PLC0415",
+    # too-many-positional-arguments, the positional-only sibling of PLR0913,
+    # which this list already waives. Enforcing one while waiving the other
+    # says nothing coherent about the code; the eight hits are risk/execution
+    # constructors whose argument lists are the domain's, not an accident.
+    "PLR0917",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Three functions are genuinely over the complexity thresholds, and that is
+# real information — but it is an argument for a supervised refactor, not
+# something to fix as a lint chore. `submit_order` in particular is the live
+# execution path, where a restructuring done to satisfy a linter is exactly
+# the kind of change this project makes under a paper drill, never in passing.
+# Scoped to these files so the rules keep firing on everything new.
+"scripts/trade.py" = ["PLR0912", "PLR0915"]
+"scripts/backup.py" = ["PLR0912"]
+"tradingagents_us/execution/executor.py" = ["PLR0911", "PLR0912", "PLR0915"]
+
+[tool.ruff.lint.flake8-bugbear]
+# `Depends(...)`/`Query(...)` in a parameter default is not the mutable-default
+# bug B008 exists to catch — it is how FastAPI declares dependencies, and the
+# alternative the rule suggests would mean hand-rolling injection in every
+# route. Ruff ships this setting precisely for callables that are safe there.
+# The config objects below are all `@dataclass(frozen=True)`, so the shared-
+# instance hazard B008 is named after cannot occur: no caller can mutate the
+# default out from under the next one.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Body",
+    "fastapi.Header",
+    "tradingagents_us.execution.executor.ExecutionConfig",
+    "tradingagents_us.risk.portfolio_limits.PortfolioLimits",
+    "tradingagents_us.backtest.engine.BacktestConfig",
+]
 
 [tool.mypy]
 python_version = "3.12"

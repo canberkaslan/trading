@@ -8,7 +8,7 @@ still live after a successful cancel, and never swallow a broker refusal.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -31,7 +31,7 @@ def _order(order_id: str = "ord-1") -> TradeOrder:
         stop_loss=250.0,
         risk_approved=True,
         rejection_reasons=[],
-        submitted_at_utc=datetime.now(timezone.utc),
+        submitted_at_utc=datetime.now(UTC),
     )
 
 

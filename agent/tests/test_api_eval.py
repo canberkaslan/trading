@@ -67,7 +67,9 @@ def test_provisional_trend_below_min_days(
 
 
 def test_no_go_surfaces_reasons(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("api.routes.eval.build_scorecard", lambda period, benchmark: _sc(sharpe=0.3))
+    monkeypatch.setattr(
+        "api.routes.eval.build_scorecard", lambda period, benchmark: _sc(sharpe=0.3)
+    )
     b = client.get("/v1/eval").json()
     assert b["verdict"] == "NO-GO"
     assert any("Sharpe" in r for r in b["reasons"])

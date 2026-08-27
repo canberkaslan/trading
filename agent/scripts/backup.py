@@ -35,7 +35,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 
@@ -162,7 +162,7 @@ def main() -> int:
     prefix = os.environ.get("BACKUP_S3_PREFIX", "ai-trader")
     # The timer fires post-midnight UTC (after the worst-case run window), so
     # stamp with the TRADING day (now - 6h), not the calendar day.
-    stamp = (datetime.now(timezone.utc) - timedelta(hours=6)).strftime("%Y-%m-%d")
+    stamp = (datetime.now(UTC) - timedelta(hours=6)).strftime("%Y-%m-%d")
 
     artifacts: list[tuple[str, bytes]] = []
     errors: list[str] = []
@@ -224,4 +224,4 @@ if __name__ == "__main__":
         raise
     except Exception as exc:  # crash-before-alert must still alert
         _alert(f"backup crashed: {exc}")
-        raise SystemExit(1)
+        raise SystemExit(1) from exc

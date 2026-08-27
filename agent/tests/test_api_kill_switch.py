@@ -38,7 +38,9 @@ class TestSetKillSwitch:
     def test_flatten_all_executes_immediately(self, client: TestClient, tmp_path: Path) -> None:
         # The panic button must liquidate at flip time, not at 22:30 UTC.
         with patch("api.routes.orders.flatten_all") as fl:
-            fl.return_value = FlattenResult(ok=True, summary="close orders submitted for 2/2", submitted=["AAPL", "NVDA"])
+            fl.return_value = FlattenResult(
+                ok=True, summary="close orders submitted for 2/2", submitted=["AAPL", "NVDA"]
+            )
             r = client.post("/v1/orders/kill-switch", json={"state": "FLATTEN_ALL"})
         assert r.status_code == 200
         fl.assert_called_once()
@@ -47,7 +49,9 @@ class TestSetKillSwitch:
 
     def test_partial_flatten_surfaces_as_error(self, client: TestClient, tmp_path: Path) -> None:
         with patch("api.routes.orders.flatten_all") as fl:
-            fl.return_value = FlattenResult(ok=False, summary="PARTIAL: NVDA failed", failed=["NVDA: status=403"])
+            fl.return_value = FlattenResult(
+                ok=False, summary="PARTIAL: NVDA failed", failed=["NVDA: status=403"]
+            )
             r = client.post("/v1/orders/kill-switch", json={"state": "FLATTEN_ALL"})
         assert r.status_code == 502
         # State stays armed so the daily-run backstop retries
@@ -75,7 +79,9 @@ class TestGetKillSwitch:
 
 class TestApproveHonorsKillSwitch:
     @pytest.mark.parametrize("state", ["PAUSE_NEW", "FLATTEN_ALL"])
-    def test_armed_switch_blocks_approve(self, client: TestClient, tmp_path: Path, state: str) -> None:
+    def test_armed_switch_blocks_approve(
+        self, client: TestClient, tmp_path: Path, state: str
+    ) -> None:
         # A stale Approve tap must not open a position while the switch is
         # armed — this path used to bypass the kill switch entirely.
         (tmp_path / "kill.state").write_text(state)

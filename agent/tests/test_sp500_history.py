@@ -16,7 +16,7 @@ import pytest
 from tradingagents_us.dataflows import sp500_history as sph
 from tradingagents_us.dataflows.sp500_history import (
     IndexChange,
-    SP500HistoryUnavailable,
+    SP500HistoryUnavailableError,
     members_as_of,
     parse_changes,
 )
@@ -159,7 +159,7 @@ def test_raises_when_no_url_yields_a_changes_table(monkeypatch) -> None:
     """
     monkeypatch.setattr(sph, "_fetch_html", lambda url=sph.WIKI_URL: CONSTITUENTS_HTML)
 
-    with pytest.raises(SP500HistoryUnavailable) as e:
+    with pytest.raises(SP500HistoryUnavailableError) as e:
         sph.fetch_changes()
     # The message has to name both places we looked, or the next person
     # debugging a stale selector starts from zero.
@@ -202,12 +202,12 @@ def test_refuses_a_date_older_than_the_change_history(changes) -> None:
     # 1990 predates the oldest change, so undoing the whole list still leaves
     # every 1990-to-1994 change unaccounted for — the caller would get a
     # confident-looking universe that nothing in the data supports.
-    with pytest.raises(SP500HistoryUnavailable, match="only reaches back to 1994-09-30"):
+    with pytest.raises(SP500HistoryUnavailableError, match="only reaches back to 1994-09-30"):
         members_as_of(date(1990, 1, 1), changes, _current("AAPL"))
 
 
 def test_refuses_an_empty_change_list_for_a_past_date() -> None:
-    with pytest.raises(SP500HistoryUnavailable, match="no index changes available"):
+    with pytest.raises(SP500HistoryUnavailableError, match="no index changes available"):
         members_as_of(date(2007, 12, 31), [], _current("AAPL"))
 
 

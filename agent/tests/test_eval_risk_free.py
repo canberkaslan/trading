@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest import mock
 
 import pytest
@@ -57,8 +57,8 @@ def test_spy_return_includes_dividends() -> None:
     fake.__exit__ = mock.Mock(return_value=False)
     fake.aggregates.return_value = [_Bar(100.0), _Bar(101.0)]
     fake.dividends.return_value = [{"cash_amount": 1.5}, {"cash_amount": 0.5}]
-    start = datetime(2026, 6, 1, tzinfo=timezone.utc)
-    end = datetime(2026, 6, 30, tzinfo=timezone.utc)
+    start = datetime(2026, 6, 1, tzinfo=UTC)
+    end = datetime(2026, 6, 30, tzinfo=UTC)
     with mock.patch("tradingagents_us.dataflows.polygon.PolygonClient", return_value=fake):
         ret = _spy_return(start, end)
     # (101 + 2.0) / 100 - 1 = 3.0% total return vs 1.0% price-only
@@ -71,8 +71,8 @@ def test_spy_return_survives_dividend_failure() -> None:
     fake.__exit__ = mock.Mock(return_value=False)
     fake.aggregates.return_value = [_Bar(100.0), _Bar(102.0)]
     fake.dividends.side_effect = RuntimeError("api down")
-    start = datetime(2026, 6, 1, tzinfo=timezone.utc)
-    end = datetime(2026, 6, 30, tzinfo=timezone.utc)
+    start = datetime(2026, 6, 1, tzinfo=UTC)
+    end = datetime(2026, 6, 30, tzinfo=UTC)
     with mock.patch("tradingagents_us.dataflows.polygon.PolygonClient", return_value=fake):
         ret = _spy_return(start, end)
     assert ret == pytest.approx(0.02)  # falls back to price return

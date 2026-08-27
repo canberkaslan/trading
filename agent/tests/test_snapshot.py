@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from tradingagents_us.dataflows.alpaca_broker import Account, Position
 from scripts.snapshot import append_snapshot, build_snapshot
+from tradingagents_us.dataflows.alpaca_broker import Account, Position
 
 
 def _account(equity: float = 100_000.0, cash: float = 40_000.0) -> Account:

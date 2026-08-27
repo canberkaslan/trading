@@ -15,7 +15,7 @@ import logging
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from threading import Lock
 from typing import Literal
 
@@ -35,7 +35,7 @@ JobStatus = Literal["queued", "running", "done", "error"]
 # One worker so a burst of taps can't fan out into N concurrent ~$1 runs.
 # This is a personal single-user backend; a process-local store is fine.
 _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="analyze")
-_jobs: dict[str, "AnalyzeJob"] = {}
+_jobs: dict[str, AnalyzeJob] = {}
 _lock = Lock()
 # Keep the registry from growing unbounded over a long-lived process.
 _MAX_JOBS = 100
@@ -48,7 +48,7 @@ class AnalyzeJob:
     status: JobStatus = "queued"
     decision: AgentDecision | None = None
     error: str | None = None
-    created_utc: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_utc: datetime = field(default_factory=lambda: datetime.now(UTC))
     finished_utc: datetime | None = None
 
 
@@ -106,13 +106,13 @@ def _run(job_id: str, ticker: str, trade_date: str) -> None:
         with _lock:
             job.decision = decision
             job.status = "done"
-            job.finished_utc = datetime.now(timezone.utc)
+            job.finished_utc = datetime.now(UTC)
     except Exception as exc:  # noqa: BLE001 — surface any pipeline failure to the client
         log.exception("analyze pipeline failed for %s", ticker)
         with _lock:
             job.error = str(exc)
             job.status = "error"
-            job.finished_utc = datetime.now(timezone.utc)
+            job.finished_utc = datetime.now(UTC)
 
 
 @router.post("", response_model=AnalyzeJobView, status_code=202)
@@ -131,7 +131,7 @@ async def start_analysis(
         job = AnalyzeJob(job_id=uuid.uuid4().hex[:12], ticker=ticker)
         _jobs[job.job_id] = job
         _evict_old()
-    trade_date = datetime.now(timezone.utc).date().isoformat()
+    trade_date = datetime.now(UTC).date().isoformat()
     _executor.submit(_run, job.job_id, ticker, trade_date)
     log.info("analyze job %s queued for %s", job.job_id, ticker)
     return _view(job)

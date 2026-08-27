@@ -7,7 +7,7 @@ equity-series cleaning + drawdown math without touching the broker.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -26,7 +26,7 @@ class _FakeAlpaca:
 
 
 def _ts(y: int, m: int, d: int) -> int:
-    return int(datetime(y, m, d, tzinfo=timezone.utc).timestamp())
+    return int(datetime(y, m, d, tzinfo=UTC).timestamp())
 
 
 def _make_client(history: dict, monkeypatch: pytest.MonkeyPatch) -> TestClient:
@@ -121,6 +121,6 @@ def test_alpaca_error_502(monkeypatch: pytest.MonkeyPatch) -> None:
     from api.deps import get_alpaca
     from api.main import app
 
-    app.dependency_overrides[get_alpaca] = lambda: _Boom()
+    app.dependency_overrides[get_alpaca] = _Boom
     r = TestClient(app).get("/v1/portfolio/history")
     assert r.status_code == 502

@@ -9,7 +9,7 @@ rendering as a confident zero.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 from tradingagents_us.execution.reconcile import ClosedTrade
 from tradingagents_us.storage import TradeLogRepository
 
-T0 = datetime(2026, 8, 1, 20, 0, tzinfo=timezone.utc)
+T0 = datetime(2026, 8, 1, 20, 0, tzinfo=UTC)
 
 
 def _trade(

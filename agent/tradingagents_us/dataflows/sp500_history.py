@@ -29,10 +29,10 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import date, datetime
 from io import StringIO
-from typing import Iterator
 
 import httpx
 import pandas as pd
@@ -47,7 +47,7 @@ CHANGES_URLS = (CHANGES_URL, WIKI_URL)
 USER_AGENT = "Trading Research (https://github.com/canberkaslan/trading)"
 
 
-class SP500HistoryUnavailable(RuntimeError):
+class SP500HistoryUnavailableError(RuntimeError):
     """Historical membership could not be sourced (page moved, table gone, network down).
 
     Raised instead of degrading to "no changes", because a caller that gets an
@@ -109,7 +109,7 @@ def fetch_current_constituents() -> pd.DataFrame:
 def fetch_changes() -> list[IndexChange]:
     """Return historical additions/removals, trying each known table location.
 
-    Raises SP500HistoryUnavailable if no page yields a usable changes table.
+    Raises SP500HistoryUnavailableError if no page yields a usable changes table.
     """
     problems: list[str] = []
     for url in CHANGES_URLS:
@@ -122,7 +122,7 @@ def fetch_changes() -> list[IndexChange]:
         if changes:
             return changes
         problems.append(f"{url}: no additions/removals rows found")
-    raise SP500HistoryUnavailable(
+    raise SP500HistoryUnavailableError(
         "S&P 500 change history unavailable — " + "; ".join(problems)
     )
 
@@ -222,17 +222,21 @@ def _assert_covers(changes: list[IndexChange], as_of: date) -> None:
     if as_of >= date.today():
         return  # nothing to undo; today's constituents are the answer
     if not changes:
-        raise SP500HistoryUnavailable(
+        raise SP500HistoryUnavailableError(
             f"no index changes available — cannot reconstruct membership as of {as_of}"
         )
     oldest = min(c.effective_date for c in changes)
     if as_of < oldest:
-        raise SP500HistoryUnavailable(
+        raise SP500HistoryUnavailableError(
             f"change history only reaches back to {oldest}; cannot reconstruct {as_of}"
         )
 
 
-def members_as_of(as_of: date, changes: list[IndexChange] | None = None, current: pd.DataFrame | None = None) -> set[str]:
+def members_as_of(
+    as_of: date,
+    changes: list[IndexChange] | None = None,
+    current: pd.DataFrame | None = None,
+) -> set[str]:
     """Reconstruct the S&P 500 constituent set on a given historical date.
 
     Algorithm:

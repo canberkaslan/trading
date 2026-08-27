@@ -29,7 +29,7 @@ def test_ma_crossover_fires_on_cross() -> None:
     entries, exits = ma_crossover(_series(vals), fast=5, slow=20)
     assert entries["X"].any()  # at least one golden cross
     # signals are booleans aligned to the index, no look-ahead (uses shift)
-    assert entries.dtypes.iloc[0] == bool
+    assert entries.dtypes.iloc[0] == np.dtype(bool)
 
 
 def test_momentum_and_mean_reversion_fire_on_oscillation() -> None:

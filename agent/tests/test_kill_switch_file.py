@@ -86,7 +86,9 @@ class TestKillCheckExitCodes:
         kc = self._run_main(tmp_path, monkeypatch, None)
         assert kc.main() == 0
 
-    def test_pause_exits_75_and_audits(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_pause_exits_75_and_audits(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         kc = self._run_main(tmp_path, monkeypatch, "PAUSE_NEW")
         with patch.object(kc, "_audit") as audit:
             assert kc.main() == 75

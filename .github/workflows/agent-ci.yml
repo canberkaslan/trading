@@ -44,14 +44,14 @@ jobs:
         run: uv run mypy tradingagents_us api
         continue-on-error: true  # Strict mode — relax until phase 4
 
-      # Advisory for the same reason as mypy, and just as temporarily: ~340
-      # findings in our own code predate this workflow, and fixing them in the
-      # commit that unblocks the tests would bury the tests. Tracked in
-      # task_plan.md; drop the continue-on-error the moment the count is zero,
-      # because an advisory linter nobody must satisfy stops being read too.
+      # A real gate as of 2026-08-27: the ~340 findings this inherited are at
+      # zero. Most were mechanical (164 autofixes, 64 line wraps); the rest
+      # were rules that did not fit the design and are now waived by name with
+      # the reason in pyproject.toml, rather than left as noise. The three
+      # over-complex functions keep their finding scoped per-file — they need a
+      # supervised refactor, not a lint edit.
       - name: Ruff
         run: uv run ruff check .
-        continue-on-error: true
 
   build-image:
     needs: lint-test

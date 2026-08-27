@@ -8,7 +8,7 @@ id, walking forward) against a stubbed transport.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -58,7 +58,7 @@ class TestFillActivities:
         assert len(fills) == 1
         f = fills[0]
         assert (f.id, f.symbol, f.side, f.qty, f.price) == ("a1", "AAPL", "buy", 10.0, 100.5)
-        assert f.transaction_time == datetime(2026, 8, 1, 14, 30, tzinfo=timezone.utc)
+        assert f.transaction_time == datetime(2026, 8, 1, 14, 30, tzinfo=UTC)
 
     def test_pages_forward_using_the_last_id_as_token(self, client: AlpacaClient) -> None:
         seen = _stub(client, [
@@ -100,6 +100,6 @@ class TestFillActivities:
     def test_after_is_sent_as_utc_iso(self, client: AlpacaClient) -> None:
         seen = _stub(client, [[]])
 
-        client.list_fill_activities(after=datetime(2026, 7, 1, tzinfo=timezone.utc))
+        client.list_fill_activities(after=datetime(2026, 7, 1, tzinfo=UTC))
 
         assert seen[0]["after"] == "2026-07-01T00:00:00Z"

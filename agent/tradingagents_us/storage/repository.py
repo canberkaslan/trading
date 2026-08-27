@@ -7,9 +7,10 @@ makes dev frictionless. Production points at Aurora.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime
-from typing import TYPE_CHECKING, Iterator
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.engine import Engine
@@ -111,15 +112,15 @@ class TradeLogRepository:
     def append_kill_event(
         self, state: str, actor: str, source: str, detail: str | None = None
     ) -> None:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         with self.session() as s:
             s.add(KillSwitchEventRow(
                 state=state, actor=actor, source=source, detail=detail,
-                timestamp_utc=datetime.now(timezone.utc),
+                timestamp_utc=datetime.now(UTC),
             ))
 
-    def upsert_closed_trades(self, trades: list["ClosedTrade"]) -> int:
+    def upsert_closed_trades(self, trades: list[ClosedTrade]) -> int:
         """Persist reconciled round trips; returns the number of NEW rows.
 
         `merge` on the deterministic trade_id makes a replay idempotent: the
@@ -128,9 +129,9 @@ class TradeLogRepository:
         The new-row count is what the caller reports — "wrote 40 rows" every
         hour would hide the fact that nothing actually closed.
         """
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         new_rows = 0
         with self.session() as s:
             for t in trades:
@@ -201,9 +202,15 @@ class TradeLogRepository:
                 stmt = stmt.where(ClosedTradeRow.symbol == ticker.upper())
             return int(s.execute(stmt).scalar_one())
 
-    def list_recent_decisions(self, limit: int = 50, ticker: str | None = None) -> list[AgentDecisionRow]:
+    def list_recent_decisions(
+        self, limit: int = 50, ticker: str | None = None
+    ) -> list[AgentDecisionRow]:
         with self.session() as s:
-            stmt = select(AgentDecisionRow).order_by(AgentDecisionRow.timestamp_utc.desc()).limit(limit)
+            stmt = (
+                select(AgentDecisionRow)
+                .order_by(AgentDecisionRow.timestamp_utc.desc())
+                .limit(limit)
+            )
             if ticker:
                 stmt = stmt.where(AgentDecisionRow.ticker == ticker)
             return list(s.execute(stmt).scalars().all())
@@ -219,7 +226,11 @@ class TradeLogRepository:
         mid-window would silently understate the refusal counts computed on top.
         """
         with self.session() as s:
-            stmt = select(TradeOrderRow).order_by(TradeOrderRow.submitted_at_utc.desc()).limit(limit)
+            stmt = (
+                select(TradeOrderRow)
+                .order_by(TradeOrderRow.submitted_at_utc.desc())
+                .limit(limit)
+            )
             if since is not None:
                 stmt = stmt.where(TradeOrderRow.submitted_at_utc >= since)
             rows = list(s.execute(stmt).scalars().all())

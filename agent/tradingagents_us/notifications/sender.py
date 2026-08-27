@@ -90,7 +90,7 @@ def notify_decision_pending(tokens: list[str], ticker: str, rating: str, order_i
         PushMessage(
             to=t,
             title=f"{ticker}: {rating}",
-            body=f"Pending order ready for approval",
+            body="Pending order ready for approval",
             data={"type": "decision_pending", "ticker": ticker, "order_id": order_id},
         )
         for t in tokens

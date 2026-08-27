@@ -8,7 +8,7 @@ than none — it costs the same attention and buys nothing.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -27,7 +27,7 @@ def _report(
     inert_run_days: int = 5,
     by_reason: dict[str, int] | None = None,
     last_submitted: datetime | None = None,
-    last_order: datetime | None = datetime(2026, 8, 21, 0, 39, tzinfo=timezone.utc),
+    last_order: datetime | None = datetime(2026, 8, 21, 0, 39, tzinfo=UTC),
 ) -> ActionabilityReport:
     return ActionabilityReport(
         orders=orders,
@@ -37,7 +37,7 @@ def _report(
         inert_run_days=inert_run_days,
         run_days=10,
         last_submitted_at_utc=last_submitted,
-        first_order_at_utc=datetime(2026, 7, 22, tzinfo=timezone.utc),
+        first_order_at_utc=datetime(2026, 7, 22, tzinfo=UTC),
         last_order_at_utc=last_order,
     )
 
@@ -60,7 +60,7 @@ def test_body_names_the_dominant_blocker_and_the_last_ack():
         _report(
             submitted=6,
             by_reason={"trimmed_to_zero_by_portfolio_caps": 93, "rating=Hold": 12},
-            last_submitted=datetime(2026, 8, 11, 23, 30, tzinfo=timezone.utc),
+            last_submitted=datetime(2026, 8, 11, 23, 30, tzinfo=UTC),
         ),
         AlertState(),
     )

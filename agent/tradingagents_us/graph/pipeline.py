@@ -25,7 +25,7 @@ import logging
 import os
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Make the vendored upstream importable
@@ -43,8 +43,8 @@ def _load_env() -> None:
     env_path = Path(__file__).resolve().parent.parent.parent / ".env"
     if not env_path.exists():
         return
-    for line in env_path.read_text().splitlines():
-        line = line.strip()
+    for raw in env_path.read_text().splitlines():
+        line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         k, v = line.split("=", 1)
@@ -65,7 +65,9 @@ def propagate(ticker: str, trade_date: str) -> AgentDecision:
     """
     _load_env()
 
-    from tradingagents.graph.trading_graph import TradingAgentsGraph  # type: ignore[import-not-found]
+    from tradingagents.graph.trading_graph import (
+        TradingAgentsGraph,  # type: ignore[import-not-found]
+    )
 
     log.info("initializing TradingAgentsGraph for %s @ %s", ticker, trade_date)
     ta = TradingAgentsGraph(
@@ -166,7 +168,7 @@ def propagate(ticker: str, trade_date: str) -> AgentDecision:
         reasoning=reasoning,
         debate_transcript={},
         final_decision_text=str(final or "")[:8000],
-        timestamp_utc=datetime.now(timezone.utc),
+        timestamp_utc=datetime.now(UTC),
         decision_id=str(uuid.uuid4()),
     )
 
@@ -237,7 +239,9 @@ def _parse_pm_output(text: str) -> tuple[str, float | None, str | None]:
     """
     import re
 
-    rating_match = re.search(r"\*\*Rating\*\*\s*:?\s*(Buy|Overweight|Hold|Underweight|Sell)", text, re.I)
+    rating_match = re.search(
+        r"\*\*Rating\*\*\s*:?\s*(Buy|Overweight|Hold|Underweight|Sell)", text, re.I
+    )
     rating_raw = (rating_match.group(1).capitalize() if rating_match else "Hold")
     # Normalize: pydantic Literal is case-sensitive
     rating_map = {
@@ -315,10 +319,12 @@ def _parse_trader_output(text: str) -> tuple[float | None, float | None, float]:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s | %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s | %(message)s"
+    )
     parser = argparse.ArgumentParser(description="Run TradingAgents-US for a single ticker")
     parser.add_argument("--ticker", required=True, help="US ticker (e.g. AAPL)")
-    parser.add_argument("--date", default=datetime.now(timezone.utc).date().isoformat())
+    parser.add_argument("--date", default=datetime.now(UTC).date().isoformat())
     args = parser.parse_args()
 
     decision = propagate(args.ticker, args.date)

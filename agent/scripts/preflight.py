@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+from datetime import UTC
 
 import httpx
 
@@ -39,9 +40,13 @@ def _check_alpaca(failures: list[Failure]) -> None:
         expected = os.environ.get("EXPECTED_TRADING_MODE", "paper").strip().lower()
         is_paper = "paper" in base
         if expected == "live" and is_paper:
-            failures.append(("alpaca", f"EXPECTED_TRADING_MODE=live but routing to paper: {base!r}"))
+            failures.append(
+                ("alpaca", f"EXPECTED_TRADING_MODE=live but routing to paper: {base!r}")
+            )
         elif expected != "live" and not is_paper:
-            failures.append(("alpaca", f"base URL is NOT paper: {base!r} (EXPECTED_TRADING_MODE={expected})"))
+            failures.append(
+                ("alpaca", f"base URL is NOT paper: {base!r} (EXPECTED_TRADING_MODE={expected})")
+            )
         status = getattr(acct, "status", "")
         if status and str(status).upper() != "ACTIVE":
             failures.append(("alpaca", f"account status={status}"))
@@ -84,7 +89,10 @@ def _check_finnhub(failures: list[Failure]) -> None:
     if not key:
         # Optional in the pipeline (finnhub.py degrades to placeholders) —
         # unset must not page anyone; only a REJECTED configured key alerts.
-        print("preflight: FINNHUB_API_KEY unset (soft — pipeline uses placeholders)", file=sys.stderr)
+        print(
+            "preflight: FINNHUB_API_KEY unset (soft — pipeline uses placeholders)",
+            file=sys.stderr,
+        )
         return
     try:
         r = httpx.get(
@@ -121,11 +129,11 @@ def _check_openrouter(failures: list[Failure]) -> None:
 def _check_fred() -> None:
     """Warn-only — the risk-free rate falls back gracefully without FRED."""
     try:
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
         from tradingagents_us.dataflows.fred import FREDClient
 
-        today = datetime.now(timezone.utc).date()
+        today = datetime.now(UTC).date()
         with FREDClient() as fc:
             fc.series("DGS3MO", start=today - timedelta(days=14), end=today)
     except Exception as exc:

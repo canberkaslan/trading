@@ -20,8 +20,8 @@ def _load_env_at_import() -> None:
     if not os.path.exists(env_path):
         return
     with open(env_path) as f:
-        for line in f:
-            line = line.strip()
+        for raw in f:
+            line = raw.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
             k, v = line.split("=", 1)
@@ -55,7 +55,9 @@ def test_polygon_aggregates_aapl_last_week() -> None:
     assert all(b.close > 0 for b in bars)
 
 
-@pytest.mark.skipif(not os.environ.get("SEC_EDGAR_USER_AGENT"), reason="SEC_EDGAR_USER_AGENT not set")
+@pytest.mark.skipif(
+    not os.environ.get("SEC_EDGAR_USER_AGENT"), reason="SEC_EDGAR_USER_AGENT not set"
+)
 def test_edgar_ticker_to_cik_aapl() -> None:
     from tradingagents_us.dataflows.sec_edgar import EdgarClient
 
@@ -64,7 +66,9 @@ def test_edgar_ticker_to_cik_aapl() -> None:
     assert cik == "0000320193"
 
 
-@pytest.mark.skipif(not os.environ.get("SEC_EDGAR_USER_AGENT"), reason="SEC_EDGAR_USER_AGENT not set")
+@pytest.mark.skipif(
+    not os.environ.get("SEC_EDGAR_USER_AGENT"), reason="SEC_EDGAR_USER_AGENT not set"
+)
 def test_edgar_recent_10q_aapl() -> None:
     from tradingagents_us.dataflows.sec_edgar import EdgarClient
 
@@ -122,7 +126,7 @@ def test_sp500_history_survivor_safe() -> None:
 
     # Only an offline machine is a skip, and the constituents fetch is the
     # network probe that detects it (it lets httpx errors through). A page that
-    # loads but no longer holds the changes table raises SP500HistoryUnavailable
+    # loads but no longer holds the changes table raises SP500HistoryUnavailableError
     # — a stale selector, the exact regression this test exists to catch, so it
     # is deliberately not swallowed here.
     try:

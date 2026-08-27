@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -61,7 +61,7 @@ def append_snapshot(record: dict[str, Any], path: str | Path) -> None:
 
 def main() -> int:
     path = os.environ.get("EVAL_SNAPSHOT_FILE", DEFAULT_FILE)
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
     with AlpacaClient() as ac:
         record = build_snapshot(ac.account(), ac.list_positions(), now_iso)
     append_snapshot(record, path)

@@ -108,6 +108,51 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - 7e Charts, 7f Analiz-Et deep-link, 7g Settings kill-switch+health, snapshot logger
 - cost-opt routing on branch (opt-in, not deployed)
 
+## Daily loop 2026-08-27 (🔴 BOX DARK 4. gün; watchdog'un 3. sinyali açıldı, ruff borcu sıfırlandı)
+- **Canlı durum ALINAMADI, 4. gün.** `trader.fusapp.com` → Cloudflare **1033** (tunnel yok), SSH
+  22 timeout, ICMP %100 kayıp. `/v1/eval` ve `/v1/portfolio/snapshot` okunamıyor; en son bilinen
+  değerler 08-22'nin **NO-GO**'su (Sharpe 0.50, +0.9% vs SPY +2.45%). Kurtarma hâlâ Hetzner
+  konsolu gerektiriyor = Canberk. Box ölü olduğu için bugün **deploy edilecek bir şey yok**;
+  mobil değişiklik de olmadığından OTA atlandı.
+- [x] **Watchdog'un kör noktası kapatıldı** — `WATCHDOG_HOST` repo secret'ı `167.233.102.179:22`
+  olarak set edildi (`gh secret set`, değer commit'lenmedi; repo ve issue'lar public). Dispatch
+  ile doğrulandı: 3. sinyal artık canlı ve tasarlandığı gibi davranıyor —
+  _"Direct TCP probe to the origin: no answer (timed out or filtered) … a dropped packet and an
+  unplugged machine look identical from here, so it is not called."_ Yani timeout'u ölüm SAYMIYOR,
+  sadece destekliyor. Asıl kazanç kurtarma yönünde: box döndüğünde accept/RST gelirse watchdog
+  `wedged` (host ayakta, tunnel ölü → önce ssh) ile gerçek `dark` arasını **ayırt edebilecek**;
+  4 gündür verebildiği tek cevap `edge_down` = "bilemiyorum" idi. Issue #1 doğru şekilde sessiz
+  kaldı (state değişmedi → yorum spam'i yok). `WATCHDOG_BACKUP_TOKEN` hâlâ boş ama artık şart değil.
+- [x] **Ruff borcu 337 → 0; agent-ci'da gerçek gate oldu.** Dünkü bulgunun ikinci yarısı: suite'i
+  öne alıp ruff'ı `continue-on-error` yapmak testleri açmıştı, ama "kimsenin geçmek zorunda
+  olmadığı linter" de okunmaz hale gelir — workflow'un kendi notu "sayı sıfırlanınca flag'i kaldır"
+  diyordu. Bugün sıfırlandı:
+  - **164 autofix** (UP017 `timezone.utc`→`UTC`, unused import, quoted annotation, import sort).
+  - **64 E501** elle sarıldı (imza/çağrı/f-string; semantik değişiklik yok).
+  - **~21 gerçek küçük bulgu**: `SP500HistoryUnavailable`→`…Error` (N818, 4 dosya), `raise
+    SystemExit(1) from exc`, 4× `contextlib.suppress`, iç içe `if` birleştirme, `line`
+    loop-shadow'ları (6×) `raw`'a, `%`-format → f-string, `type(x)==bool` → `np.dtype`,
+    `api.main`'de builtin gölgeleyen `eval` → `eval as eval_routes`.
+  - **`zip(ts, eq, strict=True)`** (eval_report equity curve): uzunluk uyuşmazlığı bozuk bir Alpaca
+    payload'u demek; sessizce kırpılmış bir eğri **kendinden emin ve yanlış** bir Sharpe üretir.
+    Raporu çökertmek, o rakamı yayınlamaktan iyi.
+  - **Kurallar kod yerine config'te reddedildi, gerekçesiyle**: `PLC0415` (123) — hepsi kasıtlı;
+    `jose` fail-closed, `boto3` sadece S3 yolunda, watchdog bilerek stdlib-only. `B008` (21+4) —
+    FastAPI `Depends`/`Query` ve `frozen=True` config dataclass'ları → `extend-immutable-calls`.
+    `PLR0917` — `PLR0913` zaten muaf, birini tutup diğerini zorlamak tutarsız.
+  - **6 complexity bulgusu susturulmadı, kapsamlandı**: `trade.py:main`, `backup.py:main`,
+    `executor.py:submit_order` için `per-file-ignores`. Kural yeni kodda ötmeye devam ediyor;
+    `submit_order` canlı execution path'i — linter'ı memnun etmek için yapılan restructuring tam
+    da bu projenin paper drill olmadan yapmadığı değişiklik.
+  - Ruff `>=0.8.0` → **`>=0.16.4,<0.17`** pinlendi: gate olduğu andan itibaren sınırsız bir linter,
+    kimsenin koda dokunmadığı bir sabah main'i kırmak için başkasının release'ini bekliyor demektir.
+  - 420 test yeşil, `ruff check .` temiz (0.16.4). Off-decision-path — hiçbir karar/emir mantığı
+    değişmedi.
+- **Sıradaki:** (a) box kurtarma = Canberk (Hetzner konsolu), (b) döndüğünde ilk iş **78% naked
+  stop backfill** (265/339 hisse korumasız) + realized ledger'ın negatif expectancy'si,
+  (c) NO-GO kök nedeni: Underweight→SELL exit yolu + over-cap trim politikası (decision-path,
+  HIGH blast, denetimli paper run şart — Canberk'in kararı).
+
 ## Daily loop 2026-08-26 (🔴 BOX HÂLÂ DARK — 2. gün; watchdog 30 dk'da bir "bilemiyorum" diyordu)
 - **Canlı durum:** box 08-24 ~13:34 UTC'den beri ölü, **~40 saat**. SSH timeout, ICMP yok, CF
   530/1033. `trader.fusapp.com` down → `/v1/eval` ve `/v1/portfolio/snapshot` ALINAMIYOR (dünkü

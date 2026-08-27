@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -12,7 +12,7 @@ from tradingagents_us.execution.actionability import (
     normalize_reason,
 )
 
-BASE = datetime(2026, 8, 3, 3, 0, tzinfo=timezone.utc)  # a Monday
+BASE = datetime(2026, 8, 3, 3, 0, tzinfo=UTC)  # a Monday
 
 
 def order(

@@ -25,7 +25,9 @@ def momentum(close: pd.DataFrame, lookback: int = 126) -> tuple[pd.DataFrame, pd
     return entries.fillna(False), exits.fillna(False)
 
 
-def mean_reversion(close: pd.DataFrame, lower: int = 30, upper: int = 60) -> tuple[pd.DataFrame, pd.DataFrame]:
+def mean_reversion(
+    close: pd.DataFrame, lower: int = 30, upper: int = 60
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """RSI mean reversion: buy oversold, exit when normalized."""
     r = rsi(close)
     entries = (r < lower) & (r.shift(1) >= lower)
@@ -33,7 +35,9 @@ def mean_reversion(close: pd.DataFrame, lower: int = 30, upper: int = 60) -> tup
     return entries.fillna(False), exits.fillna(False)
 
 
-def ma_crossover(close: pd.DataFrame, fast: int = 20, slow: int = 50) -> tuple[pd.DataFrame, pd.DataFrame]:
+def ma_crossover(
+    close: pd.DataFrame, fast: int = 20, slow: int = 50
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Golden/death cross trend follower."""
     f = close.rolling(fast).mean()
     s = close.rolling(slow).mean()

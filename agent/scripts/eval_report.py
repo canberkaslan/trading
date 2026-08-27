@@ -24,7 +24,7 @@ import json
 import os
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -70,8 +70,11 @@ def _equity_series(history: dict) -> pd.Series:
     ts = history.get("timestamp", [])
     eq = history.get("equity", [])
     pairs = [
-        (datetime.fromtimestamp(t, tz=timezone.utc), float(e))
-        for t, e in zip(ts, eq)
+        (datetime.fromtimestamp(t, tz=UTC), float(e))
+        # strict: a length mismatch means Alpaca returned a malformed history,
+        # and a silently truncated equity curve would produce a confident,
+        # wrong Sharpe. Better to fail the report than to publish that.
+        for t, e in zip(ts, eq, strict=True)
         if e is not None and float(e) > 0
     ]
     if not pairs:
@@ -153,7 +156,7 @@ def _risk_free_rate() -> tuple[float, str]:
 
         from tradingagents_us.dataflows.fred import FREDClient
 
-        today = datetime.now(timezone.utc).date()
+        today = datetime.now(UTC).date()
         with FREDClient() as fc:
             obs = fc.series("DGS3MO", start=today - timedelta(days=14), end=today)
         vals = [o.value for o in obs if o.value is not None]
@@ -227,8 +230,8 @@ def _snapshot_summary() -> tuple[float, float, int] | None:
         return None
     counts: list[int] = []
     tops: list[float] = []
-    for line in path.read_text().splitlines():
-        line = line.strip()
+    for raw in path.read_text().splitlines():
+        line = raw.strip()
         if not line:
             continue
         try:

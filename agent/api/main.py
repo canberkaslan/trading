@@ -22,7 +22,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from fastapi import Depends, FastAPI
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
@@ -31,12 +31,14 @@ from .routes import (
     agents,
     analyze,
     diagnostics,
-    eval,
     notifications,
     orders,
     portfolio,
     prices,
     trades,
+)
+from .routes import (
+    eval as eval_routes,
 )
 
 app = FastAPI(
@@ -68,7 +70,7 @@ app.include_router(orders.router, prefix="/v1/orders", tags=["orders"])
 app.include_router(agents.router, prefix="/v1/agents", tags=["agents"])
 app.include_router(analyze.router, prefix="/v1/analyze", tags=["analyze"])
 app.include_router(prices.router, prefix="/v1/prices", tags=["prices"])
-app.include_router(eval.router, prefix="/v1/eval", tags=["eval"])
+app.include_router(eval_routes.router, prefix="/v1/eval", tags=["eval"])
 app.include_router(notifications.router, prefix="/v1/notifications", tags=["notifications"])
 app.include_router(trades.router, prefix="/v1/trades", tags=["trades"])
 app.include_router(diagnostics.router, prefix="/v1/diagnostics", tags=["diagnostics"])

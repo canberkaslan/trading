@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import io
 import os
-from datetime import date
 
 import pytest
 
@@ -20,8 +19,8 @@ def _load_env_at_import() -> None:
     if not os.path.exists(env_path):
         return
     with open(env_path) as f:
-        for line in f:
-            line = line.strip()
+        for raw in f:
+            line = raw.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
             k, v = line.split("=", 1)

@@ -61,7 +61,10 @@ def _notify(title: str, body: str) -> None:
         with _repo().session() as s:
             tokens = list_all_tokens(s)
         send_expo_push([
-            PushMessage(to=t, title=title, body=body[:200], data={"type": "ops_alert", "kind": "kill_switch"})
+            PushMessage(
+                to=t, title=title, body=body[:200],
+                data={"type": "ops_alert", "kind": "kill_switch"},
+            )
             for t in tokens
         ])
     except Exception as exc:

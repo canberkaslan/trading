@@ -23,7 +23,7 @@ import logging
 import os
 import sys
 import uuid
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 # Make package + vendor importable when running as a script
@@ -63,8 +63,8 @@ def _load_env() -> None:
     env_path = _AGENT_ROOT / ".env"
     if not env_path.exists():
         return
-    for line in env_path.read_text().splitlines():
-        line = line.strip()
+    for raw in env_path.read_text().splitlines():
+        line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         k, v = line.split("=", 1)
@@ -100,11 +100,11 @@ def _decision_from_cached(ticker: str) -> AgentDecision:
     trade_date = state.get("trade_date")
     if trade_date:
         try:
-            decision_ts = datetime.fromisoformat(trade_date).replace(tzinfo=timezone.utc)
+            decision_ts = datetime.fromisoformat(trade_date).replace(tzinfo=UTC)
         except ValueError:
-            decision_ts = datetime.now(timezone.utc)
+            decision_ts = datetime.now(UTC)
     else:
-        decision_ts = datetime.now(timezone.utc)
+        decision_ts = datetime.now(UTC)
 
     return AgentDecision(
         ticker=ticker, market="US", quote_currency="USD",
@@ -143,12 +143,16 @@ def _print_decision(d: AgentDecision) -> None:
 
 
 def main() -> int:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s | %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s | %(message)s"
+    )
     _load_env()
 
-    parser = argparse.ArgumentParser(description="Decide + size + (optional) submit to Alpaca paper.")
+    parser = argparse.ArgumentParser(
+        description="Decide + size + (optional) submit to Alpaca paper."
+    )
     parser.add_argument("--ticker", required=True)
-    parser.add_argument("--date", default=datetime.now(timezone.utc).date().isoformat())
+    parser.add_argument("--date", default=datetime.now(UTC).date().isoformat())
     parser.add_argument("--use-cached", action="store_true",
                         help="Replay the most recent cached state for this ticker (no LLM cost)")
     parser.add_argument("--method", choices=["atr", "llm_pct"], default="atr",
@@ -158,7 +162,8 @@ def main() -> int:
     parser.add_argument("--submit", action="store_true",
                         help="Actually submit the order to Alpaca (default: dry run)")
     parser.add_argument("--hold", action="store_true",
-                        help="Save the order as PENDING (no broker call) — wait for mobile approval")
+                        help="Save the order as PENDING (no broker call) — "
+                             "wait for mobile approval")
     parser.add_argument("--refuse-outside-hours", action="store_true")
     parser.add_argument("--no-persist", action="store_true",
                         help="Skip writing to the trade log DB")
@@ -168,7 +173,10 @@ def main() -> int:
     args = parser.parse_args()
 
     from sqlalchemy import create_engine
-    repo = None if args.no_persist else TradeLogRepository(engine=create_engine(args.db_url, future=True))
+    repo = (
+        None if args.no_persist
+        else TradeLogRepository(engine=create_engine(args.db_url, future=True))
+    )
 
     # The RUN's trading date anchors the idempotency key. Decisions finishing
     # after midnight UTC must not shift the key to the next day (silent
@@ -176,14 +184,17 @@ def main() -> int:
     try:
         run_date = date.fromisoformat(args.date)
     except ValueError:
-        run_date = datetime.now(timezone.utc).date()
+        run_date = datetime.now(UTC).date()
 
     # 1. Get decision
     if args.use_cached:
         log.info("loading cached decision for %s", args.ticker)
         decision = _decision_from_cached(args.ticker)
     else:
-        log.info("running fresh LLM pipeline for %s @ %s (~5-10 min, ~$0.50-1.50)", args.ticker, args.date)
+        log.info(
+            "running fresh LLM pipeline for %s @ %s (~5-10 min, ~$0.50-1.50)",
+            args.ticker, args.date,
+        )
         decision = propagate(args.ticker, args.date)
     _print_decision(decision)
 
@@ -311,15 +322,17 @@ def main() -> int:
             repo.append_update(OrderUpdate(
                 order_id=order.order_id, status="PENDING",
                 error_message="awaiting_mobile_approval",
-                timestamp_utc=datetime.now(timezone.utc),
+                timestamp_utc=datetime.now(UTC),
             ))
-        print(f"\n=== HOLD: order persisted as PENDING ===")
+        print("\n=== HOLD: order persisted as PENDING ===")
         print(f"  Order ID:    {order.order_id}")
         print(f"  Approve via: POST /v1/orders/{order.order_id}/approve (mobile)")
         print(f"  Or CLI:      curl -X POST http://localhost:8000/v1/orders/{order.order_id}/approve")
         return 0
 
-    config = ExecutionConfig(dry_run=not args.submit, refuse_outside_hours=args.refuse_outside_hours)
+    config = ExecutionConfig(
+        dry_run=not args.submit, refuse_outside_hours=args.refuse_outside_hours
+    )
     result = submit_order(order, config=config, decision=decision,
                           current_price=current_price, trade_date=run_date)
 
@@ -337,7 +350,10 @@ def main() -> int:
     if result.refusal_reasons:
         print(f"  Refusals:    {result.refusal_reasons}")
     if not args.submit:
-        print("\n(--submit not set — no broker call made. Re-run with --submit to send to Alpaca paper.)")
+        print(
+            "\n(--submit not set — no broker call made. "
+            "Re-run with --submit to send to Alpaca paper.)"
+        )
     # Exit non-zero ONLY on an operational failure (broker/API error). A policy
     # refusal — non-actionable Hold, risk guard, PDT, market closed — is the
     # intended "no trade today" outcome and must not mark the daily run failed.

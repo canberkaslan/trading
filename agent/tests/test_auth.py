@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 
 import pytest
 from fastapi import HTTPException
@@ -59,7 +58,9 @@ async def test_cognito_path_requires_bearer(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def _fake_jwt() -> str:
-    header = base64.urlsafe_b64encode(json.dumps({"alg": "RS256", "kid": "x"}).encode()).rstrip(b"=")
+    header = base64.urlsafe_b64encode(
+        json.dumps({"alg": "RS256", "kid": "x"}).encode()
+    ).rstrip(b"=")
     payload = base64.urlsafe_b64encode(json.dumps({"sub": "user-1234"}).encode()).rstrip(b"=")
     return f"{header.decode()}.{payload.decode()}.fakesig"
 

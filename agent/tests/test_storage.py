@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import create_engine
@@ -29,7 +29,7 @@ def _decision(dec_id: str = "dec-1", ticker: str = "AAPL") -> AgentDecision:
                            tokens_in=0, tokens_out=0, latency_ms=0),
         ],
         final_decision_text="**Rating**: Overweight",
-        timestamp_utc=datetime.now(timezone.utc),
+        timestamp_utc=datetime.now(UTC),
         decision_id=dec_id,
     )
 
@@ -39,7 +39,7 @@ def _order(order_id: str, decision_id: str = "dec-1") -> TradeOrder:
         order_id=order_id, decision_id=decision_id,
         ticker="AAPL", market="US", side="BUY", quantity=29, order_type="MARKET",
         limit_price=None, stop_loss=229.0, risk_approved=True,
-        rejection_reasons=[], submitted_at_utc=datetime.now(timezone.utc),
+        rejection_reasons=[], submitted_at_utc=datetime.now(UTC),
     )
 
 
@@ -65,11 +65,11 @@ def test_decision_then_order_then_updates(repo: TradeLogRepository) -> None:
     repo.save_order(_order("ord-1"), broker_order_id="alpaca-xyz")
     repo.append_update(OrderUpdate(
         order_id="ord-1", status="PENDING",
-        timestamp_utc=datetime.now(timezone.utc),
+        timestamp_utc=datetime.now(UTC),
     ))
     repo.append_update(OrderUpdate(
         order_id="ord-1", status="FILLED", filled_qty=29, avg_fill_price=271.50,
-        slippage_bps=2.0, timestamp_utc=datetime.now(timezone.utc),
+        slippage_bps=2.0, timestamp_utc=datetime.now(UTC),
     ))
 
     orders = repo.list_open_orders()

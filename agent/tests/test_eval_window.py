@@ -7,7 +7,7 @@ window"), they end up describing different books while looking like one.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -16,23 +16,23 @@ from tradingagents_us.eval_window import eval_start_utc, parse_eval_start
 
 class TestParseEvalStart:
     def test_plain_date_is_utc_midnight(self) -> None:
-        assert parse_eval_start("2026-06-24") == datetime(2026, 6, 24, tzinfo=timezone.utc)
+        assert parse_eval_start("2026-06-24") == datetime(2026, 6, 24, tzinfo=UTC)
 
     def test_naive_timestamp_is_read_as_utc(self) -> None:
         # Broker fill timestamps are UTC; anchoring the boundary to local time
         # would reclassify trades on the cutoff day itself.
         assert parse_eval_start("2026-06-24T13:30:00") == datetime(
-            2026, 6, 24, 13, 30, tzinfo=timezone.utc
+            2026, 6, 24, 13, 30, tzinfo=UTC
         )
 
     def test_offset_timestamp_is_converted_to_utc(self) -> None:
         assert parse_eval_start("2026-06-24T16:30:00+03:00") == datetime(
-            2026, 6, 24, 13, 30, tzinfo=timezone.utc
+            2026, 6, 24, 13, 30, tzinfo=UTC
         )
 
     def test_zulu_suffix_parses(self) -> None:
         assert parse_eval_start("2026-06-24T00:00:00Z") == datetime(
-            2026, 6, 24, tzinfo=timezone.utc
+            2026, 6, 24, tzinfo=UTC
         )
 
     @pytest.mark.parametrize("raw", [None, "", "   "])
@@ -50,7 +50,7 @@ class TestParseEvalStart:
 class TestEvalStartUtc:
     def test_reads_the_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("EVAL_START_DATE", "2026-06-24")
-        assert eval_start_utc() == datetime(2026, 6, 24, tzinfo=timezone.utc)
+        assert eval_start_utc() == datetime(2026, 6, 24, tzinfo=UTC)
 
     def test_missing_env_is_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("EVAL_START_DATE", raising=False)

@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import math
 
-import numpy as np
 import vectorbt as vbt
 
 from backtest.data import load_ohlcv
@@ -52,7 +51,10 @@ def run() -> None:
     tr = close.loc[TRAIN[0]:TRAIN[1]]
     te = close.loc[TEST[0]:TEST[1]]
     n_trials = len(SL_GRID) * len(TP_GRID)
-    print(f"TRAIN {TRAIN[0]}..{TRAIN[1]} ({len(tr)}g)  TEST {TEST[0]}..{TEST[1]} ({len(te)}g)  grid={n_trials}/strateji\n")
+    print(
+        f"TRAIN {TRAIN[0]}..{TRAIN[1]} ({len(tr)}g)  "
+        f"TEST {TEST[0]}..{TEST[1]} ({len(te)}g)  grid={n_trials}/strateji\n"
+    )
 
     for sname, fn in STRATEGIES.items():
         tr_e, tr_x = fn(tr)
@@ -63,7 +65,8 @@ def run() -> None:
                 results.append((sl, tp, _sharpe(tr, tr_e, tr_x, sl, tp)))
         valid = [r for r in results if math.isfinite(r[2])]
         if not valid:
-            print(f"{sname}: tüm kombolar nan — atlandı"); continue
+            print(f"{sname}: tüm kombolar nan — atlandı")
+            continue
         best = max(valid, key=lambda r: r[2])
         sl, tp, tr_sh = best
         te_sh = _sharpe(te, te_e, te_x, sl, tp)
@@ -72,7 +75,7 @@ def run() -> None:
         deflated_tr = tr_sh - haircut * (1.0 / math.sqrt(len(tr)))
         tag = "OVERFIT?" if (math.isfinite(te_sh) and te_sh < tr_sh - 0.5) else "robust"
         print(f"=== {sname} ===")
-        print(f"  en iyi TRAIN param : SL {sl*100:.0f}%  TP {('%d%%'%(tp*100)) if tp else 'yok'}")
+        print(f"  en iyi TRAIN param : SL {sl*100:.0f}%  TP {f'{tp*100:.0f}%' if tp else 'yok'}")
         print(f"  TRAIN Sharpe       : {tr_sh:.2f}  (deflated ~{deflated_tr:.2f})")
         print(f"  TEST  Sharpe (OOS) : {te_sh:.2f}   -> {tag}")
         print()

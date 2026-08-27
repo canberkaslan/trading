@@ -104,7 +104,9 @@ def main() -> None:
     total = 0
     for t in tickers:
         try:
-            total += fetch_and_upload(t, args.start, args.end, args.bucket, args.prefix, args.profile)
+            total += fetch_and_upload(
+                t, args.start, args.end, args.bucket, args.prefix, args.profile
+            )
         except Exception:
             log.exception("failed: %s", t)
     log.info("done. total rows=%d tickers=%d", total, len(tickers))

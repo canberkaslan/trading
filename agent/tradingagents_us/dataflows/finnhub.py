@@ -58,7 +58,7 @@ class FinnhubClient:
     def close(self) -> None:
         self._http.close()
 
-    def __enter__(self) -> "FinnhubClient":
+    def __enter__(self) -> FinnhubClient:
         return self
 
     def __exit__(self, *_: object) -> None:

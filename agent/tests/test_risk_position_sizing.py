@@ -50,13 +50,16 @@ class TestATR:
 class TestVolTarget:
     def test_vol_target_basic(self) -> None:
         # 15% target, 30% asset vol → 0.5x weight; 100k * 0.5 / $50 = 1000 shares
-        size = vol_target_size(equity=100_000, target_annual_vol=0.15, asset_annual_vol=0.30, price=50.0)
+        size = vol_target_size(
+            equity=100_000, target_annual_vol=0.15, asset_annual_vol=0.30, price=50.0
+        )
         assert size == 1000
 
     def test_vol_target_caps_at_max_weight(self) -> None:
         # 30% target, 15% asset vol would want 2x — capped at 1.0
         size = vol_target_size(
-            equity=100_000, target_annual_vol=0.30, asset_annual_vol=0.15, price=50.0, max_weight=1.0
+            equity=100_000, target_annual_vol=0.30, asset_annual_vol=0.15,
+            price=50.0, max_weight=1.0,
         )
         assert size == 2000  # 100k / $50
 
@@ -184,5 +187,8 @@ class TestDescribePositionCapTrim:
         hr = position_cap_headroom(
             price=309.35, equity=100_000, existing_position_value=10_400, max_position_pct=0.10
         )
-        reason = f"trimmed_to_zero_by_portfolio_caps ({describe_position_cap_trim('AAPL', 309.35, hr)})"
+        reason = (
+            "trimmed_to_zero_by_portfolio_caps "
+            f"({describe_position_cap_trim('AAPL', 309.35, hr)})"
+        )
         assert normalize_reason(reason) == "trimmed_to_zero_by_portfolio_caps"

@@ -44,14 +44,18 @@ class AgentDecisionRow(Base):
     final_decision_text: Mapped[str | None] = mapped_column(String, nullable=True)
     timestamp_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
-    orders: Mapped[list["TradeOrderRow"]] = relationship(back_populates="decision", cascade="all, delete-orphan")
+    orders: Mapped[list[TradeOrderRow]] = relationship(
+        back_populates="decision", cascade="all, delete-orphan"
+    )
 
 
 class TradeOrderRow(Base):
     __tablename__ = "trade_orders"
 
     order_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    decision_id: Mapped[str] = mapped_column(String(64), ForeignKey("agent_decisions.decision_id"), index=True)
+    decision_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("agent_decisions.decision_id"), index=True
+    )
     ticker: Mapped[str] = mapped_column(String(16), index=True)
     market: Mapped[str] = mapped_column(String(8), default="US")
     side: Mapped[str] = mapped_column(String(8))             # "BUY" | "SELL"
@@ -65,7 +69,9 @@ class TradeOrderRow(Base):
     submitted_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
     decision: Mapped[AgentDecisionRow] = relationship(back_populates="orders")
-    updates: Mapped[list["OrderUpdateRow"]] = relationship(back_populates="order", cascade="all, delete-orphan")
+    updates: Mapped[list[OrderUpdateRow]] = relationship(
+        back_populates="order", cascade="all, delete-orphan"
+    )
 
 
 class KillSwitchEventRow(Base):
@@ -118,7 +124,9 @@ class OrderUpdateRow(Base):
     __tablename__ = "order_updates"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    order_id: Mapped[str] = mapped_column(String(64), ForeignKey("trade_orders.order_id"), index=True)
+    order_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("trade_orders.order_id"), index=True
+    )
     status: Mapped[str] = mapped_column(String(16))
     filled_qty: Mapped[int] = mapped_column(Integer, default=0)
     avg_fill_price: Mapped[float | None] = mapped_column(Float, nullable=True)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends
@@ -36,7 +36,7 @@ async def register_token(
     with repo.session() as s:
         upsert_token(
             s, token=body.token, user_id=user, platform=body.platform,
-            ts=datetime.now(timezone.utc),
+            ts=datetime.now(UTC),
         )
     return {"status": "registered", "token": body.token[:24] + "…"}
 

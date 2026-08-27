@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 
-import pandas as pd
 import vectorbt as vbt
 
 from backtest.data import REGIMES, load_ohlcv
@@ -32,7 +31,7 @@ SLIPPAGE = 0.0005
 INIT_CASH = 100_000.0
 
 
-def _metrics(pf: "vbt.Portfolio") -> dict:
+def _metrics(pf: vbt.Portfolio) -> dict:
     try:
         sharpe = float(pf.sharpe_ratio())
     except Exception:
@@ -81,7 +80,10 @@ def run(start: str, end: str) -> None:
         uni = sub[[t for t in UNIVERSE if t in sub.columns]].dropna(how="all")
         spy = sub[BENCHMARK].dropna()
 
-        print(f"\n{'='*64}\n  REGIME: {rname}  ({sub.index.min().date()} → {sub.index.max().date()}, {len(sub)} gün)\n{'='*64}")
+        print(
+            f"\n{'='*64}\n  REGIME: {rname}  "
+            f"({sub.index.min().date()} → {sub.index.max().date()}, {len(sub)} gün)\n{'='*64}"
+        )
         print(f"  {'strateji':<22}{'Sharpe':>9}{'MaxDD%':>10}{'Getiri%':>11}")
         print("  " + "-" * 50)
 
@@ -91,7 +93,10 @@ def run(start: str, end: str) -> None:
             m = _run_strategy(uni, entries, exits)
             print(f"  {sname:<22}{m['sharpe']:>9.2f}{m['max_dd']:>10.1f}{m['total_return']:>11.1f}")
         print("  " + "-" * 50)
-        print(f"  {'SPY buy&hold':<22}{spy_m['sharpe']:>9.2f}{spy_m['max_dd']:>10.1f}{spy_m['total_return']:>11.1f}")
+        print(
+            f"  {'SPY buy&hold':<22}{spy_m['sharpe']:>9.2f}"
+            f"{spy_m['max_dd']:>10.1f}{spy_m['total_return']:>11.1f}"
+        )
 
 
 def main() -> int:

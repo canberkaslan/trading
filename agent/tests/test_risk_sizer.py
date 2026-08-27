@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
-import pytest
+from datetime import UTC, datetime
 
 from tradingagents_us.execution.actionability import normalize_reason
 from tradingagents_us.risk.circuit_breaker import CircuitBreaker
@@ -14,7 +12,12 @@ from tradingagents_us.risk.sizer import MarketContext, size_from_decision
 from tradingagents_us.schemas import AgentDecision, AgentReasoning
 
 
-def _decision(rating: str, entry: float | None = 271.0, stop: float | None = 229.0, size: float = 0.045) -> AgentDecision:
+def _decision(
+    rating: str,
+    entry: float | None = 271.0,
+    stop: float | None = 229.0,
+    size: float = 0.045,
+) -> AgentDecision:
     return AgentDecision(
         ticker="AAPL",
         market="US",
@@ -23,8 +26,13 @@ def _decision(rating: str, entry: float | None = 271.0, stop: float | None = 229
         entry_price=entry,
         stop_loss=stop,
         suggested_size_pct=size,
-        reasoning=[AgentReasoning(agent="pm", model="claude-opus-4-7", summary="x", tokens_in=0, tokens_out=0, latency_ms=0)],
-        timestamp_utc=datetime.now(timezone.utc),
+        reasoning=[
+            AgentReasoning(
+                agent="pm", model="claude-opus-4-7", summary="x",
+                tokens_in=0, tokens_out=0, latency_ms=0,
+            )
+        ],
+        timestamp_utc=datetime.now(UTC),
         decision_id="dec-1",
     )
 
@@ -145,7 +153,10 @@ class TestRejections:
             circuit_breaker=_cb(),
             portfolio_limits=PortfolioLimits(max_position_pct=0.10),
         )
-        reason = next(r for r in order.rejection_reasons if r.startswith("trimmed_to_zero_by_portfolio_caps"))
+        reason = next(
+            r for r in order.rejection_reasons
+            if r.startswith("trimmed_to_zero_by_portfolio_caps")
+        )
         assert reason == (
             "trimmed_to_zero_by_portfolio_caps "
             "(AAPL at 10.0% of equity, cap 10.0%, headroom=$0.00)"
@@ -171,7 +182,10 @@ class TestRejections:
             circuit_breaker=_cb(),
             portfolio_limits=PortfolioLimits(max_position_pct=0.10),
         )
-        reason = next(r for r in order.rejection_reasons if r.startswith("trimmed_to_zero_by_portfolio_caps"))
+        reason = next(
+            r for r in order.rejection_reasons
+            if r.startswith("trimmed_to_zero_by_portfolio_caps")
+        )
         assert "below 1 share @ $271.00" in reason
         assert "at 9.8% of equity" not in reason  # that phrasing is reserved for at-cap
 

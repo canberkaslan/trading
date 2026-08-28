@@ -6,13 +6,22 @@ name: watchdog
 # died on 2026-08-24 nothing fired. GitHub's scheduler has no dependency on that
 # machine, which is the only property that matters here.
 #
-# Scheduled runs are best-effort on GitHub's side and can be delayed under load —
-# fine for a 30-minute watchdog, and a reason not to make the cadence tighter
-# than the thing it watches actually needs.
-
+# Scheduled runs are best-effort on GitHub's side and can be delayed under load.
+# That was written as a caveat; measured over the 2026-08-25..28 outage it is the
+# dominant behavior. Across 46 scheduled runs the median gap was 55 minutes, a
+# third of gaps exceeded an hour, and the last three were 10.6h, 9.7h and 8.4h.
+# So the cadence is not 30 minutes, and an incident's verdict can be however many
+# hours stale — worth knowing before reading one as current.
+#
+# The offset below is a mitigation, not a diagnosis: '*/30' fires at :00 and :30,
+# the minutes every other cron on the platform also asks for, and GitHub drops
+# scheduled runs it cannot place. Moving off that boundary is cheap and costs
+# nothing if congestion turns out not to be the whole story. It is NOT a fix for
+# multi-hour gaps, and the real repair is the watchdog reporting the age of its
+# own last check so a stale verdict cannot read as a fresh one.
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '7,37 * * * *'
   workflow_dispatch:
     inputs:
       dry_run:

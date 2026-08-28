@@ -108,6 +108,55 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - 7e Charts, 7f Analiz-Et deep-link, 7g Settings kill-switch+health, snapshot logger
 - cost-opt routing on branch (opt-in, not deployed)
 
+## Daily loop 2026-08-28 (🔴 BOX DARK 5. gün; stop coverage'ın doğru sayımı, watchdog'un yalancı cadence'i)
+- **Canlı durum ALINAMADI, 5. gün.** `trader.fusapp.com` → CF **1033**, SSH 22 timeout, ICMP %100
+  kayıp. `/v1/eval` ve `/v1/portfolio/snapshot` okunamıyor. Kurtarma hâlâ Hetzner konsolu = Canberk.
+  Box ölü, mobil değişiklik yok → **bugün de deploy YOK** (backend deploy imkânsız, OTA gereksiz).
+  Broker'dan doğrudan (read-only): equity **$108,577.67**, last_equity $108,029.01, cash $2,829.16,
+  10 pozisyon, unrealized **+$9,518.92**, ACTIVE, `trading_blocked=false`. 08-24'ten beri tek emir
+  yok (son fill `META buy 1` 08-24T13:34) — kitap 5 gündür yönetilmiyor, sadece piyasayla sürükleniyor.
+- [x] **`risk/stop_coverage.py` — koruyucu stop kapsamının doğru sayımı** (risk muhasebesi,
+  karar-yolu DIŞI, box GEREKTİRMEZ). Repo'da bu soruyu cevaplayan hiçbir kod yoktu, ve bariz yol
+  parayı kaybettiren yönde yanlış.
+  - **Bu hatayı bugün ben yaptım**: Alpaca'ya `status=open` sorup stop emirlerini saydım ve
+    **339/339 hisse çıplak** okudum. Gerçek rakam **265/339 (%78.2)** — 08-25'ten beri değişmemiş.
+    İki sebep: (a) bracket'ın bekleyen bacağı **`held`** statüsünde durur ve Alpaca'nın "open"
+    filtresi `held`'i **dışarıda bırakır**, (b) bacaklar parent'ın **içine nested** döner, üst
+    seviyede görünmez. İkisi de aynı yöne yanlışlar: **olmayan çıplaklık uydururlar.**
+  - **Bu kötü bir rapor değil, kötü bir trade.** Bu sayının tüketicisi naked-stop backfill'i:
+    korunan pozisyonu çıplak sanırsa zaten stop'u olan hisselere **ikinci bir stop** koyar, ve tek
+    lot üzerinde iki stop, gap-down'da **short pozisyon** demektir. `held` stop'lar gerçekten
+    çalışıyor — kanıt: 08-20'de UNH 11 hisse `held` stop **doldu**.
+  - **Üç kova, iki değil**: `protected + naked + indeterminate == pozisyon`. Tanınmayan statü
+    ikisine de yuvarlanmaz, `indeterminate` olur ve o ismi backfill'e **kapatır** — `cash_budget`'ın
+    fiyatlanamayan emirde 0.0 yerine `None` döndürmesiyle aynı kural. Live/terminal statüler
+    **allowlist**: Alpaca yarın yeni bir statü eklerse "koruma" değil "bilinmiyor" okunur.
+  - Side eşleştiriliyor: long'u **SELL** stop korur, short'u **BUY**. Take-profit limit koruma
+    DEĞİL — yukarıyı sınırlar, aşağı inerken hiçbir şey yapmaz; hesabın "open" görünen 5 emrinin
+    **hepsi** bu (META 625, GOOGL 395×2, XOM 170, UNH 470). Ayrıca `excess_qty` (iki kez koşmuş
+    bir backfill'in parmak izi) ve altında pozisyon olmayan orphan stop'lar raporlanıyor.
+  - `scripts/stop_coverage.py`: salt-okunur rapor, **hiçbir emir göndermez**. Box'sız çalışır —
+    kitap sahipsizken kullanılabilir olmasının bütün mesele olduğu nokta bu.
+  - 22 yeni test (**442 yeşil**), ruff temiz (0.16.4). Bir test naive sayımı doğrusuyla yan yana
+    pinliyor, bir diğeri `held`'in terminal sete kaymasını yakalıyor — regresyon sessizce dönemez.
+  - **Canlı doğrulama:** rapor 08-25'in elle sayımıyla birebir aynı çıktı: 339 tutulan, 74 korunan
+    (XOM 56/56, UNH 15/15, GOOGL 2/31, META 1/19), **265 çıplak = %78.2**; AAPL/AMZN/JPM/MSFT/NVDA/V
+    tamamen çıplak. **Emir GEÇİLMEDİ** — backfill hâlâ Canberk'in kararı ve denetimli koşu şart.
+- [x] **Watchdog'un cadence'i yalan söylüyordu** (ölçüldü, mitigate edildi). Cron `*/30` diyor;
+  08-25..28 penceresinde 46 scheduled run'ın **medyan aralığı 55 dk**, %33'ü 1 saati aşıyor ve son
+  üç aralık **10.6s / 9.7s / 8.4s**. Yani "30 dakikada bir haber alırım" garantisi yok; bir
+  incident'ın verdict'i saatlerce bayat olabilir ve **bunu okuyanın anlamasının yolu yok**.
+  Cron `7,37`'ye kaydırıldı — `*/30` platformdaki her cron'un istediği :00/:30'a düşüyor ve GitHub
+  yerleştiremediği koşuları düşürüyor. **Bu bir teşhis değil mitigation**; çok saatlik boşlukları
+  çözmez. Asıl onarım watchdog'un **kendi son kontrolünün yaşını** rapora yazması (sıradaki).
+- **Canberk'e kalan (değişmedi):** (1) Hetzner konsolu → box'a bak, ayaktaysa `ssh agentmesh` +
+  `journalctl -b -1 -e`, değilse power-cycle; sonra `ai-trader.timer`, `ai-trader-api`, `cloudflared`.
+  (2) `WATCHDOG_BACKUP_TOKEN` (trading-backups Contents:read PAT) — `WATCHDOG_HOST` dün kuruldu.
+- **Sıradaki:** (a) box kurtarma = Canberk, (b) watchdog self-staleness (verdict'in yaşı incident
+  gövdesinde), (c) box dönünce **stop backfill** — artık doğru input'u var: `is_actionable` olan
+  6 isim, 265 hisse; indeterminate varken o isme dokunulmayacak, (d) NO-GO kök nedeni:
+  Underweight→SELL exit yolu + realized negatif expectancy (decision-path, HIGH blast, denetimli).
+
 ## Daily loop 2026-08-27 (🔴 BOX DARK 4. gün; watchdog'un 3. sinyali açıldı, ruff borcu sıfırlandı)
 - **Canlı durum ALINAMADI, 4. gün.** `trader.fusapp.com` → Cloudflare **1033** (tunnel yok), SSH
   22 timeout, ICMP %100 kayıp. `/v1/eval` ve `/v1/portfolio/snapshot` okunamıyor; en son bilinen

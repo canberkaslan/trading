@@ -66,6 +66,15 @@ class Order:
     # Present on limit orders only; None for market orders. Cash budgeting needs it
     # to price an open BUY that has not filled yet (see risk.cash_budget).
     limit_price: float | None = None
+    # Present on stop / stop_limit / trailing_stop orders. Stop-coverage accounting
+    # needs it to report the level a position is actually protected at, not just
+    # that some protective order exists (see risk.stop_coverage).
+    stop_price: float | None = None
+    # Bracket/OCO children. Alpaca returns these NESTED under the parent when the
+    # request asks for it, and the protective stop of a bracket lives here rather
+    # than at the top level — a caller that does not descend sees a book with no
+    # stops on it at all.
+    legs: tuple[Order, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -276,8 +285,25 @@ class AlpacaClient:
         d = r.json()
         return _order_from_dict(d) if d else None
 
-    def list_orders(self, status: str = "open", limit: int = 50) -> list[Order]:
-        return [_order_from_dict(o) for o in self._get(f"/orders?status={status}&limit={limit}")]
+    def list_orders(
+        self, status: str = "open", limit: int = 50, nested: bool = False
+    ) -> list[Order]:
+        """Orders at the broker.
+
+        `nested=True` asks Alpaca to return bracket/OCO children inside their
+        parent's `legs` instead of flattening them into the top-level list. It is
+        off by default because every existing caller wants the flat view; anything
+        reasoning about protective stops wants it ON (see `risk.stop_coverage`).
+
+        NOTE on `status="open"`: Alpaca's "open" filter does NOT include `held`,
+        which is the state the resting leg of a bracket sits in. Querying open
+        orders and concluding a book has no stops on it is a false negative, not
+        an observation — pass `status="all"` when the question is about protection.
+        """
+        query = f"/orders?status={status}&limit={limit}"
+        if nested:
+            query += "&nested=true"
+        return [_order_from_dict(o) for o in self._get(query)]
 
     def cancel_order(self, order_id: str) -> dict:
         return self._delete(f"/orders/{order_id}")
@@ -377,4 +403,6 @@ def _order_from_dict(d: dict) -> Order:
         submitted_at=datetime.fromisoformat(d["submitted_at"].replace("Z", "+00:00")),
         filled_avg_price=float(d["filled_avg_price"]) if d.get("filled_avg_price") else None,
         limit_price=float(d["limit_price"]) if d.get("limit_price") else None,
+        stop_price=float(d["stop_price"]) if d.get("stop_price") else None,
+        legs=tuple(_order_from_dict(leg) for leg in (d.get("legs") or ())),
     )

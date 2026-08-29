@@ -108,6 +108,64 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - 7e Charts, 7f Analiz-Et deep-link, 7g Settings kill-switch+health, snapshot logger
 - cost-opt routing on branch (opt-in, not deployed)
 
+## Daily loop 2026-08-29 (🔴 BOX DARK 6. gün; incident kendi yaşını söylüyor + watchdog cadence'i ÇÖKMÜŞ)
+- **Canlı durum ALINAMADI, 6. gün.** `trader.fusapp.com` → CF **1033**, SSH 22 timeout, ICMP %100
+  kayıp. Kurtarma hâlâ Hetzner konsolu = Canberk. Backend deploy imkânsız, mobil değişiklik yok →
+  **OTA yok**. Broker'dan doğrudan (read-only): equity **$109,330.78**, cash $2,829.16, 10 pozisyon,
+  unrealized **+$10,272.03**, ACTIVE, `trading_blocked=false`. `last_equity == equity` (Cumartesi,
+  piyasa kapalı). Son fill hâlâ **08-24 META buy 1** — kitap 6 gündür yönetilmiyor.
+  Stop coverage değişmedi: **265/339 çıplak (%78.2)**, indeterminate 0.
+- [x] **Incident artık kendi okumasının yaşını söylüyor** (`monitoring/incident_clock.py`,
+  off-decision-path, box GEREKTİRMEZ, GH Actions'tan çalışır → push = deploy).
+  Issue #1 08-25 07:24'te açıldı ve gövdesi **4 gün boyunca byte-byte aynı** kaldı
+  (`updated_at == created_at`). Sessizlik doğruydu — state değişmedi, ve 30 dk'da bir yorum atan
+  bir incident günde 48 bildirim demek. Ama "sessiz" = "hiçbir şey yazma" diye kodlanmıştı, ve
+  4 gündür kıpırdamayan bir sayfayı **iki farklı dünya** üretir: (a) watchdog çalışıyor, yeni haber
+  yok; (b) watchdog da 08-25 sabahı öldü ve son sözü hâlâ orada güncel görünüyor. Sayfada bunları
+  ayıran hiçbir şey yoktu, o yüzden varsayılan okuma iyimser olan — yani outage kaybettiren okuma.
+  - Issue **gövdesini düzenlemek kimseye bildirim göndermez**. Artık gövde **her koşuda**, sessiz
+    koşularda da yeniden yazılıyor; iki instant taşıyor: outage ne zaman başladı, en son ne zaman
+    doğrulandı. Alttaki satır bunun her kontrolde ilerlediğini söylüyor — donmuş bir sayfayı
+    "omuz silkme"den **sinyale** çeviren şey bu: ilerlemiyorsa duran şey watchdog'un kendisi.
+  - Önceki kontrolle arasındaki boşluk **varsayılmıyor, ölçülüp yazılıyor**: 67 dk'lık bir okuma
+    "schedule 30 dk" yerine 67 dk olduğunu söylüyor.
+  - **Yan bulgu, sessiz bug**: escalation gövdeyi `_First seen: {now}_` ile yeniden kuruyordu —
+    yani kötüleşen bir outage'ın yaşı kötüleştiği ana **sıfırlanıyordu**. First-seen artık
+    escalation'lar boyunca taşınıyor; marker'dan önce açılmış issue #1 için API'nin `created_at`'ine
+    düşüyor (o fallback olmasa 4 günü sıfır okunacaktı — canlı doğrulandı, "open 4d 6h" yazdı).
+  - Recovery yorumu artık outage'ın **ne kadar sürdüğünü** yazıyor — herkesin ilk sorduğu ve sadece
+    issue kapanmadan önce ekranda olan sayı.
+  - Saf zaman mantığı ayrı modülde, her instant dışarıdan veriliyor (clock okumuyor) → testler
+    string'leri birebir pinliyor. Bozuk stamp `None` döndürür, **raise etmez**: elle düzenlenmiş bir
+    gövde, her şey zaten kırıkken çalışmak zorunda olan tek alerter'ı susturamamalı.
+  - 19 yeni test (**461 yeşil**), ruff temiz (0.16.4), agent-ci yeşil. `workflow_dispatch` ile canlı
+    doğrulandı: issue #1'in `updated_at`'i **4 günde ilk kez** ilerledi, **0 yorum** atıldı.
+- 🔴 **ASIL BULGU — watchdog fiilen 30 dk'da bir DEĞİL, günde ~2 kez koşuyor.** Dün "medyan 55 dk"
+  ölçülmüştü; o metrik yanlış soruyu soruyor, çünkü medyan **koşan** run'ların arasına bakıyor.
+  Doğru metrik günlük run sayısı (schedule 48/gün):
+
+  | Gün | Scheduled run | Beklenen | Teslim |
+  |---|---|---|---|
+  | 08-25 | 24 | 48 | %50 |
+  | 08-26 | 18 | 48 | %38 |
+  | 08-27 | **3** | 48 | %6 |
+  | 08-28 | **2** | 48 | %4 |
+  | 08-29 (09:21'e kadar) | 2 | ~19 | %11 |
+
+  En büyük boşluk **834 dk = 13.9 saat** (08-28 05:05 → 18:59), tam da box karanlıkken. Çöküş
+  **08-27'de başlıyor**, yani dün cron'u `7,37`'ye kaydırmak sebep değil — ama **çare de olmadı**.
+  Pratik anlamı: box şu an ölse haber ~yarım gün gecikebilir, ve watchdog'un varlık sebebi tam
+  olarak buydu. Bugünkü değişiklik bunu **görünür** kılıyor (gövde "son kontrol" damgasını taşıyor),
+  ama **çözmüyor** — GitHub cron'unu GitHub cron'uyla tamir edemezsin.
+- **Canberk'e kalan (değişmedi):** (1) Hetzner konsolu → box'a bak, ayaktaysa `ssh agentmesh` +
+  `journalctl -b -1 -e`, değilse power-cycle; sonra `ai-trader.timer`, `ai-trader-api`, `cloudflared`.
+  (2) `WATCHDOG_BACKUP_TOKEN` (trading-backups Contents:read PAT).
+- **Sıradaki:** (a) box kurtarma = Canberk, (b) **GitHub cron'una bağlı olmayan ikinci tetikleyici**
+  (cron-job.org / UptimeRobot → `workflow_dispatch`, ya da doğrudan healthz izleyen harici bir
+  servis) — bugünkü tabloya göre bu artık watchdog'un en zayıf halkası, (c) box dönünce
+  **stop backfill** (265/339 çıplak; is_actionable 6 isim), (d) NO-GO kök nedeni:
+  Underweight→SELL exit yolu + realized negatif expectancy (decision-path, HIGH blast, denetimli).
+
 ## Daily loop 2026-08-28 (🔴 BOX DARK 5. gün; stop coverage'ın doğru sayımı, watchdog'un yalancı cadence'i)
 - **Canlı durum ALINAMADI, 5. gün.** `trader.fusapp.com` → CF **1033**, SSH 22 timeout, ICMP %100
   kayıp. `/v1/eval` ve `/v1/portfolio/snapshot` okunamıyor. Kurtarma hâlâ Hetzner konsolu = Canberk.

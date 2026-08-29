@@ -9,11 +9,12 @@ times a day about a single outage, and by day two nobody reads it.
 from __future__ import annotations
 
 import urllib.error
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from scripts import watchdog
+from tradingagents_us.monitoring.incident_clock import humanize_duration, render_timeline
 from tradingagents_us.monitoring.liveness import (
     STATE_DARK,
     STATE_DEGRADED,
@@ -71,11 +72,26 @@ def _verdict(state: str):
     return classify(health, backup)
 
 
-def _issue(state: str, number: int = 7) -> dict[str, object]:
-    return {
+def _issue(
+    state: str,
+    number: int = 7,
+    *,
+    first_seen: datetime | None = None,
+    checked_at: datetime | None = None,
+    created_at: str | None = None,
+) -> dict[str, object]:
+    markers = [watchdog._state_marker(state)]
+    if first_seen is not None:
+        markers.append(watchdog._marker(watchdog._FIRST_SEEN_MARKER, first_seen.isoformat()))
+    if checked_at is not None:
+        markers.append(watchdog._marker(watchdog._CHECKED_AT_MARKER, checked_at.isoformat()))
+    issue: dict[str, object] = {
         "number": number,
-        "body": f"{watchdog._state_marker(state)}\n\nsomething happened",
+        "body": "\n".join(markers) + "\n\nsomething happened",
     }
+    if created_at is not None:
+        issue["created_at"] = created_at
+    return issue
 
 
 class TestIncidentLifecycle:
@@ -86,18 +102,32 @@ class TestIncidentLifecycle:
         assert len(posts) == 1
         assert posts[0][2]["labels"] == [watchdog.ISSUE_LABEL]
 
-    def test_same_state_on_the_next_run_says_nothing(self, gh: FakeGitHub) -> None:
+    def test_same_state_on_the_next_run_refreshes_the_clock_but_says_nothing(
+        self, gh: FakeGitHub
+    ) -> None:
+        """No comment — but the body must still record that a check happened.
+
+        The whole failure this replaces: four days of correct silence left issue
+        #1 byte-identical to the hour it was opened, so 'nothing new' and 'the
+        watchdog died too' looked exactly alike.
+        """
         gh.open_issue = _issue(STATE_DARK)
         result = watchdog.report(_verdict(STATE_DARK), REPO, "t", NOW)
         assert "staying quiet" in result
-        assert gh.writes == []
+
+        methods = [c[0] for c in gh.writes]
+        assert methods == ["PATCH"], "a quiet run must not comment"
+        payload = gh.writes[0][2]
+        assert set(payload) == {"body"}, "quiet runs must not retitle either"
+        assert "Last checked 2026-08-25 06:30 UTC" in str(payload["body"])
 
     def test_de_escalation_also_stays_quiet(self, gh: FakeGitHub) -> None:
         """Dark -> edge_down is still an open outage, not news worth a second ping."""
         gh.open_issue = _issue(STATE_DARK)
         result = watchdog.report(_verdict(STATE_EDGE_DOWN), REPO, "t", NOW)
         assert "staying quiet" in result
-        assert gh.writes == []
+        assert [c[0] for c in gh.writes] == ["PATCH"]
+        assert "comments" not in gh.writes[0][1]
 
     def test_escalation_comments_once_and_retitles(self, gh: FakeGitHub) -> None:
         gh.open_issue = _issue(STATE_DEGRADED)
@@ -126,6 +156,110 @@ class TestIncidentLifecycle:
         gh.open_issue = {"number": 7, "body": "someone opened this by hand"}
         result = watchdog.report(_verdict(STATE_DARK), REPO, "t", NOW)
         assert "escalated #7" in result
+
+
+class TestIncidentClock:
+    """The issue body has to say how old it is, or its silence means nothing."""
+
+    def test_a_new_incident_stamps_both_instants(self, gh: FakeGitHub) -> None:
+        watchdog.report(_verdict(STATE_DARK), REPO, "t", NOW)
+        body = str(gh.writes[0][2]["body"])
+        assert watchdog._parse_stamp(
+            watchdog._read_marker(body, watchdog._FIRST_SEEN_MARKER)
+        ) == NOW
+        assert watchdog._parse_stamp(
+            watchdog._read_marker(body, watchdog._CHECKED_AT_MARKER)
+        ) == NOW
+
+    def test_escalation_keeps_the_original_start_time(self, gh: FakeGitHub) -> None:
+        """An outage that gets worse is the same outage — its age must not reset.
+
+        The previous body wrote `_First seen: {now}_` on every escalation, so a
+        four-day dark host that escalated on day four read as four minutes old.
+        """
+        started = datetime(2026, 8, 25, 7, 24, tzinfo=UTC)
+        gh.open_issue = _issue(STATE_DEGRADED, first_seen=started)
+        watchdog.report(_verdict(STATE_DARK), REPO, "t", NOW)
+
+        body = str(gh.writes[0][2]["body"])
+        assert (
+            watchdog._parse_stamp(watchdog._read_marker(body, watchdog._FIRST_SEEN_MARKER))
+            == started
+        )
+        assert "First seen 2026-08-25 07:24 UTC" in body
+
+    def test_an_issue_predating_the_marker_falls_back_to_created_at(
+        self, gh: FakeGitHub
+    ) -> None:
+        """Issue #1 has no marker but is four days old; `now` would erase that."""
+        gh.open_issue = _issue(STATE_EDGE_DOWN, created_at="2026-08-25T07:24:46Z")
+        watchdog.report(_verdict(STATE_DARK), REPO, "t", NOW)
+        assert "First seen 2026-08-25 07:24 UTC" in str(gh.writes[0][2]["body"])
+
+    def test_a_late_run_is_reported_as_late(self, gh: FakeGitHub) -> None:
+        """The cron says every 30 min; the measured median is 55. Say which happened."""
+        gh.open_issue = _issue(
+            STATE_DARK, checked_at=NOW - timedelta(minutes=67), first_seen=NOW
+        )
+        watchdog.report(_verdict(STATE_DARK), REPO, "t", NOW)
+        body = str(gh.writes[0][2]["body"])
+        assert "previous check was 67 min earlier" in body
+        assert "older than the schedule suggests" in body
+
+    def test_an_on_time_run_does_not_cry_wolf(self, gh: FakeGitHub) -> None:
+        gh.open_issue = _issue(
+            STATE_DARK, checked_at=NOW - timedelta(minutes=31), first_seen=NOW
+        )
+        watchdog.report(_verdict(STATE_DARK), REPO, "t", NOW)
+        body = str(gh.writes[0][2]["body"])
+        assert "previous check 31 min earlier" in body
+        assert "older than the schedule" not in body
+
+    def test_recovery_says_how_long_it_was_down(self, gh: FakeGitHub) -> None:
+        gh.open_issue = _issue(STATE_DARK, first_seen=NOW - timedelta(hours=101))
+        watchdog.report(_verdict("up"), REPO, "t", NOW)
+        assert "after 4d 5h down" in str(gh.writes[0][2]["body"])
+
+    @pytest.mark.parametrize("raw", [None, "", "not a date", "2026-13-45"])
+    def test_a_mangled_stamp_never_raises(self, raw: str | None) -> None:
+        """A hand-edited body costs a line of prose, not the outage report."""
+        assert watchdog._parse_stamp(raw) is None
+
+    def test_a_naive_stamp_is_read_as_utc(self) -> None:
+        assert watchdog._parse_stamp("2026-08-25T07:24:46") == datetime(
+            2026, 8, 25, 7, 24, 46, tzinfo=UTC
+        )
+
+
+class TestTimelineText:
+    def test_no_previous_check_admits_it_rather_than_inventing_a_gap(self) -> None:
+        text = render_timeline(NOW, first_seen=NOW, previous_check=None)
+        assert "no measured cadence yet" in text
+
+    def test_an_undated_incident_is_not_restamped_as_new(self) -> None:
+        text = render_timeline(NOW, first_seen=None, previous_check=None)
+        assert "not recorded" in text
+        assert "open 0s" not in text
+
+    def test_the_footer_explains_what_a_frozen_clock_means(self) -> None:
+        """The line that turns a stale page into a signal instead of a shrug."""
+        text = render_timeline(NOW, first_seen=NOW, previous_check=NOW)
+        assert "If it stops advancing, the watchdog has stopped" in text
+
+    @pytest.mark.parametrize(
+        ("seconds", "expected"),
+        [
+            (48, "48s"),
+            (60 * 67, "67 min"),
+            (3600 * 4.5, "4.5h"),
+            (3600 * 101, "4d 5h"),
+            (-90, "0s"),
+        ],
+    )
+    def test_durations_read_the_way_a_human_would_say_them(
+        self, seconds: float, expected: str
+    ) -> None:
+        assert humanize_duration(seconds) == expected
 
 
 class TestStateMarker:

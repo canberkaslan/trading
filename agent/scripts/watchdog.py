@@ -45,6 +45,11 @@ _AGENT_ROOT = Path(__file__).resolve().parent.parent
 if str(_AGENT_ROOT) not in sys.path:
     sys.path.insert(0, str(_AGENT_ROOT))
 
+from tradingagents_us.monitoring.incident_clock import (  # noqa: E402
+    format_stamp,
+    render_recovery,
+    render_timeline,
+)
 from tradingagents_us.monitoring.liveness import (  # noqa: E402
     BackupSignal,
     HealthProbe,
@@ -69,6 +74,12 @@ DEFAULT_TCP_PORT = 22
 # reported. Issue state is the only memory this thing has — there is no box to
 # keep a state file on, which is rather the situation it exists for.
 _STATE_MARKER = "<!-- watchdog-state:"
+
+# The two instants that make the page's own freshness legible: when this outage
+# started (preserved across escalations, so a retitle cannot reset the clock)
+# and when it was last confirmed (rewritten every run, including the quiet ones).
+_FIRST_SEEN_MARKER = "<!-- watchdog-first-seen:"
+_CHECKED_AT_MARKER = "<!-- watchdog-checked-at:"
 
 
 def probe_health(url: str) -> HealthProbe:
@@ -196,19 +207,81 @@ def _github_request(
     return json.loads(body) if body else {}
 
 
+def _marker(name: str, value: str) -> str:
+    return f"{name} {value} -->"
+
+
 def _state_marker(state: str) -> str:
-    return f"{_STATE_MARKER} {state} -->"
+    return _marker(_STATE_MARKER, state)
 
 
-def _recorded_state(body: str) -> str | None:
-    """Read back the state a previous run wrote into the issue body."""
-    start = body.find(_STATE_MARKER)
+def _read_marker(body: str, name: str) -> str | None:
+    """Read back a value a previous run hid in an HTML comment in the issue body."""
+    start = body.find(name)
     if start == -1:
         return None
     end = body.find("-->", start)
     if end == -1:
         return None
-    return body[start + len(_STATE_MARKER) : end].strip() or None
+    return body[start + len(name) : end].strip() or None
+
+
+def _recorded_state(body: str) -> str | None:
+    """Read back the state a previous run wrote into the issue body."""
+    return _read_marker(body, _STATE_MARKER)
+
+
+def _parse_stamp(raw: str | None) -> datetime | None:
+    """An ISO instant from a marker, or None if it is missing or malformed.
+
+    Never raises. This is the one alerter that has to work when everything else
+    is broken, and a hand-edited issue body is not a reason for it to stop
+    reporting an outage — a lost timestamp costs a line of prose, an exception
+    costs the alert.
+    """
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _incident_start(existing: dict[str, object], fallback: datetime) -> datetime | None:
+    """When this outage actually began, in preference order.
+
+    The marker first, then GitHub's own `created_at`. That second source matters
+    right now: issue #1 was opened before the marker existed, and without the
+    fallback its four-day-old outage would read as having started on whichever
+    run first wrote the new format.
+
+    A `fallback` of `now` is only used when both are unavailable — a body a human
+    replaced entirely on an issue the API did not date.
+    """
+    from_marker = _parse_stamp(_read_marker(str(existing.get("body") or ""), _FIRST_SEEN_MARKER))
+    if from_marker is not None:
+        return from_marker
+    created = existing.get("created_at")
+    return _parse_stamp(created if isinstance(created, str) else None) or fallback
+
+
+def _build_body(
+    verdict: Verdict,
+    now: datetime,
+    first_seen: datetime | None,
+    previous_check: datetime | None,
+) -> str:
+    """The full issue body: machine-readable markers, the verdict, then the clock."""
+    markers = "\n".join(
+        [
+            _state_marker(verdict.state),
+            _marker(_FIRST_SEEN_MARKER, (first_seen or now).isoformat()),
+            _marker(_CHECKED_AT_MARKER, now.isoformat()),
+        ]
+    )
+    timeline = render_timeline(now, first_seen, previous_check)
+    return f"{markers}\n\n{verdict.body()}\n\n{timeline}"
 
 
 def find_open_incident(repo: str, token: str | None) -> dict[str, object] | None:
@@ -224,13 +297,19 @@ def find_open_incident(repo: str, token: str | None) -> dict[str, object] | None
 def report(verdict: Verdict, repo: str, token: str | None, now: datetime) -> str:
     """Open, escalate, or close the incident. Returns what was done, for the log.
 
-    One open issue at a time, and a comment only when the news changes. The
+    One open issue at a time, and a *comment* only when the news changes. The
     workflow runs every 30 minutes; a dark host that commented on every run would
     produce 48 notifications a day for a single outage, and the second day of
     that is the day the alert stops being read.
+
+    The body, though, is rewritten on every run — including the quiet ones.
+    Editing an issue body notifies nobody, so it costs the reader nothing, and it
+    is the only way the page can say when it was last confirmed. Without it,
+    "quiet" and "the watchdog died too" produce an identical, frozen page: that
+    is exactly what issue #1 looked like for four days.
     """
     existing = find_open_incident(repo, token)
-    stamp = now.strftime("%Y-%m-%d %H:%M UTC")
+    stamp = format_stamp(now)
 
     if not verdict.is_incident:
         if existing is None:
@@ -240,7 +319,8 @@ def report(verdict: Verdict, repo: str, token: str | None, now: datetime) -> str
             "POST",
             f"https://api.github.com/repos/{repo}/issues/{number}/comments",
             token=token,
-            payload={"body": f"✅ Recovered at {stamp}.\n\n{verdict.body()}"},
+            payload={"body": f"{render_recovery(now, _incident_start(existing, now))}\n\n"
+                             f"{verdict.body()}"},
         )
         _github_request(
             "PATCH",
@@ -250,8 +330,6 @@ def report(verdict: Verdict, repo: str, token: str | None, now: datetime) -> str
         )
         return f"up: closed #{number}"
 
-    body = f"{_state_marker(verdict.state)}\n\n{verdict.body()}\n\n_First seen: {stamp}_"
-
     if existing is None:
         created = _github_request(
             "POST",
@@ -259,7 +337,7 @@ def report(verdict: Verdict, repo: str, token: str | None, now: datetime) -> str
             token=token,
             payload={
                 "title": f"Watchdog: {verdict.headline}",
-                "body": body,
+                "body": _build_body(verdict, now, first_seen=now, previous_check=None),
                 "labels": [ISSUE_LABEL],
             },
         )
@@ -267,9 +345,27 @@ def report(verdict: Verdict, repo: str, token: str | None, now: datetime) -> str
         return f"{verdict.state}: opened #{number}"
 
     number = existing["number"]
-    previous = _recorded_state(str(existing.get("body") or ""))
+    old_body = str(existing.get("body") or "")
+    previous = _recorded_state(old_body)
+    # Carried over rather than restamped: an escalation retitles the incident, it
+    # does not start a new one, and the old code's `_First seen: {now}` quietly
+    # reset the age of every outage that got worse.
+    first_seen = _incident_start(existing, now)
+    previous_check = _parse_stamp(_read_marker(old_body, _CHECKED_AT_MARKER))
+    body = _build_body(verdict, now, first_seen, previous_check)
+
     if previous is not None and severity(verdict.state) <= severity(previous):
-        return f"{verdict.state}: #{number} already open at '{previous}', staying quiet"
+        # Same news. Refresh the body so the clock advances, and say nothing.
+        _github_request(
+            "PATCH",
+            f"https://api.github.com/repos/{repo}/issues/{number}",
+            token=token,
+            payload={"body": body},
+        )
+        return (
+            f"{verdict.state}: #{number} already open at '{previous}', "
+            "refreshed the clock and staying quiet"
+        )
 
     _github_request(
         "PATCH",

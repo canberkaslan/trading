@@ -1,0 +1,107 @@
+name: watchdog-relay
+
+# The watchdog's cadence, carried by the watchdog instead of by GitHub's cron.
+#
+# `watchdog.yml` asks for 48 runs a day. Over the outage that began 2026-08-24 it
+# received 22, 18, 3, 2, 6, 6 — an eighth of what it asked for, with a 13.9 hour
+# gap while the box was dark. Shifting the cron off the :00/:30 boundary on 08-28
+# changed nothing (the two days after it are 6/48 and 6/48), so this is not
+# congestion at the top of the hour; scheduled runs are simply best-effort, and
+# for this repo "best effort" is not enough to alert on.
+#
+# You cannot fix cron with cron. But `workflow_dispatch` fires when asked, and it
+# is one of the two events GitHub exempts from "a GITHUB_TOKEN cannot trigger a
+# workflow" — so a run can start its own successor with the built-in token, no
+# PAT, no third-party pinger. This workflow is that chain: each link probes every
+# 30 minutes for ~5h10m (under the 6h runner ceiling, with room to hand off),
+# then dispatches the next link.
+#
+# The schedule below is NOT the cadence. It is the restart path for a chain that
+# broke — a rare event, which is the one thing an unreliable trigger is fit for.
+# The guard job makes those firings free: if a chain is already alive it costs a
+# few seconds and stops.
+#
+# Cost, stated plainly: this occupies a runner continuously. That is acceptable
+# here only because the repository is public, where Actions minutes are not
+# metered, and because the job is a sleep loop rather than compute. On a private
+# repo this would be the wrong trade and an external pinger the right one.
+on:
+  schedule:
+    # Deliberately not the minutes watchdog.yml asks for — two workflows
+    # competing for the same scheduling slot is not two chances, it is one.
+    - cron: '11,41 * * * *'
+  workflow_dispatch:
+    inputs:
+      chain:
+        description: 'Hand-off from the previous link (skips the aliveness guard)'
+        type: string
+        default: 'false'
+
+permissions:
+  contents: read
+  issues: write
+  # Read to see whether a chain is alive, write to start the next link. This is
+  # a real escalation over watchdog.yml's permissions, which is why it lives in
+  # a separate workflow: the probe that files incidents keeps its narrow scope,
+  # and only the relay — whose entire job is dispatching itself — can dispatch.
+  actions: write
+
+jobs:
+  # No concurrency group here on purpose. A scheduled firing has to be able to
+  # ask "is a chain alive?" and leave; if it queued behind the running link it
+  # would sit for five hours to answer a question it needed answered now.
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      start: ${{ steps.check.outputs.start }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # A hand-off skips the check. The outgoing link is still in progress at the
+      # moment it dispatches, so an honest aliveness check would find it, call
+      # the chain healthy, and end the chain on every single hand-off.
+      - name: Is a chain already carrying the cadence?
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ inputs.chain }}" = "true" ]; then
+            echo "hand-off from the previous link — starting without a guard check"
+            echo "start=true" >> "$GITHUB_OUTPUT"
+          else
+            python agent/scripts/watchdog_relay.py --check-chain
+          fi
+
+  relay:
+    needs: guard
+    if: needs.guard.outputs.start == 'true'
+    runs-on: ubuntu-latest
+    # The window is 5h10m; this leaves room for the hand-off and still lands
+    # under GitHub's own six-hour kill, which would take the link out before it
+    # could start a successor.
+    timeout-minutes: 340
+    concurrency:
+      group: watchdog-relay
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Stdlib only, like the probe it wraps: no `uv sync`, so a broken lockfile
+      # or a registry outage cannot take the last alerting path down with it.
+      - name: Probe on a fixed cadence, then hand off
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WATCHDOG_BACKUP_TOKEN: ${{ secrets.WATCHDOG_BACKUP_TOKEN }}
+          WATCHDOG_HOST: ${{ secrets.WATCHDOG_HOST }}
+          WATCHDOG_HEALTH_URL: https://trader.fusapp.com/healthz
+          WATCHDOG_BACKUP_REPO: canberkaslan/trading-backups
+        run: python agent/scripts/watchdog_relay.py --run

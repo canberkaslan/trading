@@ -382,12 +382,15 @@ def report(verdict: Verdict, repo: str, token: str | None, now: datetime) -> str
     return f"{verdict.state}: escalated #{number} from '{previous}'"
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dry-run", action="store_true", help="print the verdict, write nothing")
-    args = parser.parse_args()
+def check_once(now: datetime, dry_run: bool = False) -> Verdict:
+    """One probe → classify → print → report cycle. Returns the verdict.
 
-    now = datetime.now(UTC)
+    Split out of `main` so the relay driver can call it on a loop without
+    re-implementing any of it. Everything below reads the environment on each
+    call rather than closing over it at import: a five-hour relay link that
+    froze its configuration at launch would keep probing a URL the operator had
+    already corrected.
+    """
     token = os.environ.get("GITHUB_TOKEN")
     health_url = os.environ.get("WATCHDOG_HEALTH_URL", DEFAULT_HEALTH_URL)
     backup_repo = os.environ.get("WATCHDOG_BACKUP_REPO", DEFAULT_BACKUP_REPO)
@@ -419,16 +422,25 @@ def main() -> int:
         "reasons": list(verdict.reasons),
     }, indent=2))
 
-    if args.dry_run:
-        return 0
+    if dry_run:
+        return verdict
     if not token:
         print("watchdog: no GITHUB_TOKEN — verdict printed, no incident filed", file=sys.stderr)
-        return 0
+        return verdict
 
     try:
         print(report(verdict, issue_repo, token, now))
     except Exception as exc:  # never fail the run over the reporting side
         print(f"watchdog: could not file incident ({exc})", file=sys.stderr)
+    return verdict
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dry-run", action="store_true", help="print the verdict, write nothing")
+    args = parser.parse_args()
+
+    check_once(datetime.now(UTC), dry_run=args.dry_run)
     return 0
 
 

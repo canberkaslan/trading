@@ -108,6 +108,63 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - 7e Charts, 7f Analiz-Et deep-link, 7g Settings kill-switch+health, snapshot logger
 - cost-opt routing on branch (opt-in, not deployed)
 
+## Daily loop 2026-08-31 (🔴 BOX DARK 8. gün; watchdog artık kendi saatini taşıyor)
+- **Canlı durum ALINAMADI, 8. gün.** `trader.fusapp.com` HTTPS bağlanmıyor, SSH 22 timeout, ICMP
+  %100 kayıp. Kurtarma hâlâ Hetzner konsolu = Canberk. Backend deploy imkânsız, mobil değişiklik
+  yok → **OTA yok**. Broker'dan doğrudan (read-only): equity **$109,295.94**, cash $2,829.16,
+  10 pozisyon, unrealized **+$10,237.18**, ACTIVE, `trading_blocked=false`, günlük P&L −$34.84.
+  Son fill hâlâ **08-24 META buy 1** — kitap 8 gündür yönetilmiyor. Stop coverage değişmedi:
+  **265/339 çıplak (%78.2)**, indeterminate 0 (kapsanan tek isimler UNH 15, XOM 56, GOOGL 2, META 1).
+- [x] **Watchdog'un cadence'i GitHub cron'undan alındı** (`monitoring/relay.py` +
+  `scripts/watchdog_relay.py` + `.github/workflows/watchdog-relay.yml`; off-decision-path, box
+  GEREKTİRMEZ, push = deploy).
+  Dün ölçülen çöküş bugün de sürüyordu — istenen 48/gün'e karşı **08-29: 6, 08-30: 6, 08-31: 1**
+  (06:00 UTC'ye kadar), medyan gap 58 dk, en büyük delik **834 dk**. 08-28'de cron'u `7,37`'ye
+  kaydırmak ölçülebilir hiçbir şey değiştirmedi (sonraki iki gün 6/48 ve 6/48) → sorun saat başı
+  tıkanıklığı değil; scheduled run'lar basitçe best-effort ve bu repo'nun ağırlığında best-effort
+  istenenin sekizde biri demek. Sabah kontrolünde incident sayfası **5 saat bayattı** (son koşu
+  01:35Z) — yani watchdog'un varlık sebebi olan özellik fiilen yoktu.
+  **Cron'u cron'la tamir edemezsin.** Ama `workflow_dispatch` istendiğinde ateşleniyor ve
+  "GITHUB_TOKEN bir workflow tetikleyemez" kuralından **muaf tutulan iki event'ten biri** —
+  yani bir run, PAT'siz ve üçüncü parti pinger'sız, built-in token'la kendi ardılını başlatabilir.
+  Watchdog artık uyandırılmayı beklemiyor, **uyanık kalıyor**: her link 30 dk'da bir probe atıp
+  ~5s10dk sonra (6 saatlik runner tavanının altında, hand-off'a yer bırakarak) bir sonraki link'i
+  dispatch ediyor. Schedule sadece **kırılmış zincirin restart yolu** olarak duruyor — nadir bir
+  olay, ki güvenilmez bir tetikleyicinin yapabileceği tek iş de bu.
+  - Tick'ler link'in **başlangıcına** çapalı, "son probe ne zaman bitti"ye değil: 5 saatlik bir
+    pencerede uyku-tabanlı cadence iddia ettiği takvimden dakikalarca kayar, ve burası zaten tek
+    işi *iddia edilen cadence'i doğru kılmak* olan kod. Slotunu aşan bir probe o okumayı kaybeder,
+    sonraki her tick'i kaydırmaz.
+  - `guard` job'ı **bilerek concurrency group'suz**: scheduled bir tetikleme "zincir yaşıyor mu?"
+    diye sorup çıkabilmeli; group'a girseydi, şimdi cevabını istediği soruyu beklemek için 5 saat
+    kuyrukta oturacaktı. Hand-off guard'ı atlar (aşağıdaki bug'a bak).
+  - Zaman damgası olmayan run **alive sayılır ama asla stuck sayılmaz** — eksik bir alan sağlıklı
+    bir zinciri iptal ettirmemeli. Bütçe+grace'i aşan run ise stalled: yedeği concurrency
+    group'unda arkasına kuyruklanır ve GitHub timeout'u onu öldürdüğü an devralır.
+  - `actions:write` watchdog.yml'e DEĞİL bu ayrı workflow'a kondu: incident dosyalayan probe dar
+    kapsamını korusun, sadece işi kendini dispatch etmek olan relay dispatch edebilsin.
+  - Bedeli açıkça yazıldı: bu bir runner'ı **sürekli** işgal ediyor. Kabul edilebilir olmasının tek
+    sebebi repo'nun **public** olması (Actions dakikaları ölçülmüyor) ve job'ın compute değil sleep
+    loop olması. Private bir repo'da bu yanlış takas olurdu, doğrusu harici bir pinger.
+- 🔴 **Canlı doğrulama bir bug yakaladı, ve tam da "hiç başlamayan özellik" cinsinden.** İlk dispatch
+  20 saniyede bitti: `guard`, watchdog-relay run'larını listelerken **kendi run'ını** buldu ve
+  *"relay run 33364317803 is in_progress — chain is carrying the cadence"* deyip relay job'ı skip
+  etti. Saf katman `exclude_ids` parametresini taşıyordu ve testi de vardı — **çağıran onu hiç
+  geçirmiyordu**. Kendi `GITHUB_RUN_ID`'sini, sadece kendininkini, dışlıyor artık; parse edilemeyen
+  bir id hiçbir şeyi dışlamaz (uydurulmuş bir id gerçek bir link'i dışlayabilirdi, oysa bu yönde
+  hata en fazla olmayan bir zinciri var sanmaya yol açar ve backstop onu toparlar). Ders: aritmetiği
+  test etmek dikişi test etmek değil — 5 test artık dikişte.
+- **Canlı kanıt**: düzeltmeden sonraki dispatch'te guard `{"alive": false}` dedi, relay job koştu ve
+  incident #1'in gövdesi **01:35Z → 06:30Z** tazelendi. Zincir cadence'i taşıyor.
+- 30 yeni test (**491 yeşil**), ruff temiz (0.16.4).
+- **Canberk'e kalan (değişmedi):** (1) Hetzner konsolu → box'a bak, ayaktaysa `ssh agentmesh` +
+  `journalctl -b -1 -e`, değilse power-cycle; sonra `ai-trader.timer`, `ai-trader-api`, `cloudflared`.
+  (2) `WATCHDOG_BACKUP_TOKEN` (trading-backups Contents:read PAT).
+- **Sıradaki:** (a) box kurtarma = Canberk, (b) zinciri bir gün izle — hand-off gerçekten oluyor mu,
+  günlük teslim 48/48'e çıkıyor mu (ölçüp raporla; olmuyorsa hand-off'un neden düştüğü asıl soru),
+  (c) box dönünce **stop backfill** (265/339 çıplak), (d) NO-GO kök nedeni: Underweight→SELL exit
+  yolu + realized negatif expectancy (decision-path, HIGH blast, denetimli).
+
 ## Daily loop 2026-08-29 (🔴 BOX DARK 6. gün; incident kendi yaşını söylüyor + watchdog cadence'i ÇÖKMÜŞ)
 - **Canlı durum ALINAMADI, 6. gün.** `trader.fusapp.com` → CF **1033**, SSH 22 timeout, ICMP %100
   kayıp. Kurtarma hâlâ Hetzner konsolu = Canberk. Backend deploy imkânsız, mobil değişiklik yok →

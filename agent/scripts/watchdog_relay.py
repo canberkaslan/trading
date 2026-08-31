@@ -62,6 +62,20 @@ def _repo() -> str:
     return os.environ.get("GITHUB_REPOSITORY", DEFAULT_ISSUE_REPO)
 
 
+def _own_run_ids() -> list[int]:
+    """This run's id, so an aliveness check cannot be satisfied by itself.
+
+    Empty off a runner, or when `GITHUB_RUN_ID` is not an integer. Excluding
+    nothing is the safe failure here — it can only make the check conclude a
+    chain is alive when it is not, and the scheduled backstop still recovers
+    from that; inventing an id could exclude a real link.
+    """
+    raw = os.environ.get("GITHUB_RUN_ID")
+    if raw is None or not raw.strip().isdigit():
+        return []
+    return [int(raw.strip())]
+
+
 def _parse_run_time(raw: object) -> datetime | None:
     if not isinstance(raw, str) or not raw:
         return None
@@ -150,13 +164,21 @@ def _emit_output(name: str, value: str) -> None:
 def check_chain(token: str | None, now: datetime, budget_s: float) -> bool:
     """Decide whether this trigger should start a link. Returns that decision.
 
+    The guard runs *inside* a `watchdog-relay` run, so the asking run is itself
+    `in_progress` in the listing. Left in, it is the only thing the check ever
+    finds: the first live dispatch reported "relay run 33364317803 is in_progress
+    — chain is carrying the cadence" about itself and skipped the relay job. Its
+    own id is excluded, and only its own.
+
     If the listing itself failed, `list_relay_runs` hands back what it has —
     possibly nothing — and this reads as "no chain, start one". That bias is
     deliberate: the two ways to be wrong are a redundant link (which the
     `watchdog-relay` concurrency group queues and the next dispatch cancels) and
     no watchdog at all. Only one of those is a problem.
     """
-    state = chain_state(list_relay_runs(token), now, budget_s=budget_s)
+    state = chain_state(
+        list_relay_runs(token), now, budget_s=budget_s, exclude_ids=_own_run_ids()
+    )
     print(json.dumps({"alive": state.alive, "stalled": state.stalled, "detail": state.detail}))
     _emit_output("start", "true" if state.needs_start else "false")
     return state.needs_start

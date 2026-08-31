@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from scripts import watchdog_relay
 from tradingagents_us.monitoring.relay import (
     CHAIN_GRACE_S,
     DEFAULT_BUDGET_S,
@@ -171,6 +172,36 @@ def test_unusable_config_falls_back_to_the_default_instead_of_raising(raw):
     # This is the seam between an env var and the one alerter that has to work
     # when everything else is broken. A typo costs the default cadence.
     assert parse_seconds(raw, DEFAULT_INTERVAL_S) == DEFAULT_INTERVAL_S
+
+
+# --- the driver's wiring -----------------------------------------------------
+#
+# The pure layer grew `exclude_ids` for exactly one caller and the caller did not
+# use it. The first live dispatch found itself in_progress, called the chain
+# healthy and skipped the relay job — a whole feature that starts nothing. These
+# cover the seam rather than the arithmetic.
+
+
+def test_the_guard_does_not_count_its_own_run_as_a_live_chain(monkeypatch):
+    monkeypatch.setenv("GITHUB_RUN_ID", "33364317803")
+    monkeypatch.setattr(
+        watchdog_relay, "list_relay_runs", lambda _token: [_run(33364317803)]
+    )
+    assert watchdog_relay.check_chain(None, START, DEFAULT_BUDGET_S) is True
+
+
+def test_the_guard_still_stands_down_for_a_chain_that_is_not_itself(monkeypatch):
+    monkeypatch.setenv("GITHUB_RUN_ID", "33364317803")
+    monkeypatch.setattr(
+        watchdog_relay, "list_relay_runs", lambda _token: [_run(33364317803), _run(999)]
+    )
+    assert watchdog_relay.check_chain(None, START, DEFAULT_BUDGET_S) is False
+
+
+@pytest.mark.parametrize("raw", ["", "not-a-number", "12abc"])
+def test_an_unusable_run_id_excludes_nothing_rather_than_inventing_one(monkeypatch, raw):
+    monkeypatch.setenv("GITHUB_RUN_ID", raw)
+    assert watchdog_relay._own_run_ids() == []
 
 
 def test_a_usable_override_is_honoured():

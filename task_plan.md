@@ -108,6 +108,76 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - 7e Charts, 7f Analiz-Et deep-link, 7g Settings kill-switch+health, snapshot logger
 - cost-opt routing on branch (opt-in, not deployed)
 
+## Daily loop 2026-09-02 (🔴 BOX DARK 9. gün; "realized negatif expectancy" ölçümü YANLIŞ SORUYA cevaptı)
+- **Canlı durum ALINAMADI, 9. gün.** `trader.fusapp.com` → CF **1033**, SSH 22 timeout, ICMP %100
+  kayıp. Kurtarma hâlâ Hetzner konsolu = Canberk. Backend deploy imkânsız, mobil değişiklik yok →
+  **OTA yok**. Broker'dan doğrudan (read-only): equity **$108,403.84**, last_equity $108,701.66
+  (günlük **−$297.82 / −0.27%**), cash $2,829.16, 10 pozisyon, unrealized **+$9,345.09**, ACTIVE,
+  `trading_blocked=false`. Son fill hâlâ **08-24 META buy 1** — kitap 9 gündür yönetilmiyor.
+- ✅ **Watchdog relay zinciri ÖLÇÜLDÜ — dünkü açık soru kapandı: hand-off gerçek, cadence 48/48.**
+  08-31 06:29Z'den beri zincir hiç kopmadı; her link 11 probe × 30 dk atıp devrediyor ve ardıl link
+  dispatch'ten **~6 saniye sonra** başlıyor (02:31→07:32→12:32→17:32→22:33→03:33). Log'lardan sayım:
+  link başına 11 probe, gün başına ~4.8 link → **~52 probe/gün**, en büyük boşluk 30 dk. Karşılaştırma:
+
+  | Dönem | Tetikleyici | Teslim/gün | En büyük boşluk |
+  |---|---|---|---|
+  | 08-27…08-31 | GitHub cron `*/30` | 2–6 / 48 (%4–13) | **834 dk** |
+  | 08-31 06:29 → 09-02 | self-dispatch zinciri | ~52 / 48 (%100+) | **30 dk** |
+
+  Canlı teyit: incident #1 gövdesi `checked-at 2026-09-02T06:03Z`, "previous check 30 min earlier".
+  Scheduled backstop'lar bu sürede 8 kez ateşledi, hepsi guard'da ~12 sn'de "zincir yaşıyor" deyip
+  çıktı — yani yedek yol da beklendiği gibi ucuz. `WATCHDOG_BACKUP_TOKEN` HÂLÂ yok (gövdedeki
+  "backup signal unavailable" bundan).
+- [x] 🔴 **ASIL BULGU — realized ledger'ın %75'i stratejinin çıkışı DEĞİL, Haziran'daki accumulation
+  bug'ının temizliği.** `tradingagents_us/execution/exit_quality.py` + `scripts/exit_quality.py`
+  (saf modül + read-only CLI; broker'a hiçbir şey göndermiyor, DB'ye yazmıyor, **box gerektirmiyor**).
+  08-14'ten beri plan'da "NO-GO kök nedeni" olarak duran satır — *32 işlem, net −$950, %25 win rate,
+  profit factor 0.13, expectancy −$29.69* — tek bir sayıya sıkıştırılmış **dört farklı olay**:
+  her kapanan round trip'i, kapatan broker emrine kadar geri yürüttüm (fill activity → order_id →
+  order, **bracket leg'lerine inerek** — koruyucu stop hiçbir zaman top-level emir değil):
+
+  | Çıkış yolu | n | win% | net P&L | işlem başına | ort. tutuş |
+  |---|---|---|---|---|---|
+  | take-profit leg | 4 | 75% | **+$73.95** | +$18.49 | 18.0g |
+  | protective stop | 3 | 33% | −$414.44 | −$138.15 | 29.5g |
+  | agent decision sell | 1 | 100% | **+$47.12** | +$47.12 | 4.0g |
+  | **flatten (agent DIŞI)** | **24** | 12% | **−$656.86** | −$27.37 | 2.6g |
+  | **strateji çıkışları (n=8)** | 8 | 62% | **−$293.37** | −$36.67 | 20.6g |
+
+  24 işlemin tamamı **06-24 flatten'ı**: aynı ticker'ı günde 3 kez alan accumulation bug'ının
+  ürettiği fazla lot'ların tek seferde market'ten boşaltılması (MSFT 103 + AAPL 99). Ortalama
+  −%1.1 ve 2.6 gün tutuş — bu bir *exit disiplini kaydı değil*, bir bug'ı geri almanın slippage
+  maliyeti. Sınıflandırma **provenance'tan**, P&L'den değil: `trade.py` gönderdiği her emre `tr-`
+  client id damgalar, dolayısıyla broker'ın atadığı çıplak UUID'li bir market sell **kanıtlanabilir
+  şekilde** agent'ın execution path'inden gelmemiştir. (Bunun söylemediği şey niyet: "agent değil"
+  der, "biri flatten etmek istedi" demez — sınıf o yüzden gözlenene göre adlandırıldı.)
+  - **Doğru okuma:** agent'ın kendi çıkış kaydı **n=8**, net −$293.37. Bunun **−$418.30'u tek bir
+    UNH stop'u** (10+1 lot, −%9). Yani ledger exit expectancy hakkında *hiçbir* iddiayı taşıyamaz —
+    örneklem 32 değil 8, ve tek gözlem toplam kaybın %140'ı. 08-14 ve 08-10 girdilerindeki
+    "gerçekleşen her şey para kaybetti" cümlesi bu ayrımı yapmıyordu; düzeltilmesi gereken plan
+    satırı bu.
+  - **Yan bulgu (accounting, bug değil):** AMZN stop'u 234.46'da doldu ve satır **+$3.86 KÂR**
+    gösteriyor — çünkü stop 236.69'da dolan lot için kurulmuştu, FIFO ise onu 230.60'lık en eski
+    lot'la eşliyor. FIFO doğru konvansiyon; sonucu şu: **bir satırın P&L'i, o stop'un koruduğu
+    pozisyonun P&L'i değildir.** Stop kalitesini round-trip P&L'inden okumaya çalışan her analiz
+    bu yüzden yanılır.
+  - **Stop coverage'ın kaynağı da netleşti:** 265/339 çıplak (%78.2) **tamamen 07-13 öncesi miras**.
+    Emirlerin leg'leri gösteriyor ki eski bracket'ların koruyucu bacakları `expired`/`canceled`
+    (day TIF — 07-13'te gtc'ye çevrilen tam da bu), 07-21 sonrası açılan HER pozisyon ise `held`
+    (UNH 15, XOM 56, GOOGL 2, META 1 = 74 korunan). Yani backfill sınırlı ve sayılabilir bir iş:
+    AAPL 33, AMZN 42, GOOGL 29, JPM 31, META 18, MSFT 27, NVDA 55, V 30.
+  - 26 yeni test (**517 yeşil**), ruff temiz (0.16.4). Testlerin 4'ü kasten **dikişte**: join
+    bracket leg'lerine inmezse yukarıdaki tablonun tamamı "unknown" çıkardı ve saf kurallar yine
+    yeşil olurdu (08-31'in dersi).
+- **Canberk'e kalan (değişmedi):** (1) Hetzner konsolu → box'a bak, ayaktaysa `ssh agentmesh` +
+  `journalctl -b -1 -e`, değilse power-cycle; sonra `ai-trader.timer`, `ai-trader-api`, `cloudflared`.
+  (2) `WATCHDOG_BACKUP_TOKEN` (trading-backups Contents:read PAT).
+- **Sıradaki:** (a) box kurtarma = Canberk, (b) box dönünce **stop backfill** (yukarıdaki 265 hisse,
+  isim isim), (c) exit_quality'yi `/v1/trades`'e bağla (mobil "Gerçekleşen" kartı hâlâ karma
+  expectancy gösteriyor — app şu an flatten'ı strateji sanıyor), (d) NO-GO kök nedeni artık
+  **n=8 problemi**: karar, exit mantığını değiştirmek değil, örneklem biriktirmek (ya da backtest'te
+  exit yolunu ayrı ayrı ölçmek) — decision-path'e dokunmadan önce bu.
+
 ## Daily loop 2026-08-31 (🔴 BOX DARK 8. gün; watchdog artık kendi saatini taşıyor)
 - **Canlı durum ALINAMADI, 8. gün.** `trader.fusapp.com` HTTPS bağlanmıyor, SSH 22 timeout, ICMP
   %100 kayıp. Kurtarma hâlâ Hetzner konsolu = Canberk. Backend deploy imkânsız, mobil değişiklik

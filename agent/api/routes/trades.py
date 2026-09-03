@@ -12,6 +12,11 @@ Scoped to the eval window by default (`EVAL_START_DATE`, see
 win rate over bug-era trades next to a Sharpe that excludes them made the two
 numbers describe different books. `window=all` returns the full history, and
 `excluded_pre_eval` always reports how many rows the cutoff hides.
+
+`by_exit` / `strategy` split the same rows by what closed each position, using
+the class stored at reconcile time (see `execution.exit_quality`). The blended
+`stats` expectancy is not the agent's exit record: on this account most of the
+realized ledger is the 2026-06-24 flatten that cleaned up the accumulation bug.
 """
 
 from __future__ import annotations
@@ -23,6 +28,12 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from tradingagents_us.eval_window import eval_start_utc
+from tradingagents_us.execution.exit_quality import (
+    ExitBucket,
+    attribute_stored,
+    bucket_by_exit,
+    strategy_bucket,
+)
 from tradingagents_us.execution.reconcile import ClosedTrade, compute_stats
 from tradingagents_us.storage import TradeLogRepository
 
@@ -43,6 +54,43 @@ class ClosedTradeItem(BaseModel):
     holding_days: float
     opened_at_utc: datetime
     closed_at_utc: datetime
+    # What closed the position, from the broker's order record at reconcile
+    # time. None = never attributed (pre-dates attribution, or that run could
+    # not read order history) — NOT the same as "unknown", which means the
+    # order was looked for and is gone. The app must not render them alike.
+    exit_class: str | None = None
+
+
+class ExitBucketItem(BaseModel):
+    """One exit path's record. `avg_pnl` is that path's expectancy per trade."""
+
+    exit_class: str
+    label: str
+    trades: int
+    wins: int
+    losses: int
+    win_rate: float
+    net_pnl: float
+    gross_profit: float
+    gross_loss: float
+    avg_pnl: float
+    avg_holding_days: float
+
+
+def _bucket_item(bucket: ExitBucket) -> ExitBucketItem:
+    return ExitBucketItem(
+        exit_class=bucket.exit_class,
+        label=bucket.label,
+        trades=bucket.trades,
+        wins=bucket.wins,
+        losses=bucket.losses,
+        win_rate=round(bucket.win_rate, 4),
+        net_pnl=round(bucket.net_pnl, 2),
+        gross_profit=round(bucket.gross_profit, 2),
+        gross_loss=round(bucket.gross_loss, 2),
+        avg_pnl=round(bucket.avg_pnl, 2),
+        avg_holding_days=round(bucket.avg_holding_days, 2),
+    )
 
 
 class TradeStatsItem(BaseModel):
@@ -78,6 +126,19 @@ class TradesResponse(BaseModel):
     window: Literal["eval", "all_time"] = "all_time"
     eval_start_utc: datetime | None = None
     excluded_pre_eval: int = 0
+
+    # The same rows split by what actually closed each position. `stats` above
+    # blends every exit path into one expectancy, and on this account that
+    # number is dominated by the 2026-06-24 flatten of the accumulation bug —
+    # an operator cleanup, not the strategy's exit discipline. Anything that
+    # reads as "how well does the agent exit?" must come from `strategy`, with
+    # its trade count attached: it is a narrower claim on a smaller sample.
+    by_exit: list[ExitBucketItem] = []
+    strategy: ExitBucketItem | None = None
+    # Rows the split leaves out because they carry no stored class. Reported so
+    # a partially-attributed ledger cannot render as a complete one; a non-zero
+    # count here means `by_exit` does not add up to `stats`.
+    unattributed: int = 0
 
 
 @router.get("", response_model=TradesResponse)
@@ -127,6 +188,14 @@ async def list_trades(
         for r in rows
     ]
     stats = compute_stats(trades)
+    # Attribution is read from the ledger, never recomputed: classifying needs
+    # the broker's order history, and this endpoint makes no broker call by
+    # design. Buckets therefore cover exactly the rows `scripts/reconcile.py`
+    # could attribute when it last ran.
+    attributed, unattributed = attribute_stored(
+        trades, {r.trade_id: r.exit_class for r in rows}
+    )
+    strategy = strategy_bucket(attributed) if attributed else None
 
     return TradesResponse(
         trades=[
@@ -142,10 +211,14 @@ async def list_trades(
                 holding_days=r.holding_days,
                 opened_at_utc=r.opened_at_utc,
                 closed_at_utc=r.closed_at_utc,
+                exit_class=r.exit_class,
             )
             for r in rows
         ],
         stats=TradeStatsItem(**vars(stats)),
+        by_exit=[_bucket_item(b) for b in bucket_by_exit(attributed)],
+        strategy=_bucket_item(strategy) if strategy is not None else None,
+        unattributed=unattributed,
         reconciled_at_utc=max((r.reconciled_at_utc for r in rows), default=None),
         window="eval" if scoped else "all_time",
         eval_start_utc=cutoff,

@@ -29,66 +29,23 @@ _AGENT_ROOT = Path(__file__).resolve().parent.parent
 if str(_AGENT_ROOT) not in sys.path:
     sys.path.insert(0, str(_AGENT_ROOT))
 
-from scripts.reconcile import to_fills  # noqa: E402
-from tradingagents_us.dataflows.alpaca_broker import AlpacaClient, FillActivity, Order  # noqa: E402
+from scripts.reconcile import ORDER_PAGE, to_fills  # noqa: E402
+from tradingagents_us.dataflows.alpaca_broker import AlpacaClient  # noqa: E402
 from tradingagents_us.execution.exit_quality import (  # noqa: E402
     AttributedTrade,
     ExitBucket,
-    ExitOrder,
     attribute,
     bucket_by_exit,
+    exits_by_fill,
+    index_orders,
     strategy_bucket,
 )
 from tradingagents_us.execution.reconcile import reconcile_fills  # noqa: E402
 
-#: Alpaca prunes order history; the activities feed does not. Ask for far more
-#: orders than the account has ever placed so the classifier's `unknown` bucket
-#: means "the broker no longer has it", not "we did not ask for it".
-ORDER_PAGE = 500
-
-
-def _to_exit_order(order: Order, *, is_leg: bool) -> ExitOrder:
-    return ExitOrder(
-        order_id=order.id,
-        client_order_id=order.client_order_id,
-        order_type=order.order_type,
-        is_leg=is_leg,
-        trigger_price=order.stop_price if order.stop_price is not None else order.limit_price,
-    )
-
-
-def index_orders(orders: list[Order]) -> dict[str, ExitOrder]:
-    """order id → the record classification needs, bracket children included.
-
-    Descending into `legs` is the whole reason this works: a protective stop or
-    take-profit lives as a child of the entry order, so a flat listing shows an
-    account whose exits all came from nowhere.
-    """
-    out: dict[str, ExitOrder] = {}
-    for order in orders:
-        out[order.id] = _to_exit_order(order, is_leg=False)
-        for leg in order.legs:
-            out[leg.id] = _to_exit_order(leg, is_leg=True)
-    return out
-
-
-def exits_by_fill(
-    fills: list[FillActivity], orders_by_id: dict[str, ExitOrder]
-) -> dict[str, ExitOrder]:
-    """fill activity id → the order that produced it, for sell-side fills.
-
-    A fill whose `order_id` is missing or no longer at the broker is simply left
-    out; the classifier reports the absence as `unknown` rather than inventing a
-    class for it.
-    """
-    out: dict[str, ExitOrder] = {}
-    for fill in fills:
-        if fill.side != "sell":
-            continue
-        order = orders_by_id.get(fill.order_id or "")
-        if order is not None:
-            out[fill.id] = order
-    return out
+# `index_orders` / `exits_by_fill` moved next to the classifier they feed so
+# `reconcile.py` can attribute exits at write time without importing this CLI.
+# Re-exported here because they are still part of this script's surface.
+__all__ = ["exits_by_fill", "index_orders", "main"]
 
 
 def bucket_payload(bucket: ExitBucket) -> dict:

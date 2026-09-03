@@ -259,3 +259,124 @@ class TestLedgerIdempotency:
 
         body = client.get("/v1/trades").json()
         assert body["stats"]["trades"] == 2
+
+
+class TestExitAttribution:
+    """The split by what actually closed each position.
+
+    `stats` blends every exit path into one expectancy, and on this account
+    that number is dominated by the 2026-06-24 flatten that cleaned up the
+    accumulation bug. These guard the two ways the split can lie: a partially
+    attributed ledger rendering as a complete one, and an operator flatten
+    being scored as the agent's own exit discipline.
+    """
+
+    def test_buckets_and_strategy_roll_up_come_from_the_stored_class(
+        self, client: TestClient, repo: TradeLogRepository
+    ) -> None:
+        repo.upsert_closed_trades(
+            [
+                _trade("t1", "AAPL", 60.0, day=0),
+                _trade("t2", "MSFT", -40.0, day=1),
+                _trade("t3", "NVDA", -600.0, day=2),
+            ],
+            exit_classes={"t1": "take_profit", "t2": "stop", "t3": "flatten"},
+        )
+
+        body = client.get("/v1/trades").json()
+
+        by_class = {b["exit_class"]: b for b in body["by_exit"]}
+        assert by_class["take_profit"]["net_pnl"] == 60.0
+        assert by_class["stop"]["net_pnl"] == -40.0
+        assert by_class["flatten"]["net_pnl"] == -600.0
+        # The whole point: the agent's own record is +20 on 2 trades, not the
+        # -580 the blended ledger reports.
+        assert body["stats"]["net_pnl"] == -580.0
+        assert body["strategy"]["trades"] == 2
+        assert body["strategy"]["net_pnl"] == 20.0
+        assert body["unattributed"] == 0
+
+    def test_each_trade_carries_its_own_exit_class(
+        self, client: TestClient, repo: TradeLogRepository
+    ) -> None:
+        repo.upsert_closed_trades(
+            [_trade("t1", "AAPL", 60.0)], exit_classes={"t1": "decision_sell"}
+        )
+        assert client.get("/v1/trades").json()["trades"][0]["exit_class"] == "decision_sell"
+
+    def test_a_never_attributed_ledger_reports_no_split_rather_than_a_zeroed_one(
+        self, client: TestClient, repo: TradeLogRepository
+    ) -> None:
+        # Rows written before attribution existed. An empty bucket list plus a
+        # count is honest; a "strategy: 0 trades, $0.00" card would read as
+        # "the agent has never closed a position".
+        repo.upsert_closed_trades(
+            [_trade("t1", "AAPL", 60.0), _trade("t2", "MSFT", -40.0, day=1)]
+        )
+
+        body = client.get("/v1/trades").json()
+
+        assert body["by_exit"] == []
+        assert body["strategy"] is None
+        assert body["unattributed"] == 2
+        assert body["trades"][0]["exit_class"] is None
+        # The blended stats still stand — those need no order history.
+        assert body["stats"]["trades"] == 2
+
+    def test_unattributed_rows_are_counted_so_the_split_cannot_pass_as_complete(
+        self, client: TestClient, repo: TradeLogRepository
+    ) -> None:
+        repo.upsert_closed_trades(
+            [
+                _trade("t1", "AAPL", 60.0, day=0),
+                _trade("t2", "MSFT", -40.0, day=1),
+                _trade("t3", "NVDA", -25.0, day=2),
+            ],
+            exit_classes={"t1": "stop"},
+        )
+
+        body = client.get("/v1/trades").json()
+
+        assert body["unattributed"] == 2
+        assert sum(b["trades"] for b in body["by_exit"]) == 1
+        assert body["stats"]["trades"] == 3
+
+    def test_the_split_follows_the_window_and_filters_the_rows_do(
+        self, client: TestClient, repo: TradeLogRepository, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A split computed over a different set than the rows returned is the
+        # same bug the stats tests above guard, one level down.
+        monkeypatch.setenv("EVAL_START_DATE", (T0 + timedelta(days=1)).date().isoformat())
+        repo.upsert_closed_trades(
+            [_trade("old", "AAPL", -900.0, day=-5), _trade("new", "MSFT", 50.0, day=2)],
+            exit_classes={"old": "flatten", "new": "stop"},
+        )
+
+        body = client.get("/v1/trades").json()
+
+        assert body["window"] == "eval"
+        assert [b["exit_class"] for b in body["by_exit"]] == ["stop"]
+        assert body["strategy"]["net_pnl"] == 50.0
+
+    def test_a_ticker_filter_scopes_the_split_too(
+        self, client: TestClient, repo: TradeLogRepository
+    ) -> None:
+        repo.upsert_closed_trades(
+            [_trade("t1", "AAPL", 60.0), _trade("t2", "MSFT", -600.0, day=1)],
+            exit_classes={"t1": "stop", "t2": "flatten"},
+        )
+
+        body = client.get("/v1/trades", params={"ticker": "AAPL"}).json()
+
+        assert [b["exit_class"] for b in body["by_exit"]] == ["stop"]
+        assert body["strategy"]["trades"] == 1
+
+    def test_buckets_carry_a_human_label(
+        self, client: TestClient, repo: TradeLogRepository
+    ) -> None:
+        repo.upsert_closed_trades(
+            [_trade("t1", "AAPL", -600.0)], exit_classes={"t1": "flatten"}
+        )
+        body = client.get("/v1/trades").json()
+        assert body["by_exit"][0]["label"] == "flatten (outside the agent)"
+        assert body["strategy"]["label"] == "strategy exits only"

@@ -12,6 +12,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from tradingagents_us.execution.reconcile import (
+    ClosedTrade,
     Fill,
     compute_stats,
     reconcile_fills,
@@ -259,3 +260,96 @@ class TestStats:
     def test_avg_holding_days(self) -> None:
         s = compute_stats(self._closed([100.0, -100.0]))
         assert s.avg_holding_days == 2.0
+
+
+class TestExitAttributionAtWriteTime:
+    """`attribute_exits` — the class the ledger stores, decided against orders.
+
+    Classification needs the broker's ORDER history, which Alpaca prunes; the
+    fill feed is permanent. So the interesting cases are all about the gap:
+    what gets stored when the closing order is no longer there, and what must
+    NOT get stored (a `"unknown"` that would read as evidence we looked and
+    found nothing, when the caller may simply never have asked).
+    """
+
+    def _order(self, oid: str, order_type: str, client_id: str, legs: tuple = ()) -> object:
+        from tradingagents_us.dataflows.alpaca_broker import Order
+
+        return Order(
+            id=oid,
+            client_order_id=client_id,
+            symbol="AAPL",
+            side="sell",
+            qty=10.0,
+            filled_qty=10.0,
+            order_type=order_type,
+            status="filled",
+            submitted_at=T0,
+            filled_avg_price=100.0,
+            stop_price=95.0 if order_type in {"stop", "stop_limit"} else None,
+            limit_price=110.0 if order_type == "limit" else None,
+            legs=tuple(legs),
+        )
+
+    def _fill(self, fid: str, side: str, order_id: str | None) -> object:
+        from tradingagents_us.dataflows.alpaca_broker import FillActivity
+
+        return FillActivity(
+            id=fid,
+            symbol="AAPL",
+            side=side,
+            qty=10.0,
+            price=100.0,
+            transaction_time=T0,
+            order_id=order_id,
+        )
+
+    def _closed(self, tid: str, close_activity_id: str):
+        return ClosedTrade(
+            trade_id=tid,
+            symbol="AAPL",
+            direction="LONG",
+            quantity=10.0,
+            entry_price=100.0,
+            exit_price=110.0,
+            opened_at_utc=T0,
+            closed_at_utc=T0 + timedelta(days=2),
+            realized_pnl=100.0,
+            realized_pnl_pct=0.1,
+            holding_days=2.0,
+            open_activity_id="f-open",
+            close_activity_id=close_activity_id,
+        )
+
+    def test_maps_each_trade_to_the_class_of_its_closing_order(self) -> None:
+        from scripts.reconcile import attribute_exits
+
+        stop = self._order("leg-stop", "stop", "tr-AAPL-SELL")
+        parent = self._order("parent", "market", "tr-AAPL-BUY", legs=(stop,))
+        flatten = self._order("bare", "market", "68c3c73e-uuid")
+
+        got = attribute_exits(
+            [self._closed("t1", "f1"), self._closed("t2", "f2")],
+            [self._fill("f1", "sell", "leg-stop"), self._fill("f2", "sell", "bare")],
+            [parent, flatten],
+        )
+
+        assert got == {"t1": "stop", "t2": "flatten"}
+
+    def test_a_pruned_order_is_absent_rather_than_stored_as_unknown(self) -> None:
+        # The seam. `attribute` classifies a missing order as "unknown", and
+        # writing that would assert we checked the broker — but this same
+        # empty result is what an unreadable order feed produces. Leaving the
+        # trade out lets the repository preserve whatever it already knew.
+        from scripts.reconcile import attribute_exits
+
+        got = attribute_exits(
+            [self._closed("t1", "f1")], [self._fill("f1", "sell", "gone")], []
+        )
+
+        assert got == {}
+
+    def test_an_unreadable_order_feed_attributes_nothing_at_all(self) -> None:
+        from scripts.reconcile import attribute_exits
+
+        assert attribute_exits([self._closed("t1", "f1")], [], []) == {}

@@ -32,13 +32,20 @@ and hands the result in, so this can be tested without a network.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Protocol
 
 from tradingagents_us.execution.reconcile import ClosedTrade
 
 ExitClass = Literal["stop", "take_profit", "decision_sell", "flatten", "unknown"]
+
+#: The set of exit classes, as plain strings, for validating a value that has
+#: been round-tripped through storage. A `Literal` cannot check a str at
+#: runtime, and a persisted column is exactly where an unchecked value gets in.
+EXIT_CLASSES: frozenset[str] = frozenset(
+    {"stop", "take_profit", "decision_sell", "flatten", "unknown"}
+)
 
 #: Order types that mean "a protective level was reached", whatever the venue
 #: calls them. `trailing_stop` is here for completeness; nothing submits one yet.
@@ -89,6 +96,77 @@ class ExitOrder:
     order_type: str
     is_leg: bool
     trigger_price: float | None = None
+
+
+class _BrokerOrder(Protocol):
+    """The parts of a broker order this module reads.
+
+    A Protocol rather than the adapter's `Order` so resolving fills to orders
+    can live here, next to the classifier that consumes it, without dragging
+    httpx into a module whose whole point is being importable and testable
+    without a network.
+    """
+
+    id: str
+    client_order_id: str
+    order_type: str
+    stop_price: float | None
+    limit_price: float | None
+
+    @property
+    def legs(self) -> list: ...
+
+
+class _BrokerFill(Protocol):
+    """The parts of a fill activity this module reads."""
+
+    id: str
+    side: str
+    order_id: str | None
+
+
+def _to_exit_order(order: _BrokerOrder, *, is_leg: bool) -> ExitOrder:
+    return ExitOrder(
+        order_id=order.id,
+        client_order_id=order.client_order_id,
+        order_type=order.order_type,
+        is_leg=is_leg,
+        trigger_price=order.stop_price if order.stop_price is not None else order.limit_price,
+    )
+
+
+def index_orders(orders: Iterable[_BrokerOrder]) -> dict[str, ExitOrder]:
+    """order id → the record classification needs, bracket children included.
+
+    Descending into `legs` is the whole reason this works: a protective stop or
+    take-profit lives as a child of the entry order, so a flat listing shows an
+    account whose exits all came from nowhere.
+    """
+    out: dict[str, ExitOrder] = {}
+    for order in orders:
+        out[order.id] = _to_exit_order(order, is_leg=False)
+        for leg in order.legs:
+            out[leg.id] = _to_exit_order(leg, is_leg=True)
+    return out
+
+
+def exits_by_fill(
+    fills: Iterable[_BrokerFill], orders_by_id: Mapping[str, ExitOrder]
+) -> dict[str, ExitOrder]:
+    """fill activity id → the order that produced it, for sell-side fills.
+
+    A fill whose `order_id` is missing or no longer at the broker is simply left
+    out; the classifier reports the absence as `unknown` rather than inventing a
+    class for it.
+    """
+    out: dict[str, ExitOrder] = {}
+    for fill in fills:
+        if fill.side != "sell":
+            continue
+        order = orders_by_id.get(fill.order_id or "")
+        if order is not None:
+            out[fill.id] = order
+    return out
 
 
 def classify_exit(order: ExitOrder | None) -> ExitClass:
@@ -168,6 +246,54 @@ def attribute(
         )
         for t in trades
     ]
+
+
+def coerce_exit_class(value: str | None) -> ExitClass | None:
+    """A stored class string back to an `ExitClass`, or `None` if there isn't one.
+
+    `None` in, `None` out — and that is the case worth being careful about. A
+    row with no stored class has *never been attributed* (it predates
+    attribution, or the reconcile that wrote it could not reach the broker's
+    order history). That is not the same claim as `"unknown"`, which asserts we
+    looked and the order was gone. Folding the first into the second would put
+    rows in a bucket that says "evidence missing at the broker" on the strength
+    of us not having asked yet.
+
+    An unrecognised string is also `None`: a value that is not a class this
+    build knows about cannot be scored as one, and guessing is how a typo'd
+    column becomes a number on a money screen.
+    """
+    if value is None:
+        return None
+    normalised = value.strip().lower()
+    if normalised not in EXIT_CLASSES:
+        return None
+    return normalised  # type: ignore[return-value]
+
+
+def attribute_stored(
+    trades: Iterable[ClosedTrade], classes: Mapping[str, str | None]
+) -> tuple[list[AttributedTrade], int]:
+    """Pair trades with their *persisted* class; report how many have none.
+
+    The read path's counterpart to `attribute`: the class was decided against
+    the broker at reconcile time and stored, so a money screen can render the
+    split without a broker call — the reason `/v1/trades` never reconciles on
+    request.
+
+    Returns `(attributed, unattributed_count)`. Unattributed rows are dropped
+    rather than bucketed, and the count is returned so the caller can say so
+    out loud. A split that silently omits rows reads as the whole ledger.
+    """
+    attributed: list[AttributedTrade] = []
+    unattributed = 0
+    for trade in trades:
+        exit_class = coerce_exit_class(classes.get(trade.trade_id))
+        if exit_class is None:
+            unattributed += 1
+            continue
+        attributed.append(AttributedTrade(trade=trade, exit_class=exit_class, order=None))
+    return attributed, unattributed
 
 
 def _bucket(exit_class: str, rows: list[AttributedTrade]) -> ExitBucket:

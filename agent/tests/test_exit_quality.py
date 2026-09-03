@@ -16,8 +16,10 @@ from tradingagents_us.execution.exit_quality import (
     STRATEGY_CLASSES,
     ExitOrder,
     attribute,
+    attribute_stored,
     bucket_by_exit,
     classify_exit,
+    coerce_exit_class,
     strategy_bucket,
 )
 from tradingagents_us.execution.reconcile import ClosedTrade
@@ -270,3 +272,80 @@ class TestBrokerJoin:
         )
         assert got == {}
         assert classify_exit(got.get("f1")) == "unknown"
+
+
+class TestCoerceExitClass:
+    """A class read back out of storage, where nothing checked it going in."""
+
+    def test_a_known_class_survives_the_round_trip(self) -> None:
+        for name in ("stop", "take_profit", "decision_sell", "flatten", "unknown"):
+            assert coerce_exit_class(name) == name
+
+    def test_case_and_padding_are_tolerated(self) -> None:
+        assert coerce_exit_class(" Take_Profit ") == "take_profit"
+
+    def test_absent_is_none_not_unknown(self) -> None:
+        # The distinction the whole read path rests on: "we never asked" is not
+        # "we asked and the broker had pruned it".
+        assert coerce_exit_class(None) is None
+
+    def test_an_unrecognised_string_is_none_rather_than_a_guess(self) -> None:
+        assert coerce_exit_class("stopp") is None
+        assert coerce_exit_class("") is None
+
+
+class TestAttributeStored:
+    """Bucketing from the persisted class, the way /v1/trades does it."""
+
+    def test_pairs_each_trade_with_its_stored_class(self) -> None:
+        trades = [_trade("f1", 100.0), _trade("f2", -50.0)]
+        attributed, unattributed = attribute_stored(
+            trades, {"t-f1": "take_profit", "t-f2": "stop"}
+        )
+
+        assert unattributed == 0
+        assert [r.exit_class for r in attributed] == ["take_profit", "stop"]
+        # No order is available on the read path; the class is the whole record.
+        assert all(r.order is None for r in attributed)
+
+    def test_unattributed_rows_are_counted_and_left_out_of_every_bucket(self) -> None:
+        trades = [_trade("f1", 100.0), _trade("f2", -50.0), _trade("f3", -25.0)]
+
+        attributed, unattributed = attribute_stored(trades, {"t-f1": "stop"})
+
+        assert unattributed == 2
+        assert [b.exit_class for b in bucket_by_exit(attributed)] == ["stop"]
+        # The seam: a NULL row must NOT land in the "unknown" bucket. Bucketing
+        # it there would claim the broker had pruned an order nobody looked for.
+        assert all(b.exit_class != "unknown" for b in bucket_by_exit(attributed))
+
+    def test_a_flatten_stays_out_of_the_strategy_roll_up(self) -> None:
+        # The bug this endpoint exists to stop: the 2026-06-24 cleanup dwarfs
+        # the agent's own exits, so a blended expectancy answers a question
+        # nobody asked.
+        trades = [_trade("f1", 60.0), _trade("f2", -600.0)]
+        attributed, _ = attribute_stored(trades, {"t-f1": "stop", "t-f2": "flatten"})
+
+        strategy = strategy_bucket(attributed)
+
+        assert strategy.trades == 1
+        assert strategy.net_pnl == 60.0
+
+    def test_an_unknown_class_is_kept_but_never_scored_as_strategy(self) -> None:
+        trades = [_trade("f1", 100.0), _trade("f2", -40.0)]
+        attributed, unattributed = attribute_stored(
+            trades, {"t-f1": "decision_sell", "t-f2": "unknown"}
+        )
+
+        assert unattributed == 0
+        assert {b.exit_class for b in bucket_by_exit(attributed)} == {
+            "decision_sell",
+            "unknown",
+        }
+        assert strategy_bucket(attributed).trades == 1
+
+    def test_a_garbage_stored_value_is_treated_as_unattributed(self) -> None:
+        attributed, unattributed = attribute_stored([_trade("f1", 10.0)], {"t-f1": "oops"})
+
+        assert attributed == []
+        assert unattributed == 1

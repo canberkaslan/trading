@@ -119,6 +119,17 @@ class ClosedTradeRow(Base):
     close_activity_id: Mapped[str] = mapped_column(String(64), index=True)
     reconciled_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
+    #: What closed the position — see `execution.exit_quality`. Decided against
+    #: the broker's order record at reconcile time and stored here so the read
+    #: path can split the ledger without a broker call.
+    #:
+    #: NULL means "never attributed" (row predates attribution, or that
+    #: reconcile could not read order history). It does NOT mean `"unknown"`,
+    #: which is the stronger claim that we looked and the order was pruned.
+    #: Readers must keep the two apart: scoring never-asked rows as
+    #: evidence-missing quietly changes what the split is measuring.
+    exit_class: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
 
 class OrderUpdateRow(Base):
     __tablename__ = "order_updates"

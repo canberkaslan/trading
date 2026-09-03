@@ -25,6 +25,11 @@ import json
 from datetime import UTC, datetime
 
 from tradingagents_us.dataflows.alpaca_broker import AlpacaClient, FillActivity
+from tradingagents_us.execution.exit_quality import (
+    attribute,
+    exits_by_fill,
+    index_orders,
+)
 from tradingagents_us.execution.reconcile import (
     ClosedTrade,
     Fill,
@@ -33,6 +38,11 @@ from tradingagents_us.execution.reconcile import (
     reconcile_fills,
 )
 from tradingagents_us.storage import TradeLogRepository
+
+#: Alpaca prunes order history; the activities feed does not. Ask for far more
+#: orders than the account has ever placed so an exit that comes back
+#: unattributed means "the broker no longer has it", not "we did not ask".
+ORDER_PAGE = 500
 
 
 def to_fills(activities: list[FillActivity]) -> list[Fill]:
@@ -48,6 +58,28 @@ def to_fills(activities: list[FillActivity]) -> list[Fill]:
         )
         for a in activities
     ]
+
+
+def attribute_exits(
+    closed: list[ClosedTrade], fills: list[FillActivity], orders: list
+) -> dict[str, str]:
+    """trade_id → exit class, decided against the broker's own order record.
+
+    Done here, at reconcile time, rather than on read: classification needs
+    order history, and `/v1/trades` deliberately makes no broker call — a money
+    screen whose page load depends on Alpaca renders an outage as "no trades".
+    Storing the verdict moves that dependency to a job that already has it.
+
+    Trades whose closing order is gone are simply absent from the result. The
+    caller must not turn that absence into a stored `"unknown"`: the row keeps
+    whatever it had, and a never-attributed row stays NULL.
+    """
+    resolved = exits_by_fill(fills, index_orders(orders))
+    return {
+        row.trade.trade_id: row.exit_class
+        for row in attribute(closed, resolved)
+        if row.order is not None
+    }
 
 
 def summary_payload(
@@ -91,6 +123,12 @@ def format_summary(payload: dict) -> str:
         f"profit factor {pf if pf is not None else 'n/a (no losses yet)'}\n"
         f"  avg hold  {payload['avg_holding_days']:.1f}d   "
         f"best ${payload['best_trade']:,.2f}  worst ${payload['worst_trade']:,.2f}"
+        + (
+            f"\n  exits     {payload['attributed_exits']} attributed, "
+            f"{payload['unattributed_exits']} not (order pruned or unreadable)"
+            if "attributed_exits" in payload
+            else ""
+        )
     )
 
 
@@ -102,15 +140,29 @@ def main() -> int:
 
     with AlpacaClient() as ac:
         activities = ac.list_fill_activities()
+        # Nested, so bracket children come back: a protective stop is never a
+        # top-level order, and a flat listing attributes none of them.
+        # Failing to read orders must not fail the reconcile — the ledger
+        # itself comes from fills, and attribution is an enrichment on top.
+        try:
+            orders = ac.list_orders(status="all", limit=ORDER_PAGE, nested=True)
+        except Exception as exc:  # noqa: BLE001 - degrade, never lose the ledger
+            print(f"warning: order history unreadable, exits left unattributed: {exc}")
+            orders = []
 
     result = reconcile_fills(to_fills(activities))
     stats = compute_stats(result.closed)
+    exit_classes = attribute_exits(result.closed, activities, orders)
 
     new_rows = 0
     if not args.dry_run:
-        new_rows = TradeLogRepository().upsert_closed_trades(result.closed)
+        new_rows = TradeLogRepository().upsert_closed_trades(
+            result.closed, exit_classes=exit_classes
+        )
 
     payload = summary_payload(result.closed, stats, len(activities), new_rows)
+    payload["attributed_exits"] = len(exit_classes)
+    payload["unattributed_exits"] = len(result.closed) - len(exit_classes)
     if args.dry_run:
         payload["dry_run"] = True
 

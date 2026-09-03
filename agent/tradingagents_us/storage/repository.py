@@ -7,7 +7,7 @@ makes dev frictionless. Production points at Aurora.
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -35,10 +35,51 @@ def make_engine(database_url: str | None = None) -> Engine:
     return create_engine(url, future=True)
 
 
+#: Columns added to a table that already exists in a deployed database.
+#:
+#: `create_all` creates missing TABLES and nothing else — it will not touch a
+#: table it already sees. So a new column on an existing model ships fine to a
+#: fresh database and, on the box, produces `no such column` on the next SELECT:
+#: the mapper asks for a column the file does not have. There is no Alembic
+#: here, and adding it for one nullable column would be the larger change; this
+#: is the narrow substitute, and it is deliberately narrow — additive, nullable,
+#: no defaults, no type changes, no drops. Anything beyond that needs a real
+#: migration tool, not another entry in this list.
+_ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    # (table, column, SQL type) — the type is spelled out because this runs as
+    # raw DDL on both SQLite (the box) and Postgres (Aurora).
+    ("closed_trades", "exit_class", "VARCHAR(16)"),
+)
+
+
+def ensure_additive_columns(engine: Engine) -> list[str]:
+    """Add any declared column missing from an existing table. Returns what it added.
+
+    Idempotent: a column already present is skipped, so this is safe on every
+    startup. A table that does not exist yet is skipped too — `create_all` will
+    have built it complete from the model.
+    """
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    added: list[str] = []
+    for table, column, sql_type in _ADDITIVE_COLUMNS:
+        if table not in existing_tables:
+            continue
+        if column in {c["name"] for c in inspector.get_columns(table)}:
+            continue
+        with engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}"))
+        added.append(f"{table}.{column}")
+    return added
+
+
 class TradeLogRepository:
     def __init__(self, engine: Engine | None = None) -> None:
         self.engine = engine or make_engine()
         Base.metadata.create_all(self.engine)
+        ensure_additive_columns(self.engine)
         # expire_on_commit=False so detached objects retain their column
         # values after the session closes (we return rows by value).
         self._SessionLocal = sessionmaker(bind=self.engine, future=True, expire_on_commit=False)
@@ -120,7 +161,11 @@ class TradeLogRepository:
                 timestamp_utc=datetime.now(UTC),
             ))
 
-    def upsert_closed_trades(self, trades: list[ClosedTrade]) -> int:
+    def upsert_closed_trades(
+        self,
+        trades: list[ClosedTrade],
+        exit_classes: Mapping[str, str | None] | None = None,
+    ) -> int:
         """Persist reconciled round trips; returns the number of NEW rows.
 
         `merge` on the deterministic trade_id makes a replay idempotent: the
@@ -128,16 +173,30 @@ class TradeLogRepository:
         an already-known round trip is updated in place rather than appended.
         The new-row count is what the caller reports — "wrote 40 rows" every
         hour would hide the fact that nothing actually closed.
+
+        `exit_classes` (trade_id → class) is optional because it depends on the
+        broker's ORDER history, which is pruned and can be unavailable when the
+        fill feed is not. A missing or `None` entry therefore leaves whatever is
+        already stored alone rather than writing NULL over it: `merge` sets
+        every column it is given, so passing the attribute through unguarded
+        would let one order-history failure erase attribution for the whole
+        ledger — a silent downgrade that looks exactly like "we never asked".
         """
         from datetime import datetime
 
+        classes = exit_classes or {}
         now = datetime.now(UTC)
         new_rows = 0
         with self.session() as s:
             for t in trades:
-                if s.get(ClosedTradeRow, t.trade_id) is None:
+                existing = s.get(ClosedTradeRow, t.trade_id)
+                if existing is None:
                     new_rows += 1
+                exit_class = classes.get(t.trade_id) or (
+                    existing.exit_class if existing is not None else None
+                )
                 s.merge(ClosedTradeRow(
+                    exit_class=exit_class,
                     trade_id=t.trade_id,
                     symbol=t.symbol,
                     direction=t.direction,

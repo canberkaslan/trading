@@ -108,6 +108,64 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - 7e Charts, 7f Analiz-Et deep-link, 7g Settings kill-switch+health, snapshot logger
 - cost-opt routing on branch (opt-in, not deployed)
 
+## Daily loop 2026-09-03 (🔴 BOX DARK 10. gün; dünkü ölçüm artık ledger'ın kendi hafızasında)
+- **Canlı durum ALINAMADI, 10. gün.** `trader.fusapp.com` → CF **1033**, SSH 22 timeout, ICMP %100
+  kayıp. Kurtarma hâlâ Hetzner konsolu = Canberk. Backend deploy imkânsız, mobil değişiklik yok →
+  **OTA yok**. Broker'dan doğrudan (read-only): equity **$109,513.66**, last_equity $108,472.56
+  (günlük **+$1,041.10 / +0.96%**), cash $2,829.16, 10 pozisyon, unrealized **+$10,454.91**, ACTIVE,
+  `trading_blocked=false`. Son fill hâlâ **08-24 META buy 1** — kitap 10 gündür yönetilmiyor.
+  Watchdog relay zinciri sağlam: incident #1 gövdesi `checked-at 06:05Z`, bir öncekiyle arası 20 dk.
+- [x] **Dünkü exit attribution'ı CLI'dan çıkarıp ledger'a yazdım; `/v1/trades` artık split'i
+  broker'a hiç dokunmadan veriyor.** (`execution/exit_quality.py` + `storage/{models,repository}.py`
+  + `scripts/reconcile.py` + `api/routes/trades.py`; read-only reporting, decision-path'e dokunmuyor.)
+  Dün ölçülen tablo tek seferlik bir CLI çıktısıydı ve **app hâlâ karma expectancy gösteriyordu** —
+  yani "flatten'ı strateji sanma" hatası ölçülmüş ama düzeltilmemişti. Sınıflandırma order history
+  istiyor; `/v1/trades` ise tasarım gereği broker'a çağrı yapmıyor (para ekranının sayfa açılışı
+  Alpaca'nın ayakta olmasına bağlanamaz, aksi halde outage "hiç işlem yok" diye render eder).
+  Çözüm: sınıfı **order history'nin zaten elde olduğu yerde** — reconcile anında — karara bağlayıp
+  `closed_trades.exit_class`'a yazmak; endpoint `by_exit` + `strategy` roll-up'ını oradan okuyor.
+  Yeni write→read yolu, canlı broker'a karşı dünkü tabloyu **birebir** üretti (32/32 attributed,
+  0 unattributed — ORDER_PAGE=500 yetiyor):
+
+  | Çıkış yolu | n | win% | net P&L | işlem başına |
+  |---|---|---|---|---|
+  | take-profit leg | 4 | 75% | +$73.95 | +$18.49 |
+  | protective stop | 3 | 33% | −$414.44 | −$138.15 |
+  | agent decision sell | 1 | 100% | +$47.12 | +$47.12 |
+  | flatten (agent DIŞI) | 24 | 12% | −$656.86 | −$27.37 |
+  | **STRATEJİ (n=8)** | 8 | 62% | **−$293.37** | −$36.67 |
+  | ~~BLENDED (app'in bugün gösterdiği)~~ | 32 | 25% | −$950.23 | −$29.69 |
+
+  - 🔴 **Sessiz kalsa box'ı kıracak olan asıl tuzak: `create_all` eksik TABLO yaratır, eksik KOLON
+    değil.** Repo'da Alembic yok. Box'taki `closed_trades` 08-09'dan beri var, dolayısıyla mapped
+    bir kolon eklemek oraya migration olarak değil, ilk SELECT'te
+    `OperationalError: no such column: closed_trades.exit_class` olarak varırdı — ve **boş DB'den
+    başlayan her test yeşil kalırdı**. `ensure_additive_columns()` bunu kapatıyor; kasten dar
+    tutuldu (additive, nullable, default yok, drop yok — fazlası gerçek migration aracı ister).
+    Test "önce"ki hâli elle kurup ölçüyor, ve guard stub'lanınca gerçekten patlıyor (doğrulandı).
+  - 🔴 **İkinci seam: `merge` verilen her kolonu yazar.** Sınıf order history'den geliyor, o feed
+    fill feed sağlamken tek başına ölebilir → korumasız bir pass-through, **tek bir kötü koşuda
+    tüm ledger'ın attribution'ını NULL'a çevirirdi** ve bu "hiç sormadık"tan ayırt edilemezdi.
+    Artık sınıf vermeyen koşu, saklı olanı olduğu gibi bırakıyor (reclassification hâlâ kazanıyor).
+  - **NULL ≠ `"unknown"`, baştan sona.** "Hiç attribute edilmedi" ile "baktık, broker prune etmiş"
+    farklı iddialar; sadece ikincisi bucket'a girer. Attribute edilmemiş satırlar `unattributed`
+    olarak sayılıyor ki **kısmi split bütünmüş gibi render edilemesin**.
+  - `index_orders`/`exits_by_fill` CLI'dan saf modüle taşındı (Protocol ile, httpx runtime'a
+    girmeden) — böylece `reconcile.py` CLI'ı import etmeden attribute edebiliyor, cycle yok.
+  - 34 yeni test (**547 yeşil**), ruff 0.16.4 temiz, agent-ci yeşil (1m33s).
+- **DEPLOY YOK — bilinçli.** Backend box'ta; box karanlık. Kod main'de, box dönünce `git pull` +
+  `ai-trader-api` restart + bir `scripts/reconcile.py` koşusu sınıfları dolduracak (ilk koşuya kadar
+  endpoint dürüstçe `unattributed=n`, `strategy=null` der). **Mobil slice'ı da bilerek ertelendim:**
+  `by_exit`/`strategy` alanlarını okuyan bir OTA, backend inene kadar boş kart gösterirdi — karanlık
+  süresi belirsizken app'e "veri yok" kartı basmak, karma expectancy'den daha iyi değil.
+- **Canberk'e kalan (değişmedi):** (1) Hetzner konsolu → box'a bak, ayaktaysa `ssh agentmesh` +
+  `journalctl -b -1 -e`, değilse power-cycle; sonra `ai-trader.timer`, `ai-trader-api`, `cloudflared`.
+  (2) `WATCHDOG_BACKUP_TOKEN` (trading-backups Contents:read PAT).
+- **Sıradaki:** (a) box kurtarma = Canberk, (b) box dönünce reconcile koşusu + **stop backfill**
+  (265 çıplak hisse), (c) mobil "Gerçekleşen" kartı → `strategy` + n rozeti (backend indikten SONRA),
+  (d) NO-GO kök nedeni hâlâ **n=8 problemi**: exit mantığını değiştirmek değil, örneklem biriktirmek
+  ya da backtest'te exit yolunu ayrı ayrı ölçmek.
+
 ## Daily loop 2026-09-02 (🔴 BOX DARK 9. gün; "realized negatif expectancy" ölçümü YANLIŞ SORUYA cevaptı)
 - **Canlı durum ALINAMADI, 9. gün.** `trader.fusapp.com` → CF **1033**, SSH 22 timeout, ICMP %100
   kayıp. Kurtarma hâlâ Hetzner konsolu = Canberk. Backend deploy imkânsız, mobil değişiklik yok →

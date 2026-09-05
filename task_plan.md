@@ -108,6 +108,43 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - 7e Charts, 7f Analiz-Et deep-link, 7g Settings kill-switch+health, snapshot logger
 - cost-opt routing on branch (opt-in, not deployed)
 
+## Daily loop 2026-09-05 (🔴 BOX DARK 12. gun; app artik flatten'i strateji sanmiyor)
+- **Canli durum ALINAMADI, 12. gun.** `trader.fusapp.com` -> CF **530/1033**, SSH 22 timeout, ICMP
+  %100 kayip. Kurtarma hala Hetzner konsolu = Canberk. Backend deploy imkansiz. Broker'dan
+  dogrudan (read-only): equity **$109,875.54**, last_equity $110,775.90 (gunluk **-$900.36 /
+  -0.81%**), cash $2,829.16, buying_power $311,046.50, 10 pozisyon, unrealized **+$10,816.79**,
+  net vs 100k **+$9,875.54 / +9.88%**, ACTIVE, `trading_blocked=false`. Son fill hala **08-24 META
+  buy 1** -- kitap 12 gundur yonetilmiyor. Watchdog incident #1 acik (05:39Z), runlar yesil ama
+  cadence hala ~2 saatte bir (schedule 30 dk) -- GitHub cron throttling, bilinen.
+- [x] **Dun backend'e yazilan exit attribution'i mobile'a bagladim: "Gercekleşen" karti artik
+  operator flatten'ini stratejinin cikis sicili gibi okumuyor.** (`mobile/app`: `api/types.ts`
+  `ExitBucket` + opsiyonel `by_exit`/`strategy`/`unattributed`; `utils/realized.ts`
+  `exitClassLabelTr`/`exitBreakdown`/`strategyReading`/`attributionNote`; `portfolio.tsx` ayri
+  "Stratejinin cikislari" blogu + n rozeti + cikis yolu kirilimi.)
+  - Karti bozan sey su idi: tek bir harmanlanmis expectancy, ve bu kitapta o sayi **2026-06-24
+    flatten'i** (accumulation bug temizligi, operator eylemi) tarafindan domine ediliyor. Yani app
+    "ajan ne kadar iyi cikiyor?" sorusuna bir temizligin P&L'i ile cevap veriyordu.
+  - Strateji blogu **orneklem boyutunu yanina tasiyor** (n=8 bir hukum degil; MIN_SAMPLE=30
+    altinda hicbir sey yesil/kirmizi boyanmiyor), harmanlanmis expectancy'nin alt yazisi split
+    varsa "islem basi · karisik" oluyor.
+  - Split alanlari client tiplerinde **opsiyonel**: deploy'daki backend attribution'dan eski, ve
+    alansiz bir cevap "**henuz soyleyemiyoruz**" diye okunuyor -- asla "ajan hicbir sey
+    kapatmadi" diye degil. Ayni kitap hakkinda iki farkli iddia; test bunu ayrica pinliyor
+    (`strategy === undefined` -> 'unavailable', `=== null` -> 'none').
+  - `unattributed > 0` oldugunda kirilimin toplamla ortusmedigi kartta yaziyor -- yarim
+    siniflandirilmis bir defter tam gibi gorunmesin.
+  - 26 yeni jest (**207 yesil**), backend **547 yesil**, tsc dokunulan dosyalarda temiz.
+  - **OTA yayinda** (preview, update group `5ffbbd0d`, commit `6c63d01`) -- box dark oldugu icin
+    kart bugun 'unavailable' kolunu gosterecek, box donunce split kendiliginden dolacak.
+- **Canberk'e kalan (degismedi):** (1) Hetzner konsolu -> box'a bak, ayaktaysa `ssh agentmesh` +
+  `journalctl -b -1 -e`, degilse power-cycle; sonra `ai-trader.timer`, `ai-trader-api`,
+  `cloudflared`. (2) `WATCHDOG_BACKUP_TOKEN` (trading-backups Contents:read PAT).
+- **Siradaki:** (a) box kurtarma = Canberk, (b) box donunce reconcile kosusu + **stop backfill**
+  (265 ciplak hisse), (c) NO-GO kok nedeni hala **n=8 problemi** -- karar exit mantigini
+  degistirmek degil, orneklem biriktirmek ya da backtest'te exit yolunu ayri ayri olcmek
+  (decision-path'e dokunmadan once bu), (d) sizer'in cash/buying-power cap'i (branch, supervised
+  run box donmeden drill edilemez).
+
 ## Daily loop 2026-09-03 (🔴 BOX DARK 10. gün; dünkü ölçüm artık ledger'ın kendi hafızasında)
 - **Canlı durum ALINAMADI, 10. gün.** `trader.fusapp.com` → CF **1033**, SSH 22 timeout, ICMP %100
   kayıp. Kurtarma hâlâ Hetzner konsolu = Canberk. Backend deploy imkânsız, mobil değişiklik yok →

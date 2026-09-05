@@ -11,8 +11,12 @@ import {
   reconcileFreshness,
   realizedCaveat,
   evalWindowNote,
+  exitClassLabelTr,
+  exitBreakdown,
+  strategyReading,
+  attributionNote,
 } from './realized';
-import type { Position, TradeStats, TradesResponse } from '@/api/types';
+import type { ExitBucket, Position, TradeStats, TradesResponse } from '@/api/types';
 
 function pos(unrealized: number): Position {
   return {
@@ -218,5 +222,145 @@ describe('evalWindowNote', () => {
   it('is null-safe for a screen that renders before the fetch lands', () => {
     expect(evalWindowNote(null)).toBeNull();
     expect(evalWindowNote(undefined)).toBeNull();
+  });
+});
+
+describe('exitClassLabelTr', () => {
+  it('names every class the backend can emit', () => {
+    expect(exitClassLabelTr('take_profit')).toBe('Kâr al');
+    expect(exitClassLabelTr('stop')).toBe('Koruyucu stop');
+    expect(exitClassLabelTr('decision_sell')).toBe('Ajan satış kararı');
+    expect(exitClassLabelTr('flatten')).toBe('Flatten (ajan dışı)');
+    expect(exitClassLabelTr('unknown')).toBe('Bilinmiyor (emir silinmiş)');
+    expect(exitClassLabelTr('strategy')).toBe('Stratejinin kendi çıkışları');
+  });
+
+  it('renders a class it has no copy for instead of dropping the row', () => {
+    // A backend that grows a new exit class must not make its trades vanish
+    // from a money screen just because the app has not shipped copy for it.
+    expect(exitClassLabelTr('assignment')).toBe('assignment');
+    expect(exitClassLabelTr(null)).toBe('—');
+    expect(exitClassLabelTr('  ')).toBe('—');
+  });
+});
+
+function bucket(over: Partial<ExitBucket> = {}): ExitBucket {
+  return {
+    exit_class: 'stop',
+    label: 'protective stop',
+    trades: 4,
+    wins: 1,
+    losses: 3,
+    win_rate: 0.25,
+    net_pnl: -120,
+    gross_profit: 40,
+    gross_loss: 160,
+    avg_pnl: -30,
+    avg_holding_days: 2.5,
+    ...over,
+  };
+}
+
+describe('exitBreakdown', () => {
+  it("orders the agent's own exits ahead of what happened to it", () => {
+    const rows = exitBreakdown({
+      by_exit: [
+        bucket({ exit_class: 'flatten' }),
+        bucket({ exit_class: 'stop' }),
+        bucket({ exit_class: 'take_profit' }),
+        bucket({ exit_class: 'unknown' }),
+        bucket({ exit_class: 'decision_sell' }),
+      ],
+    } as TradesResponse);
+    expect(rows.map((r) => r.exit_class)).toEqual([
+      'take_profit',
+      'stop',
+      'decision_sell',
+      'flatten',
+      'unknown',
+    ]);
+  });
+
+  it('drops empty paths — a never-taken exit is not a result', () => {
+    const rows = exitBreakdown({
+      by_exit: [bucket({ exit_class: 'take_profit', trades: 0 }), bucket({ exit_class: 'stop' })],
+    } as TradesResponse);
+    expect(rows.map((r) => r.exit_class)).toEqual(['stop']);
+  });
+
+  it('sorts an unrecognised class last but keeps it', () => {
+    const rows = exitBreakdown({
+      by_exit: [bucket({ exit_class: 'assignment' }), bucket({ exit_class: 'flatten' })],
+    } as TradesResponse);
+    expect(rows.map((r) => r.exit_class)).toEqual(['flatten', 'assignment']);
+  });
+
+  it('does not mutate the response array it was handed', () => {
+    const by_exit = [bucket({ exit_class: 'flatten' }), bucket({ exit_class: 'take_profit' })];
+    exitBreakdown({ by_exit } as TradesResponse);
+    expect(by_exit.map((r) => r.exit_class)).toEqual(['flatten', 'take_profit']);
+  });
+
+  it('is empty when the backend sends no split at all', () => {
+    expect(exitBreakdown({} as TradesResponse)).toEqual([]);
+    expect(exitBreakdown(null)).toEqual([]);
+  });
+});
+
+describe('strategyReading', () => {
+  it("reports 'unavailable' when the backend predates attribution", () => {
+    // The live case while the box is dark: the deployed API answers without
+    // `strategy`, and the card must say the expectancy below is a blend —
+    // not claim the agent has closed nothing.
+    const r = strategyReading({} as TradesResponse);
+    expect(r.status).toBe('unavailable');
+    expect(r.bucket).toBeNull();
+    expect(r.note).toContain('karışımı');
+  });
+
+  it("reports 'none' — a different claim — when nothing is attributed to the strategy", () => {
+    const r = strategyReading({ strategy: null, unattributed: 0 } as TradesResponse);
+    expect(r.status).toBe('none');
+    expect(r.note).toContain('ajan dışı');
+  });
+
+  it('treats a zero-trade bucket as nothing attributed', () => {
+    const r = strategyReading({ strategy: bucket({ exit_class: 'strategy', trades: 0 }) } as TradesResponse);
+    expect(r.status).toBe('none');
+  });
+
+  it('attaches the sample size and refuses to call a small one meaningful', () => {
+    const r = strategyReading({
+      strategy: bucket({ exit_class: 'strategy', trades: 8 }),
+    } as TradesResponse);
+    expect(r.status).toBe('ok');
+    expect(r.bucket?.trades).toBe(8);
+    expect(r.note).toBe(`8 işlem — istatistiksel olarak anlamlı değil (≥${MIN_SAMPLE} gerekir).`);
+  });
+
+  it('drops the caveat once the sample clears the floor', () => {
+    const r = strategyReading({
+      strategy: bucket({ exit_class: 'strategy', trades: MIN_SAMPLE }),
+    } as TradesResponse);
+    expect(r.note).toBe(`${MIN_SAMPLE} işlem üzerinden.`);
+  });
+
+  it('is null-safe before the fetch lands', () => {
+    expect(strategyReading(null).status).toBe('unavailable');
+    expect(strategyReading(undefined).status).toBe('unavailable');
+  });
+});
+
+describe('attributionNote', () => {
+  it('says so when the split does not add up to the blended stats', () => {
+    expect(attributionNote({ unattributed: 3 } as TradesResponse)).toBe(
+      '3 işlem sınıflandırılamadı — kırılım toplam ile örtüşmüyor.',
+    );
+  });
+
+  it('stays quiet on a fully attributed ledger, and when the field is absent', () => {
+    expect(attributionNote({ unattributed: 0 } as TradesResponse)).toBeNull();
+    expect(attributionNote({} as TradesResponse)).toBeNull();
+    expect(attributionNote(null)).toBeNull();
   });
 });

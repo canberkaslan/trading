@@ -228,6 +228,29 @@ export interface TradeStats {
   worst_trade: number;
 }
 
+/**
+ * One exit path's record — the same closed trades as {@link TradeStats}, split
+ * by what actually closed each position (take-profit leg, protective stop,
+ * agent decision sell, operator flatten, or an order the broker has pruned).
+ */
+export interface ExitBucket {
+  /** 'take_profit' | 'stop' | 'decision_sell' | 'flatten' | 'unknown' | 'strategy'. */
+  exit_class: string;
+  /** Backend's English label. The app renders its own TR copy instead. */
+  label: string;
+  trades: number;
+  wins: number;
+  losses: number;
+  /** Fraction, not percent. */
+  win_rate: number;
+  net_pnl: number;
+  gross_profit: number;
+  gross_loss: number;
+  /** This path's expectancy per trade. */
+  avg_pnl: number;
+  avg_holding_days: number;
+}
+
 export interface TradesResponse {
   trades: ClosedTrade[];
   stats: TradeStats;
@@ -243,6 +266,22 @@ export interface TradesResponse {
   eval_start_utc: string | null;
   /** How many round trips the cutoff hides (reported in both windows). */
   excluded_pre_eval: number;
+
+  /**
+   * The exit split. Optional on purpose: a deployment that predates exit
+   * attribution answers without these keys, and the app must fall back to
+   * "not attributed yet" rather than rendering an empty split as "the agent
+   * has closed nothing".
+   */
+  by_exit?: ExitBucket[];
+  /**
+   * Only the classes where the strategy closed its own position. This — not
+   * `stats` — is the agent's exit record; `stats` blends in operator flattens.
+   * null when no returned row carries a stored class.
+   */
+  strategy?: ExitBucket | null;
+  /** Rows with no stored class. Non-zero means `by_exit` does not add up. */
+  unattributed?: number;
 }
 
 /**

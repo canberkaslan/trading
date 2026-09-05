@@ -16,7 +16,7 @@
  *    as a very large number — same reason.
  */
 
-import type { Position, TradeStats, TradesResponse } from '@/api/types';
+import type { ExitBucket, Position, TradeStats, TradesResponse } from '@/api/types';
 import { parseUtc, relativeAgeTr } from './format';
 
 export type Tone = 'up' | 'down' | 'neutral';
@@ -158,4 +158,127 @@ export function realizedCaveat(
     return 'Kapanan işlemler net zararda; raporlanan kazancın tamamı açık pozisyonların değerlemesinden geliyor.';
   }
   return null;
+}
+
+/* -------------------------------------------------------------------------- *
+ * Exit attribution
+ *
+ * `stats` above blends every exit path into one expectancy. On this account
+ * most of the realized ledger is the 2026-06-24 flatten that cleaned up the
+ * accumulation bug — an operator action. Reading that number as "how well does
+ * the agent exit?" scores a cleanup as strategy performance, which is exactly
+ * the mistake the backend's `strategy` bucket exists to stop. These helpers
+ * keep the two claims separate in the UI, and keep the narrower claim's sample
+ * size attached to it.
+ * -------------------------------------------------------------------------- */
+
+/** TR copy for an exit class. Unknown classes fall through to the raw value. */
+export function exitClassLabelTr(exitClass: string | null | undefined): string {
+  switch (exitClass) {
+    case 'take_profit':
+      return 'Kâr al';
+    case 'stop':
+      return 'Koruyucu stop';
+    case 'decision_sell':
+      return 'Ajan satış kararı';
+    case 'flatten':
+      return 'Flatten (ajan dışı)';
+    case 'unknown':
+      return 'Bilinmiyor (emir silinmiş)';
+    case 'strategy':
+      return 'Stratejinin kendi çıkışları';
+    default:
+      return (exitClass ?? '').trim() || EM_DASH;
+  }
+}
+
+/** Render order: the agent's own exits first, then what happened to it. */
+const CLASS_ORDER = ['take_profit', 'stop', 'decision_sell', 'flatten', 'unknown'];
+
+/**
+ * The exit split, ordered for display and stripped of empty paths.
+ *
+ * Buckets with zero trades are dropped rather than rendered as flat rows: an
+ * exit path the book has never taken is not a result, and a column of zeros
+ * reads as one.
+ */
+export function exitBreakdown(
+  response: Pick<TradesResponse, 'by_exit'> | null | undefined,
+): ExitBucket[] {
+  const rows = response?.by_exit;
+  if (!rows?.length) return [];
+  return rows
+    .filter((b) => b.trades > 0)
+    .slice()
+    .sort((a, b) => {
+      const ia = CLASS_ORDER.indexOf(a.exit_class);
+      const ib = CLASS_ORDER.indexOf(b.exit_class);
+      // Classes the app does not know about sort last, but still render.
+      return (ia < 0 ? CLASS_ORDER.length : ia) - (ib < 0 ? CLASS_ORDER.length : ib);
+    });
+}
+
+export type StrategyReadingStatus = 'unavailable' | 'none' | 'ok';
+
+export interface StrategyReading {
+  /**
+   * 'unavailable' — this backend does not report the split yet (pre-attribution
+   * deployment). 'none' — it reports one, but no returned row is attributed to
+   * a strategy exit. 'ok' — there is a bucket to show.
+   *
+   * The first two must NOT render alike: "we cannot tell" and "the agent has
+   * closed nothing itself" are different claims about the same book.
+   */
+  status: StrategyReadingStatus;
+  bucket: ExitBucket | null;
+  /** One-line TR explanation of what the reading is worth. */
+  note: string;
+}
+
+/**
+ * What the app may honestly say about the agent's own exit record.
+ *
+ * `strategy === undefined` is the undeployed-backend case and is reported as
+ * 'unavailable'; `strategy === null` is the deployed-but-nothing-attributed
+ * case and is reported as 'none'.
+ */
+export function strategyReading(
+  response:
+    | Pick<TradesResponse, 'strategy' | 'unattributed' | 'by_exit'>
+    | null
+    | undefined,
+): StrategyReading {
+  if (!response || response.strategy === undefined) {
+    return {
+      status: 'unavailable',
+      bucket: null,
+      note: 'Çıkış kırılımı bu sürümde yok — aşağıdaki beklenti tüm çıkış yollarının karışımı.',
+    };
+  }
+  const bucket = response.strategy;
+  if (!bucket || bucket.trades === 0) {
+    return {
+      status: 'none',
+      bucket: null,
+      note: 'Stratejinin kendi kapattığı işlem yok — gerçekleşen P&L tamamen ajan dışı çıkışlardan.',
+    };
+  }
+  const note =
+    bucket.trades < MIN_SAMPLE
+      ? `${bucket.trades} işlem — istatistiksel olarak anlamlı değil (≥${MIN_SAMPLE} gerekir).`
+      : `${bucket.trades} işlem üzerinden.`;
+  return { status: 'ok', bucket, note };
+}
+
+/**
+ * Warning for a partially attributed ledger. Non-zero `unattributed` means the
+ * split does not add up to `stats`, so the breakdown must say so instead of
+ * letting the rows read as the complete record.
+ */
+export function attributionNote(
+  response: Pick<TradesResponse, 'unattributed'> | null | undefined,
+): string | null {
+  const n = response?.unattributed ?? 0;
+  if (n <= 0) return null;
+  return `${n} işlem sınıflandırılamadı — kırılım toplam ile örtüşmüyor.`;
 }

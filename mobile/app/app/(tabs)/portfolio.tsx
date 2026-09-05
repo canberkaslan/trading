@@ -37,6 +37,10 @@ import {
   reconcileFreshness,
   realizedCaveat,
   evalWindowNote,
+  exitBreakdown,
+  exitClassLabelTr,
+  strategyReading,
+  attributionNote,
   type Tone as PnlToneName,
 } from '@/utils/realized';
 import {
@@ -249,6 +253,13 @@ export default function PortfolioScreen() {
           const caveat = realizedCaveat(s, open);
           const windowNote = evalWindowNote(realized);
           const realizedPct = Math.round(split.realizedShare * 100);
+          // `s` blends every exit path — on this book mostly the 2026-06-24
+          // operator flatten. The strategy block below is the agent's own exit
+          // record, kept visually separate so the blended number can never be
+          // read as "how well does the agent exit?".
+          const strat = strategyReading(realized);
+          const exits = exitBreakdown(realized);
+          const attrNote = attributionNote(realized);
           return (
             <View style={styles.riskCard}>
               <View style={styles.row}>
@@ -293,7 +304,11 @@ export default function PortfolioScreen() {
                   >
                     {formatUsd(s.expectancy, { signed: true })}
                   </Text>
-                  <Text style={styles.statSub}>işlem başı</Text>
+                  {/* Named as a blend the moment the split exists, so this
+                      number stops standing in for the agent's exit record. */}
+                  <Text style={styles.statSub}>
+                    {strat.status === 'unavailable' ? 'işlem başı' : 'işlem başı · karışık'}
+                  </Text>
                 </View>
                 <View style={styles.stat}>
                   <Text style={styles.statLabel}>Kâr faktörü</Text>
@@ -328,6 +343,87 @@ export default function PortfolioScreen() {
                   </View>
                 </>
               ) : null}
+
+              {/* The agent's own exits, separated from operator flattens. */}
+              <View style={styles.exitBlock}>
+                <View style={styles.row}>
+                  <Text style={styles.exitTitle}>Stratejinin çıkışları</Text>
+                  {strat.bucket ? (
+                    <Text
+                      style={styles.sampleBadge}
+                      accessibilityLabel={`${strat.bucket.trades} işlemlik örneklem`}
+                    >
+                      n={strat.bucket.trades}
+                    </Text>
+                  ) : null}
+                </View>
+
+                {strat.bucket ? (
+                  <View style={[styles.statRow, { marginTop: 8, marginBottom: 4 }]}>
+                    <View style={styles.stat}>
+                      <Text style={styles.statLabel}>Net</Text>
+                      <Text
+                        style={[
+                          styles.statValue,
+                          { color: PNL_TONE_COLORS[sampleTone(strat.bucket.net_pnl, strat.bucket.trades)] },
+                        ]}
+                      >
+                        {formatUsd(strat.bucket.net_pnl, { signed: true })}
+                      </Text>
+                    </View>
+                    <View style={styles.stat}>
+                      <Text style={styles.statLabel}>Kazanma</Text>
+                      <Text
+                        style={[
+                          styles.statValue,
+                          {
+                            color:
+                              PNL_TONE_COLORS[
+                                sampleTone(strat.bucket.win_rate - 0.5, strat.bucket.trades)
+                              ],
+                          },
+                        ]}
+                      >
+                        {formatWinRate({ win_rate: strat.bucket.win_rate, trades: strat.bucket.trades })}
+                      </Text>
+                    </View>
+                    <View style={styles.stat}>
+                      <Text style={styles.statLabel}>Beklenti</Text>
+                      <Text
+                        style={[
+                          styles.statValue,
+                          { color: PNL_TONE_COLORS[sampleTone(strat.bucket.avg_pnl, strat.bucket.trades)] },
+                        ]}
+                      >
+                        {formatUsd(strat.bucket.avg_pnl, { signed: true })}
+                      </Text>
+                    </View>
+                  </View>
+                ) : null}
+
+                <Text style={styles.statSub}>{strat.note}</Text>
+
+                {exits.length > 0 ? (
+                  <View style={{ marginTop: 10 }}>
+                    {exits.map((b) => (
+                      <View key={b.exit_class} style={styles.exitRow}>
+                        <Text style={styles.exitLabel} numberOfLines={1}>
+                          {exitClassLabelTr(b.exit_class)}
+                        </Text>
+                        <Text style={styles.exitCount}>{b.trades}</Text>
+                        <Text
+                          style={[styles.exitPnl, { color: PNL_TONE_COLORS[pnlTone(b.net_pnl)] }]}
+                          accessibilityLabel={`${exitClassLabelTr(b.exit_class)}: ${b.trades} işlem, net ${formatUsd(b.net_pnl, { signed: true })}`}
+                        >
+                          {formatUsd(b.net_pnl, { signed: true })}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+
+                {attrNote ? <Text style={styles.flagText}>{attrNote}</Text> : null}
+              </View>
 
               {caveat ? <Text style={styles.flagText}>{caveat}</Text> : null}
             </View>
@@ -481,6 +577,15 @@ const styles = StyleSheet.create({
   freshness: { color: colors.textMuted, fontSize: 11 },
   realizedValue: { fontSize: 26, fontWeight: '700', marginTop: 2 },
   splitTrack: { flexDirection: 'row', height: 6, borderRadius: 999, overflow: 'hidden', marginTop: 14, marginBottom: 6 },
+  // The strategy block is fenced off from the blended stats above it: the two
+  // answer different questions and must not read as one continuous list.
+  exitBlock: { marginTop: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: colors.surfaceElevated },
+  exitTitle: { color: colors.textSecondary, fontSize: 13, fontWeight: '600' },
+  sampleBadge: { color: colors.textMuted, fontSize: 11, fontWeight: '600' },
+  exitRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
+  exitLabel: { color: colors.textSecondary, fontSize: 12, flex: 1 },
+  exitCount: { color: colors.textMuted, fontSize: 12, width: 28, textAlign: 'right' },
+  exitPnl: { fontSize: 12, fontWeight: '600', width: 90, textAlign: 'right' },
   splitRealized: { backgroundColor: colors.accent },
   splitOpen: { backgroundColor: colors.surfaceElevated },
   positionCard: { marginHorizontal: 24, marginTop: 12, padding: 16, backgroundColor: colors.surface, borderRadius: 12 },

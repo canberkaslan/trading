@@ -108,6 +108,73 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - 7e Charts, 7f Analiz-Et deep-link, 7g Settings kill-switch+health, snapshot logger
 - cost-opt routing on branch (opt-in, not deployed)
 
+## Daily loop 2026-09-06 (🔴 BOX DARK 13. gün; n=8 problemi backtest'te ölçüldü)
+- **Canlı durum ALINAMADI, 13. gün.** `trader.fusapp.com` → CF **1033**, SSH 22 timeout. Kurtarma
+  hâlâ Hetzner konsolu = Canberk. Backend deploy imkânsız. Broker'dan doğrudan (read-only):
+  equity **$109,875.54**, last_equity aynı (hafta sonu → günlük **$0.00**), cash $2,829.16,
+  buying_power $311,046.50, 10 pozisyon, unrealized **+$10,816.79**, net vs 100k **+$9,875.54 /
+  +9.88%**, ACTIVE, `trading_blocked=false`. Son fill hâlâ **08-24 META** — kitap 13 gündür
+  yönetilmiyor. Watchdog relay zinciri sağlam (incident #1 gövdesi `05:42Z`).
+- [x] 🔴 **08-14'ten beri "NO-GO kök nedeni" diye taşınan stop bulgusu ÇÜRÜDÜ: n=3 gürültüydü.**
+  `tradingagents_us/backtest/exit_paths.py` + `scripts/exit_path_backtest.py` (saf modül +
+  read-only CLI; broker yok, DB yok, **box gerektirmiyor**). Canlı bracket'in *şeklini* —
+  fill'den sabit uzaklıkta bir stop bacağı + bir take-profit bacağı — deterministik bir giriş
+  sinyaline takıp 2018–2025 günlük barları üzerinde replay ediyor ve sonucu **`exit_quality`'nin
+  kendi roll-up'larıyla** puanlıyor (ikinci bir "win rate" implementasyonu er geç ledger'la
+  strateji dışı sebeplerle çelişirdi). Canlı defterdeki 8 strateji çıkışı yerine **~200 pozisyon**:
+
+  | Bracket (stop / hedef) | n | hit rate | payoff (gerçekleşen / istenen) | breakeven | edge | işlem başına |
+  |---|---|---|---|---|---|---|
+  | −3% / +6% | 206 | 38.3% | 1.93 / 2.00 | 34.1% | **+4.2pp** | +$72 |
+  | −5% / +10% | 196 | 44.9% | 1.72 / 2.00 | 36.8% | **+8.1pp** | +$220 |
+  | −8% / +16% | 153 | 55.6% | 1.65 / 2.00 | 37.8% | **+17.8pp** | +$748 |
+  | −5% / +15% | 190 | 38.4% | 2.43 / 3.00 | 29.1% | **+9.3pp** | +$318 |
+  | −10% / +10% | 152 | 69.1% | 0.81 / 1.00 | 55.4% | **+13.7pp** | +$534 |
+  | −3% / +12% | 204 | 27.9% | 3.12 / 4.00 | 24.3% | **+3.7pp** | +$91 |
+
+  - **Sonuç 1 — çıkış YAPISI kaybettiren şey değil.** Denenen her bracket şeklinde edge pozitif.
+    Yani canlı ledger'daki −$293'lük strateji sonucu "stop mantığı bozuk"un kanıtı değil; 3
+    işlemin kanıtı. **Karar: exit mantığına dokunulmayacak** (zaten decision-path, eval kuralı da
+    bunu yasaklıyor) — 08-14'ten beri açık duran (b) maddesi böylece kapanıyor.
+  - **Sonuç 2 — asıl sinyal: DAR stop en kötü şekil.** −3% stop edge +3.7…+4.2pp / işlem başına
+    $72–91; −8% stop edge +17.8pp / $748. Hit rate 38.3% → 55.6%'ya çıkıyor: dar stop trend
+    başlamadan whipsaw'da kesiyor. Canlı sistemde `stop_loss`'u **LLM Trader** seçiyor ve hiçbir
+    alt sınır yok — bu, karar kalitesine dokunmadan konuşulabilecek gerçek bir parametre sorusu.
+  - **Sonuç 3 — gap maliyeti ölçüldü: istenen payoff asla alınmıyor.** 2.00:1 istenen → 1.65–1.93:1
+    gerçekleşen; 4.00:1 → 3.12:1. Stop, seviyeden değil **açılıştan** doluyor (level'dan dolduran
+    bir backtest bu maliyeti sıfır raporlar). Breakeven hit rate nominal %33.3'ten gerçekleşen
+    %36.8'e çıkıyor — risk modelinin görmediği 3.5 puan. İlginç: stop ne kadar genişse gap erozyonu
+    **oransal olarak daha büyük** (geniş stop ancak gerçekten kötü bir harekette görülür, o hareket
+    de gap olma eğilimindedir).
+  - **Modülün asıl işi reddetmek.** Bir barın low'u stop'a, high'ı hedefe değdiğinde günlük veri
+    hangisinin önce dolduğunu **söyleyemez**; bu yazı-tura'yı çözmek bir backtest'i yalan söyletmenin
+    en kolay yolu (stop desen her böyle bar zarar, hedef desen her biri kâr). `ambiguous` bucket'ına
+    gidiyor, roll-up'lara **girmiyor**, ve sayısı yanında raporlanıyor — `stop_coverage`'ın bilinmeyen
+    order status'e uyguladığı kuralın aynısı. Canlı ölçümde bu ±5% seviyelerinde **0** bağladı; ±1%'de
+    bağlıyor (2/211) ve gap fill'ler patlıyor (78/211 = %37) — yani guard boşuna değil, sadece bu
+    aralıkta ücretsiz. Ambiguous pozisyon yine de sembolü serbest bırakıyor: belirsizlik **hangi
+    bacağın** dolduğunda, pozisyonun kapanıp kapanmadığında değil.
+  - Diğer iki "para uydurma" kuralı: giriş barı taranmıyor (high/low'u fill'den önceki fiyatları
+    içeriyor), ve giriş sinyalin close'unda değil **bir sonraki barın açılışında** doluyor.
+  - `level_mix()` — bariz kolonlar totoloji olduğu için var: take-profit bacağının win rate'i tanım
+    gereği %100, stop'unki %0. Bunları canlı ledger'ın gerçek win rate'inin yanına basmak yanlış
+    karşılaştırmayı davet eder. Rapor bunun yerine hit rate / gerçekleşen payoff / breakeven basıyor.
+  - **CAVEAT (mutlak sayılar için):** universe = bugünkü 10 isim, 2018–2025 → **survivorship bias**
+    (`backtest/data.py` zaten söylüyor). Hepsi hayatta kaldı ve çoğu yükseldi, dolayısıyla mutlak
+    edge iyimser. **Şekiller arası karşılaştırma** bundan çok daha sağlam ve yukarıdaki üç sonuç
+    ona dayanıyor. Ayrıca giriş sinyali golden cross — LLM değil; ölçülen şey giriş değil **çıkış**.
+  - 30 yeni test (**577 yeşil**), ruff 0.16.4 temiz. Commit `ad78413`.
+- **DEPLOY YOK — bilinçli ve gerekli değil.** Off-decision-path, off-eval-path, canlı yolda hiçbir
+  şey çalıştırmıyor; box dönünce de bir şey deploy edilmesi gerekmiyor (analiz aracı, laptop'tan
+  koşuyor).
+- **Canberk'e kalan (değişmedi):** (1) Hetzner konsolu → box'a bak, ayaktaysa `ssh agentmesh` +
+  `journalctl -b -1 -e`, değilse power-cycle; sonra `ai-trader.timer`, `ai-trader-api`, `cloudflared`.
+  (2) `WATCHDOG_BACKUP_TOKEN` (trading-backups Contents:read PAT).
+- **Sıradaki:** (a) box kurtarma = Canberk, (b) box dönünce reconcile + **stop backfill** (265 çıplak
+  hisse), (c) **stop-loss alt sınırı** tartışması — dar stop bulgusu bunu somutlaştırdı ama
+  decision-path, yani branch + supervised drill, box dönmeden olmaz, (d) survivorship-safe universe
+  (delisted dahil) ile aynı sweep'i tekrarlamak — mutlak sayıları düzeltir, CLI hazır.
+
 ## Daily loop 2026-09-05 (🔴 BOX DARK 12. gun; app artik flatten'i strateji sanmiyor)
 - **Canli durum ALINAMADI, 12. gun.** `trader.fusapp.com` -> CF **530/1033**, SSH 22 timeout, ICMP
   %100 kayip. Kurtarma hala Hetzner konsolu = Canberk. Backend deploy imkansiz. Broker'dan

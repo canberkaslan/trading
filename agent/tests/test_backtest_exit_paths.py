@@ -9,7 +9,10 @@ unless a test says otherwise.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from datetime import date
+from pathlib import Path
 
 import pytest
 
@@ -46,6 +49,31 @@ def _entry(**kw: object) -> BracketEntry:
 
 def _bar(day: date, o: float, h: float, low: float, c: float) -> Bar:
     return Bar(day=day, open=o, high=h, low=low, close=c)
+
+
+def test_importing_this_module_does_not_pull_in_vectorbt() -> None:
+    """The pure module must not inherit the engine's dependencies.
+
+    It did once, through the package `__init__`, and the cost was not abstract:
+    vectorbt imports plotly, plotly 6 raises on vectorbt's `scattermapbox`
+    reference, and a module with no plotting in it took down the whole test
+    collection on CI while passing on a laptop with an older pin. Asserted in a
+    subprocess because `sys.modules` is shared — another test importing
+    vectorbt first would make this pass for the wrong reason.
+    """
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; import tradingagents_us.backtest.exit_paths; "
+            "sys.exit(1 if 'vectorbt' in sys.modules else 0)",
+        ],
+        cwd=Path(__file__).resolve().parent.parent,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"vectorbt was imported: {result.stderr}"
 
 
 # --- the ambiguity this module exists to refuse ------------------------------

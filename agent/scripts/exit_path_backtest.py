@@ -204,20 +204,51 @@ def main() -> int:
     )
     parser.add_argument("--fast", type=int, default=20, help="fast SMA for the entry signal")
     parser.add_argument("--slow", type=int, default=50, help="slow SMA for the entry signal")
+    parser.add_argument(
+        "--provider",
+        choices=("yfinance", "survivor-safe"),
+        default="yfinance",
+        help=(
+            "yfinance: today's names only, and a recycled ticker returns a "
+            "stranger's prices under the old symbol. survivor-safe: Polygon "
+            "bars restricted to the issuer that held the ticker at --start, "
+            "with a coverage line per name."
+        ),
+    )
     args = parser.parse_args()
 
     stop_pct = args.stop_pct / 100.0
     tp_pct = args.take_profit_pct / 100.0
     tickers = [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
 
-    from backtest.data import load_ohlcv
-
     print(f"Loading {len(tickers)} tickers, {args.start} → {args.end}…", file=sys.stderr)
-    frames = load_ohlcv(tickers, args.start, args.end)
+    if args.provider == "survivor-safe":
+        from backtest.survivor_prices import load_universe
+
+        bars_by_ticker, coverage = load_universe(
+            tickers, date.fromisoformat(args.start), date.fromisoformat(args.end)
+        )
+        for row in coverage:
+            print(f"  {row.summary()}", file=sys.stderr)
+        unusable = [c.ticker for c in coverage if not c.usable]
+        if unusable:
+            # Printed as a share, because that share *is* the survivorship
+            # measurement: it is how much of the point-in-time universe a
+            # survivor-only run silently drops.
+            print(
+                f"  {len(unusable)}/{len(tickers)} tickers unpriceable "
+                f"({len(unusable) / len(tickers):.0%}): {', '.join(unusable)}",
+                file=sys.stderr,
+            )
+    else:
+        from backtest.data import load_ohlcv
+
+        frames = load_ohlcv(tickers, args.start, args.end)
+        bars_by_ticker = {t: _bars_for(frames, t) for t in tickers}
 
     exits: list[SimulatedExit] = []
     for ticker in tickers:
-        bars = _bars_for(frames, ticker)
+        bars = bars_by_ticker.get(ticker) or []
         if not bars:
             print(f"  {ticker}: no bars, skipped", file=sys.stderr)
             continue

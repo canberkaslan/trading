@@ -108,6 +108,88 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - 7e Charts, 7f Analiz-Et deep-link, 7g Settings kill-switch+health, snapshot logger
 - cost-opt routing on branch (opt-in, not deployed)
 
+## Daily loop 2026-09-07 (🔴 BOX DARK 14. gün; DÜNKÜ "dar stop kötü" BULGUSU TERSİNE DÖNDÜ)
+- **Canlı durum ALINAMADI, 14. gün.** `trader.fusapp.com` → CF **1033**, SSH 22 timeout, ICMP yok.
+  Broker'dan doğrudan (read-only): equity **$109,875.54**, last_equity aynı (hafta sonu → günlük
+  **$0.00**), cash $2,829.16, buying_power $311,046.50, 10 pozisyon, unrealized **+$10,816.79**,
+  net vs 100k **+$9,875.54 / +9.88%**, ACTIVE, `trading_blocked=false`. Son fill hâlâ **08-24 META**
+  — kitap 14 gündür yönetilmiyor. Dünkü sayılarla birebir aynı (piyasa kapalı).
+- [x] 🔴 **`backtest/survivor_prices.py` — survivorship-safe FİYAT katmanı** (commit `6037f0e`).
+  `dataflows/sp500_history.py` point-in-time üyeliği zaten kuruyordu; eksik olan o isimleri
+  **fiyatlamak**tı. Ve mevcut `backtest/data.py`'a bağlamak delisted isimleri kaybetmekten
+  **daha kötü** bir şey yapıyor. Canlı key'lerle bugün ölçüldü:
+  - **yfinance**: 16 delisted S&P ismi (TWTR, ATVI, SIVB, CERN, XLNX, VMW, SPLK, PXD, CTXS, NLSN,
+    ABMD, SGEN, HZNP, MXIM, ALXN, DISCA) → **0 satır**. Ama **SBNY 345 satır** (2024-08'den) ve
+    **INFO 306 satır** (2024-10'dan) döndü. Signature Bank 2023 Mart'ta el konuldu, IHS Markit
+    2022 Şubat'ta S&P Global'e katıldı — bu barlar **o dört harfi şimdi kim tutuyorsa ona ait**
+    (INFO bugün bir ETF). Loader "SBNY: 345 bar" diyor ve çıktısında bunu söyleyen hiçbir şey yok.
+  - **Polygon**: delisted geçmişi var, ama plan penceresiyle **kesişen** aralığı sessizce kırpıyor.
+    Tamamen dışarıdaki aralık dürüstçe `NOT_AUTHORIZED`; kesişen aralık **HTTP 200 + kırpılmış veri**.
+    TWTR 2018-01-01→2022-10-27 istendi, 2021-09-08'den başlayan 288 bar geldi, bayrak yok. Plan
+    penceresi ölçüldü: **2021-09-03** (5 yıllık kayan pencere). Repo'daki her backtest 2018-2025
+    konfigüre — yani sessiz versiyon **her seferinde** tetiklenen versiyon.
+  - **Guard**: bar'lar, pencere başında ticker'ı tutan issuer'a kısıtlanıyor; kimlik = Polygon
+    point-in-time reference'ın **CIK**'i (bir recycle'ın koruyamayacağı tek alan; isimler
+    re-brand/share-class yüzünden masumca kayar, isim karşılaştırmak bunları recycle sanardı).
+    Ticker başına **iki dışa doğru binary search**; arama yalnızca provider'ın pozitif olarak
+    doğruladığı bir günü döndürüyor — bilinmeyen bir orta nokta ya bir tarafa atanmıyor, sınırı
+    geri çekiyor. İki `unknown` **asla eşit değil**, yani okunamayan ticker guard'a takılıyor,
+    guard'dan geçmiyor. Canlı sınırların hepsi gerçek corporate action'a oturdu: **SBNY 2023-03-10,
+    SIVB 2023-03-09, INFO 2022-02-25, ATVI 2023-10-12, TWTR 2022-10-27**. Guard bugünkü indeksin
+    **içinde** de bir recycle yakaladı: **DOC** (Physicians Realty → 2024'te ticker Healthpeak'e
+    geçti, 459 bar).
+  - Yazarken bir bug yakalandı ve düzeltildi: uzak uç `unknown` olduğunda extension hiç
+    çalışmıyordu; Polygon'un **güncel** SBNY satırında CIK yok ama point-in-time satırları
+    Signature Bank'i 2023-03-13'e kadar kanıtlıyor — guard 379 barlık kanıtlı aralığı **1 güne**
+    düşürüyordu. Artık okunabilir yakın uç, uzak uç okunamasa da uzatılıyor.
+  - 23 test (**601 yeşil**), ruff 0.16.4 temiz, provider'lar inject edilebilir (test'te network yok).
+- [x] 🔴 **DÜNKÜ "Sonuç 2 — dar stop en kötü şekil" SURVIVORSHIP ARTIFACT'İ ÇIKTI.**
+  Kontrollü ölçüm: `members_as_of(2021-09-03)` = 506 isim, bunların **82'si** bugünkü indekste yok.
+  Örneklem = 82 leaver + 82 seed'li rastgele survivor (aynı evren, aynı pencere 2021-09→2025-12,
+  aynı bracket, aynı loader) — tek değişen, leaver'ların dahil olup olmadığı. **82 leaver'ın hepsi
+  Polygon'da fiyatlanabildi** (0 kayıp; yfinance'te 82'sinin çoğu 0 satırdı).
+
+  | Bracket | survivor-safe edge | survivors-only edge | survivorship | per-trade fark |
+  |---|---|---|---|---|
+  | −3% / +6% | **+3.4pp** | +4.2pp | +0.8pp | +$20 |
+  | −5% / +10% | −0.1pp | +0.9pp | +1.0pp | +$22 |
+  | −8% / +16% | **−2.1pp** | +1.5pp | **+3.6pp** | **+$111** |
+  | −5% / +15% | −0.2pp | +2.0pp | +2.2pp | +$65 |
+  | −10% / +10% | −3.2pp | −1.5pp | +1.7pp | +$33 |
+  | −3% / +12% | +1.1pp | +1.9pp | +0.8pp | +$22 |
+
+  - **Bias her bracket'te pozitif** (+0.8…+3.6pp) — yani survivor evreninde her çıkış şekli
+    olduğundan iyi görünüyor. Beklenen kısım bu.
+  - **Beklenmeyen kısım: bias üniform değil ve tam da dünkü sonucun yaşadığı yerde en büyük.**
+    Dün "geniş stop çok daha iyi" idi (−8%: +17.8pp vs −3%: +4.2pp). Survivorship-safe evrende
+    **−8%/+16% edge NEGATİF (−2.1pp)** ve **−3%/+6% altı şeklin en iyisi (+3.4pp)**. Sıralama
+    **tersine dönüyor**. Mekanizma mantıklı: geniş stop ancak gerçekten kötü bir harekette
+    tetiklenir, ve gerçekten kötü hareketi yaşayan isimler tam olarak indeksten **düşen** isimler.
+    Survivor evreninde o hareketler tanım gereği toparlanmış oluyor, dolayısıyla geniş stop en çok
+    survivorship'i emiyor (+3.6pp / +$111).
+  - **Bu, decision-path'e girmek üzere olan bir bulguydu.** Dünkü "sıradaki (c) stop-loss alt sınırı
+    tartışması" doğrudan bu bulgudan doğuyordu — yani bir survivorship artifact'i üzerine kurulmuş
+    bir risk parametresi değişikliği olacaktı. **Madde (c) düşürüldü.**
+  - **Dünkü Sonuç 1 ayakta**: çıkış *yapısı* kaybettiren şey değil — ama artık "her şekilde edge
+    pozitif" demiyoruz; survivorship-safe evrende altı şeklin **dördü negatif**. Doğru okuma:
+    golden-cross girişi + sabit bracket kombinasyonunun bu evrende anlamlı bir edge'i yok, ve
+    canlı ledger'daki −$293 hâlâ 3 işlemin sonucu, bir stop bulgusu değil.
+  - **CAVEAT (dürüstlük payı):** dünkü koşu 2018–2025 / 10 mega-cap, bugünkü 2021-09→2025 / 164
+    karma isim. İki koşu arasındaki **mutlak** fark yalnız survivorship değil, pencere+evren
+    farkını da içeriyor. Ama tabloda karşılaştırılan iki sütun **aynı pencere, aynı örneklem
+    kurgusu, aynı loader** — survivorship'i temiz izole eden ölçüm o sütun farkı, ve sıralamanın
+    tersine dönmesi de o kontrollü ölçümün içinde.
+- **DEPLOY YOK — bilinçli ve gerekli değil.** Off-decision-path, off-eval-path; canlı yolda hiçbir
+  şey çalıştırmıyor, box dönünce de deploy edilecek bir şey yok (laptop'tan koşan analiz aracı).
+- **Canberk'e kalan (değişmedi):** (1) Hetzner konsolu → box'a bak, ayaktaysa `ssh agentmesh` +
+  `journalctl -b -1 -e`, değilse power-cycle; sonra `ai-trader.timer`, `ai-trader-api`, `cloudflared`.
+  (2) `WATCHDOG_BACKUP_TOKEN` (trading-backups Contents:read PAT).
+- **Sıradaki:** (a) box kurtarma = Canberk, (b) box dönünce reconcile + stop backfill (265 çıplak
+  hisse), (c) ~~stop-loss alt sınırı~~ **DÜŞTÜ** — dayandığı bulgu survivorship çıktı,
+  (d) `backtest/data.py`'ın kendisini survivor_prices'a geçirmek (şu an hâlâ yfinance; llm_backtest
+  ve engine onu kullanıyor, yani aynı recycle tuzağı orada duruyor), (e) 2 sembol formatı
+  fiyatlanamadı (BF-B, MRSH — Polygon `BF.B` kullanıyor) → ticker normalizasyonu.
+
 ## Daily loop 2026-09-06 (🔴 BOX DARK 13. gün; n=8 problemi backtest'te ölçüldü)
 - **Canlı durum ALINAMADI, 13. gün.** `trader.fusapp.com` → CF **1033**, SSH 22 timeout. Kurtarma
   hâlâ Hetzner konsolu = Canberk. Backend deploy imkânsız. Broker'dan doğrudan (read-only):

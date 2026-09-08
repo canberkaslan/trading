@@ -303,8 +303,11 @@ const I18N={
     c_cash:'Nakit',c_liquid:'likit',pos_open:'açık',qty_word:'adet',
     th_sym:'Sembol',th_avg:'Ort.',th_last:'Son',th_pl:'K/Z',th_plp:'K/Z %',
     other_word:'Diğer',risk_topw:'En büyük ağırlık',risk_gross:'Brüt maruziyet',
-    flags_cap:'Tek-isim cap üstü (>%10): ',tt_port:'Portföy',
+    flags_cap:'Tek-isim cap üstü (>%{limit}): ',tt_port:'Portföy',
+    flag_eff_n:'Effective N {value} < {limit} — kitap 3 eşit bahisten az davranıyor',
     err_msg:'Veriye ulaşılamadı ({e}) — tekrar denenecek.',no_data:'Henüz yeterli veri yok',
+    g_trading_days:'İşlem günü',g_sharpe:'Sharpe',g_max_drawdown:'Maks. düşüş',g_beats_spy:'SPY’ı geçiyor',
+    need_gt:'gereken >',need_lt:'gereken <',
   },
   en:{
     auth_p:'This panel is private. Enter your access key — it is stored on this device only.',
@@ -317,8 +320,11 @@ const I18N={
     c_cash:'Cash',c_liquid:'liquid',pos_open:'open',qty_word:'shares',
     th_sym:'Symbol',th_avg:'Avg',th_last:'Last',th_pl:'P&L',th_plp:'P&L %',
     other_word:'Other',risk_topw:'Top weight',risk_gross:'Gross exposure',
-    flags_cap:'Above single-name cap (>10%): ',tt_port:'Portfolio',
+    flags_cap:'Above single-name cap (>{limit}%): ',tt_port:'Portfolio',
+    flag_eff_n:'Effective N {value} < {limit} — book behaves like fewer than 3 equal bets',
     err_msg:'Could not reach data ({e}) — will retry.',no_data:'Not enough data yet',
+    g_trading_days:'Trading days',g_sharpe:'Sharpe',g_max_drawdown:'Max drawdown',g_beats_spy:'Beats SPY',
+    need_gt:'need >',need_lt:'need <',
   },
 };
 let LANG=localStorage.getItem('trader_lang')||((navigator.language||'').toLowerCase().startsWith('tr')?'tr':'en');
@@ -434,7 +440,11 @@ function render(){
   $('#gdays').textContent=ev.days+' / '+ev.days_required+' '+t('days_word');
   $('#gates').innerHTML=ev.gates.map(g=>{
     const ic=g.passed===true?ok():g.passed===false?bad():pend();
-    return `<div class="gate">${ic}<div><div class="t">${esc(g.name)}</div><div class="d mono">${esc(g.detail)}</div></div></div>`;
+    // Translate by stable key; fall back to the server's English label so a
+    // deployment that predates the keys still renders a named gate.
+    const label=(g.key&&I18N[LANG]['g_'+g.key])||g.name;
+    const detail=String(g.detail).replace('need >',t('need_gt')).replace('need <',t('need_lt'));
+    return `<div class="gate">${ic}<div><div class="t">${esc(label)}</div><div class="d mono">${esc(detail)}</div></div></div>`;
   }).join('');
 
   /* positions */
@@ -471,7 +481,7 @@ function render(){
     kv(t('risk_topw'),conc.top_weight_pct.toFixed(1)+'%')+
     kv('HHI',conc.hhi.toFixed(3))+
     kv(t('risk_gross'),conc.gross_exposure_pct.toFixed(0)+'%')+
-    flagsHtml(conc.flags||[]);
+    flagsHtml(conc.flag_items||[],conc.flags||[]);
 
   $('#decisions').innerHTML=decs.map(d=>{
     const k=(d.rating==='Buy'||d.rating==='Overweight')?'b':(d.rating==='Hold')?'h':'s';
@@ -483,14 +493,27 @@ function render(){
 }
 const chip=(k,v,c,s)=>`<div class="chip"><span class="k">${k}</span><span class="v mono ${c}">${v}</span><span class="s mono">${s}</span></div>`;
 const kv=(k,v)=>`<div class="kv"><span>${k}</span><b class="mono">${v}</b></div>`;
-function flagsHtml(flags){
-  if(!flags.length)return '';
-  const caps=[],rest=[];
-  flags.forEach(f=>{const m=/^(\S+) is ([\d.]+)% of equity/.exec(f);
-    if(m)caps.push(m[1]+' %'+m[2]);else rest.push(f);});
+function flagsHtml(items,fallback){
   const lines=[];
-  if(caps.length)lines.push(esc(t('flags_cap'))+caps.map(esc).join(' · '));
-  rest.forEach(f=>lines.push(esc(f)));
+  if(items.length){
+    // Structured path: the server tells us which warning and with what numbers,
+    // so the wording is ours and translates cleanly.
+    const caps=items.filter(f=>f.code==='single_name_cap');
+    if(caps.length){
+      const limit=caps[0].limit;
+      lines.push(esc(t('flags_cap').replace('{limit}',limit.toFixed(0)))+
+        caps.map(f=>esc(f.ticker+' %'+f.value.toFixed(1))).join(' · '));
+    }
+    items.filter(f=>f.code==='low_effective_n').forEach(f=>{
+      lines.push(esc(t('flag_eff_n').replace('{value}',f.value.toFixed(1)).replace('{limit}',f.limit.toFixed(0))));
+    });
+    items.filter(f=>f.code!=='single_name_cap'&&f.code!=='low_effective_n')
+      .forEach(f=>lines.push(esc(f.code)));
+  }else{
+    // A deployment older than flag_items still has the English sentences.
+    fallback.forEach(f=>lines.push(esc(f)));
+  }
+  if(!lines.length)return '';
   return `<div class="flags">${lines.join('<br>')}</div>`;
 }
 const ok=()=>`<svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="var(--pos)" stroke-width="1.5" opacity=".4"/><path class="ck" d="M6.2 10.4l2.6 2.6L14 7.6" stroke="var(--pos)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;

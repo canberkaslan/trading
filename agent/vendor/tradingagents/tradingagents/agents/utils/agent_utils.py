@@ -21,19 +21,26 @@ from tradingagents.agents.utils.news_data_tools import (
 
 
 def get_language_instruction() -> str:
-    """Return a prompt instruction for the configured output language.
+    """Return the per-agent trailer: compliance framing, then output language.
 
-    Returns empty string when English (default), so no extra tokens are used.
-    Applied to every agent whose output reaches the saved report —
-    analysts, researchers, debaters, research manager, trader, and
-    portfolio manager — so a non-English run produces a fully localized
-    report rather than a mix of languages.
+    Applied to every agent whose output reaches the saved report — analysts,
+    researchers, debaters, research manager, trader, and portfolio manager.
+    The compliance clause rides here because this is the one string all twelve
+    prompt sites already append, so a single edit reaches every agent; the
+    text itself lives in `tradingagents_us.compliance` (fork delta kept to one
+    import, so a vendor resync has one line to reapply).
     """
     from tradingagents.dataflows.config import get_config
+
+    try:
+        from tradingagents_us.compliance import AGENT_INSTRUCTION
+    except ImportError:  # vendored tree used standalone — degrade, never break
+        AGENT_INSTRUCTION = ""
+
     lang = get_config().get("output_language", "English")
     if lang.strip().lower() == "english":
-        return ""
-    return f" Write your entire response in {lang}."
+        return AGENT_INSTRUCTION
+    return f"{AGENT_INSTRUCTION} Write your entire response in {lang}."
 
 
 def build_instrument_context(ticker: str) -> str:

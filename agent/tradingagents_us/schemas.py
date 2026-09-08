@@ -9,6 +9,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from .compliance import ADVICE_STATUS, DISCLAIMER
+
 Market = Literal["US"]
 Side = Literal["BUY", "SELL"]
 Currency = Literal["USD"]
@@ -56,6 +58,10 @@ class AgentDecision(BaseModel):
     final_decision_text: str | None = None
     timestamp_utc: datetime
     decision_id: str
+    # Travels with every decision the API serves, so no client can render a
+    # rating or price target without the caveat already in hand.
+    advice_status: str = ADVICE_STATUS
+    disclaimer: str = DISCLAIMER
 
 
 class TradeOrder(BaseModel):

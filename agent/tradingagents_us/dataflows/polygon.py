@@ -163,7 +163,14 @@ class PolygonClient:
     # ----------------------------- http -------------------------------
 
     def _get(self, url_or_path: str, params: dict) -> dict:
-        """GET with exponential backoff on 429/5xx."""
+        """GET with exponential backoff on 429/5xx.
+
+        A 4xx other than 429 is deterministic — an unknown ticker answers 404
+        however many times you ask — so it raises on the first response. The
+        retry loop used to swallow it via httpx.HTTPError and spend all five
+        attempts plus ~30s of sleep on it, which on the free tier also burned
+        the whole 5-requests-per-minute budget on a symbol that can never work.
+        """
         is_absolute = url_or_path.startswith("http")
         last_err: Exception | None = None
         for attempt in range(5):
@@ -177,7 +184,13 @@ class PolygonClient:
                     continue
                 r.raise_for_status()
                 return r.json()
-            except httpx.HTTPError as e:
+            except httpx.HTTPStatusError as e:
+                # 4xx (429 already handled above) will not change on a retry.
+                if 400 <= e.response.status_code < 500:
+                    raise
+                last_err = e
+                time.sleep(2 ** attempt)
+            except httpx.HTTPError as e:  # transport/timeout — worth retrying
                 last_err = e
                 time.sleep(2 ** attempt)
         raise RuntimeError(f"polygon request failed: {url_or_path} — {last_err}")

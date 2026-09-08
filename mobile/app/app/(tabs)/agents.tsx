@@ -3,6 +3,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useState, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
+import { useTranslation } from 'react-i18next';
 
 import { useDecisions } from '@/api/hooks';
 import { colors } from '@/theme/colors';
@@ -32,6 +33,7 @@ function formatTs(iso: string): string {
 }
 
 export default function AgentsScreen() {
+  const { t } = useTranslation();
   const router = useRouter();
   const { data, isLoading, isError, isFetching, refetch } = useDecisions({ limit: 25 });
   const queryClient = useQueryClient();
@@ -124,6 +126,7 @@ export default function AgentsScreen() {
             );
           })
         )}
+        <Text style={styles.disclaimer}>{t('disclaimer.short')}</Text>
       </ScrollView>
     </SafeAreaView>
   );
@@ -147,4 +150,5 @@ const styles = StyleSheet.create({
   reasoningText: { color: colors.textSecondary, fontSize: 12, lineHeight: 17 },
   detailLink: { color: colors.accent, fontSize: 13, fontWeight: '600', marginTop: 4 },
   muted: { color: colors.textMuted, fontSize: 12 },
+  disclaimer: { color: '#555', fontSize: 11, paddingVertical: 20, fontStyle: 'italic', textAlign: 'center' },
 });

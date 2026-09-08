@@ -1,5 +1,6 @@
 import { View, Text, StyleSheet, ScrollView, Pressable, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useTranslation } from 'react-i18next';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 
@@ -12,6 +13,7 @@ import { MIN_TOUCH_TARGET, hitSlopFor, orderActionLabel } from '@/utils/a11y';
 import type { AgentDecision, OrderListItem } from '@/api/types';
 
 export default function ApproveOrderScreen() {
+  const { t } = useTranslation();
   const { orderId } = useLocalSearchParams<{ orderId: string }>();
   const router = useRouter();
   const { data: orders, isLoading: ordersLoading } = usePendingOrders();
@@ -182,6 +184,7 @@ export default function ApproveOrderScreen() {
         ) : (
           <Text style={styles.muted}>Gerekçe yükleniyor…</Text>
         )}
+        <Text style={styles.disclaimer}>{t('disclaimer.short')}</Text>
       </ScrollView>
     </SafeAreaView>
   );
@@ -235,4 +238,5 @@ const styles = StyleSheet.create({
   btnSecondaryText: { color: colors.textPrimary, fontWeight: '600' },
   section: { color: colors.textPrimary, fontSize: 16, fontWeight: '600', marginTop: 24, marginBottom: 8 },
   body: { color: colors.textSecondary, fontSize: 13, lineHeight: 20 },
+  disclaimer: { color: '#555', fontSize: 11, paddingVertical: 20, fontStyle: 'italic', textAlign: 'center' },
 });

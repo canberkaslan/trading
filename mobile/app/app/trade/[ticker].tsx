@@ -1,5 +1,6 @@
 import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useTranslation } from 'react-i18next';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { useDecisions } from '@/api/hooks';
@@ -21,6 +22,7 @@ function modelBadge(model: string): { label: string; color: string } {
 }
 
 export default function TradeApproveScreen() {
+  const { t } = useTranslation();
   const { ticker } = useLocalSearchParams<{ ticker: string }>();
   const router = useRouter();
   const { data, isLoading } = useDecisions({ ticker, limit: 1 });
@@ -116,6 +118,7 @@ export default function TradeApproveScreen() {
             <Text style={styles.body}>{decision.final_decision_text ?? '(PM metni yok)'}</Text>
           </>
         )}
+        <Text style={styles.disclaimer}>{t('disclaimer.short')}</Text>
       </ScrollView>
     </SafeAreaView>
   );
@@ -174,4 +177,5 @@ const styles = StyleSheet.create({
   debateCard: { backgroundColor: colors.surface, borderRadius: 10, padding: 12, gap: 4, marginBottom: 8 },
   debateRole: { color: colors.textPrimary, fontSize: 12, fontWeight: '700' },
   body: { color: colors.textSecondary, fontSize: 13, lineHeight: 20 },
+  disclaimer: { color: '#555', fontSize: 11, paddingVertical: 20, fontStyle: 'italic', textAlign: 'center' },
 });

@@ -146,3 +146,30 @@ class OrderUpdateRow(Base):
     timestamp_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
     order: Mapped[TradeOrderRow] = relationship(back_populates="updates")
+
+
+class PriceBarRow(Base):
+    """One daily OHLCV bar, cached so we stop re-buying it from Polygon.
+
+    The free tier allows five requests a minute, which a screen that draws a
+    sparkline per position exhausts on its first paint. Bars are stored per
+    (ticker, date) rather than as a serialized window, because any window a
+    caller asks for is then a date-range slice of the same rows — a 30-day and
+    a 60-day request share storage and cost one fetch between them instead of
+    two. A closed session's bar never changes, so only the most recent row
+    needs a freshness check; `fetched_at_utc` is what that check reads.
+
+    New table — created automatically by create_all(), so no additive-column
+    entry and no migration.
+    """
+
+    __tablename__ = "price_bars"
+
+    ticker: Mapped[str] = mapped_column(String(16), primary_key=True)
+    bar_date: Mapped[str] = mapped_column(String(10), primary_key=True)  # ISO date
+    open: Mapped[float] = mapped_column(Float)
+    high: Mapped[float] = mapped_column(Float)
+    low: Mapped[float] = mapped_column(Float)
+    close: Mapped[float] = mapped_column(Float)
+    volume: Mapped[float] = mapped_column(Float, default=0.0)
+    fetched_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

@@ -59,6 +59,8 @@ class ConcentrationOut(BaseModel):
     hhi: float
     effective_n: float
     flags: list[str]
+    # Machine-readable twin of `flags` so clients translate instead of parsing.
+    flag_items: list[dict] = []
     trend: list[TrendPointOut]
 
 
@@ -245,6 +247,7 @@ async def get_concentration(
         hhi=m.hhi,
         effective_n=m.effective_n,
         flags=m.flags,
+        flag_items=m.flag_items,
         trend=[
             TrendPointOut(
                 ts=t.ts,

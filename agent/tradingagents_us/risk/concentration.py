@@ -32,6 +32,11 @@ class ConcentrationMetrics:
     hhi: float  # Herfindahl index over invested weights, 0..1 (1 = single name)
     effective_n: float  # 1 / hhi — effective number of equal-weight positions
     flags: list[str] = field(default_factory=list)
+    # The same warnings as data rather than prose, so a client can render them
+    # in its own language instead of regex-parsing the English sentence.
+    # {"code": "single_name_cap", "ticker": "MSFT", "value": 12.2, "limit": 10.0}
+    # {"code": "low_effective_n", "value": 2.4, "limit": 3.0}
+    flag_items: list[dict] = field(default_factory=list)
 
 
 def compute_concentration(
@@ -73,12 +78,24 @@ def compute_concentration(
     cash_pct = max(0.0, 100.0 - gross_exposure_pct)
 
     flags: list[str] = []
+    flag_items: list[dict] = []
     for ticker, w in by_equity:
         if w > flag_pct:
             flags.append(f"{ticker} is {w:.1f}% of equity (> {flag_pct:.0f}% single-name cap)")
+            flag_items.append(
+                {
+                    "code": "single_name_cap",
+                    "ticker": ticker,
+                    "value": round(w, 2),
+                    "limit": round(flag_pct, 2),
+                }
+            )
     if positions and effective_n and effective_n < 3.0:
         flags.append(
             f"effective_n {effective_n:.1f} < 3 — book behaves like fewer than 3 equal bets"
+        )
+        flag_items.append(
+            {"code": "low_effective_n", "value": round(effective_n, 2), "limit": 3.0}
         )
 
     return ConcentrationMetrics(
@@ -90,6 +107,7 @@ def compute_concentration(
         hhi=round(hhi, 4),
         effective_n=round(effective_n, 2),
         flags=flags,
+        flag_items=flag_items,
     )
 
 

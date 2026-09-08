@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from ..compliance import AGENT_INSTRUCTION
 from ..schemas import Rating
 
 log = logging.getLogger(__name__)
@@ -151,7 +152,7 @@ _VOTER_SYSTEM = (
     "be willing to disagree with the house if the evidence warrants. Keep it to "
     "2-3 sentences of reasoning, then end with exactly:\nRATING: "
     "<Buy|Overweight|Hold|Underweight|Sell>"
-)
+) + AGENT_INSTRUCTION
 
 _CHAIR_SYSTEM = (
     "You are the chair of an investment council and the most capable model "
@@ -161,7 +162,7 @@ _CHAIR_SYSTEM = (
     "less aggressive rating when the council is split). Give the FINAL decision "
     "in 2-4 sentences, then end with exactly two lines:\n"
     "RATING: <Buy|Overweight|Hold|Underweight|Sell>\nCONFIDENCE: <0-100>"
-)
+) + AGENT_INSTRUCTION
 
 
 def _collect_votes(digest: str, house_block: str) -> list[Vote]:

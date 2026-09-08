@@ -33,6 +33,9 @@ _lock = Lock()
 
 
 class Gate(BaseModel):
+    # `key` is the stable identity clients translate against; `name` stays the
+    # English label so an older build that never learned the keys still renders.
+    key: str = ""
     name: str
     passed: bool | None
     detail: str

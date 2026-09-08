@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useTranslation } from 'react-i18next';
 
 import { useStartAnalysis, useAnalysisJob } from '@/api/hooks';
 import { colors } from '@/theme/colors';
@@ -33,6 +34,7 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 export default function AskScreen() {
+  const { t } = useTranslation();
   const router = useRouter();
   const params = useLocalSearchParams<{ ticker?: string }>();
   const [ticker, setTicker] = useState('');
@@ -188,6 +190,7 @@ export default function AskScreen() {
             <Text style={styles.tapHint}>Detay için dokun →</Text>
           </Pressable>
         ) : null}
+        <Text style={styles.disclaimer}>{t('disclaimer.short')}</Text>
       </ScrollView>
     </SafeAreaView>
   );
@@ -269,4 +272,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   chipText: { color: colors.textPrimary, fontSize: 14, fontWeight: '600', letterSpacing: 1 },
+  disclaimer: { color: '#555', fontSize: 11, paddingVertical: 20, fontStyle: 'italic', textAlign: 'center' },
 });

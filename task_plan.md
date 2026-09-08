@@ -108,6 +108,52 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - 7e Charts, 7f Analiz-Et deep-link, 7g Settings kill-switch+health, snapshot logger
 - cost-opt routing on branch (opt-in, not deployed)
 
+## Daily loop 2026-09-08 (🔴 BOX DARK 15. gün; survivorship sayacı kendi yazım hatamızı sayıyormuş)
+- **Canlı durum ALINAMADI, 15. gün.** `trader.fusapp.com` → CF **1033**, SSH 22 timeout, %100 ICMP
+  kaybı. Broker'dan doğrudan (read-only): equity **$109,875.54**, last_equity aynı (günlük **$0.00**),
+  cash $2,829.16, 10 pozisyon, unrealized **+$10,816.79**, net **+$9,875.54 / +9.88%**. Son fill hâlâ
+  **08-24 META** — kitap 15 gündür yönetilmiyor. Stop coverage değişmedi: **265/339 çıplak (%78.2)**.
+- [x] 🔴 **`survivor_prices` iki ismi delisting sanıyordu; biri hayatta** (commit `eb338ee`).
+  Dünkü koşu "2 sembol fiyatlanamadı: BF-B, MRSH" dedi ve ikisini de **survivorship sayacına** yazdı.
+  BF-B = Brown-Forman, yaşıyor, Polygon'da **BF.B** altında 1083 bar. `sp500_history` sınıf hisselerini
+  `.`→`-` çeviriyor (satır 105/204) çünkü Wikipedia/yfinance öyle yazıyor; Polygon nokta kullanıyor.
+  Yani bu modülün **dürüst raporlamak için var olduğu tek sayı**, bir yazım kuralı yüzünden şişmiş.
+  - **Neden görünmedi — bugün ölçüldü:** aggregates endpoint'i hiç "hayır" demiyor. `BF-B` ve `MRSH`
+    ikisi de **HTTP 200, `status: OK`, 0 sonuç** — birbirinden ve gerçekten geçmişi biten bir
+    şirketten **ayırt edilemez**. Reference endpoint ayırıyor ama modülün beklemediği şekilde:
+    `BF-B`/`BRK-B` → **HTTP 400** (parse edilemeyen sembol), `MRSH` → temiz **404** (sembol var,
+    kimse tutmamış). `read_issuer` sadece 404 bekliyordu, **400 raise ediyordu** → tek bir sınıf
+    hissesi 500 isimlik bir universe koşusunu o satıra mal olmak yerine **komple düşürüyordu**.
+  - `polygon_candidates` orijinal yazımdan **sonra** nokta formunu öneriyor, yalnızca sondaki 1-2
+    harflik sınıf eki için — warrant/unit eki tahmine açılmıyor, ve caller'ın istediği yazım her
+    zaman önce deneniyor. `resolve_symbol` bir adayı ancak provider **bir issuer adlandırırsa**
+    kabul ediyor (modüldeki her probe'un geçmek zorunda olduğu aynı çıta).
+  - **Mevcut bir kural az kalsın kırılıyordu, test yakaladı:** probe'lar provider'ın bar döndürdüğü
+    günlere clamp'li (yoksa ilk bardan önceki bir lookup hayali issuer değişimi uyduruyor). Bu yüzden
+    çözümleme yalnızca **birden fazla adayı olan** ticker'lar için önden koşuyor; boş yolda clamp'lenecek
+    bar zaten yok, dolayısıyla lookup oraya taşındı — ve delisting'i yazım hatasından ayırabildiği
+    **tek an** orası.
+  - `Coverage.provider_symbol` + `unlisted`, `usable`'dan **ayrı** raporlanıyor. `unlisted` için iki
+    şart da gerekiyor: **SIVB** 200 bar döndürüp okunabilir issuer vermiyor — o provider geçmişinde
+    gerçek bir boşluk, bizim yazım hatamız değil, ve survivorship sayacında **kalmalı**.
+  - **Canlı doğrulama:** BF-B ve BRK-B artık **1083'er bar**, MRSH sayacın dışında, TWTR/SIVB/INFO
+    sınırları hâlâ **2022-10-27 / 2023-03-09 / 2022-02-25** gerçek corporate action'larında. 12 yeni
+    test (**611 yeşil**), ruff temiz.
+- **Dünkü tabloya etkisi — sınırlandı, ölçüldü:** 2021-09-03 üyeliğinde tireli **yalnız 2 isim** var
+  (`BF-B`, `BRK-B`) ve **ikisi de survivor**; 82 leaver'ın **hiçbiri** tireli değil. Yani dünkü
+  tablonun **leaver kolu etkilenmemiş** (kanıtlı). Survivor kolu 424'ten 82 çekmişti, dolayısıyla en
+  fazla 2 çekiliş sessizce düşmüş olabilir (beklenen ≈0.4 isim). Ölçülen +0.8…+3.6pp bias'ın yanında
+  gürültü, ve survivors-only kolundan isim düşmesi bias'ın **işaretini** sistematik olarak
+  değiştirmez. Dünkü seed'li örneklem ad-hoc'tu, repo'da script'i yok → kesin çekiliş listesi
+  yeniden üretilemiyor; bu yüzden "etkilenmedi" değil, **"etkisi ≤2 survivor draw ile sınırlı"** diyorum.
+- **DEPLOY YOK — bilinçli.** Off-decision-path, off-eval-path; laptop'tan koşan analiz aracı, canlı
+  yolda hiçbir şey çalıştırmıyor. Box dönünce de deploy edilecek bir şey yok.
+- **Sıradaki:** (a) box kurtarma = Canberk, (b) box dönünce reconcile + stop backfill (265 çıplak
+  hisse), (d) `backtest/data.py`'ı survivor_prices'a geçirmek (hâlâ yfinance; run.py + optimize.py
+  onu kullanıyor → aynı recycle tuzağı orada duruyor) — artık altındaki loader'ın sayacı doğru
+  olduğu için güvenle yapılabilir, (f) dünkü 6-bracket tablosunu seed'i **commit edilmiş** bir
+  script'le yeniden üretmek (tekrarlanabilirlik; bugünkü "yeniden üretemiyorum" durumu bir daha olmasın).
+
 ## Daily loop 2026-09-07 (🔴 BOX DARK 14. gün; DÜNKÜ "dar stop kötü" BULGUSU TERSİNE DÖNDÜ)
 - **Canlı durum ALINAMADI, 14. gün.** `trader.fusapp.com` → CF **1033**, SSH 22 timeout, ICMP yok.
   Broker'dan doğrudan (read-only): equity **$109,875.54**, last_equity aynı (hafta sonu → günlük

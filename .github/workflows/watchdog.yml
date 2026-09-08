@@ -69,7 +69,7 @@ jobs:
           # this repo and the issues this workflow files are public, and the
           # origin IP behind Cloudflare is precisely what the proxy is hiding.
           WATCHDOG_HOST: ${{ secrets.WATCHDOG_HOST }}
-          WATCHDOG_HEALTH_URL: https://trader.fusapp.com/healthz
+          WATCHDOG_HEALTH_URL: https://trader-stg.fusapp.tech/healthz
           WATCHDOG_BACKUP_REPO: canberkaslan/trading-backups
         run: |
           python agent/scripts/watchdog.py ${{ inputs.dry_run && '--dry-run' || '' }}

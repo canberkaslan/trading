@@ -249,7 +249,7 @@ def _unreadable_backup(
         )
         remedy = (
             "Treat as probably dark: check the Hetzner console first, and keep "
-            "`curl -sS https://trader.fusapp.com/healthz` as the recovery check."
+            "`curl -sS https://trader-stg.fusapp.tech/healthz` as the recovery check."
         )
     else:
         leaning = (
@@ -258,7 +258,7 @@ def _unreadable_backup(
             "this case instead of leaving it open every 30 minutes."
         )
         remedy = (
-            "Retry `curl -sS https://trader.fusapp.com/healthz`; if it stays down, "
+            "Retry `curl -sS https://trader-stg.fusapp.tech/healthz`; if it stays down, "
             "`ssh agentmesh` and check `cloudflared` before assuming the host is gone."
         )
 

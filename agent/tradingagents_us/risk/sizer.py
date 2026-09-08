@@ -57,6 +57,45 @@ def _side_from_rating(rating: str) -> str | None:
     return None
 
 
+def _size_for_side(
+    *,
+    side: str | None,
+    decision: AgentDecision,
+    account_equity: float,
+    method: SizingMethod,
+    risk_per_trade: float,
+    held_quantity: float,
+) -> int:
+    """Share count before any cap is applied.
+
+    The two sides answer different questions. A buy asks how much to put at
+    stake, so it is sized from the risk budget and the distance to its stop. A
+    sell closes a position, which puts nothing at stake — it takes something
+    off — so it is bounded by the holding. Sizing a sell off the budget is what
+    let a 30-share position produce an approved 70-share order: 40 shares short,
+    on which the executor attaches no protective leg at all.
+    """
+    if side == "SELL":
+        return int(max(0.0, held_quantity))
+    if side != "BUY" or not (decision.entry_price and decision.stop_loss):
+        return 0
+    if method == "atr":
+        # The stop that will ride on the order is known here, so size off the
+        # real distance to it rather than an ATR standing in for that distance.
+        # The proxy is what let the intended 0.5% become 1.25%.
+        return risk_based_size(
+            equity=account_equity,
+            entry=decision.entry_price,
+            stop=decision.stop_loss,
+            risk_per_trade=risk_per_trade,
+        )
+    if method == "llm_pct":
+        notional = account_equity * decision.suggested_size_pct
+        return int(notional / decision.entry_price) if decision.entry_price > 0 else 0
+    # 'kelly' / 'vol_tgt' require extra inputs — caller wires when ready
+    return 0
+
+
 def size_from_decision(
     decision: AgentDecision,
     account_equity: float,
@@ -67,6 +106,7 @@ def size_from_decision(
     risk_per_trade: float = 0.005,
     portfolio_limits: PortfolioLimits = PortfolioLimits(),
     session_open_equity: float | None = None,
+    held_quantity: float = 0.0,
 ) -> TradeOrder:
     """Build a TradeOrder from an AgentDecision + market + portfolio context.
 
@@ -74,6 +114,13 @@ def size_from_decision(
     as the previous close). It is what the circuit breaker measures the day's
     drawdown against; omit it and that one check is skipped rather than run
     against a ratio of 1.0, which can never trip.
+
+    `held_quantity` is how many shares of this ticker the account actually holds.
+    It bounds a sell: this system is long-only — no agent produces a short thesis
+    and the executor attaches a protective leg to buys only — so a sell closes a
+    position and can never open one. Leave it at 0 and a sell is refused rather
+    than sized off the risk budget, which is how an approved order once came out
+    larger than the holding it was meant to close.
     """
     rejections: list[str] = []
 
@@ -99,25 +146,25 @@ def size_from_decision(
         rejections.extend(cb_reasons)
 
     # 2. Sizing
-    qty = 0
-    if side is not None and decision.entry_price and decision.stop_loss:
-        if method == "atr":
-            # The stop that will ride on the order is known here, so size off
-            # the real distance to it rather than an ATR standing in for that
-            # distance. The proxy is what let the intended 0.5% become 1.25%.
-            qty = risk_based_size(
-                equity=account_equity,
-                entry=decision.entry_price,
-                stop=decision.stop_loss,
-                risk_per_trade=risk_per_trade,
-            )
-        elif method == "llm_pct":
-            notional = account_equity * decision.suggested_size_pct
-            qty = int(notional / decision.entry_price) if decision.entry_price > 0 else 0
-        # 'kelly' / 'vol_tgt' require extra inputs — caller wires when ready
+    qty = _size_for_side(
+        side=side,
+        decision=decision,
+        account_equity=account_equity,
+        method=method,
+        risk_per_trade=risk_per_trade,
+        held_quantity=held_quantity,
+    )
+    if side == "SELL" and qty == 0:
+        rejections.append("nothing_held_to_sell")
 
     # 3. Per-position cap trim FIRST (so check_limits sees the actual proposed value)
-    if qty > 0:
+    #    BUY only. Every cap from here down bounds how much EXPOSURE may be taken
+    #    on, so applying them to a sell inverts them: the headroom calculation
+    #    returns zero for a name already at its cap, which trimmed the exit to
+    #    zero on precisely the position that most needed exiting. The cash cap
+    #    below already reasoned this through for its own case; the same holds for
+    #    all of them.
+    if qty > 0 and side == "BUY":
         existing = portfolio_ctx.existing_position_values_by_ticker.get(decision.ticker, 0.0)
         headroom = position_cap_headroom(
             price=decision.entry_price,  # type: ignore[arg-type]
@@ -160,8 +207,11 @@ def size_from_decision(
             )
 
     # 4. Portfolio caps (per-sector + correlation + liquidity + gross exposure)
-    #    Per-position cap already enforced above; re-check the trimmed value.
-    if qty > 0:
+    #    BUY only, for the same reason as above: each of these bounds exposure,
+    #    and a sell reduces it. Handing check_limits a sell's notional as
+    #    `new_position_value` had it reject exits for the very sector and gross
+    #    concentration the exit would relieve.
+    if qty > 0 and side == "BUY":
         position_value = qty * decision.entry_price  # type: ignore[operator]
         limits_ok, limits_reasons = check_limits(
             ticker=decision.ticker,

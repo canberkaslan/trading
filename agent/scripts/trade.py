@@ -207,7 +207,13 @@ def main() -> int:
         repo.save_decision(decision)
         log.info("persisted decision %s", decision.decision_id)
 
-    if not (decision.entry_price and decision.stop_loss):
+    # An entry and a stop are what size a BUY. A Sell closes a position and is
+    # sized off the holding, so requiring them there discarded exit signals: the
+    # trader agent has no reason to quote an entry price for a name it wants out
+    # of, and this returned 1 before writing any row — so the exit never reached
+    # the broker, never reached the DB, and daily_run.sh counted it as a generic
+    # ticker failure rather than a dropped trade.
+    if decision.rating != "Sell" and not (decision.entry_price and decision.stop_loss):
         log.warning("decision missing entry/stop — cannot size; aborting before risk layer")
         return 1
 
@@ -264,12 +270,22 @@ def main() -> int:
     else:
         print(f"  ADV:       ${adv:,.0f} (20d average dollar volume)")
 
-    # Use entry as price proxy for sizing (a live quote would be better, but the
-    # entry is what the stop is measured against, so they stay consistent).
+    # Use entry as the price proxy for sizing (a live quote would be better, but
+    # the entry is what the stop is measured against, so they stay consistent).
+    # A Sell need not carry one — it is sized off the holding — so fall back to
+    # the last close, and only then to the position's own mark, so the circuit
+    # breaker's price check still has something real to work with.
+    ref_price = decision.entry_price or _fetch_current_price(args.ticker)
+    if not ref_price and held_qty:
+        ref_price = existing_by_ticker.get(args.ticker, 0.0) / held_qty
+    if not ref_price:
+        log.warning("no reference price for %s — cannot size", args.ticker)
+        return 1
+
     market_ctx = MarketContext(
-        current_price=decision.entry_price,
-        rolling_mean=decision.entry_price,
-        rolling_std=max(decision.entry_price * 0.02, 1.0),  # 2% as conservative band
+        current_price=ref_price,
+        rolling_mean=ref_price,
+        rolling_std=max(ref_price * 0.02, 1.0),  # 2% as conservative band
         # No synthesized ATR: the sizer now measures the real entry-to-stop
         # distance itself, and a proxy here is what made positions 2.5x.
         atr=None,
@@ -318,9 +334,13 @@ def main() -> int:
         # means Alpaca omitted it; pass None so the check is skipped rather
         # than run against a bogus baseline.
         session_open_equity=acct.last_equity or None,
+        # Bounds a sell to what is actually held. Without it a sell is sized off
+        # the risk budget and can exceed the position, which the executor would
+        # submit as an unprotected short.
+        held_quantity=held_qty,
     )
 
-    notional = order.quantity * (decision.entry_price or 0)
+    notional = order.quantity * (decision.entry_price or ref_price or 0)
     pct = notional / acct.portfolio_value * 100 if acct.portfolio_value > 0 else 0
     print("\n=== TRADE ORDER ===")
     print(f"  Side:        {order.side}")

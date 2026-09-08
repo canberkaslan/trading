@@ -77,5 +77,25 @@ def test_lessons_do_not_claim_dead_controls_are_live() -> None:
     there — the one failure mode in this content that could actually cost money.
     """
     blob = _AGENT_COPY.read_text(encoding="utf-8")
-    for claim in ("shrink the tail in advance", "kuyruğu sonradan ölçmek yerine baştan kısıyor"):
+    for claim in (
+        "shrink the tail in advance",
+        "kuyruğu sonradan ölçmek yerine baştan kısıyor",
+        # The sizer never moves the stop — it sizes as if the stop were nearer
+        # than it is. Saying it "places" one there implies a stop-out costs the
+        # configured 0.5%, when the whole point is that it costs about 1.25%.
+        "places its stop at twice that",
+        "stop'u bunun iki katına koyuyor",
+    ):
         assert claim not in blob, f"lesson still presents inert controls as protection: {claim!r}"
+
+
+def test_lessons_name_the_real_per_trade_loss() -> None:
+    """The 0.5% risk setting does not describe what a stop-out actually costs.
+    If a lesson ever quotes the setting without the ~1.25% it works out to, the
+    operator is being told the position is a third of the size it really is."""
+    blob = _AGENT_COPY.read_text(encoding="utf-8")
+    if "0.5%" in blob or "%0.5" in blob:
+        assert "1.25" in blob, (
+            "a lesson quotes the 0.5% per-trade risk setting without the ~1.25% "
+            "of equity a stop-out actually costs as currently wired"
+        )

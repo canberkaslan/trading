@@ -173,6 +173,35 @@
   #tip .r i{width:8px;height:8px;border-radius:2px}
   #tip .r b{margin-left:auto;padding-left:14px}
 
+  /* learn */
+  .lesson{border-bottom:1px solid var(--hair)}
+  .lesson:last-child{border-bottom:0}
+  .lesson>summary{list-style:none;cursor:pointer;padding:13px 0;display:flex;align-items:flex-start;gap:12px}
+  .lesson>summary::-webkit-details-marker{display:none}
+  .lesson .ld{width:8px;height:8px;border-radius:50%;background:var(--s3);margin-top:6px;flex:0 0 8px;transition:background .2s}
+  .lesson.solved .ld{background:var(--pos)}
+  .lesson .lt{font-size:14px;font-weight:650}
+  .lesson .ls{font-size:12.5px;color:var(--ink3);margin-top:3px;line-height:1.5}
+  .lesson .lx{margin-left:auto;color:var(--ink3);font-size:18px;line-height:1;transition:transform .2s}
+  .lesson[open] .lx{transform:rotate(45deg)}
+  .lbody{padding:0 0 16px 20px;display:flex;flex-direction:column;gap:12px}
+  .lbody p{font-size:13.5px;color:var(--ink2);line-height:1.65}
+  .ltake{background:var(--s2);border-radius:10px;padding:12px 14px}
+  .ltake b{display:block;font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-bottom:4px}
+  .ltake span{font-size:13.5px;line-height:1.55}
+  .lq{font-size:13.5px;font-weight:600;line-height:1.55}
+  .lopt{display:block;width:100%;text-align:left;border:1px solid var(--hair2);border-radius:10px;
+    padding:10px 14px;font-size:13.5px;line-height:1.5;transition:all .15s;margin-bottom:8px}
+  .lopt:hover:not(:disabled){border-color:rgba(255,255,255,.25)}
+  .lopt:disabled{cursor:default}
+  .lopt.right{border-color:var(--pos);background:var(--pos-dim)}
+  .lopt.wrong{border-color:var(--neg);background:var(--neg-dim)}
+  .lexp{font-size:13px;color:var(--ink2);line-height:1.6}
+  .lexp b{display:block;font-size:12px;margin-bottom:3px}
+  .lprog{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+  .lprog .tr{flex:1;height:4px;border-radius:2px;background:var(--s3);overflow:hidden}
+  .lprog .tr i{display:block;height:4px;border-radius:2px;background:var(--pos);width:0;transition:width .5s cubic-bezier(.2,.7,.3,1)}
+
   #err{display:none;margin-top:16px;padding:12px 16px;border:1px solid rgba(255,93,108,.35);
     background:var(--neg-dim);border-radius:12px;font-size:13px;color:var(--neg)}
   footer{margin-top:44px;font-size:11.5px;color:var(--ink3);text-align:center;line-height:1.8}
@@ -276,6 +305,11 @@
     <div class="bd" id="decisions"></div>
   </section>
 
+  <section class="card rise d5">
+    <div class="hd"><h2 data-i18n="learn_h">Öğren</h2><span class="sub" id="learnSub"></span></div>
+    <div class="bd" id="learn"></div>
+  </section>
+
   <footer data-i18n="footer">Paper trading — gerçek para değildir · 60 sn'de bir tazelenir · Yatırım tavsiyesi değildir</footer>
 </div>
 </div>
@@ -308,6 +342,7 @@ const I18N={
     err_msg:'Veriye ulaşılamadı ({e}) — tekrar denenecek.',no_data:'Henüz yeterli veri yok',
     g_trading_days:'İşlem günü',g_sharpe:'Sharpe',g_max_drawdown:'Maks. düşüş',g_beats_spy:'SPY’ı geçiyor',
     need_gt:'gereken >',need_lt:'gereken <',
+    learn_h:'Öğren',l_takeaway:'Akılda kalsın',l_correct:'Doğru',l_wrong:'Yanlış',
   },
   en:{
     auth_p:'This panel is private. Enter your access key — it is stored on this device only.',
@@ -325,6 +360,7 @@ const I18N={
     err_msg:'Could not reach data ({e}) — will retry.',no_data:'Not enough data yet',
     g_trading_days:'Trading days',g_sharpe:'Sharpe',g_max_drawdown:'Max drawdown',g_beats_spy:'Beats SPY',
     need_gt:'need >',need_lt:'need <',
+    learn_h:'Learn',l_takeaway:'Takeaway',l_correct:'Correct',l_wrong:'Not quite',
   },
 };
 // Turkish is the default rather than the browser's language: this is one
@@ -347,6 +383,7 @@ function toggleLang(){
   localStorage.setItem('trader_lang',LANG);
   applyStatic();
   if(LAST){DRAWN=true;render();}
+  if(LESSONS.length)renderLearn();
 }
 
 let TOKEN=localStorage.getItem('trader_token')||'';
@@ -371,6 +408,7 @@ async function boot(){
     await refresh(true);
     $('#auth').style.display='none';$('#app').style.display='block';
     if(!TIMER)TIMER=setInterval(()=>refresh().catch(()=>{}),60000);
+    loadLearn();
   }catch(e){
     if(e.auth){$('#auth').style.display='block';$('#app').style.display='none';$('#autherr').style.display='block';}
     else{$('#auth').style.display='none';$('#app').style.display='block';showErr(e);}
@@ -524,6 +562,58 @@ function flagsHtml(items,fallback){
 const ok=()=>`<svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="var(--pos)" stroke-width="1.5" opacity=".4"/><path class="ck" d="M6.2 10.4l2.6 2.6L14 7.6" stroke="var(--pos)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 const bad=()=>`<svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="var(--neg)" stroke-width="1.5" opacity=".4"/><path d="M7.4 7.4l5.2 5.2M12.6 7.4l-5.2 5.2" stroke="var(--neg)" stroke-width="1.8" stroke-linecap="round"/></svg>`;
 const pend=()=>`<svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="var(--ink3)" stroke-width="1.5" opacity=".5"/><path d="M6.5 10h7" stroke="var(--ink3)" stroke-width="1.8" stroke-linecap="round"/></svg>`;
+
+/* ============ learn ============ */
+let LESSONS=[];
+const SOLVED=JSON.parse(localStorage.getItem('trader_learn')||'{}');
+
+async function loadLearn(){
+  if(LESSONS.length)return renderLearn();
+  try{
+    const r=await fetch('/v1/learn');
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    LESSONS=await r.json();
+    renderLearn();
+  }catch(_){
+    // The lessons are a bonus, not the dashboard — a failure here must not
+    // leave a broken-looking empty card sitting under the decisions.
+    $('#learn').closest('section').style.display='none';
+  }
+}
+function renderLearn(){
+  const box=$('#learn');
+  const done=LESSONS.filter(l=>SOLVED[l.id]===l[LANG].quizAnswer).length;
+  $('#learnSub').textContent=done+'/'+LESSONS.length;
+  box.innerHTML=`<div class="lprog"><span class="tr"><i style="width:${(done/LESSONS.length*100).toFixed(0)}%"></i></span></div>`+
+    LESSONS.map(l=>{
+      const x=l[LANG], picked=SOLVED[l.id], reveal=picked!==undefined;
+      const solved=picked===x.quizAnswer;
+      return `<details class="lesson${solved?' solved':''}" data-id="${esc(l.id)}">
+        <summary><span class="ld"></span><span><span class="lt">${esc(x.title)}</span>
+          <span class="ls" style="display:block">${esc(x.summary)}</span></span><span class="lx">+</span></summary>
+        <div class="lbody">
+          ${x.body.map(p=>`<p>${esc(p)}</p>`).join('')}
+          <div class="ltake"><b>${esc(t('l_takeaway'))}</b><span>${esc(x.takeaway)}</span></div>
+          <div class="lq">${esc(x.quizQ)}</div>
+          <div>${x.quizOptions.map((o,i)=>{
+            const cls=reveal?(i===x.quizAnswer?' right':(i===picked?' wrong':'')):'';
+            return `<button class="lopt${cls}" data-l="${esc(l.id)}" data-i="${i}"${reveal?' disabled':''}>${esc(o)}</button>`;
+          }).join('')}</div>
+          ${reveal?`<div class="lexp"><b style="color:${solved?'var(--pos)':'var(--neg)'}">${esc(t(solved?'l_correct':'l_wrong'))}</b>${esc(x.quizExplain)}</div>`:''}
+        </div>
+      </details>`;
+    }).join('');
+  requestAnimationFrame(()=>{const b=box.querySelector('.lprog i');if(b)b.style.width=(done/LESSONS.length*100).toFixed(0)+'%';});
+}
+document.addEventListener('click',e=>{
+  const b=e.target.closest('.lopt');
+  if(!b||b.disabled)return;
+  SOLVED[b.dataset.l]=Number(b.dataset.i);
+  localStorage.setItem('trader_learn',JSON.stringify(SOLVED));
+  const open=[...document.querySelectorAll('.lesson[open]')].map(d=>d.dataset.id);
+  renderLearn();
+  open.forEach(id=>{const d=document.querySelector(`.lesson[data-id="${id}"]`);if(d)d.open=true;});
+});
 
 /* ============ chart: robinhood-style scrub ============ */
 let RO=null;

@@ -1,0 +1,316 @@
+[
+  {
+    "id": "paper_trading",
+    "tr": {
+      "title": "Paper trading ne kanıtlar",
+      "summary": "Simüle parayla gerçek fiyatlarda test etmenin neyi kanıtlayıp neyi kanıtlamadığı.",
+      "body": [
+        "Sistemin ürettiği her emir Alpaca'nın paper API'sine gidiyor. Arkasındaki quote ve bar'lar gerçek piyasadan geliyor; simüle olan sadece para. Agent pipeline'ı, sizer ve risk cap'leri fonlanmış bir hesapta nasıl çalışacaksa aynen öyle çalışıyor — değiştirilen tek bileşen hesabın kendisi. Amaç, sermaye piyasayla karşılaşmadan önce sürecin karşılaşması.",
+        "Bu kurulumun asıl ölçtüğü şey davranış. Emirlerin bu sistemin kendi cap'lerine gerçekten takılıp takılmadığını görüyorsun — tek isimde %10, sektörde %30, 1.5x gross exposure, işlem başına equity'nin %0.5'i risk — ve equity curve eval gate'lerini geçiyor mu: en az 10 işlem günü, 3 aylık T-bill üstü excess Sharpe > 1.0, max drawdown < %15. Bunlar sektör standardı değil, bu sistemin eşikleri; 10 günün altında scorecard hüküm bile vermiyor, TOO EARLY diyor. Paper aynı zamanda tesisat hatalarının ucuza çıktığı yer: yanlış parse edilmiş bir stop, cap'ini sessizce aşan bir pozisyon.",
+        "Paper'ın çözemediği şey maliyet. Simüle fill, emrin kotasyondaki fiyattan anında ve tamamen dolduğunu varsayar: ödenen spread yok, kuyruk sırası yok, kısmi fill yok, kendi büyüklüğünün defteri aleyhine itmesi yok. Bu yüzden paper Sharpe'ı canlının tahmini değil, üst sınırı olarak okumak gerekir. $100k ADV likidite tabanı ve verdict bir gün GO'ya dönerse küçük başlama notu tam olarak bu bilinmeyen fark için var."
+      ],
+      "takeaway": "Paper trading bir stratejiyi eleyebilir ama doğrulayamaz; gate'leri geçmek küçük bir sermayeyi riske atma izni verir, edge kanıtı değildir.",
+      "quizQ": "Eval scorecard'da paper Sharpe gate'in belirgin şekilde üstünde çıktı. Bundan gerçekte ne sonuç çıkarılabilir?",
+      "quizOptions": [
+        "Sonuç iyimser bir üst sınırdır; canlıda simüle fill'lerin hiç yansıtmadığı spread ve market impact maliyeti ödenir.",
+        "Edge doğrulanmıştır; geriye sadece ne kadar sermaye ayrılacağı sorusu kalır.",
+        "Fiyat feed'i gerçek piyasadan geldiğine göre aynı getiri gerçek parayla da elde edilirdi."
+      ],
+      "quizAnswer": 0,
+      "quizExplain": "Simüle fill kuyruk ve impact olmadan kotasyon fiyatından verilir, dolayısıyla canlı sonuç ancak daha kötü çıkabilir; üçüncü şık cezbedici çünkü fiyatlar cidden gerçekti, ama feed'in gerçek olması emrin o fiyattan dolacağı anlamına gelmez."
+    },
+    "en": {
+      "title": "What Paper Trading Proves",
+      "summary": "Why this system trades simulated money at real prices, and what that can never prove.",
+      "body": [
+        "Every order this system produces goes to Alpaca's paper API. The quotes and bars behind it come from the real market; only the cash is simulated. The agent pipeline, the sizer and the risk caps run exactly as they would against a funded account — the account is the single substituted component. The point is to let the process meet the market before any capital does.",
+        "What that setup genuinely measures is behaviour. You find out whether orders really do get trimmed by this system's own caps — 10% in any single name, 30% per sector, 1.5x gross exposure, 0.5% of equity risked per trade — and whether the equity curve clears the eval gates: at least 10 trading days, Sharpe above 1.0 measured as excess over the 3-month T-bill, and max drawdown under 15%. Those are this system's thresholds, not an industry standard, and below 10 days the scorecard refuses to rule at all and returns TOO EARLY. Paper is also where plumbing bugs surface cheaply: a mis-parsed stop, a position that quietly grows past its cap.",
+        "What paper cannot settle is cost. A simulated fill assumes the order executes at the quoted price, instantly and in full — no spread paid, no queue position, no partial fill, no book pushed against you by your own size. So a paper Sharpe is best read as an upper bound on the live one, not a forecast of it. The $100k average-daily-volume floor and the note to start live small if the verdict ever turns GO exist precisely because that gap stays unknown until real orders pay it."
+      ],
+      "takeaway": "Paper trading can rule a strategy out but never rule it in — clearing the gates buys permission to risk a small amount of real money, not proof of an edge.",
+      "quizQ": "The eval scorecard comes back with a paper Sharpe comfortably above the gate. What does that actually let you conclude?",
+      "quizOptions": [
+        "It is an optimistic upper bound: live trading pays spread and market impact that the simulated fills never charged.",
+        "The edge is confirmed, and the only open question is how much capital to allocate to it.",
+        "Because the price feed was the real market, the same returns would have been earned with real money."
+      ],
+      "quizAnswer": 0,
+      "quizExplain": "Simulated fills are granted at the quoted price with no queue or impact, so the live number can only come out worse; the third option is tempting because the prices genuinely were real, but a real price feed says nothing about whether your order would have been filled there."
+    }
+  },
+  {
+    "id": "agents",
+    "tr": {
+      "title": "Tartışmadan Emre Giden Yol",
+      "summary": "Bir rating nasıl doğuyor ve emre dönüşmeden önce onu ne durdurabiliyor.",
+      "body": [
+        "Pipeline tek görüşlü bir model değil, bir uzmanlar zinciri. Dört analist (market, news, fundamentals, sentiment) kanıtı ayrı ayrı topluyor; bull ve bear araştırmacılar aynı kanıt üzerinden tartışıyor; research manager tartışmayı karara bağlıyor; trader bu kararı somut bir entry ve stop'a çeviriyor; üç risk analisti (aggressive, conservative, neutral) pozisyon büyüklüğü için çekişiyor ve portfolio manager beş kademeli rating'i veriyor (Buy, Overweight, Hold, Underweight, Sell). Yapının mantığı şu: tek bir modele \"alayım mı\" diye sorarsan sana ikna edici tek bir hikaye yazar; karşıt görüşü zorunlu hale getirmek o hikayenin zayıf eklem yerlerini görünür kılıyor.",
+        "Rating'in bittiği yerde aritmetik başlıyor. Ajanların ürettiği her şey öneri; bu sistemdeki risk katmanı ise içinde hiç LLM olmayan deterministik kod ve öneriyi ya kırpıyor ya doğrudan reddediyor. Buradaki caps: tek isim equity'nin %10'unu, sektör %30'unu aşamıyor, adayla korelasyonu 0.7 üzerinde en fazla 3 pozisyon taşınıyor, gross exposure 1.5x ile sınırlı ve bir hissenin işlem görebilmesi için günlük ortalama 100 bin dolarlık hacim şartı var. Bunlardan birine takılan bir \"Buy\", emir olarak değil rejection_reasons dolu bir kayıt olarak geri geliyor.",
+        "Council oylaması bundan sonra geliyor: DeepSeek, GLM ve lokal qwen aynı araştırma özetini bağımsız olarak yeniden puanlıyor, Opus chair de bu oyları house görüşüyle tartıp son kararı yazıyor. Modellerin farklı ailelerden seçilmesi bilinçli bir tercih, çünkü aynı ailenin modelleri genelde aynı kör noktaları paylaşıyor. Council fail-safe kurulmuş: bir voter'a ulaşılamazsa ya da chair çalışamazsa run kırılmıyor, house rating olduğu gibi kalıyor. Ama bunların hiçbiri sürecin para kazandığını kanıtlamıyor; o yargı paper eval'e ait ve eval 10 işlem gününün altında hiçbir şeyi notlandırmıyor, sonrasında da 3 aylık T-bill üzerinden excess Sharpe > 1.0 ve max drawdown < %15 istiyor."
+      ],
+      "takeaway": "İkna edici argüman onaylanmış pozisyon demek değildir: tartışma yalnızca görüş üretir, o görüşün emre dönüşüp dönüşmeyeceğine deterministik caps karar verir.",
+      "quizQ": "Portfolio manager bir hisse için Buy verdi ve council chair de aynı fikirde. Buna rağmen neden hiç emir çıkmayabilir?",
+      "quizOptions": [
+        "Deterministik risk katmanı rating'den sonra çalışıyor ve %10 tek isim limiti gibi, ajanların tartışamayacağı caps'lerde size'ı sıfıra kırpabiliyor",
+        "Council voter'larından birine ulaşılamazsa karar geçersiz sayılır ve run iptal edilir",
+        "Eval verdict'i her emri kapıda tutar; scorecard NO-GO okuduğu sürece emir gönderilmez"
+      ],
+      "quizAnswer": 0,
+      "quizExplain": "Caps görüş değil kod olduğu için üzerinde anlaşılmış bir Buy bile tek isim ya da nakit cap'inde sıfıra inebilir; cazip görünen ikinci şık ise tam tersini söylüyor, çünkü ulaşılamayan voter fail-safe davranışın devreye girip house rating'in aynen kaldığı durumdur."
+    },
+    "en": {
+      "title": "From Debate To Order",
+      "summary": "How a rating is argued into existence, and what can still stop it becoming an order.",
+      "body": [
+        "The pipeline is a chain of specialists, not one model with an opinion. Four analysts (market, news, fundamentals, sentiment) gather evidence separately; a bull and a bear researcher argue over that same evidence; a research manager judges the debate; a trader converts the verdict into a concrete entry and stop; three risk analysts (aggressive, conservative, neutral) argue over sizing; and a portfolio manager issues the five-tier rating (Buy, Overweight, Hold, Underweight, Sell). The reason for the structure is simple: ask a single model \"should I buy this\" and it tends to write one confident story, while forcing an adversarial step makes the weak joints in that story visible.",
+        "Where the rating ends, arithmetic begins. Everything the agents produce is a proposal, and this system's risk layer is deterministic code with no LLM in it that trims the proposal or refuses it outright. Its caps here are a 10% cap on any single name as a share of equity, 30% per sector, at most 3 positions correlated above 0.7 with the candidate, 1.5x gross exposure, and a $100k average daily dollar volume floor before a name is tradable at all. A \"Buy\" that collides with any of those comes back as a record full of rejection_reasons rather than as a filled order.",
+        "Only then does the council vote: DeepSeek, GLM and a local qwen re-rate the same research digest independently, and an Opus chair weighs those votes against the house view. Picking models from different families is deliberate, because models from one family tend to share the same blind spots. The council is also fail-safe by design, so if a voter is unreachable or the chair cannot run, the house rating stands unchanged instead of the run breaking. None of this proves the process makes money, though: that judgment belongs to the paper eval, which refuses to grade anything under 10 trading days and then asks for Sharpe above 1.0 (excess over the 3-month T-bill) and max drawdown under 15%."
+      ],
+      "takeaway": "A convincing argument is not an approved position: the debate produces an opinion, and deterministic caps decide whether that opinion ever becomes an order.",
+      "quizQ": "The portfolio manager issues Buy on a name and the council chair agrees with it. Why might no order still be placed?",
+      "quizOptions": [
+        "The deterministic risk layer runs after the rating and can trim the size to zero on caps the agents cannot argue with, such as the 10% single-name limit",
+        "A council voter being unreachable voids the decision, so the run is cancelled and nothing is submitted",
+        "The eval verdict gates each order, so while the scorecard reads NO-GO no order can be placed"
+      ],
+      "quizAnswer": 0,
+      "quizExplain": "The caps are code rather than opinion, so even an agreed Buy can be trimmed to zero by the single-name or cash cap; the tempting alternative is backwards, because an unreachable voter is exactly the fail-safe case where the house rating simply stands."
+    }
+  },
+  {
+    "id": "sharpe",
+    "tr": {
+      "title": "Risk Başına Getiri",
+      "summary": "Bir getiri sayısı, hangi oynaklıkla alındığını bilmeden neden hiçbir şey anlatmaz.",
+      "body": [
+        "İki hesap da pencereyi +%4 ile kapatabilir ve birbirine hiç benzemez: biri yavaşça oraya sürüklenmiştir, diğeri bir hafta içinde yüzde altı savrulup tesadüfen aynı sayıda durmuştur. Sharpe bu farkı tek bir rakama indirir; risk/metrics.py'de günlük excess getirilerin ortalamasını yine aynı serinin standart sapmasına böler ve sqrt(252) ile yıllıklandırır. Yani sorduğu soru \"ne kadar kazandık\" değil, \"kabul ettiğimiz her bir birim dalgalanmanın karşılığında bize ne ödendi\".",
+        "\"Excess\" kısmı bu sistemde bilinçli bir tercih. eval_report.py risk-free oranı gerçek bir kaynaktan çeker — FRED'den 3 aylık T-bill (DGS3MO), o gelmezse EVAL_RISK_FREE_RATE env değişkeni, o da yoksa sıfır — ve stratejiyi bu oranın üzerindeki getiriye göre notlar. Nakit zaten %4-5 getirirken sıfır tabana göre ölçmek Sharpe'ı sessizce şişirir ve GO/NO-GO kararını GO tarafına eğer; bu yüzden scorecard oranın yanına rf_annual ve rf_source'u da basar.",
+        "Bizim eşiğimiz GATE_SHARPE = 1.0 ve karşılaştırma katı: kod sc.sharpe > 1.0 arar, tam 1.0 geçmez. Üstelik MIN_TRADING_DAYS = 10 dolmadan verdict hiç hesaplanmaz, çünkü dört günlük gürültülü seriden çıkan Sharpe virgüllü bir yazı-turadan ibarettir. Negatif Sharpe ise sadece \"zayıf sonuç\" demek değildir: ortalama excess getiri risk-free'in altında kalmış, yani defter gerçek bir varyans taşımış ve hiçbir şey yapmamaktan daha azını almıştır. Nedenini söylemez — bu yüzden tek başına değil, GATE_MAX_DD = %15 ile birlikte okunur; yüksek görünen bir Sharpe hâlâ tek bir derin çukurun üstünde oturuyor olabilir."
+      ],
+      "takeaway": "Bir getiri rakamı, yanında hangi volatiliteyle alındığı yazmadan yorumlanamaz.",
+      "quizQ": "Aynı pencerede iki strateji de +%6 yapmış; A'nın Sharpe'ı 1.4, B'nin 0.3. Bu fark neyi anlatır?",
+      "quizOptions": [
+        "B aynı sonuca çok daha oynak bir yoldan varmış; aynı para daha fazla volatilite karşılığında kazanılmış",
+        "B, A'dan daha fazla günü zararla kapatmıştır",
+        "B bundan sonraki dönemde A'nın gerisinde kalacaktır"
+      ],
+      "quizAnswer": 0,
+      "quizExplain": "Sharpe excess getiriyi kendi standart sapmasına böldüğü için getiriler eşitken düşük Sharpe yalnızca daha gürültülü bir yol demektir; kaç günün pozitif kapandığı Sharpe'ın ölçtüğü şey değil ayrı bir metriktir (raporda positive_days_pct) ve Sharpe geçmiş seriyi ölçer, gelecek hakkında bir iddia taşımaz."
+    },
+    "en": {
+      "title": "Return Per Unit Risk",
+      "summary": "Why a return number means nothing until you divide it by the risk that bought it.",
+      "body": [
+        "Two accounts can both finish a window up 4% and be nothing alike: one drifted there, the other swung six percent in a week and happened to land on the same figure. Sharpe collapses that difference into a single number — in risk/metrics.py it takes the mean daily excess return, divides by the standard deviation of those same daily returns, and annualizes by multiplying by sqrt(252). The question it answers is not \"how much did we make\" but \"how much were we paid for each unit of wobble we agreed to carry\".",
+        "The \"excess\" part is a deliberate choice in this system. eval_report.py pulls a real risk-free rate — the 3-month T-bill from FRED (DGS3MO), falling back to the EVAL_RISK_FREE_RATE env var and then to zero — and grades the strategy only on return above that rate. Measuring against a 0% baseline while idle cash yields 4-5% would quietly inflate the ratio and tilt the GO/NO-GO toward GO, so the scorecard prints rf_annual and rf_source right next to the number.",
+        "Our threshold is GATE_SHARPE = 1.0, and the comparison is strict: the code asks for sc.sharpe > 1.0, so exactly 1.0 does not pass. Nothing is judged at all before MIN_TRADING_DAYS = 10, because a Sharpe computed from four noisy days is a coin flip with a decimal point. A negative Sharpe is more than a weak result: it means average excess return sat below the risk-free rate, so the book carried real variance and was paid less than doing nothing at all. It never tells you why, which is exactly why it is read together with GATE_MAX_DD = 15% — a flattering Sharpe can still be sitting on top of one deep hole."
+      ],
+      "takeaway": "A return figure is uninterpretable until you know what volatility was spent to get it.",
+      "quizQ": "Two strategies both returned +6% over the same window, but A's Sharpe is 1.4 and B's is 0.3. What does that gap actually tell you?",
+      "quizOptions": [
+        "B reached the same result along a much rougher path — the same money was bought with more volatility",
+        "B closed more days at a loss than A did",
+        "B will lag A over the next period"
+      ],
+      "quizAnswer": 0,
+      "quizExplain": "Sharpe divides excess return by its own standard deviation, so with returns equal the lower one simply describes a noisier path; how many days closed green is a different metric entirely (the report shows positive_days_pct separately), and Sharpe measures a past series rather than making any claim about the next one."
+    }
+  },
+  {
+    "id": "max_drawdown",
+    "tr": {
+      "title": "Max Drawdown Gate'i",
+      "summary": "Bir stratejiyi getirisi değil, en kötü tepe-dip düşüşü tradable yapar.",
+      "body": [
+        "Max drawdown en kötü günün değil, en kötü çukurun ölçüsü. metrics.max_drawdown equity eğrisini gezer, o ana kadarki en yüksek noktayı (high-water mark) tutar ve bu tepeden en derin yüzde kaç aşağı inildiğini, ayrıca kaç bar su altında kalındığını döner. Yani tek bir felaket seansı olmadan da büyük bir drawdown çıkabilir; geri alınamayan küçük kayıplar birikince aynı çukur oluşur.",
+        "Bu yüzden burada drawdown dipnot değil, hard gate. eval_report.py'da GATE_MAX_DD = 0.15, GATE_SHARPE = 1.0 ile yan yana duruyor: max drawdown %15'e ulaştığı anda getiri iyi görünse bile verdict NO-GO oluyor, MIN_TRADING_DAYS = 10 ise bu sayıların çok kısa bir geçmişten okunmasını engelliyor. metrics.py'daki Calmar da CAGR'ı max drawdown'a bölerek aynı tercihi açıkça söylüyor: getiriyi tek başına değil, ödenen en kötü bedelle birlikte oku.",
+        "Emir anında gerçekten devrede olan tek yapısal fren tek isim capi: PortfolioLimits.max_position_pct = 0.10, sizer emri kalan headroom'a kırpıyor ve check_limits kalanı reddediyor. Kodda duran diğer iki koruma — %30 sektör capi ve circuit breaker'ın %3 günlük drawdown bloğu — şu anki bağlantı biçiminde tetiklenemiyor: sektör her emirde \"Unknown\" geçiyor ve breaker'a session açılış equity'si yerine anlık equity'nin kendisi veriliyor, yani hesaplanan günlük drawdown daima sıfır. Bir korumanın kodda var olması devrede olduğu anlamına gelmiyor; drawdown'u asıl sınırlayan şey pozisyon başına riskin küçük tutulması."
+      ],
+      "takeaway": "Bir getiri sayısı, onu elde etmek için göze alınan en kötü düşüşle birlikte okunmadıkça eksiktir.",
+      "quizQ": "Bir strateji %40 getiri ve %35 max drawdown, diğeri %12 getiri ve %6 max drawdown üretiyor. Bu sistemin gate'lerine göre ilkini taşımayı asıl zorlaştıran şey nedir?",
+      "quizOptions": [
+        "%35'lik çukuru kapatıp eski tepeye dönmek çok daha büyük bir yükseliş gerektirir ve gate getiriye değil düşüşün derinliğine bakar",
+        "Yüksek getiri tek başına overfit göstergesidir, o yüzden ilk stratejinin sayısına güvenilmez",
+        "Max drawdown en kötü tek günü ölçer ve ilk stratejinin en kötü günü diğerinden büyüktür"
+      ],
+      "quizAnswer": 0,
+      "quizExplain": "Doğru cevap gate'in düşüş derinliğine bakması ve toparlanmanın asimetrik olması, yani yüksek getiri drawdown limitini satın alamıyor; \"en kötü tek gün\" seçeneği yanlış çünkü max drawdown koşan tepeye göre kümülatif ölçülür ve hiç dramatik bir seans olmadan birçok barda birikebilir."
+    },
+    "en": {
+      "title": "Max Drawdown Gate",
+      "summary": "Why the worst peak-to-trough fall, not the return, decides if a strategy is tradable.",
+      "body": [
+        "Max drawdown is not your worst day, it is your worst hole. In this system metrics.max_drawdown walks the equity curve, keeps a running high-water mark, and reports the deepest percentage fall below that mark plus how many bars the account stayed under water. So a run can contain no catastrophic single session and still print a large drawdown, because small losses that were never clawed back dig the same hole.",
+        "That is why this system treats drawdown as a hard gate rather than a footnote. eval_report.py sets GATE_MAX_DD = 0.15 next to GATE_SHARPE = 1.0: once max drawdown reaches 15% the verdict is NO-GO even if total return looks strong, and MIN_TRADING_DAYS = 10 keeps either number from being read off too little history. Calmar in metrics.py states the same preference out loud by dividing CAGR by max drawdown: never read a return without the worst price paid for it.",
+        "At order time the one structural brake that actually fires is the single-name cap — PortfolioLimits.max_position_pct = 0.10, with the sizer trimming to the remaining headroom and check_limits rejecting the rest. Two other protections exist in the code but cannot trigger as currently wired: the 30% sector cap sees every ticker as \"Unknown\", and the circuit breaker's 3% daily-drawdown block is handed the current equity as its session-open equity, so the drawdown it computes is always zero. A control existing in the source is not the same as a control being live; what actually limits drawdown here is keeping per-trade risk small."
+      ],
+      "takeaway": "A return figure is incomplete until you read it next to the worst fall it took to earn.",
+      "quizQ": "Strategy A shows +40% return with a 35% max drawdown; Strategy B shows +12% with 6%. Under this system's gates, what actually makes A the harder one to trade?",
+      "quizOptions": [
+        "A 35% hole needs a far larger gain just to get back to the old peak, and the gate scores the depth of the fall rather than the return",
+        "A high return is by itself evidence of overfitting, so A's number cannot be trusted",
+        "Max drawdown measures the single worst day, and A's worst day is bigger than B's"
+      ],
+      "quizAnswer": 0,
+      "quizExplain": "The gate scores depth of fall and recovery is asymmetric, so A's return does not buy its way past the drawdown limit; the \"single worst day\" option is wrong because max drawdown is cumulative against the running peak and can build over many bars without any dramatic session."
+    }
+  },
+  {
+    "id": "alpha_benchmark",
+    "tr": {
+      "title": "Kâr Değil, Alpha",
+      "summary": "SPY aynı pencerede +12% yaparken +9% getirinin neden kayıp sayıldığı.",
+      "body": [
+        "Bir portföyün rakibi sıfır değil; o parayla hiç uğraşmadan alınabilecek SPY. Scorecard bu yüzden kendi equity curve'ümüzün getirisini ve aynı pencerede SPY'ın getirisini yan yana basar, aradaki farkı da edge olarak yüzde puan cinsinden gösterir. +9% ile +12% karşılaştığında edge -3.00pp'dir. Artı işareti sadece piyasanın yükseldiğini söyler; senin bir şey katıp katmadığını söyleyen fark.",
+        "Karşılaştırmanın dürüst kalması iki ayrıntıya bağlı. SPY tarafı total return alınır, yani fiyat artı nakit temettü; çünkü hesabın kendi equity curve'üne de temettüler düşüyor ve sadece fiyat getirisiyle kıyaslamak stratejiye yılda kabaca bir puanlık bedava avans verirdi. Pencere de sonradan seçilmiş bir takvim aralığı değil: equity curve'ün ilk gününden son gününe kadar olan aralık. Başlangıç tarihini oynatmak, olmayan bir edge'i imal etmenin en ucuz yoludur.",
+        "Endeksi çok daha fazla risk alarak geçmek alpha değil, kılık değiştirmiş kaldıraçtır. Bu yüzden Beats SPY scorecard'da hard gate değil flag olarak durur; bu sistemin hard gate'leri Sharpe > 1.0 ve max drawdown < %15, üstelik buradaki Sharpe 3 aylık T-bill üzerinden excess hesaplandığı için nakit faizi hiçbir zaman beceri sayılmaz. Tek isim için konan %10'luk cap de aynı fikrin parçası. Tek bir şişkin pozisyon tuttuğu için SPY'ı geçen bir kitap, tekrarlanabilir hiçbir şey göstermiş olmuyor."
+      ],
+      "takeaway": "Ölçüt sıfır değil benchmark'tır: bir getiri ancak aynı pencerede endeksi geçiyorsa ve bunu fazladan riskle satın almadıysa sonuç sayılır.",
+      "quizQ": "Scorecard aynı pencerede kitap için +9%, SPY için +12% gösteriyor. Bu sana ne söyler?",
+      "quizOptions": [
+        "Kitap para kazandı ama hiç emek istemeyen alternatifin gerisinde kaldı; sonucu belirleyen işaret değil, aradaki fark",
+        "Getiri pozitif olduğuna göre alpha üretilmiştir; SPY yalnızca arka plan bilgisidir",
+        "Kitabın drawdown'ı daha küçük olduğu için yine de kazançtır; daha az riskle gelen düşük getiri otomatik olarak daha iyidir"
+      ],
+      "quizAnswer": 0,
+      "quizExplain": "Alpha elindeki gerçek alternatife göre ölçülür, dolayısıyla endeksin gerisinde kalan pozitif getiri para kazandırmış ama değer katmamıştır; üçüncü şık cazip çünkü riske göre kıyaslama gerçekten meşru bir yaklaşım, ama bunun ölçülmesi gerekir (Sharpe ve %15 drawdown gate'leri tam da bunun için), küçük getiriden varsayılamaz."
+    },
+    "en": {
+      "title": "Beating SPY, Not Zero",
+      "summary": "Why +9% can be a loss when SPY returned +12% over the same window.",
+      "body": [
+        "A portfolio's competitor is not zero. It is the money doing nothing clever: sitting in SPY, with no research, no agent calls, and no single-name risk. So the eval scorecard prints our own total return next to SPY's over exactly the same window and shows the difference as an edge in percentage points. +9% against +12% is an edge of -3.00pp, and a negative edge means the index would have paid more for none of the work.",
+        "Two details keep that comparison honest. The SPY figure is total return, price plus cash dividends, because the account's own equity curve collects dividends too and grading against price-only SPY would hand the strategy roughly a point a year of free credit. The window is not a calendar year chosen afterwards either: it runs from the first day of our equity curve to the last, since moving a start date is the cheapest way to manufacture an edge that was never there. Below MIN_TRADING_DAYS = 10 the scorecard does not even score that line, it renders the SPY gate as not yet evaluable rather than as a pass.",
+        "Beating the index by carrying far more risk is not alpha, it is leverage wearing a costume. That is why Beats SPY sits on the scorecard as a flag rather than a hard gate: the hard gates in this system are Sharpe above 1.0 and max drawdown under 15%, and Sharpe here is excess over the 3-month T-bill, so cash yield never gets counted as skill. The 10% single-name cap belongs to the same idea. A book that edged past SPY because one oversized position happened to run has not demonstrated anything repeatable."
+      ],
+      "takeaway": "A positive return is not a result; the result is the gap to the benchmark over the same window, earned inside the risk limits.",
+      "quizQ": "The scorecard shows +9% for the book and +12% for SPY over the same window. What does that actually tell you?",
+      "quizOptions": [
+        "The book made money but trailed the alternative that required no work; the gap is the result, not the sign",
+        "Alpha was produced, because the return is positive and SPY is only background context",
+        "It counts as a win anyway, since the book's drawdown was smaller and a lower return with less risk is automatically better"
+      ],
+      "quizAnswer": 0,
+      "quizExplain": "Alpha is measured against the alternative you actually had, so a positive return that trails the index earned money without adding value; the third option is tempting because risk-adjusted comparison is genuinely legitimate, but it has to be measured (that is what the Sharpe and 15% drawdown gates are for) rather than assumed from the smaller number."
+    }
+  },
+  {
+    "id": "concentration",
+    "tr": {
+      "title": "On İsim, Üç Bahis",
+      "summary": "Pozisyon sayısı çeşitlendirmeyi neden yanıltır, HHI ve effective N gerçekte ne ölçer.",
+      "body": [
+        "HHI, her pozisyonun ağırlığının karesini toplar; effective N ise bunun tersi (1/HHI) — yani mevcut kitapla aynı yoğunluğa sahip eşit ağırlıklı pozisyon sayısı. Kare almak işin bütün püf noktası: büyük ağırlığı, küçüğü ödüllendirdiğinden çok daha sert cezalandırır. Eşit ağırlıklı 10 pozisyonda HHI 0.10, effective N 10 çıkar; ama yatırılmış tutarın %55'i tek isimde, %20'si ikincide, %10'u üçüncüde ve kalan %15 yedi isme dağılmışsa effective N yaklaşık 2.8 olur. Ekranda hâlâ on ticker var ama ortada üç bahis var — bu yüzden bu sistem effective_n 3.0'ın altına düştüğünde low_effective_n flag'i basıyor.",
+        "Tek isim limiti burada equity'nin %10'u (PortfolioLimits.max_position_pct = 0.10) ve iki ayrı yerde, iki ayrı sebeple devrede. Emir anında sizer önerilen miktarı kalan headroom'a göre kırpıyor, check_limits de hâlâ limiti aşanı reddediyor. Ama o kontrol sadece yeni emirlere bakar — %9 ile alınıp %12'ye koşan bir isim bir daha sorgulanmaz, o yüzden concentration.py aynı %10'u mevcut kitap üzerinde read-only bir flag olarak tekrar uygular ve bu drift'i yakalar. Panelde gördüğün sarı cap uyarısı tam olarak bu ikinci kontroldür. Kodda duran %30 sektör limiti ise bugünkü bağlantı biçiminde tetiklenemiyor: her emir sektörü \"Unknown\" olarak geçiyor, dolayısıyla sektör bazında biriken bir şey hiç görülmüyor.",
+        "Gross exposure, pozisyonların mutlak market value toplamının equity'ye bölümüdür; mutlak değer olduğu için short bir pozisyon long'u nötrlemez, üstüne eklenir. Sistem cash_pct'yi 100 eksi gross exposure olarak (sıfırda kırpılmış) yazar, yani bu alan gerçek nakit bakiyesi değil bir artık değerdir: limitler gross'a 1.5x'e kadar izin verir ve %100'ü geçtiğinde alan sadece 0 gösterir. Asıl nokta şu ki HHI yalnızca yatırılmış ağırlıklar üzerinden, gross'a normalize edilerek hesaplanır — dolayısıyla çok nakit tutmak riske attığın tutarı düşürür ama riskin ne kadar çarpık dağıldığını değiştirmez. Performans ise ayrı bir soru: eval gate'leri (Sharpe > 1.0, max drawdown < %15, en az 10 trading day) sonuca bakar ve dağılımı gayet dengeli bir kitap da bu gate'lerden geçemeyebilir.",
+        "Bu ekrandaki hiçbir metrik bir alım satım önerisi değil; concentration.py'nin ürettiği her şey read-only teşhistir ve karar akışına girmez. İşe yarama biçimi de bu: kitabın gerçekte kaç bağımsız bahis taşıdığını, emir anındaki kontrollerin göremediği yerlerden sonra gösterir."
+      ],
+      "takeaway": "Çeşitlendirme ekrandaki ticker sayısı değil ağırlıkların dağılımıdır; cash exposure'ı düşürür, concentration'ı değil.",
+      "quizQ": "Kitabın %40'ı yatırılmış, %60'ı cash; 8 pozisyon var ve effective N 1.9 görünüyor. Bu ne anlama gelir?",
+      "quizOptions": [
+        "Sekiz pozisyonun ağırlıkları çok çarpık; cash exposure'ı düşürür ama HHI hesabına hiç girmez.",
+        "Sorun yok — %60 cash varken kitap zaten çeşitlendirilmiş sayılır, effective N burada yanıltıcıdır.",
+        "Hesap hatalı; 8 pozisyonu olan bir kitap 3'ün altında effective N veremez."
+      ],
+      "quizAnswer": 0,
+      "quizExplain": "HHI sadece gross'a normalize edilmiş yatırılmış ağırlıklar üzerinden hesaplanır, yani cash riske attığın tutarı azaltır ama dağılımın çarpıklığını değiştirmez; ikinci şık düşük exposure ile çeşitlendirmeyi birbirine karıştırıyor."
+    },
+    "en": {
+      "title": "Ten Names, Three Bets",
+      "summary": "Why position count lies about diversification, and what HHI and effective N measure.",
+      "body": [
+        "HHI sums the square of each position's weight, and effective N is simply 1/HHI — the number of equal-sized positions that would be as concentrated as the book you actually hold. The squaring is the whole trick: it punishes a large weight far harder than it rewards a small one. Ten equal positions give HHI 0.10 and an effective N of 10, but a book where one name holds 55% of the invested value, a second 20%, a third 10%, and seven stragglers split the last 15% lands at an effective N of about 2.8. That is still ten tickers on the screen and three real bets, which is why this system raises a low_effective_n flag whenever effective_n drops below 3.0.",
+        "The single-name cap here is 10% of equity (PortfolioLimits.max_position_pct = 0.10) and it is enforced in two places for two different reasons. At order time the sizer trims a proposed quantity down to the remaining headroom and check_limits rejects whatever still breaches it. But that check only ever sees new orders — a name bought at 9% that then rallies to 12% is never re-examined, so concentration.py mirrors the same 10% as a read-only flag over the current book to catch exactly that drift; the amber cap warning on the dashboard is that second check speaking. The 30% sector limit in the same module cannot fire as wired today: every order is passed a sector of \"Unknown\", so nothing ever accumulates per sector.",
+        "Gross exposure is the sum of the absolute market values of the positions divided by equity — absolute, so a short adds to it rather than netting against a long. This system reports cash_pct as 100 minus gross exposure, floored at zero, which makes it a residual rather than a real cash balance: the limits allow gross up to 1.5x equity, and past 100% that field simply reads 0. The point that matters here is that HHI is computed only over invested weights, normalized to gross, so sitting on a large cash pile lowers how much is at risk without changing how lopsided that risk is. Performance is a separate question again: the eval gates (Sharpe > 1.0, max drawdown < 15%, at least 10 trading days) judge results, and a well-spread book can still fail them.",
+        "None of these numbers is a recommendation to do anything. Everything concentration.py produces is read-only diagnostics that never feed the decision path — its job is to show how many independent bets the book really carries, in the places the order-time checks structurally cannot see."
+      ],
+      "takeaway": "Diversification is how the weights are spread, not how many tickers are on the screen; cash lowers exposure, not concentration.",
+      "quizQ": "A book is 40% invested and 60% cash across eight positions, and its effective N reads 1.9. What does that tell you?",
+      "quizOptions": [
+        "The eight holdings are badly lopsided; the cash pile lowers exposure but never enters the HHI calculation.",
+        "Nothing is wrong — with 60% in cash the book is diversified by definition, so effective N is misleading here.",
+        "The metric is broken, since a book holding eight positions cannot score below three."
+      ],
+      "quizAnswer": 0,
+      "quizExplain": "HHI is computed only over invested weights normalized to gross, so cash changes how much is at risk but not how unevenly that risk is split; the second option confuses low exposure with diversification."
+    }
+  },
+  {
+    "id": "stop_loss",
+    "tr": {
+      "title": "Stop-loss ve bracket order",
+      "summary": "Risk katmanı stop'u girişte neden ekler, dar stop neden daha güvenli değil.",
+      "body": [
+        "Trader agent emir göndermez; sadece bir entry ve bir stop seviyesi önerir. Bu öneriyi somut lot adedine çeviren yer sizer.py ve orası tamamen deterministik, o yolda hiçbir model çağrısı yok. Emir brokera giderken stop aynı submission'ın bir bacağı olarak gider (Alpaca tarafında bracket order), yani koruma pozisyon dolduğu anda kurulu olur, sonradan hatırlanacak bir iş değildir. Adapter bacak eklendiği anda time-in-force'u gtc'ye yükseltir; day emirde çocuk bacaklar kapanışta düşer ve pozisyon geceyi korumasız geçirir.",
+        "Stop bir tetiktir, fiyat garantisi değil. Anlamı şudur: piyasa buraya gelirse satmaya başla. Haber sonrası açılış o seviyenin epey altındaysa fill defterin gerçekten olduğu yerde gerçekleşir ve zarar stop'un ima ettiğinden büyük çıkabilir. Sistemin coverage muhasebesi stop_limit'i tam bu yüzden yıldızlı koruma sayar: gap'te limit atlanabilir ve pozisyon açık kalır. Aynı temkin defter denetiminde de var; stop_coverage her lotu protected, naked veya indeterminate diye ayırır ve tahmin etmeyi reddeder, çünkü korumalıyken korumasız okunan bir pozisyona ikinci bir stop bindirilir ve tek lot üzerindeki iki stop, isim aşağı gap attığında short'a dönüşür.",
+        "Stop'u daraltmak riski küçültmez, alınan miktarı büyütür. Varsayılan ATR sizing işlem başına equity'nin %0.5'ini riske atar ve lot adedini bu bütçeyi stop mesafesine bölerek bulur; mesafeyi yarıya indirince adet kabaca ikiye katlanır. Planlanan zarar aynı kalır ama pozisyon iki kat büyür: gap riskine iki kat açıksın ve tez oturmaya fırsat bulmadan sıradan gürültüyle stoplanma ihtimalin artar. Bu hesaptan çıkan adedi sonra bu sistemin sabit cap'leri budar, tek isim equity'nin %10'unu ve tek sektör %30'unu geçemez; seviyeleri de karıştırmamak lazım: stop tek bir işlemi sınırlar, eval scorecard'ındaki %15 max drawdown gate'i ise en az 10 işlem günü üzerinden bütün hesabı ölçer."
+      ],
+      "takeaway": "Stop, almayı göze aldığın zararı tanımlar, alabileceğin zararı değil; daraltıldığında sessizce daha büyük bir pozisyon satın alır.",
+      "quizQ": "Agent entry ile stop arasındaki mesafeyi yarıya indiriyor, işlem başına risk %0.5'te kalıyor. Gerçekte ne değişir?",
+      "quizOptions": [
+        "Emir kabaca iki kat lot açar; pozisyon büyür ve stop'un altına gap atma riskine daha açık hale gelir",
+        "Lot adedi sabit kalır, sadece en kötü senaryodaki zarar yarıya iner",
+        "Risk katmanı stop fazla dar olduğu için emri komple reddeder"
+      ],
+      "quizAnswer": 0,
+      "quizExplain": "Adet, risk bütçesinin stop mesafesine bölünmesiyle bulunur; mesafe yarıya inince adet ikiye katlanır. İkinci şık lot adedini sabit varsayıyor, oysa sizer'ın oynattığı değişken tam olarak o adet."
+    },
+    "en": {
+      "title": "Stops and bracket orders",
+      "summary": "Why the risk layer attaches a stop at entry, and why a tighter stop is not safer.",
+      "body": [
+        "The trader agent does not place orders. It proposes an entry price and a stop level, and sizer.py turns that proposal into a concrete share count deterministically, with no model call anywhere in that path. When the order goes out, the stop rides along as a leg of the same submission (a bracket, in the broker's terms), so the protective exit exists from the moment the entry fills instead of being something to remember later. The broker adapter also promotes time-in-force to gtc as soon as a leg is attached, because a day-order bracket expires its children at the close and leaves the position naked overnight.",
+        "A stop is a trigger, not a promised price. It says start selling when the market trades here, so if the market opens well below that level on news, the fill happens where the book actually is and the loss can exceed what the stop implied. This system's coverage accounting treats a stop_limit as protection with an asterisk for exactly that reason: in a gap the limit can be skipped entirely and the position simply stays open. The same caution shows up in how the book is audited, where stop_coverage sorts every share into protected, naked or indeterminate and refuses to guess, because a covered position misread as naked gets a second stop stacked on it, and two stops on one lot become a short the next time the name gaps down.",
+        "Tightening the stop does not shrink the risk, it changes what gets bought. The default ATR sizing risks 0.5% of equity per trade and derives the share count by dividing that budget by the stop distance, so halving the distance roughly doubles the shares. The intended loss is unchanged, but the position is twice as large, twice as exposed to a gap straight through the level, and more likely to be knocked out by ordinary noise before the thesis has any room. Whatever survives that arithmetic is trimmed again by this system's flat caps, no single name above 10% of equity and no sector above 30%, and it is worth keeping the levels apart: a stop bounds one trade, while the eval scorecard's 15% max-drawdown gate judges the whole account over at least 10 trading days."
+      ],
+      "takeaway": "A stop defines the loss you intend to take, not the loss you can take, and tightening it quietly buys you a larger position.",
+      "quizQ": "The agent halves the distance between entry and stop while risk-per-trade stays at 0.5%. What actually changes?",
+      "quizOptions": [
+        "The order sizes roughly twice as many shares, so the position is bigger and more exposed to a gap through the stop",
+        "The share count stays the same and the worst case loss is cut in half",
+        "The risk layer rejects the order because the stop is too tight to be meaningful"
+      ],
+      "quizAnswer": 0,
+      "quizExplain": "Share count is the risk budget divided by the stop distance, so halving the distance doubles the size; the tempting second option assumes the share count is fixed, which is precisely the variable the sizer moves."
+    }
+  },
+  {
+    "id": "go_live_gates",
+    "tr": {
+      "title": "Gate Geçilir, Tartışılmaz",
+      "summary": "Gerçek paraya geçişin neden sabit dört gate'e bağlı olduğunu anlarsın.",
+      "body": [
+        "scripts/eval_report.py, paper hesabın equity curve'ünü çekip tek kelimelik bir sonuç basar: GO, NO-GO ya da TOO EARLY. Baktığı dört şey var — trading günü sayısı (MIN_TRADING_DAYS = 10), Sharpe (1.0'ın üstünde olmalı), max drawdown (%15'in altında kalmalı) ve aynı pencerede hesabın SPY'a karşı getirisi. Script read-only; hiçbir emir açmaz, iptal etmez. Ölçmek ile yapmak bilerek ayrı iki program.",
+        "Her eşik, kendini kandırmanın belirli bir yoluna karşılık geliyor. On günün altında verdict zaten TOO EARLY'ye kilitli, çünkü bir avuç günün Sharpe'ı büyük ölçüde şansı ölçer. Bu sistemde Sharpe, sıfıra göre değil FRED'den çekilen 3 aylık T-bill'e (DGS3MO) göre excess hesaplanıyor: nakit %4-5 getirirken sıfıra göre not vermek oranı şişirir ve raporu kendiliğinden GO'ya doğru eğer. %15'lik drawdown sınırı da tepe-dip en kötü çukuru bağlar; oturup katlanamayacağın bir getiri serisi, pratikte elde tutacağın seri değildir.",
+        "SPY karşılaştırması temettü dahil total return üzerinden yapılıyor, çünkü hesap da temettü topluyor; ve bu satır verdict'i çevirmiyor, scorecard'a gerekçe olarak yazılıyor — kararı gün sayısı, Sharpe ve drawdown veriyor. Bunların dosyada sabit durmasının sebebi basit: scorecard'ı okuyan kişi ile eşiği koyan kişi aynı kişi değil, ve ikisinden yalnızca birinin masada parası vardı. Aynı desen bir kat aşağıda, emir tarafında da işliyor: tek isimde %10, sektörde %30, 1.5x gross exposure, ve agent'ın önerdiği boyutu sınıra göre kesen bir sizer — gerektiğinde sıfıra kadar. NO-GO da bozuk bir job değil; script exit 0 döner, çünkü verdict job health değil veridir, üstelik GO çıktığında bile bu tasarım tam geçişi değil düşük cap'lerle küçük bir başlangıcı işaret eder."
+      ],
+      "takeaway": "Geçme kriterini ortada para yokken yaz; para masaya girdiği an kendi sayılarının tarafsız okuyucusu olmaktan çıkarsın.",
+      "quizQ": "Gate eşikleri neden kodda sabit duruyor da checkpoint anında tartışılmıyor?",
+      "quizOptions": [
+        "Sabit bir sayı, her koşuda yeniden karar vermekten daha ucuz olduğu için.",
+        "Sharpe ve drawdown zaten nesnel sayılar; yorum gerektirmedikleri için eşik de tartışma konusu değil.",
+        "Scorecard'ı okuduğun anda sonuca bağlısın ve umduğun cevabı savunacak gerekçeyi kolayca bulursun."
+      ],
+      "quizAnswer": 2,
+      "quizExplain": "Kural metriği değil, metriği okuyan kişiyi hizada tutuyor; 2. şık cazip çünkü sayılar gerçekten nesnel, ama hangisinin 'bu sefer önemli' sayılacağı tam da esnetmenin yaşandığı yer."
+    },
+    "en": {
+      "title": "Four Gates, No Vote",
+      "summary": "Why real money waits on four fixed gates instead of your judgment on the day.",
+      "body": [
+        "The scorecard in scripts/eval_report.py reads the paper account's equity curve and prints exactly one of three words: GO, NO-GO, or TOO EARLY. It checks four things — trading days (MIN_TRADING_DAYS = 10), Sharpe (must be above 1.0), max drawdown (must stay under 15%), and the account's return against SPY over the same window. The script never places or cancels an order; measuring and acting are deliberately separate programs.",
+        "Each threshold answers a specific way of fooling yourself. Below ten trading days the verdict is locked to TOO EARLY, because a Sharpe computed over a handful of days is mostly a measurement of luck. This system's Sharpe is excess return over the 3-month T-bill it pulls from FRED rather than over zero: when cash yields 4-5%, grading against 0% inflates the ratio and tilts the report toward GO on its own. The 15% drawdown cap bounds the worst peak-to-trough dip, on the reasoning that a return stream you could not sit through is not one you would actually have held.",
+        "The SPY comparison uses total return including dividends, since the account collects dividends too, and in this system it is printed as a reason line rather than flipping the verdict — days, Sharpe and drawdown are what decide that. All of it lives in a file as constants because the person reading the scorecard is not the person who set the bars, and only one of them had money on the line. The same shape repeats one level down at order time: 10% per name, 30% per sector, 1.5x gross exposure, and a sizer that trims the agent's proposed size to fit, sometimes all the way to zero. A NO-GO is not a broken job either — the script exits 0 because the verdict is data, and even a GO in this design points at a small funded start with low caps rather than a switch being thrown."
+      ],
+      "takeaway": "Set the pass mark while nothing is at stake, because the moment something is, you stop being a neutral reader of your own numbers.",
+      "quizQ": "Why are the pass marks hard-coded in the scorecard instead of being weighed by you at the checkpoint?",
+      "quizOptions": [
+        "Because Sharpe and max drawdown are objective numbers, so no interpretation is needed at all.",
+        "Because by the time you read the scorecard you are invested in the outcome and will argue for the answer you were hoping for.",
+        "Because a constant is cheaper to compute than a fresh judgment call on every run."
+      ],
+      "quizAnswer": 1,
+      "quizExplain": "The rule exists to constrain the reader, not the metric; option 0 is tempting because the numbers really are objective, but which number counts and how much is exactly where the rationalizing happens."
+    }
+  }
+]

@@ -20,5 +20,21 @@
   },
   "disclaimer": {
     "short": "Yatırım tavsiyesi değildir. Geçmiş performans gelecekteki getirileri garanti etmez."
+  },
+  "tabs": {
+    "portfolio": "Portföy",
+    "ask": "Sor",
+    "orders": "Bekleyen",
+    "agents": "Ajanlar",
+    "charts": "Grafik",
+    "learn": "Öğren",
+    "settings": "Ayarlar"
+  },
+  "learn": {
+    "title": "Öğren",
+    "subtitle": "Panelindeki sayıların ne anlama geldiği.",
+    "takeaway": "Akılda kalsın",
+    "correct": "Doğru",
+    "wrong": "Yanlış"
   }
 }

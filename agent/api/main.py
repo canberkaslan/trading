@@ -31,6 +31,7 @@ from .routes import (
     agents,
     analyze,
     diagnostics,
+    learn,
     notifications,
     orders,
     portfolio,
@@ -70,6 +71,7 @@ app.include_router(orders.router, prefix="/v1/orders", tags=["orders"])
 app.include_router(agents.router, prefix="/v1/agents", tags=["agents"])
 app.include_router(analyze.router, prefix="/v1/analyze", tags=["analyze"])
 app.include_router(prices.router, prefix="/v1/prices", tags=["prices"])
+app.include_router(learn.router, prefix="/v1/learn", tags=["learn"])
 app.include_router(eval_routes.router, prefix="/v1/eval", tags=["eval"])
 app.include_router(notifications.router, prefix="/v1/notifications", tags=["notifications"])
 app.include_router(trades.router, prefix="/v1/trades", tags=["trades"])

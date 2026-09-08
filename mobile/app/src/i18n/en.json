@@ -20,5 +20,21 @@
   },
   "disclaimer": {
     "short": "Not investment advice. Past performance does not guarantee future results."
+  },
+  "tabs": {
+    "portfolio": "Portfolio",
+    "ask": "Ask",
+    "orders": "Pending",
+    "agents": "Agents",
+    "charts": "Charts",
+    "learn": "Learn",
+    "settings": "Settings"
+  },
+  "learn": {
+    "title": "Learn",
+    "subtitle": "What the numbers on your dashboard actually mean.",
+    "takeaway": "Takeaway",
+    "correct": "Correct",
+    "wrong": "Not quite"
   }
 }

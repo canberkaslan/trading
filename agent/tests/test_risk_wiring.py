@@ -252,6 +252,24 @@ def test_liquidity_floor_rejects_a_thin_name() -> None:
     assert any("liquidity" in r or "adv" in r.lower() for r in reasons)
 
 
+def test_the_cold_cache_fallback_does_not_block_every_order() -> None:
+    """With no cached bars the caller substitutes the floor itself, so this
+    must pass. It only does because the check is strictly `<` — flip it to
+    `<=` and a freshly deployed box, whose bar cache is empty, would reject
+    every order it ever sized while looking like a liquidity problem.
+    """
+    limits = PortfolioLimits()
+    ok, reasons = check_limits(
+        ticker="ANY",
+        sector=None,
+        new_position_value=5_000.0,
+        avg_daily_volume_usd=limits.min_liquidity_adv,
+        ctx=_portfolio(),
+        limits=limits,
+    )
+    assert ok, f"cold-cache fallback rejected the order: {reasons}"
+
+
 def test_a_hardcoded_billion_makes_every_name_liquid() -> None:
     """What the caller used to pass, pinned as the mistake it was."""
     ok, _ = check_limits(

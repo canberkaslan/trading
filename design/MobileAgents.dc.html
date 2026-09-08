@@ -1,0 +1,109 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; background: #0a0a0a; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif; }
+    a { color: #a855f7; text-decoration: none; }
+    a:hover { color: #c084fc; }
+  </style>
+</helmet>
+<div style="width: 390px; height: 844px; background: #0a0a0a; color: #ffffff; display: flex; flex-direction: column; overflow: hidden;">
+
+  <div style="flex: 1; overflow: hidden; display: flex; flex-direction: column; padding: 66px 24px 0; gap: 16px;">
+
+    <!-- header -->
+    <div style="display: flex; align-items: center;">
+      <span style="font-size: 24px; font-weight: 700;">Agents</span>
+      <span style="margin-left: auto; font-size: 12px; color: #949494;">portfolio manager + council</span>
+    </div>
+
+    <!-- decision cards -->
+    <div style="display: flex; flex-direction: column; gap: 12px;">
+
+      <div style="background: #171717; border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 10px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span style="font-size: 17px; font-weight: 800;">META</span>
+          <span style="font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 999px; color: #22c55e; background: rgba(34,197,94,0.14);">Overweight</span>
+          <span style="margin-left: auto; font-size: 12px; color: #949494;">21 Ağu</span>
+        </div>
+        <div style="display: flex; gap: 18px; font-size: 12px; color: #a3a3a3; font-family: ui-monospace, 'SF Mono', Menlo, monospace;">
+          <span>PT $625</span><span>SL $498</span><span>Boyut %8</span>
+        </div>
+        <div style="font-size: 13px; color: #a3a3a3; line-height: 1.5;">Reels monetizasyonu ve reklam yükü artışı beklentileri aşıyor; kâr marjı genişlemesi sürüyor.</div>
+      </div>
+
+      <div style="background: #171717; border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 10px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span style="font-size: 17px; font-weight: 800;">JPM</span>
+          <span style="font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 999px; color: #22c55e; background: rgba(34,197,94,0.14);">Overweight</span>
+          <span style="margin-left: auto; font-size: 12px; color: #949494;">22 Ağu</span>
+        </div>
+        <div style="display: flex; gap: 18px; font-size: 12px; color: #a3a3a3; font-family: ui-monospace, 'SF Mono', Menlo, monospace;">
+          <span>PT $366</span><span>SL $310</span><span>Boyut %7</span>
+        </div>
+        <div style="font-size: 13px; color: #a3a3a3; line-height: 1.5;">Net faiz geliri dayanıklı; yatırım bankacılığı toparlanması fiyatlanmadı.</div>
+      </div>
+
+      <div style="background: #171717; border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 10px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span style="font-size: 17px; font-weight: 800;">UNH</span>
+          <span style="font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 999px; color: #a3a3a3; background: #262626;">Hold</span>
+          <span style="margin-left: auto; font-size: 12px; color: #949494;">22 Ağu</span>
+        </div>
+        <div style="display: flex; gap: 18px; font-size: 12px; color: #a3a3a3; font-family: ui-monospace, 'SF Mono', Menlo, monospace;">
+          <span>PT $413</span><span>SL $372</span><span>Boyut %4</span>
+        </div>
+        <div style="font-size: 13px; color: #a3a3a3; line-height: 1.5;">Maliyet baskısı sürüyor; regülasyon riski netleşene kadar pozisyon korunuyor, artırılmıyor.</div>
+      </div>
+
+      <div style="background: #171717; border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 10px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span style="font-size: 17px; font-weight: 800;">XOM</span>
+          <span style="font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 999px; color: #a3a3a3; background: #262626;">Hold</span>
+          <span style="margin-left: auto; font-size: 12px; color: #949494;">22 Ağu</span>
+        </div>
+        <div style="display: flex; gap: 18px; font-size: 12px; color: #a3a3a3; font-family: ui-monospace, 'SF Mono', Menlo, monospace;">
+          <span>PT $166</span><span>SL $141</span><span>Boyut %5</span>
+        </div>
+        <div style="font-size: 13px; color: #a3a3a3; line-height: 1.5;">Ham petrol bandı dar; temettü ve geri alım hikâyesi korunuyor.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- tab bar -->
+  <div style="display: flex; align-items: center; justify-content: space-around; padding: 10px 8px 28px; border-top: 1px solid #262626; background: #0a0a0a;">
+    <div style="display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 52px; color: #949494;">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21.2 15.9A10 10 0 1 1 8 2.8"></path><path d="M22 12A10 10 0 0 0 12 2v10z"></path></svg>
+      <span style="font-size: 10px; font-weight: 600;">Portfolio</span>
+    </div>
+    <div style="display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 52px; color: #949494;">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-8.5 8.4c-1.3 0-2.6-.3-3.7-.8L3 21l1.9-5.7a8.3 8.3 0 0 1-.9-3.8A8.4 8.4 0 0 1 12.5 3a8.4 8.4 0 0 1 8.5 8.5z"></path></svg>
+      <span style="font-size: 10px; font-weight: 600;">Sor</span>
+    </div>
+    <div style="display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 52px; color: #949494;">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 3"></path></svg>
+      <span style="font-size: 10px; font-weight: 600;">Pending</span>
+    </div>
+    <div style="display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 52px; color: #a855f7;">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M9 9h6v6H9zM9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"></path></svg>
+      <span style="font-size: 10px; font-weight: 600;">Agents</span>
+    </div>
+    <div style="display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 52px; color: #949494;">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 21V10M10 21V6M15 21v-9M20 21V4"></path></svg>
+      <span style="font-size: 10px; font-weight: 600;">Charts</span>
+    </div>
+    <div style="display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 52px; color: #949494;">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5 1h.1a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path></svg>
+      <span style="font-size: 10px; font-weight: 600;">Settings</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

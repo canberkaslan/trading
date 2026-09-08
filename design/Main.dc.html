@@ -1,0 +1,253 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; background: #0a0b0d; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif; }
+    a { color: #00d17a; text-decoration: none; }
+    a:hover { color: #35e09a; }
+  </style>
+</helmet>
+<div style="width: 1440px; min-height: 1960px; background: #0a0b0d; color: #eef0f3; font-size: 14px; line-height: 1.45; display: flex; flex-direction: column;">
+
+  <!-- top bar -->
+  <div style="display: flex; align-items: center; gap: 12px; padding: 13px 40px; border-bottom: 1px solid rgba(255,255,255,0.06);">
+    <div style="display: flex; align-items: center; gap: 9px;">
+      <svg width="22" height="22" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#1c2027"></rect><path d="M7 21l6-7 4 4 8-10" stroke="#00d17a" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+      <span style="font-size: 13px; font-weight: 700; letter-spacing: 0.16em;">TRADER</span>
+    </div>
+    <span style="font-size: 10px; font-weight: 700; letter-spacing: 0.1em; color: #5d6673; border: 1px solid rgba(255,255,255,0.12); border-radius: 5px; padding: 2px 7px;">PAPER</span>
+    <span style="display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; border-radius: 999px; padding: 5px 12px; color: #ff5d6c; background: rgba(255,93,108,0.12);">
+      <span style="width: 7px; height: 7px; border-radius: 50%; background: #ff5d6c;"></span>
+      NO-GO · 20 gün
+    </span>
+    <div style="margin-left: auto; display: flex; align-items: center; gap: 12px;">
+      <span style="font-size: 12px; color: #5d6673;">18:24</span>
+      <span style="width: 32px; height: 32px; border: 1px solid rgba(255,255,255,0.12); border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; color: #9aa3b2;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"></path></svg>
+      </span>
+    </div>
+  </div>
+
+  <!-- ticker tape -->
+  <div style="display: flex; gap: 34px; padding: 8px 40px; border-bottom: 1px solid rgba(255,255,255,0.06); background: rgba(255,255,255,0.012); overflow: hidden; white-space: nowrap; font-size: 12.5px; font-family: ui-monospace, 'SF Mono', Menlo, monospace;">
+    <span><b style="font-family: -apple-system, sans-serif;">AAPL</b> <span style="color: #9aa3b2;">$316.32</span> <span style="color: #00d17a;">+0.6%</span></span>
+    <span><b style="font-family: -apple-system, sans-serif;">AMZN</b> <span style="color: #9aa3b2;">$257.14</span> <span style="color: #ff5d6c;">−0.4%</span></span>
+    <span><b style="font-family: -apple-system, sans-serif;">GOOGL</b> <span style="color: #9aa3b2;">$338.25</span> <span style="color: #ff5d6c;">−1.2%</span></span>
+    <span><b style="font-family: -apple-system, sans-serif;">JPM</b> <span style="color: #9aa3b2;">$356.42</span> <span style="color: #00d17a;">+0.3%</span></span>
+    <span><b style="font-family: -apple-system, sans-serif;">META</b> <span style="color: #9aa3b2;">$617.30</span> <span style="color: #00d17a;">+0.2%</span></span>
+    <span><b style="font-family: -apple-system, sans-serif;">MSFT</b> <span style="color: #9aa3b2;">$492.82</span> <span style="color: #ff5d6c;">−0.9%</span></span>
+    <span><b style="font-family: -apple-system, sans-serif;">NVDA</b> <span style="color: #9aa3b2;">$226.93</span> <span style="color: #00d17a;">+1.1%</span></span>
+    <span><b style="font-family: -apple-system, sans-serif;">XOM</b> <span style="color: #9aa3b2;">$160.17</span> <span style="color: #ff5d6c;">−0.5%</span></span>
+    <span><b style="font-family: -apple-system, sans-serif;">UNH</b> <span style="color: #9aa3b2;">$394.26</span> <span style="color: #ff5d6c;">−2.0%</span></span>
+  </div>
+
+  <div style="width: 1080px; margin: 0 auto; padding: 0 20px; display: flex; flex-direction: column;">
+
+    <!-- hero -->
+    <div style="padding: 34px 0 6px; display: flex; flex-direction: column; gap: 6px;">
+      <div style="font-size: 12px; font-weight: 600; letter-spacing: 0.1em; color: #5d6673; text-transform: uppercase;">Portföy değeri</div>
+      <div style="font-size: 44px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.05; font-family: ui-monospace, 'SF Mono', Menlo, monospace;">$109,061</div>
+      <div style="display: flex; align-items: baseline; gap: 12px; font-size: 14.5px;">
+        <span style="color: #00d17a; font-family: ui-monospace, 'SF Mono', Menlo, monospace;">+$9,061 (+9.06%)</span>
+        <span style="color: #5d6673; font-size: 12.5px;">başlangıçtan bu yana · $100k</span>
+      </div>
+    </div>
+
+    <!-- chart -->
+    <div style="margin-top: 6px;">
+      <svg viewBox="0 0 1040 300" width="1040" height="300" role="img" aria-label="Portföy performans grafiği">
+        <defs>
+          <linearGradient id="fillg" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="rgba(0,209,122,0.22)"></stop>
+            <stop offset="1" stop-color="rgba(0,209,122,0)"></stop>
+          </linearGradient>
+          <filter id="glow" x="-20%" y="-40%" width="140%" height="180%">
+            <feGaussianBlur stdDeviation="5" result="b"></feGaussianBlur>
+            <feMerge><feMergeNode in="b"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge>
+          </filter>
+        </defs>
+        <line x1="6" y1="228" x2="960" y2="228" stroke="rgba(255,255,255,0.12)" stroke-dasharray="2,6"></line>
+        <path d="M6,232 L60,244 L110,208 L160,168 L210,150 L260,142 L310,120 L360,138 L410,96 L460,60 L510,66 L560,58 L610,74 L660,70 L710,88 L760,80 L810,96 L860,72 L910,84 L960,52 L960,290 L6,290 Z" fill="url(#fillg)"></path>
+        <path d="M6,232 L60,238 L110,226 L160,214 L210,220 L260,208 L310,214 L360,244 L410,196 L460,188 L510,196 L560,182 L610,190 L660,178 L710,186 L760,180 L810,190 L860,184 L910,178 L960,182" fill="none" stroke="#767f8c" stroke-width="1.5" opacity="0.8"></path>
+        <path d="M6,232 L60,244 L110,208 L160,168 L210,150 L260,142 L310,120 L360,138 L410,96 L460,60 L510,66 L560,58 L610,74 L660,70 L710,88 L760,80 L810,96 L860,72 L910,84 L960,52" fill="none" stroke="#00d17a" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" filter="url(#glow)"></path>
+        <text x="972" y="56" font-size="11.5" font-weight="600" fill="#00d17a" font-family="ui-monospace, Menlo, monospace">+9.1%</text>
+        <text x="972" y="186" font-size="11" fill="#767f8c" font-family="ui-monospace, Menlo, monospace">SPY +2.8%</text>
+      </svg>
+      <div style="display: flex; align-items: center; gap: 4px; margin-top: 4px;">
+        <span style="font-size: 12px; font-weight: 650; color: #5d6673; padding: 6px 14px; border-radius: 999px;">1A</span>
+        <span style="font-size: 12px; font-weight: 650; color: #eef0f3; padding: 6px 14px; border-radius: 999px; background: #1c2027;">3A</span>
+        <span style="font-size: 12px; font-weight: 650; color: #5d6673; padding: 6px 14px; border-radius: 999px;">6A</span>
+        <span style="margin-left: auto; display: inline-flex; align-items: center; gap: 7px; font-size: 11.5px; color: #5d6673;">
+          <span style="width: 14px; height: 3px; border-radius: 2px; background: #767f8c;"></span>
+          SPY karşılaştır
+        </span>
+      </div>
+    </div>
+
+    <!-- stat chips -->
+    <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 22px;">
+      <div style="display: flex; flex-direction: column; gap: 3px; background: #101216; border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 11px 16px; min-width: 118px;">
+        <span style="font-size: 10.5px; font-weight: 650; letter-spacing: 0.08em; text-transform: uppercase; color: #5d6673;">Bugün</span>
+        <span style="font-size: 16.5px; font-weight: 650; color: #ff5d6c; font-family: ui-monospace, Menlo, monospace;">−$815</span>
+        <span style="font-size: 11px; color: #5d6673; font-family: ui-monospace, Menlo, monospace;">−0.74%</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 3px; background: #101216; border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 11px 16px; min-width: 118px;">
+        <span style="font-size: 10.5px; font-weight: 650; letter-spacing: 0.08em; text-transform: uppercase; color: #5d6673;">Sharpe</span>
+        <span style="font-size: 16.5px; font-weight: 650; color: #ff5d6c; font-family: ui-monospace, Menlo, monospace;">−0.44</span>
+        <span style="font-size: 11px; color: #5d6673; font-family: ui-monospace, Menlo, monospace;">eşik 1.0</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 3px; background: #101216; border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 11px 16px; min-width: 118px;">
+        <span style="font-size: 10.5px; font-weight: 650; letter-spacing: 0.08em; text-transform: uppercase; color: #5d6673;">Maks. düşüş</span>
+        <span style="font-size: 16.5px; font-weight: 650; font-family: ui-monospace, Menlo, monospace;">−2.9%</span>
+        <span style="font-size: 11px; color: #5d6673; font-family: ui-monospace, Menlo, monospace;">eşik %15</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 3px; background: #101216; border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 11px 16px; min-width: 118px;">
+        <span style="font-size: 10.5px; font-weight: 650; letter-spacing: 0.08em; text-transform: uppercase; color: #5d6673;">Alpha</span>
+        <span style="font-size: 16.5px; font-weight: 650; color: #00d17a; font-family: ui-monospace, Menlo, monospace;">+6.3%</span>
+        <span style="font-size: 11px; color: #5d6673; font-family: ui-monospace, Menlo, monospace;">vs SPY</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 3px; background: #101216; border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 11px 16px; min-width: 118px;">
+        <span style="font-size: 10.5px; font-weight: 650; letter-spacing: 0.08em; text-transform: uppercase; color: #5d6673;">Nakit</span>
+        <span style="font-size: 16.5px; font-weight: 650; font-family: ui-monospace, Menlo, monospace;">$2,829</span>
+        <span style="font-size: 11px; color: #5d6673; font-family: ui-monospace, Menlo, monospace;">3% likit</span>
+      </div>
+    </div>
+
+    <!-- gates -->
+    <div style="background: #101216; border: 1px solid rgba(255,255,255,0.06); border-radius: 16px; margin-top: 16px;">
+      <div style="display: flex; align-items: baseline; gap: 10px; padding: 18px 22px 0;">
+        <span style="font-size: 12px; font-weight: 650; letter-spacing: 0.1em; color: #9aa3b2; text-transform: uppercase;">Go-live kapıları</span>
+        <span style="margin-left: auto; font-size: 12px; color: #5d6673; font-family: ui-monospace, Menlo, monospace;">20 / 10 gün</span>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 14px 22px 18px;">
+        <div style="display: flex; align-items: center; gap: 10px; background: #15181d; border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 12px 14px;">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="#00d17a" stroke-width="1.5" opacity="0.4"></circle><path d="M6.2 10.4l2.6 2.6L14 7.6" stroke="#00d17a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          <div><div style="font-size: 12px; font-weight: 600;">Trading days</div><div style="font-size: 11px; color: #5d6673; font-family: ui-monospace, Menlo, monospace;">20/10</div></div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px; background: #15181d; border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 12px 14px;">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="#ff5d6c" stroke-width="1.5" opacity="0.4"></circle><path d="M7.4 7.4l5.2 5.2M12.6 7.4l-5.2 5.2" stroke="#ff5d6c" stroke-width="1.8" stroke-linecap="round"></path></svg>
+          <div><div style="font-size: 12px; font-weight: 600;">Sharpe</div><div style="font-size: 11px; color: #5d6673; font-family: ui-monospace, Menlo, monospace;">−0.44 &lt; 1.0</div></div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px; background: #15181d; border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 12px 14px;">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="#00d17a" stroke-width="1.5" opacity="0.4"></circle><path d="M6.2 10.4l2.6 2.6L14 7.6" stroke="#00d17a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          <div><div style="font-size: 12px; font-weight: 600;">Max drawdown</div><div style="font-size: 11px; color: #5d6673; font-family: ui-monospace, Menlo, monospace;">2.9% &lt; 15%</div></div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px; background: #15181d; border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 12px 14px;">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="#00d17a" stroke-width="1.5" opacity="0.4"></circle><path d="M6.2 10.4l2.6 2.6L14 7.6" stroke="#00d17a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          <div><div style="font-size: 12px; font-weight: 600;">Beats SPY</div><div style="font-size: 11px; color: #5d6673; font-family: ui-monospace, Menlo, monospace;">+9.1% vs +2.8%</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- positions + risk -->
+    <div style="display: grid; grid-template-columns: 1fr 330px; gap: 16px; align-items: start; margin-top: 16px;">
+      <div style="background: #101216; border: 1px solid rgba(255,255,255,0.06); border-radius: 16px;">
+        <div style="display: flex; align-items: baseline; gap: 10px; padding: 18px 22px 0;">
+          <span style="font-size: 12px; font-weight: 650; letter-spacing: 0.1em; color: #9aa3b2; text-transform: uppercase;">Pozisyonlar</span>
+          <span style="margin-left: auto; font-size: 12px; color: #5d6673;">8 açık</span>
+        </div>
+        <div style="padding: 14px 22px 18px; display: flex; flex-direction: column;">
+          <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr; gap: 8px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 10.5px; font-weight: 650; letter-spacing: 0.08em; text-transform: uppercase; color: #5d6673;">
+            <span>Sembol</span><span style="text-align: right;">Ort.</span><span style="text-align: right;">Son</span><span style="text-align: right;">K/Z</span><span style="text-align: right;">K/Z %</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr; gap: 8px; align-items: center; padding: 11px 0; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 13.5px; font-family: ui-monospace, Menlo, monospace;">
+            <span style="display: flex; align-items: center; gap: 11px; font-family: -apple-system, sans-serif; font-weight: 650;"><span style="width: 30px; height: 30px; border-radius: 9px; background: #1c2027; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: #9aa3b2;">MSFT</span>MSFT</span>
+            <span style="text-align: right; color: #5d6673;">$361.49</span><span style="text-align: right;">$492.82</span><span style="text-align: right; color: #00d17a;">+3546</span><span style="text-align: right; color: #00d17a;">+36.3%</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr; gap: 8px; align-items: center; padding: 11px 0; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 13.5px; font-family: ui-monospace, Menlo, monospace;">
+            <span style="display: flex; align-items: center; gap: 11px; font-family: -apple-system, sans-serif; font-weight: 650;"><span style="width: 30px; height: 30px; border-radius: 9px; background: #1c2027; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: #9aa3b2;">NVDA</span>NVDA</span>
+            <span style="text-align: right; color: #5d6673;">$198.93</span><span style="text-align: right;">$226.93</span><span style="text-align: right; color: #00d17a;">+1540</span><span style="text-align: right; color: #00d17a;">+14.1%</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr; gap: 8px; align-items: center; padding: 11px 0; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 13.5px; font-family: ui-monospace, Menlo, monospace;">
+            <span style="display: flex; align-items: center; gap: 11px; font-family: -apple-system, sans-serif; font-weight: 650;"><span style="width: 30px; height: 30px; border-radius: 9px; background: #1c2027; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: #9aa3b2;">AMZN</span>AMZN</span>
+            <span style="text-align: right; color: #5d6673;">$229.15</span><span style="text-align: right;">$257.14</span><span style="text-align: right; color: #00d17a;">+1175</span><span style="text-align: right; color: #00d17a;">+12.2%</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr; gap: 8px; align-items: center; padding: 11px 0; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 13.5px; font-family: ui-monospace, Menlo, monospace;">
+            <span style="display: flex; align-items: center; gap: 11px; font-family: -apple-system, sans-serif; font-weight: 650;"><span style="width: 30px; height: 30px; border-radius: 9px; background: #1c2027; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: #9aa3b2;">META</span>META</span>
+            <span style="text-align: right; color: #5d6673;">$555.75</span><span style="text-align: right;">$617.30</span><span style="text-align: right; color: #00d17a;">+1169</span><span style="text-align: right; color: #00d17a;">+11.1%</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr; gap: 8px; align-items: center; padding: 11px 0; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 13.5px; font-family: ui-monospace, Menlo, monospace;">
+            <span style="display: flex; align-items: center; gap: 11px; font-family: -apple-system, sans-serif; font-weight: 650;"><span style="width: 30px; height: 30px; border-radius: 9px; background: #1c2027; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: #9aa3b2;">V</span>V</span>
+            <span style="text-align: right; color: #5d6673;">$332.90</span><span style="text-align: right;">$368.64</span><span style="text-align: right; color: #00d17a;">+1072</span><span style="text-align: right; color: #00d17a;">+10.7%</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr; gap: 8px; align-items: center; padding: 11px 0; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 13.5px; font-family: ui-monospace, Menlo, monospace;">
+            <span style="display: flex; align-items: center; gap: 11px; font-family: -apple-system, sans-serif; font-weight: 650;"><span style="width: 30px; height: 30px; border-radius: 9px; background: #1c2027; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: #9aa3b2;">AAPL</span>AAPL</span>
+            <span style="text-align: right; color: #5d6673;">$286.77</span><span style="text-align: right;">$316.32</span><span style="text-align: right; color: #00d17a;">+975</span><span style="text-align: right; color: #00d17a;">+10.3%</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr; gap: 8px; align-items: center; padding: 11px 0; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 13.5px; font-family: ui-monospace, Menlo, monospace;">
+            <span style="display: flex; align-items: center; gap: 11px; font-family: -apple-system, sans-serif; font-weight: 650;"><span style="width: 30px; height: 30px; border-radius: 9px; background: #1c2027; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: #9aa3b2;">GOOG</span>GOOGL</span>
+            <span style="text-align: right; color: #5d6673;">$342.46</span><span style="text-align: right;">$338.25</span><span style="text-align: right; color: #ff5d6c;">−130</span><span style="text-align: right; color: #ff5d6c;">−1.2%</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr; gap: 8px; align-items: center; padding: 11px 0; font-size: 13.5px; font-family: ui-monospace, Menlo, monospace;">
+            <span style="display: flex; align-items: center; gap: 11px; font-family: -apple-system, sans-serif; font-weight: 650;"><span style="width: 30px; height: 30px; border-radius: 9px; background: #1c2027; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: #9aa3b2;">UNH</span>UNH</span>
+            <span style="text-align: right; color: #5d6673;">$415.95</span><span style="text-align: right;">$394.26</span><span style="text-align: right; color: #ff5d6c;">−325</span><span style="text-align: right; color: #ff5d6c;">−5.2%</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="background: #101216; border: 1px solid rgba(255,255,255,0.06); border-radius: 16px;">
+        <div style="display: flex; align-items: baseline; padding: 18px 22px 0;">
+          <span style="font-size: 12px; font-weight: 650; letter-spacing: 0.1em; color: #9aa3b2; text-transform: uppercase;">Dağılım &amp; risk</span>
+        </div>
+        <div style="padding: 14px 22px 18px; display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; height: 8px; border-radius: 5px; overflow: hidden; gap: 2px;">
+            <span style="width: 12.2%; background: #3987e5;"></span>
+            <span style="width: 11.4%; background: #6ea4ec;"></span>
+            <span style="width: 10.8%; background: #a7c4f2;"></span>
+            <span style="width: 65.6%; background: #3a414c;"></span>
+          </div>
+          <div style="display: flex; gap: 14px; flex-wrap: wrap; font-size: 11.5px; color: #9aa3b2;">
+            <span style="display: inline-flex; align-items: center; gap: 5px;"><span style="width: 8px; height: 8px; border-radius: 2px; background: #3987e5;"></span>MSFT %12.2</span>
+            <span style="display: inline-flex; align-items: center; gap: 5px;"><span style="width: 8px; height: 8px; border-radius: 2px; background: #6ea4ec;"></span>NVDA %11.4</span>
+            <span style="display: inline-flex; align-items: center; gap: 5px;"><span style="width: 8px; height: 8px; border-radius: 2px; background: #a7c4f2;"></span>META %10.8</span>
+            <span style="display: inline-flex; align-items: center; gap: 5px;"><span style="width: 8px; height: 8px; border-radius: 2px; background: #3a414c;"></span>Diğer %65.6</span>
+          </div>
+          <div style="display: flex; flex-direction: column;">
+            <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 13px;"><span style="color: #9aa3b2;">Effective N</span><b style="font-family: ui-monospace, Menlo, monospace;">9.7</b></div>
+            <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 13px;"><span style="color: #9aa3b2;">En büyük ağırlık</span><b style="font-family: ui-monospace, Menlo, monospace;">12.2%</b></div>
+            <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 13px;"><span style="color: #9aa3b2;">HHI</span><b style="font-family: ui-monospace, Menlo, monospace;">0.103</b></div>
+            <div style="display: flex; justify-content: space-between; padding: 8px 0; font-size: 13px;"><span style="color: #9aa3b2;">Brüt maruziyet</span><b style="font-family: ui-monospace, Menlo, monospace;">97%</b></div>
+          </div>
+          <div style="font-size: 12px; color: #e2b93b; line-height: 1.6;">Tek-isim cap üstü (&gt;%10): MSFT %12.2 · NVDA %11.4 · META %10.8 · V %10.1 · JPM %10.1</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- decisions -->
+    <div style="background: #101216; border: 1px solid rgba(255,255,255,0.06); border-radius: 16px; margin-top: 16px;">
+      <div style="display: flex; align-items: baseline; gap: 10px; padding: 18px 22px 0;">
+        <span style="font-size: 12px; font-weight: 650; letter-spacing: 0.1em; color: #9aa3b2; text-transform: uppercase;">Son kararlar</span>
+        <span style="margin-left: auto; font-size: 12px; color: #5d6673;">portfolio manager + council</span>
+      </div>
+      <div style="padding: 14px 22px 18px; display: flex; flex-direction: column;">
+        <div style="display: grid; grid-template-columns: 100px 1fr auto auto; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 13.5px;">
+          <span style="display: inline-flex; justify-content: center; font-size: 11px; font-weight: 650; padding: 4px 0; border-radius: 7px; color: #9aa3b2; background: #1c2027;">Hold</span>
+          <b>UNH</b><span style="color: #5d6673; font-size: 12px; font-family: ui-monospace, Menlo, monospace;">PT $413</span><span style="color: #5d6673; font-size: 12px;">22 Ağu</span>
+        </div>
+        <div style="display: grid; grid-template-columns: 100px 1fr auto auto; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 13.5px;">
+          <span style="display: inline-flex; justify-content: center; font-size: 11px; font-weight: 650; padding: 4px 0; border-radius: 7px; color: #9aa3b2; background: #1c2027;">Hold</span>
+          <b>XOM</b><span style="color: #5d6673; font-size: 12px; font-family: ui-monospace, Menlo, monospace;">PT $166</span><span style="color: #5d6673; font-size: 12px;">22 Ağu</span>
+        </div>
+        <div style="display: grid; grid-template-columns: 100px 1fr auto auto; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 13.5px;">
+          <span style="display: inline-flex; justify-content: center; font-size: 11px; font-weight: 650; padding: 4px 0; border-radius: 7px; color: #00d17a; background: rgba(0,209,122,0.12);">Overweight</span>
+          <b>JPM</b><span style="color: #5d6673; font-size: 12px; font-family: ui-monospace, Menlo, monospace;">PT $366</span><span style="color: #5d6673; font-size: 12px;">22 Ağu</span>
+        </div>
+        <div style="display: grid; grid-template-columns: 100px 1fr auto auto; gap: 12px; align-items: center; padding: 10px 0; font-size: 13.5px;">
+          <span style="display: inline-flex; justify-content: center; font-size: 11px; font-weight: 650; padding: 4px 0; border-radius: 7px; color: #00d17a; background: rgba(0,209,122,0.12);">Overweight</span>
+          <b>META</b><span style="color: #5d6673; font-size: 12px; font-family: ui-monospace, Menlo, monospace;">PT $625</span><span style="color: #5d6673; font-size: 12px;">21 Ağu</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin: 44px 0 40px; font-size: 11.5px; color: #5d6673; text-align: center; line-height: 1.8;">Paper trading — gerçek para değildir · 60 sn'de bir tazelenir · Yatırım tavsiyesi değildir</div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

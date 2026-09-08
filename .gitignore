@@ -75,3 +75,7 @@ agent/inert_alert.state.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Design canvas: the .dc.html artboards are the source, the seeded
+# trader-ui.html is a 2MB generated bundle.
+design/trader-ui.html

@@ -16,29 +16,35 @@ defaults:
     working-directory: mobile/app
 
 jobs:
-  lint-typecheck:
+  # This job used to install with pnpm against a pnpm-lock.yaml that has never
+  # existed in this repo (the committed lockfile is package-lock.json), so it
+  # failed in setup-node's cache step on every run since August — and every
+  # step that could have caught something real carried continue-on-error, so
+  # nothing was ever gated even in principle.
+  test-typecheck:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: pnpm
-          cache-dependency-path: mobile/app/pnpm-lock.yaml
+          cache: npm
+          cache-dependency-path: mobile/app/package-lock.json
 
       - name: Install
-        run: pnpm install --frozen-lockfile
-        continue-on-error: true  # lockfile not committed yet — phase 5
-
-      - name: Lint
-        run: pnpm lint
-        continue-on-error: true
+        run: npm ci
 
       - name: Typecheck
-        run: pnpm typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test -- --ci
+
+      # Lint stays advisory: package.json runs eslint, but the project has no
+      # eslint.config.js and ESLint 9 requires flat config, so the step can
+      # only report that it cannot run. Kept visible rather than deleted so
+      # the gap does not read as coverage we have.
+      - name: Lint (advisory — needs an eslint flat config)
+        run: npm run lint
         continue-on-error: true

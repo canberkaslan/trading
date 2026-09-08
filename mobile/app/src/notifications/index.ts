@@ -26,6 +26,9 @@ let tokenRegistered = false;
 // Foreground behavior: show the banner + play sound + bump badge.
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
+    // shouldShowBanner/shouldShowList are the newer split of shouldShowAlert;
+    // the installed types still require the old key, so send both.
+    shouldShowAlert: true,
     shouldShowBanner: true,
     shouldShowList: true,
     shouldPlaySound: true,

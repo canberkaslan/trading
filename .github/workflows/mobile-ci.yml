@@ -41,10 +41,5 @@ jobs:
       - name: Test
         run: npm test -- --ci
 
-      # Lint stays advisory: package.json runs eslint, but the project has no
-      # eslint.config.js and ESLint 9 requires flat config, so the step can
-      # only report that it cannot run. Kept visible rather than deleted so
-      # the gap does not read as coverage we have.
-      - name: Lint (advisory — needs an eslint flat config)
+      - name: Lint
         run: npm run lint
-        continue-on-error: true

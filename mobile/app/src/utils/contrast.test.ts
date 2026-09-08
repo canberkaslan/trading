@@ -32,7 +32,7 @@ describe('contrast helpers', () => {
 
 describe('theme text tokens meet WCAG AA on app backgrounds', () => {
   const backgrounds = [colors.background, colors.surface, colors.surfaceElevated];
-  const textTokens: Array<[string, string]> = [
+  const textTokens: [string, string][] = [
     ['textPrimary', colors.textPrimary],
     ['textSecondary', colors.textSecondary],
     ['textMuted', colors.textMuted],

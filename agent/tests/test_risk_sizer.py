@@ -203,11 +203,17 @@ class TestRejections:
 
 class TestATRSizing:
     def test_atr_size_respects_risk_per_trade(self) -> None:
-        # equity 100k, risk 0.5% = $500. atr=4 (from market_ctx), atr_mult=2 -> stop_distance=8.
-        # shares = 500 / 8 = 62. With default 10% position cap (=$10k / $271 = 36),
-        # would be trimmed. Raise cap to 20% so ATR formula dominates.
+        """Sizing risks 0.5% of equity at the stop that will be placed.
+
+        This used to expect ~62 shares, derived from the market context's ATR
+        (4) times atr_mult (2) as a stand-in for the stop distance. The stop
+        actually placed on the order is the decision's, 42 away — so 62 shares
+        would lose $2,604 at it, over five times the $500 budget. The test was
+        pinning the sizing bug rather than the rule, so it asserted a number
+        that could not be reached honestly; it now asserts the rule.
+        """
         order = size_from_decision(
-            decision=_decision("Buy"),
+            decision=_decision("Buy"),          # entry 271, stop 229 -> distance 42
             account_equity=100_000.0,
             market_ctx=_market(),
             portfolio_ctx=_portfolio_empty(),
@@ -216,7 +222,9 @@ class TestATRSizing:
             risk_per_trade=0.005,
             portfolio_limits=PortfolioLimits(max_position_pct=0.20),
         )
-        assert 60 <= order.quantity <= 64
+        # $500 budget / $42 stop distance = 11 shares.
+        assert order.quantity == 11
+        assert order.quantity * 42.0 <= 100_000.0 * 0.005
 
 
 class TestLLMPctSizing:

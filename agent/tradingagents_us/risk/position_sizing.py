@@ -27,6 +27,30 @@ def kelly_fraction(p_win: float, win_loss_ratio: float, kelly_mult: float = 0.25
     return max(0.0, full * kelly_mult)
 
 
+def risk_based_size(
+    equity: float,
+    entry: float,
+    stop: float,
+    risk_per_trade: float = 0.005,
+) -> int:
+    """Shares such that being stopped out costs `risk_per_trade` of equity.
+
+    Use this whenever the stop that will actually be placed on the order is
+    known, which is the normal case here — the trader agent proposes both an
+    entry and a stop. Sizing off an ATR *proxy* for that distance is how the
+    two silently diverged: the caller scaled the entry-to-stop distance down to
+    stand in for an ATR, `atr_position_size` scaled it back up by `atr_mult`,
+    the two factors did not cancel, and every position came out 2.5x intended
+    while the order still carried the full-distance stop. Dividing the risk
+    budget by the real distance removes the class of mistake, not just the
+    constant.
+    """
+    distance = abs(entry - stop)
+    if equity <= 0 or entry <= 0 or distance <= 0:
+        return 0
+    return int(equity * risk_per_trade / distance)
+
+
 def atr_position_size(
     equity: float,
     atr: float,
@@ -34,9 +58,12 @@ def atr_position_size(
     risk_per_trade: float = 0.005,
     atr_mult: float = 2.0,
 ) -> int:
-    """ATR-based sizing. Risk `risk_per_trade` of equity; stop = atr_mult*ATR away.
+    """ATR-based sizing for when no explicit stop is known.
 
-    Default 0.5% risk per trade. Returns share count (int).
+    Assumes the stop will sit `atr_mult` ATRs away and sizes to risk
+    `risk_per_trade` of equity at that distance. When the caller already knows
+    the real stop, prefer `risk_based_size` — this function's assumed distance
+    is only as good as the ATR it is handed.
     """
     if equity <= 0 or atr <= 0 or price <= 0:
         return 0

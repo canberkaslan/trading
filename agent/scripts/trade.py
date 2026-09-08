@@ -35,6 +35,7 @@ if str(_AGENT_ROOT / "vendor" / "tradingagents") not in sys.path:
 
 from tradingagents_us.dataflows.alpaca_broker import AlpacaClient  # noqa: E402
 from tradingagents_us.dataflows.polygon import PolygonClient  # noqa: E402
+from tradingagents_us.dataflows.sector_map import sector_for  # noqa: E402
 from tradingagents_us.execution import ExecutionConfig, submit_order  # noqa: E402
 from tradingagents_us.graph.pipeline import (  # noqa: E402
     _parse_pm_output,
@@ -50,6 +51,10 @@ from tradingagents_us.risk.circuit_breaker import CircuitBreaker  # noqa: E402
 from tradingagents_us.risk.kill_switch import (  # noqa: E402
     CachedKillSwitchReader,
     FileKillSwitchReader,
+)
+from tradingagents_us.risk.market_inputs import (  # noqa: E402
+    average_dollar_volume,
+    count_correlated,
 )
 from tradingagents_us.risk.portfolio_limits import PortfolioContext, PortfolioLimits  # noqa: E402
 from tradingagents_us.risk.sizer import MarketContext, size_from_decision  # noqa: E402
@@ -247,20 +252,45 @@ def main() -> int:
         print(f"  Open BUYs: {len(open_buys)} reserving ${reserved:,.2f} "
               f"-> spendable ${spendable:,.2f}")
 
-    # Use entry as price proxy for sizing demo (real run would pull live quote)
+    # Real liquidity, from the bars the price cache already holds. The old
+    # hardcoded $1B meant the $100k floor could never reject anything, so a
+    # thinly traded name looked as liquid as SPY to the risk layer.
+    adv = average_dollar_volume(args.ticker)
+    if adv is None:
+        # No bars is not "infinitely liquid". Fall back to the floor itself so
+        # the check neither waves the order through nor blocks on a data gap.
+        adv = PortfolioLimits().min_liquidity_adv
+        print(f"  ADV:       unavailable for {args.ticker} — using the floor")
+    else:
+        print(f"  ADV:       ${adv:,.0f} (20d average dollar volume)")
+
+    # Use entry as price proxy for sizing (a live quote would be better, but the
+    # entry is what the stop is measured against, so they stay consistent).
     market_ctx = MarketContext(
         current_price=decision.entry_price,
         rolling_mean=decision.entry_price,
         rolling_std=max(decision.entry_price * 0.02, 1.0),  # 2% as conservative band
-        atr=abs(decision.entry_price - decision.stop_loss) / 5.0,
-        avg_daily_volume_usd=1_000_000_000.0,
-        sector="Unknown",
+        # No synthesized ATR: the sizer now measures the real entry-to-stop
+        # distance itself, and a proxy here is what made positions 2.5x.
+        atr=None,
+        avg_daily_volume_usd=adv,
+        sector=sector_for(args.ticker),
     )
+    # Sector exposure from the live book. `sector_for` returns None for a name
+    # outside the mapped universe, and unknowns are deliberately NOT bucketed
+    # together — one shared "Unknown" sector would invent concentration between
+    # unrelated names and reject on it.
+    existing_by_sector: dict[str, float] = {}
+    for sym, value in existing_by_ticker.items():
+        sec = sector_for(sym)
+        if sec:
+            existing_by_sector[sec] = existing_by_sector.get(sec, 0.0) + value
+
     portfolio_ctx = PortfolioContext(
         equity=acct.portfolio_value,
         existing_position_values_by_ticker=existing_by_ticker,
-        existing_position_values_by_sector={},
-        high_correlation_count=0,
+        existing_position_values_by_sector=existing_by_sector,
+        high_correlation_count=count_correlated(args.ticker, list(existing_by_ticker)),
         # Settled cash net of pending BUYs, so an order can't be sized off
         # appreciating equity and borrow. The live paper book already drifted to
         # negative cash on equity-only sizing (2026-08-13: -$856 on $108k).
@@ -283,6 +313,11 @@ def main() -> int:
         method=args.method,
         risk_per_trade=args.risk_per_trade,
         portfolio_limits=PortfolioLimits(max_position_pct=args.max_position_pct),
+        # Alpaca's last_equity is the previous close — the session's opening
+        # equity, which is what the daily-drawdown halt measures against. 0.0
+        # means Alpaca omitted it; pass None so the check is skipped rather
+        # than run against a bogus baseline.
+        session_open_equity=acct.last_equity or None,
     )
 
     notional = order.quantity * (decision.entry_price or 0)

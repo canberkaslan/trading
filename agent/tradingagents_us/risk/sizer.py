@@ -4,7 +4,7 @@ The LLM proposes entry / stop / size %. This module:
 
 1. Validates the proposal (entry, stop sane?)
 2. Computes a share count using one of three methods:
-     - "atr"      → atr_position_size (default — uses LLM stop as ATR proxy)
+     - "atr"      → risk_based_size (default — risks a fixed % of equity at the LLM stop)
      - "kelly"    → fractional_kelly (when p_win and b are provided)
      - "vol_tgt"  → vol_target_size
      - "llm_pct"  → trust the LLM's suggested_size_pct as-is, clipped
@@ -27,9 +27,9 @@ from .circuit_breaker import CircuitBreaker
 from .portfolio_limits import PortfolioContext, PortfolioLimits, check_limits
 from .position_sizing import (
     apply_cash_cap,
-    atr_position_size,
     describe_position_cap_trim,
     position_cap_headroom,
+    risk_based_size,
 )
 
 SizingMethod = Literal["atr", "llm_pct", "vol_tgt", "kelly"]
@@ -66,8 +66,15 @@ def size_from_decision(
     method: SizingMethod = "atr",
     risk_per_trade: float = 0.005,
     portfolio_limits: PortfolioLimits = PortfolioLimits(),
+    session_open_equity: float | None = None,
 ) -> TradeOrder:
-    """Build a TradeOrder from an AgentDecision + market + portfolio context."""
+    """Build a TradeOrder from an AgentDecision + market + portfolio context.
+
+    `session_open_equity` is the equity the session opened at (Alpaca reports it
+    as the previous close). It is what the circuit breaker measures the day's
+    drawdown against; omit it and that one check is skipped rather than run
+    against a ratio of 1.0, which can never trip.
+    """
     rejections: list[str] = []
 
     # 0. Side derivation
@@ -76,9 +83,14 @@ def size_from_decision(
         rejections.append(f"non-actionable rating={decision.rating}")
 
     # 1. Circuit breaker
+    #    equity_open must be the session's OPENING equity. Passing account_equity
+    #    for both is what silently disabled the daily-drawdown halt: the ratio is
+    #    then 1.0 and the computed drawdown is always 0.0, so the threshold could
+    #    never be crossed. Callers that cannot supply an opening figure leave it
+    #    None, and the breaker skips that check rather than pretending to run it.
     cb_ok, cb_reasons = circuit_breaker.check(
         equity_now=account_equity,
-        equity_open=account_equity,  # caller can override via separate call
+        equity_open=session_open_equity if session_open_equity else 0.0,
         price=market_ctx.current_price,
         rolling_mean=market_ctx.rolling_mean,
         rolling_std=market_ctx.rolling_std,
@@ -89,15 +101,15 @@ def size_from_decision(
     # 2. Sizing
     qty = 0
     if side is not None and decision.entry_price and decision.stop_loss:
-        # ATR proxy: distance between entry and stop if no ATR provided
-        atr = market_ctx.atr or abs(decision.entry_price - decision.stop_loss) / 2.0
         if method == "atr":
-            qty = atr_position_size(
+            # The stop that will ride on the order is known here, so size off
+            # the real distance to it rather than an ATR standing in for that
+            # distance. The proxy is what let the intended 0.5% become 1.25%.
+            qty = risk_based_size(
                 equity=account_equity,
-                atr=atr,
-                price=decision.entry_price,
+                entry=decision.entry_price,
+                stop=decision.stop_loss,
                 risk_per_trade=risk_per_trade,
-                atr_mult=2.0,
             )
         elif method == "llm_pct":
             notional = account_equity * decision.suggested_size_pct

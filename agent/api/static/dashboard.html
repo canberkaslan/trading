@@ -201,10 +201,10 @@
   <div class="card">
     <svg width="30" height="30" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="var(--s3)"/><path d="M7 21l6-7 4 4 8-10" stroke="var(--pos)" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
     <h1>TRADER</h1>
-    <p>Bu panel özeldir. Erişim anahtarını gir — yalnızca bu cihazda saklanır.</p>
+    <p data-i18n="auth_p">Bu panel özeldir. Erişim anahtarını gir — yalnızca bu cihazda saklanır.</p>
     <input id="tok" type="password" placeholder="erişim anahtarı" autocomplete="off" spellcheck="false">
-    <button class="go" onclick="saveTok()">Devam et</button>
-    <div id="autherr">Anahtar doğrulanamadı. Tekrar dene.</div>
+    <button class="go" onclick="saveTok()" data-i18n="auth_go">Devam et</button>
+    <div id="autherr" data-i18n="auth_err">Anahtar doğrulanamadı. Tekrar dene.</div>
   </div>
 </div>
 
@@ -219,6 +219,7 @@
     <span class="live wait" id="verdict"><span class="d"></span><span id="vtext">—</span></span>
     <span class="r">
       <span class="stamp" id="stamp"></span>
+      <button class="icobtn" id="langbtn" onclick="toggleLang()" aria-label="Language" style="width:auto;padding:0 10px;font-size:11px;font-weight:700;letter-spacing:.06em">EN</button>
       <button class="icobtn" id="rfbtn" onclick="refresh()" aria-label="Yenile">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
       </button>
@@ -231,7 +232,7 @@
   <div id="err"></div>
 
   <div class="hero rise d1">
-    <div class="lbl">Portföy değeri</div>
+    <div class="lbl" data-i18n="hero_lbl">Portföy değeri</div>
     <div class="big mono" id="heroEq">—</div>
     <div class="sub">
       <span class="mono" id="heroChg"></span>
@@ -242,27 +243,27 @@
   <div class="rise d2">
     <div id="chartbox"><div id="chart"><div class="sk" style="height:300px"></div></div><div id="tip"></div></div>
     <div class="ptabs" role="tablist" id="ptabs">
-      <button role="tab" data-p="1M" aria-selected="false">1A</button>
-      <button role="tab" data-p="3M" aria-selected="true">3A</button>
-      <button role="tab" data-p="6M" aria-selected="false">6A</button>
-      <button class="spybtn" id="spytoggle" aria-pressed="true"><i></i>SPY karşılaştır</button>
+      <button role="tab" data-p="1M" aria-selected="false" data-i18n="p1">1A</button>
+      <button role="tab" data-p="3M" aria-selected="true" data-i18n="p3">3A</button>
+      <button role="tab" data-p="6M" aria-selected="false" data-i18n="p6">6A</button>
+      <button class="spybtn" id="spytoggle" aria-pressed="true"><i></i><span data-i18n="spy_cmp">SPY karşılaştır</span></button>
     </div>
   </div>
 
   <div class="chips rise d3" id="chips"></div>
 
   <section class="card rise d3">
-    <div class="hd"><h2>Go-live kapıları</h2><span class="sub mono" id="gdays"></span></div>
+    <div class="hd"><h2 data-i18n="gates_h">Go-live kapıları</h2><span class="sub mono" id="gdays"></span></div>
     <div class="bd"><div class="gates" id="gates"></div></div>
   </section>
 
   <section class="cols">
     <div class="card rise d4">
-      <div class="hd"><h2>Pozisyonlar</h2><span class="sub" id="pcount"></span></div>
+      <div class="hd"><h2 data-i18n="pos_h">Pozisyonlar</h2><span class="sub" id="pcount"></span></div>
       <div class="bd" style="overflow-x:auto" id="positions"></div>
     </div>
     <div class="card rise d4">
-      <div class="hd"><h2>Dağılım &amp; risk</h2></div>
+      <div class="hd"><h2 data-i18n="risk_h">Dağılım &amp; risk</h2></div>
       <div class="bd">
         <div class="alloc" id="alloc"></div>
         <div id="risk"></div>
@@ -271,11 +272,11 @@
   </section>
 
   <section class="card rise d5">
-    <div class="hd"><h2>Son kararlar</h2><span class="sub">portfolio manager + council</span></div>
+    <div class="hd"><h2 data-i18n="dec_h">Son kararlar</h2><span class="sub">portfolio manager + council</span></div>
     <div class="bd" id="decisions"></div>
   </section>
 
-  <footer>Paper trading — gerçek para değildir · 60 sn'de bir tazelenir · Yatırım tavsiyesi değildir</footer>
+  <footer data-i18n="footer">Paper trading — gerçek para değildir · 60 sn'de bir tazelenir · Yatırım tavsiyesi değildir</footer>
 </div>
 </div>
 
@@ -288,6 +289,54 @@ const usd2=v=>'$'+v.toLocaleString('en-US',{minimumFractionDigits:2,maximumFract
 const sgn=(v,d=2)=>(v>0?'+':v<0?'−':'')+Math.abs(v).toFixed(d);
 const pct=(v,d=2)=>sgn(v,d)+'%';
 const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* i18n */
+const I18N={
+  tr:{
+    auth_p:'Bu panel özeldir. Erişim anahtarını gir — yalnızca bu cihazda saklanır.',
+    auth_ph:'erişim anahtarı',auth_go:'Devam et',auth_err:'Anahtar doğrulanamadı. Tekrar dene.',
+    hero_lbl:'Portföy değeri',hero_since:'başlangıçtan bu yana · $100k',
+    p1:'1A',p3:'3A',p6:'6A',spy_cmp:'SPY karşılaştır',
+    gates_h:'Go-live kapıları',pos_h:'Pozisyonlar',risk_h:'Dağılım & risk',dec_h:'Son kararlar',
+    footer:'Paper trading — gerçek para değildir · 60 sn\'de bir tazelenir · Yatırım tavsiyesi değildir',
+    days_word:'gün',c_today:'Bugün',c_waiting:'piyasa bekliyor',c_thresh:'eşik',c_dd:'Maks. düşüş',
+    c_cash:'Nakit',c_liquid:'likit',pos_open:'açık',qty_word:'adet',
+    th_sym:'Sembol',th_avg:'Ort.',th_last:'Son',th_pl:'K/Z',th_plp:'K/Z %',
+    other_word:'Diğer',risk_topw:'En büyük ağırlık',risk_gross:'Brüt maruziyet',
+    flags_cap:'Tek-isim cap üstü (>%10): ',tt_port:'Portföy',
+    err_msg:'Veriye ulaşılamadı ({e}) — tekrar denenecek.',no_data:'Henüz yeterli veri yok',
+  },
+  en:{
+    auth_p:'This panel is private. Enter your access key — it is stored on this device only.',
+    auth_ph:'access key',auth_go:'Continue',auth_err:'Key could not be verified. Try again.',
+    hero_lbl:'Portfolio value',hero_since:'since inception · $100k',
+    p1:'1M',p3:'3M',p6:'6M',spy_cmp:'Compare SPY',
+    gates_h:'Go-live gates',pos_h:'Positions',risk_h:'Allocation & risk',dec_h:'Recent decisions',
+    footer:'Paper trading — not real money · refreshes every 60s · Not investment advice',
+    days_word:'days',c_today:'Today',c_waiting:'awaiting market',c_thresh:'gate',c_dd:'Max drawdown',
+    c_cash:'Cash',c_liquid:'liquid',pos_open:'open',qty_word:'shares',
+    th_sym:'Symbol',th_avg:'Avg',th_last:'Last',th_pl:'P&L',th_plp:'P&L %',
+    other_word:'Other',risk_topw:'Top weight',risk_gross:'Gross exposure',
+    flags_cap:'Above single-name cap (>10%): ',tt_port:'Portfolio',
+    err_msg:'Could not reach data ({e}) — will retry.',no_data:'Not enough data yet',
+  },
+};
+let LANG=localStorage.getItem('trader_lang')||((navigator.language||'').toLowerCase().startsWith('tr')?'tr':'en');
+if(!I18N[LANG])LANG='tr';
+const t=k=>I18N[LANG][k]??I18N.tr[k]??k;
+const LOCALE=()=>LANG==='tr'?'tr-TR':'en-US';
+function applyStatic(){
+  document.documentElement.lang=LANG;
+  document.querySelectorAll('[data-i18n]').forEach(el=>{el.textContent=t(el.dataset.i18n);});
+  $('#tok').placeholder=t('auth_ph');
+  $('#langbtn').textContent=LANG==='tr'?'EN':'TR';
+}
+function toggleLang(){
+  LANG=LANG==='tr'?'en':'tr';
+  localStorage.setItem('trader_lang',LANG);
+  applyStatic();
+  if(LAST){DRAWN=true;render();}
+}
 
 let TOKEN=localStorage.getItem('trader_token')||'';
 const hm=location.hash.match(/[#&]t=([^&]+)/);
@@ -305,6 +354,7 @@ function saveTok(){TOKEN=$('#tok').value.trim();localStorage.setItem('trader_tok
 $('#tok').addEventListener('keydown',e=>{if(e.key==='Enter')saveTok();});
 
 async function boot(){
+  applyStatic();
   if(!TOKEN){$('#auth').style.display='block';$('#app').style.display='none';return;}
   try{
     await refresh(true);
@@ -330,7 +380,7 @@ async function refresh(first){
   }catch(e){if(first)throw e;showErr(e);}
   finally{$('#rfbtn').classList.remove('spin');}
 }
-function showErr(e){const b=$('#err');b.textContent='Veriye ulaşılamadı ('+e.message+') — tekrar denenecek.';b.style.display='block';}
+function showErr(e){const b=$('#err');b.textContent=t('err_msg').replace('{e}',e.message);b.style.display='block';}
 
 /* count-up */
 function tween(el,to,fmt){
@@ -348,18 +398,18 @@ function render(){
   const {snap,ev,hist,conc,decs,spy}=LAST;
   const eq=snap.total_equity_usd, net=eq-100000, netP=net/1000;
 
-  $('#stamp').textContent=new Date().toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'});
+  $('#stamp').textContent=new Date().toLocaleTimeString(LOCALE(),{hour:'2-digit',minute:'2-digit'});
   const v=ev.verdict, cls=v==='GO'?'go':v==='NO-GO'?'nogo':'wait';
   $('#verdict').className='live '+cls;
   $('#vtext').textContent=v==='TOO EARLY'
     ?('EVAL '+ev.days+'/'+ev.days_required+(ev.provisional_verdict?' · '+ev.provisional_verdict:''))
-    :(v+' · '+ev.days+' gün');
+    :(v+' · '+ev.days+' '+t('days_word'));
 
   /* hero */
   tween($('#heroEq'),eq,x=>usd(x));
   $('#heroChg').className='mono '+(net>=0?'up':'down');
   $('#heroChg').textContent=`${net>=0?'+':'−'}${usd(Math.abs(net)).slice(1)==='0'?'$0':usd(Math.abs(net))} (${pct(netP)})`;
-  $('#heroDate').textContent='başlangıçtan bu yana · $100k';
+  $('#heroDate').textContent=t('hero_since');
 
   /* tape */
   const items=snap.positions.map(p=>{
@@ -371,17 +421,17 @@ function render(){
   /* chips */
   const dayPnl=snap.daily_pnl_usd,dz=Math.abs(dayPnl)<0.005;
   $('#chips').innerHTML=
-    chip('Bugün',dz?'$0':(dayPnl>0?'+':'−')+usd(Math.abs(dayPnl)),dz?'':(dayPnl>0?'up':'down'),dz?'piyasa bekliyor':pct(snap.daily_pnl_pct*100))+
-    chip('Sharpe',ev.sharpe.toFixed(2),ev.sharpe>=ev.gate_sharpe?'up':'down','eşik '+ev.gate_sharpe.toFixed(1))+
-    chip('Maks. düşüş',ev.max_dd_pct.toFixed(1)+'%','','eşik %'+ev.gate_max_dd_pct.toFixed(0))+
+    chip(t('c_today'),dz?'$0':(dayPnl>0?'+':'−')+usd(Math.abs(dayPnl)),dz?'':(dayPnl>0?'up':'down'),dz?t('c_waiting'):pct(snap.daily_pnl_pct*100))+
+    chip('Sharpe',ev.sharpe.toFixed(2),ev.sharpe>=ev.gate_sharpe?'up':'down',t('c_thresh')+' '+ev.gate_sharpe.toFixed(1))+
+    chip(t('c_dd'),ev.max_dd_pct.toFixed(1)+'%','',t('c_thresh')+' %'+ev.gate_max_dd_pct.toFixed(0))+
     chip('Alpha',ev.spy_return_pct!=null?pct(ev.total_return_pct-ev.spy_return_pct,1):'—',
       ev.spy_return_pct!=null&&ev.total_return_pct>=ev.spy_return_pct?'up':'down','vs SPY')+
-    chip('Nakit',usd(snap.cash_usd),'',Math.round(100*snap.cash_usd/eq)+'% likit');
+    chip(t('c_cash'),usd(snap.cash_usd),'',Math.round(100*snap.cash_usd/eq)+'% '+t('c_liquid'));
 
   drawChart(hist.points,spy);
 
   /* gates */
-  $('#gdays').textContent=ev.days+' / '+ev.days_required+' gün';
+  $('#gdays').textContent=ev.days+' / '+ev.days_required+' '+t('days_word');
   $('#gates').innerHTML=ev.gates.map(g=>{
     const ic=g.passed===true?ok():g.passed===false?bad():pend();
     return `<div class="gate">${ic}<div><div class="t">${esc(g.name)}</div><div class="d mono">${esc(g.detail)}</div></div></div>`;
@@ -390,14 +440,14 @@ function render(){
   /* positions */
   const ps=[...snap.positions].sort((a,b)=>b.unrealized_pnl-a.unrealized_pnl);
   const mx=Math.max(...ps.map(p=>Math.abs(p.unrealized_pnl)),1);
-  $('#pcount').textContent=ps.length+' açık';
+  $('#pcount').textContent=ps.length+' '+t('pos_open');
   $('#positions').innerHTML=`<table><thead><tr>
-    <th>Sembol</th><th class="hide-sm">Ort.</th><th>Son</th><th>K/Z</th><th>K/Z %</th></tr></thead>
+    <th>${t('th_sym')}</th><th class="hide-sm">${t('th_avg')}</th><th>${t('th_last')}</th><th>${t('th_pl')}</th><th>${t('th_plp')}</th></tr></thead>
     <tbody>${ps.map(p=>{
       const c=p.unrealized_pnl>=0?'up':'down',col=p.unrealized_pnl>=0?'var(--pos)':'var(--neg)';
       const w=Math.max(8,Math.abs(p.unrealized_pnl)/mx*56);
       return `<tr>
-        <td><span class="sym"><span class="ava">${esc(p.ticker.slice(0,4))}</span><span>${esc(p.ticker)}<br><span class="qty mono">${p.quantity} adet</span></span></span></td>
+        <td><span class="sym"><span class="ava">${esc(p.ticker.slice(0,4))}</span><span>${esc(p.ticker)}<br><span class="qty mono">${p.quantity} ${t('qty_word')}</span></span></span></td>
         <td class="hide-sm mono dim">${usd2(p.avg_entry_price)}</td>
         <td class="mono">${usd2(p.current_price)}</td>
         <td class="mono ${c}"><span class="plcell">${sgn(p.unrealized_pnl,0)}<span class="plbar"><i data-w="${w}" style="background:${col};${p.unrealized_pnl>=0?'left:0':'right:0'}"></i></span></span></td>
@@ -411,24 +461,24 @@ function render(){
   const cols=['#3987e5','#6ea4ec','#a7c4f2'];
   let acc=0;const segs=top.map((p,i)=>{const w=Math.abs(p.quantity*p.current_price)/tot*100;acc+=w;
     return {n:p.ticker,w,c:cols[i]};});
-  segs.push({n:'Diğer',w:Math.max(0,100-acc),c:'#3a414c'});
+  segs.push({n:t('other_word'),w:Math.max(0,100-acc),c:'#3a414c'});
   $('#alloc').innerHTML=`<div class="bar">${segs.map(s=>`<i data-w="${s.w}" style="background:${s.c};width:0%"></i>`).join('')}</div>
     <div class="lg">${segs.map(s=>`<span><i style="background:${s.c}"></i>${esc(s.n)} <span class="mono">%${s.w.toFixed(1)}</span></span>`).join('')}</div>`;
   requestAnimationFrame(()=>document.querySelectorAll('.alloc .bar i').forEach(el=>{el.style.width=el.dataset.w+'%';}));
 
   $('#risk').innerHTML=
     kv('Effective N',conc.effective_n.toFixed(1))+
-    kv('En büyük ağırlık',conc.top_weight_pct.toFixed(1)+'%')+
+    kv(t('risk_topw'),conc.top_weight_pct.toFixed(1)+'%')+
     kv('HHI',conc.hhi.toFixed(3))+
-    kv('Brüt maruziyet',conc.gross_exposure_pct.toFixed(0)+'%')+
+    kv(t('risk_gross'),conc.gross_exposure_pct.toFixed(0)+'%')+
     flagsHtml(conc.flags||[]);
 
   $('#decisions').innerHTML=decs.map(d=>{
     const k=(d.rating==='Buy'||d.rating==='Overweight')?'b':(d.rating==='Hold')?'h':'s';
-    const t=new Date(d.timestamp_utc);
+    const dt=new Date(d.timestamp_utc);
     return `<div class="dec"><span class="rchip ${k}">${esc(d.rating)}</span><b>${esc(d.ticker)}</b>
       <span class="pt mono">${d.price_target?('PT '+usd(d.price_target)):''}</span>
-      <span class="when">${t.toLocaleDateString('tr-TR',{day:'numeric',month:'short'})}</span></div>`;
+      <span class="when">${dt.toLocaleDateString(LOCALE(),{day:'numeric',month:'short'})}</span></div>`;
   }).join('');
 }
 const chip=(k,v,c,s)=>`<div class="chip"><span class="k">${k}</span><span class="v mono ${c}">${v}</span><span class="s mono">${s}</span></div>`;
@@ -439,7 +489,7 @@ function flagsHtml(flags){
   flags.forEach(f=>{const m=/^(\S+) is ([\d.]+)% of equity/.exec(f);
     if(m)caps.push(m[1]+' %'+m[2]);else rest.push(f);});
   const lines=[];
-  if(caps.length)lines.push('Tek-isim cap üstü (&gt;%10): '+caps.map(esc).join(' · '));
+  if(caps.length)lines.push(esc(t('flags_cap'))+caps.map(esc).join(' · '));
   rest.forEach(f=>lines.push(esc(f)));
   return `<div class="flags">${lines.join('<br>')}</div>`;
 }
@@ -454,7 +504,7 @@ function drawChart(points,spy){
   const W=Math.max(box.clientWidth||box.parentElement.clientWidth,320), H=310;
   const P={l:6,r:66,t:16,b:10};
   const ai=points.map(p=>({d:p.date,v:p.return_pct,eq:p.equity}));
-  if(ai.length<2){box.innerHTML='<div style="padding:70px 0;text-align:center;color:var(--ink3)">Henüz yeterli veri yok</div>';return;}
+  if(ai.length<2){box.innerHTML='<div style="padding:70px 0;text-align:center;color:var(--ink3)">'+esc(t('no_data'))+'</div>';return;}
 
   const upAll=ai[ai.length-1].v>=ai[0].v;
   const C=upAll?'var(--pos)':'var(--neg)';
@@ -533,8 +583,8 @@ function drawChart(points,spy){
     $('#heroChg').className='mono '+(chg>=0?'up':'down');
     $('#heroChg').textContent=`${chg>=0?'+':'−'}${usd(Math.abs(chg))} (${pct(a.v)})`;
     const dd=new Date(a.d+'T00:00:00Z');
-    $('#heroDate').textContent=dd.toLocaleDateString('tr-TR',{day:'numeric',month:'long',year:'numeric'});
-    tip.innerHTML=`<div class="r"><i style="background:${C}"></i>Portföy<b class="mono">${pct(a.v,2)}</b></div>
+    $('#heroDate').textContent=dd.toLocaleDateString(LOCALE(),{day:'numeric',month:'long',year:'numeric'});
+    tip.innerHTML=`<div class="r"><i style="background:${C}"></i>${t('tt_port')}<b class="mono">${pct(a.v,2)}</b></div>
       ${sv!=null?`<div class="r"><i style="background:var(--bench)"></i>SPY<b class="mono">${pct(sv,2)}</b></div>`:''}`;
     tip.style.display='block';
     const bw=$('#chartbox').getBoundingClientRect().width;
@@ -548,7 +598,7 @@ function drawChart(points,spy){
     $('#heroEq').textContent=usd(eq);$('#heroEq').dataset.v=eq;
     $('#heroChg').className='mono '+(net>=0?'up':'down');
     $('#heroChg').textContent=`${net>=0?'+':'−'}${usd(Math.abs(net))} (${pct(net/1000)})`;
-    $('#heroDate').textContent='başlangıçtan bu yana · $100k';
+    $('#heroDate').textContent=t('hero_since');
   }
   hz.addEventListener('pointermove',e=>scrub(e.clientX));
   hz.addEventListener('pointerdown',e=>scrub(e.clientX));

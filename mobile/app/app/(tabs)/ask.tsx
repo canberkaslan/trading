@@ -272,5 +272,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   chipText: { color: colors.textPrimary, fontSize: 14, fontWeight: '600', letterSpacing: 1 },
-  disclaimer: { color: '#555', fontSize: 11, paddingVertical: 20, fontStyle: 'italic', textAlign: 'center' },
+  disclaimer: { color: colors.textMuted, fontSize: 11, paddingVertical: 20, fontStyle: 'italic', textAlign: 'center' },
 });

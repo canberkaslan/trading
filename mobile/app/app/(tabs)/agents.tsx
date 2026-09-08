@@ -150,5 +150,5 @@ const styles = StyleSheet.create({
   reasoningText: { color: colors.textSecondary, fontSize: 12, lineHeight: 17 },
   detailLink: { color: colors.accent, fontSize: 13, fontWeight: '600', marginTop: 4 },
   muted: { color: colors.textMuted, fontSize: 12 },
-  disclaimer: { color: '#555', fontSize: 11, paddingVertical: 20, fontStyle: 'italic', textAlign: 'center' },
+  disclaimer: { color: colors.textMuted, fontSize: 11, paddingVertical: 20, fontStyle: 'italic', textAlign: 'center' },
 });

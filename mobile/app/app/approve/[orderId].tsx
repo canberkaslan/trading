@@ -238,5 +238,5 @@ const styles = StyleSheet.create({
   btnSecondaryText: { color: colors.textPrimary, fontWeight: '600' },
   section: { color: colors.textPrimary, fontSize: 16, fontWeight: '600', marginTop: 24, marginBottom: 8 },
   body: { color: colors.textSecondary, fontSize: 13, lineHeight: 20 },
-  disclaimer: { color: '#555', fontSize: 11, paddingVertical: 20, fontStyle: 'italic', textAlign: 'center' },
+  disclaimer: { color: colors.textMuted, fontSize: 11, paddingVertical: 20, fontStyle: 'italic', textAlign: 'center' },
 });

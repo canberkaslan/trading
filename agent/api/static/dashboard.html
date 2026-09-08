@@ -327,10 +327,15 @@ const I18N={
     need_gt:'need >',need_lt:'need <',
   },
 };
-let LANG=localStorage.getItem('trader_lang')||((navigator.language||'').toLowerCase().startsWith('tr')?'tr':'en');
+// Turkish is the default rather than the browser's language: this is one
+// operator's own dashboard, it was Turkish before it was bilingual, and a
+// Turkish operator on a US-locale browser would otherwise silently lose it.
+let LANG=localStorage.getItem('trader_lang')||'tr';
 if(!I18N[LANG])LANG='tr';
 const t=k=>I18N[LANG][k]??I18N.tr[k]??k;
 const LOCALE=()=>LANG==='tr'?'tr-TR':'en-US';
+// Turkish writes the sign before the number (%12.5), English after (12.5%).
+const pctNum=(v,d=1)=>LANG==='tr'?('%'+v.toFixed(d)):(v.toFixed(d)+'%');
 function applyStatic(){
   document.documentElement.lang=LANG;
   document.querySelectorAll('[data-i18n]').forEach(el=>{el.textContent=t(el.dataset.i18n);});
@@ -429,7 +434,7 @@ function render(){
   $('#chips').innerHTML=
     chip(t('c_today'),dz?'$0':(dayPnl>0?'+':'−')+usd(Math.abs(dayPnl)),dz?'':(dayPnl>0?'up':'down'),dz?t('c_waiting'):pct(snap.daily_pnl_pct*100))+
     chip('Sharpe',ev.sharpe.toFixed(2),ev.sharpe>=ev.gate_sharpe?'up':'down',t('c_thresh')+' '+ev.gate_sharpe.toFixed(1))+
-    chip(t('c_dd'),ev.max_dd_pct.toFixed(1)+'%','',t('c_thresh')+' %'+ev.gate_max_dd_pct.toFixed(0))+
+    chip(t('c_dd'),ev.max_dd_pct.toFixed(1)+'%','',t('c_thresh')+' '+pctNum(ev.gate_max_dd_pct,0))+
     chip('Alpha',ev.spy_return_pct!=null?pct(ev.total_return_pct-ev.spy_return_pct,1):'—',
       ev.spy_return_pct!=null&&ev.total_return_pct>=ev.spy_return_pct?'up':'down','vs SPY')+
     chip(t('c_cash'),usd(snap.cash_usd),'',Math.round(100*snap.cash_usd/eq)+'% '+t('c_liquid'));
@@ -473,7 +478,7 @@ function render(){
     return {n:p.ticker,w,c:cols[i]};});
   segs.push({n:t('other_word'),w:Math.max(0,100-acc),c:'#3a414c'});
   $('#alloc').innerHTML=`<div class="bar">${segs.map(s=>`<i data-w="${s.w}" style="background:${s.c};width:0%"></i>`).join('')}</div>
-    <div class="lg">${segs.map(s=>`<span><i style="background:${s.c}"></i>${esc(s.n)} <span class="mono">%${s.w.toFixed(1)}</span></span>`).join('')}</div>`;
+    <div class="lg">${segs.map(s=>`<span><i style="background:${s.c}"></i>${esc(s.n)} <span class="mono">${pctNum(s.w,1)}</span></span>`).join('')}</div>`;
   requestAnimationFrame(()=>document.querySelectorAll('.alloc .bar i').forEach(el=>{el.style.width=el.dataset.w+'%';}));
 
   $('#risk').innerHTML=
@@ -502,7 +507,7 @@ function flagsHtml(items,fallback){
     if(caps.length){
       const limit=caps[0].limit;
       lines.push(esc(t('flags_cap').replace('{limit}',limit.toFixed(0)))+
-        caps.map(f=>esc(f.ticker+' %'+f.value.toFixed(1))).join(' · '));
+        caps.map(f=>esc(f.ticker+' '+pctNum(f.value,1))).join(' · '));
     }
     items.filter(f=>f.code==='low_effective_n').forEach(f=>{
       lines.push(esc(t('flag_eff_n').replace('{value}',f.value.toFixed(1)).replace('{limit}',f.limit.toFixed(0))));

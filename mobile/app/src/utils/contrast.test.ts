@@ -46,3 +46,49 @@ describe('theme text tokens meet WCAG AA on app backgrounds', () => {
     }
   }
 });
+
+describe('screens do not reintroduce off-token text colours', () => {
+  // The token suite above only sees colors.ts, so a screen that writes a literal
+  // is invisible to it. That is exactly what happened: seven screens styled the
+  // legal disclaimer `color: '#555'` — 2.66:1 on the app background, well under
+  // the bar textMuted was raised to clear, and the one piece of text on those
+  // screens that most needs to be readable.
+  const OFFENDERS = ['#555', '#555555', '#666', '#666666'];
+
+  it('the disclaimer grey that shipped is genuinely a failure, not a near miss', () => {
+    expect(meetsAA('#555555', colors.background)).toBe(false);
+    expect(contrastRatio('#555555', colors.background)).toBeLessThan(3);
+  });
+
+  it('textMuted is a legitimate replacement for it', () => {
+    expect(meetsAA(colors.textMuted, colors.background)).toBe(true);
+    expect(meetsAA(colors.textMuted, colors.surface)).toBe(true);
+    expect(meetsAA(colors.textMuted, colors.surfaceElevated)).toBe(true);
+  });
+
+  it('no screen hard-codes one of those greys as a text colour', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { readFileSync, readdirSync, statSync } = require('fs');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { join } = require('path');
+
+    const walk = (dir: string): string[] =>
+      readdirSync(dir).flatMap((entry: string) => {
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory()) return walk(full);
+        return full.endsWith('.tsx') ? [full] : [];
+      });
+
+    const roots = [join(__dirname, '..', '..', 'app'), join(__dirname, '..', 'components')];
+    const hits: string[] = [];
+    for (const root of roots) {
+      for (const file of walk(root)) {
+        const src = readFileSync(file, 'utf8');
+        for (const bad of OFFENDERS) {
+          if (src.includes(`color: '${bad}'`)) hits.push(`${file}: color: '${bad}'`);
+        }
+      }
+    }
+    expect(hits).toEqual([]);
+  });
+});

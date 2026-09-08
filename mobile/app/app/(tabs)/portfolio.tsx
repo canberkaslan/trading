@@ -593,5 +593,5 @@ const styles = StyleSheet.create({
   posTicker: { color: colors.textPrimary, fontSize: 18, fontWeight: '600' },
   posPnl: { fontSize: 14, fontWeight: '600' },
   analyzeHint: { color: colors.accent, fontSize: 12, fontWeight: '600', marginTop: 4 },
-  disclaimer: { color: '#555', fontSize: 11, padding: 24, fontStyle: 'italic', textAlign: 'center' },
+  disclaimer: { color: colors.textMuted, fontSize: 11, padding: 24, fontStyle: 'italic', textAlign: 'center' },
 });

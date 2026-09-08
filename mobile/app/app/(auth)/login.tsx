@@ -3,6 +3,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useState } from 'react';
 import { useRouter } from 'expo-router';
 
+import { colors } from '@/theme/colors';
+
 export default function LoginScreen() {
   const router = useRouter();
   const [email, setEmail] = useState('');
@@ -64,7 +66,7 @@ const styles = StyleSheet.create({
   },
   buttonText: { color: '#000', fontWeight: '700', fontSize: 16 },
   disclaimer: {
-    color: '#555',
+    color: colors.textMuted,
     fontSize: 11,
     fontStyle: 'italic',
     marginTop: 32,

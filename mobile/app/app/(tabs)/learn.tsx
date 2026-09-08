@@ -201,5 +201,5 @@ const styles = StyleSheet.create({
   explainHead: { fontSize: 12, fontWeight: '700' },
   explainText: { color: colors.textSecondary, fontSize: 13, lineHeight: 19 },
 
-  disclaimer: { color: '#555', fontSize: 11, paddingVertical: 20, fontStyle: 'italic', textAlign: 'center' },
+  disclaimer: { color: colors.textMuted, fontSize: 11, paddingVertical: 20, fontStyle: 'italic', textAlign: 'center' },
 });

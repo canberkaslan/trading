@@ -230,14 +230,23 @@ def main() -> int:
         )
         for row in coverage:
             print(f"  {row.summary()}", file=sys.stderr)
-        unusable = [c.ticker for c in coverage if not c.usable]
-        if unusable:
-            # Printed as a share, because that share *is* the survivorship
-            # measurement: it is how much of the point-in-time universe a
-            # survivor-only run silently drops.
+        # Two different failures, deliberately not summed. A name the market
+        # stopped listing is the survivorship measurement; a symbol we failed to
+        # spell is our own bug, and counting it as the former inflates the one
+        # number this provider exists to report honestly.
+        delisted = [c.ticker for c in coverage if not c.usable and not c.unlisted]
+        unlisted = [c.ticker for c in coverage if c.unlisted]
+        if delisted:
             print(
-                f"  {len(unusable)}/{len(tickers)} tickers unpriceable "
-                f"({len(unusable) / len(tickers):.0%}): {', '.join(unusable)}",
+                f"  {len(delisted)}/{len(tickers)} tickers unpriceable "
+                f"({len(delisted) / len(tickers):.0%}): {', '.join(delisted)}",
+                file=sys.stderr,
+            )
+        if unlisted:
+            print(
+                f"  {len(unlisted)}/{len(tickers)} symbols unknown to the provider "
+                "— NOT counted as survivorship, the spelling is ours to fix: "
+                f"{', '.join(unlisted)}",
                 file=sys.stderr,
             )
     else:

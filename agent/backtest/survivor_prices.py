@@ -54,11 +54,18 @@ aggregates, both read-only.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
 from tradingagents_us.backtest.exit_paths import Bar
+
+#: A class-share ticker in the hyphen convention: `BF-B`, `BRK-B`, `BF-A`.
+#: Deliberately anchored and narrow — it must not match a warrant (`FOO-WT`),
+#: a unit, or anything else where a dot form would be a guess rather than the
+#: same security written another way.
+_CLASS_SHARE_HYPHEN = re.compile(r"^([A-Z]+)-([A-Z]{1,2})$")
 
 #: Polygon returns `NOT_FOUND` for a symbol nobody held on the probe date, and
 #: an issuer with no CIK (an ETF, most trust structures) is equally unusable as
@@ -138,6 +145,33 @@ class Coverage:
     spans: tuple[IssuerSpan, ...]
     intended_cik: str | None
     note: str = ""
+    #: The symbol actually sent to the provider, which is not always the one
+    #: the caller asked for — see `polygon_candidates`. `None` means no spelling
+    #: was recognised, which is a different failure from a company whose history
+    #: ended, and the two must not be counted together.
+    provider_symbol: str | None = None
+
+    @property
+    def bars_offered(self) -> int:
+        """What the provider returned, before the issuer guard took any away."""
+        return self.bars + self.dropped_recycled
+
+    @property
+    def unlisted(self) -> bool:
+        """The provider knows nothing about this symbol under any spelling tried.
+
+        Kept apart from `usable` because the survivorship measurement is a count
+        of names a survivor-only universe *loses*, and a symbol we failed to
+        spell was never lost by the market. Folding the two together overstates
+        exactly the number this module exists to report honestly.
+
+        Both halves are required. A symbol that returns bars but no readable
+        issuer — SIVB's shape, where the guard drops all 200 — *is* listed; what
+        failed there is identity, which is a real gap in the provider's history
+        and belongs in the survivorship count. Only an answer that is empty on
+        both channels means we asked for something that was never there.
+        """
+        return self.provider_symbol is None and self.bars_offered == 0
 
     @property
     def truncated_start(self) -> timedelta | None:
@@ -157,6 +191,8 @@ class Coverage:
         line = (
             f"{self.ticker}: {self.bars} bars {self.covered_start} → {self.covered_end}"
         )
+        if self.provider_symbol and self.provider_symbol != self.ticker:
+            line += f" (as {self.provider_symbol})"
         gap = self.truncated_start
         if gap is not None and gap > timedelta(days=5):
             line += f" (requested {self.requested_start}, short {gap.days}d)"
@@ -168,6 +204,66 @@ class Coverage:
 # --------------------------------------------------------------------------
 # Pure core. Everything below the fetchers is offline-testable.
 # --------------------------------------------------------------------------
+
+
+def polygon_candidates(ticker: str) -> tuple[str, ...]:
+    """The spellings of `ticker` worth asking Polygon for, best guess first.
+
+    The membership layer normalises class shares to the hyphen form, because
+    that is what Wikipedia's tables and yfinance use — `sp500_history` does the
+    `.`→`-` rewrite in two places. Polygon uses the dot form, and the two are
+    the same security written two ways, not two securities.
+
+    What makes this worth a dedicated step rather than a blind rewrite is how
+    Polygon says no, measured on 2026-09-08:
+
+      * The **aggregates** endpoint does not say no at all. `BF-B` and `MRSH`
+        both come back **HTTP 200, `status: OK`, zero results** — byte-identical
+        to each other and to a company whose history genuinely ran out. A loader
+        that only asks for bars books a spelling mistake as a delisting, in the
+        one report whose entire purpose is counting delistings.
+      * The **reference** endpoint does distinguish them, and not in the shape
+        the rest of this module expects: `BF-B` and `BRK-B` are **HTTP 400**
+        (unparseable symbol), while `MRSH` is a clean **404** (a symbol nobody
+        held). `BF.B` and `BRK.B` return real CIKs and 1083 bars.
+
+    So the dot form is not a cosmetic preference — it is the difference between
+    1083 bars and silence.
+
+    The list is short on purpose. Only a trailing one-or-two-letter share class
+    is rewritten, so a warrant or unit suffix is left alone rather than guessed
+    at, and the original spelling is always tried first so a ticker that
+    legitimately contains a hyphen is never overridden by the rewrite.
+    """
+    candidates = [ticker]
+    match = _CLASS_SHARE_HYPHEN.match(ticker)
+    if match:
+        candidates.append(f"{match.group(1)}.{match.group(2)}")
+    return tuple(candidates)
+
+
+def resolve_symbol(
+    ticker: str,
+    day: date,
+    read_issuer_fn: Callable[[str, date], IssuerRef],
+) -> str | None:
+    """The spelling the provider positively recognises on `day`, or None.
+
+    "Recognises" means it named an issuer — the same bar `read_issuer` sets
+    everywhere else in this module. A null-CIK answer is not recognition, which
+    is the whole point: that is precisely what a misspelled ticker returns.
+
+    Returning None rather than falling back to the original spelling here is
+    safe because the caller keeps using the original anyway; None is a *label*
+    on that outcome, not a refusal to proceed. So this can only ever add
+    coverage to a run, never take any away — worth stating plainly, since a
+    change to the loader that silently dropped names would corrupt the same
+    measurement it is meant to fix.
+    """
+    for candidate in polygon_candidates(ticker):
+        if read_issuer_fn(candidate, day).known:
+            return candidate
+    return None
 
 
 def spans_from_refs(refs: Sequence[IssuerRef]) -> tuple[IssuerSpan, ...]:
@@ -298,7 +394,13 @@ def read_issuer(ticker: str, day: date, api_key: str | None = None) -> IssuerRef
         params={"date": day.isoformat(), "apiKey": _api_key(api_key)},
         timeout=30.0,
     )
-    if resp.status_code == 404:
+    # 404 is "a symbol, nobody held it on this date"; 400 is "not a symbol I can
+    # parse at all", which is what the hyphen form of a class share returns
+    # (`BF-B`, `BRK-B`, measured 2026-09-08). Both are the same answer to the
+    # only question asked here — no issuer — and neither is a transport failure.
+    # Letting the 400 raise meant one misspelled name aborted an entire
+    # 500-ticker universe run instead of costing that one row.
+    if resp.status_code in (400, 404):
         return IssuerRef(ticker, day, UNKNOWN_CIK, None)
     resp.raise_for_status()
     body = resp.json()
@@ -361,16 +463,51 @@ def load_ticker(
     its four letters afterwards.
     """
     anchor = intended_on or start
+
+    # A ticker with only one plausible spelling has nothing to resolve, and
+    # probing it here would break a rule this module already keeps: probes are
+    # clamped to the days the provider returned bars for, so a lookup before the
+    # first bar cannot invent an issuer change. The one case that must be
+    # resolved up front is a class share, where the spelling decides which
+    # symbol the bars are even fetched under. So the extra reference call is
+    # spent only on hyphenated tickers — everything else pays nothing.
+    candidates = polygon_candidates(ticker)
+    symbol = (
+        resolve_symbol(ticker, anchor, read_issuer_fn) if len(candidates) > 1 else ticker
+    )
+    query = symbol or ticker
+
+    def _issuer(_ticker: str, day: date) -> IssuerRef:
+        # Probes go out under the resolved spelling but come back labelled with
+        # the ticker the caller asked for, so spans and notes stay in the
+        # caller's vocabulary.
+        ref = read_issuer_fn(query, day)
+        return IssuerRef(ticker, ref.day, ref.cik, ref.name)
+
     try:
-        bars = read_bars_fn(ticker, start, end)
+        bars = read_bars_fn(query, start, end)
     except ProviderWindowError as exc:
         return [], Coverage(
-            ticker, start, end, None, None, 0, 0, (), None, note=str(exc)
+            ticker, start, end, None, None, 0, 0, (), None,
+            note=str(exc), provider_symbol=symbol,
         )
 
     if not bars:
+        # Nothing came back, so there are no bars for a probe to be clamped to
+        # and the lookup is free to happen now — which is the only moment it can
+        # tell the two empty answers apart. "Delisted" and "we misspelled it"
+        # are the same empty list from here, and only one of them belongs in the
+        # survivorship count.
+        if symbol is not None and not read_issuer_fn(query, anchor).known:
+            symbol = None
+        note = (
+            "provider does not list this symbol"
+            if symbol is None
+            else "provider returned no bars"
+        )
         return [], Coverage(
-            ticker, start, end, None, None, 0, 0, (), None, note="provider returned no bars"
+            ticker, start, end, None, None, 0, 0, (), None,
+            note=note, provider_symbol=symbol,
         )
 
     # Probe the span the provider actually covered, not the one requested: a
@@ -378,9 +515,9 @@ def load_ticker(
     # prices for, and would put a phantom issuer change in the report.
     first_day, last_day = bars[0].day, bars[-1].day
     probe_anchor = min(max(anchor, first_day), last_day)
-    refs = [read_issuer_fn(ticker, first_day), read_issuer_fn(ticker, last_day)]
+    refs = [_issuer(ticker, first_day), _issuer(ticker, last_day)]
     if probe_anchor not in (first_day, last_day):
-        refs.append(read_issuer_fn(ticker, probe_anchor))
+        refs.append(_issuer(ticker, probe_anchor))
 
     left = min(refs, key=lambda r: r.day)
     right = max(refs, key=lambda r: r.day)
@@ -391,7 +528,7 @@ def load_ticker(
         # the near end never got extended. Signature Bank is provable through
         # 2023-03-13 and the guard was keeping a single day of it.
         bounded_left, bounded_right = bisect_change_day(
-            ticker, left, right, read_issuer_fn
+            ticker, left, right, _issuer
         )
         refs = [*refs, bounded_left, bounded_right]
 
@@ -417,6 +554,7 @@ def load_ticker(
         spans=spans,
         intended_cik=intended,
         note=note,
+        provider_symbol=symbol,
     )
 
 

@@ -23,6 +23,8 @@ from backtest.survivor_prices import (
     drop_outside_span,
     load_ticker,
     load_universe,
+    polygon_candidates,
+    resolve_symbol,
     spans_from_refs,
     usable_span,
 )
@@ -444,6 +446,146 @@ def test_coverage_summary_names_the_reason_when_nothing_is_usable():
 
     assert "no usable bars" in coverage.summary()
     assert "issuer unknown" in coverage.summary()
+
+
+# --------------------------------------------------------------------------
+# symbol resolution (class shares)
+# --------------------------------------------------------------------------
+
+
+def _by_symbol(known: dict[str, tuple[str, str]]):
+    """A reference reader that recognises only the exact spellings given.
+
+    Unlike `_issuers`, the ticker argument matters here — which is the whole
+    subject of these tests. Everything else answers the way Polygon does for a
+    misspelled symbol: a well-formed row with a null CIK, not a 404.
+    """
+
+    def read(ticker: str, day: date) -> IssuerRef:
+        if ticker in known:
+            cik, name = known[ticker]
+            return IssuerRef(ticker, day, cik, name)
+        return IssuerRef(ticker, day, None, None)
+
+    return read
+
+
+def test_a_class_share_offers_the_dot_spelling_after_the_original():
+    assert polygon_candidates("BF-B") == ("BF-B", "BF.B")
+    assert polygon_candidates("BRK-B") == ("BRK-B", "BRK.B")
+
+
+def test_a_plain_ticker_offers_nothing_to_guess_at():
+    assert polygon_candidates("AAPL") == ("AAPL",)
+
+
+def test_suffixes_that_are_not_share_classes_are_left_alone():
+    """A warrant or unit is not the same security written another way."""
+    assert polygon_candidates("FOO-WXYZ") == ("FOO-WXYZ",)
+    assert polygon_candidates("FOO-1") == ("FOO-1",)
+    assert polygon_candidates("BF.B") == ("BF.B",)
+
+
+def test_resolution_prefers_the_spelling_asked_for():
+    """A hyphen the provider already knows is never rewritten out from under it."""
+    read = _by_symbol({"BF-B": (OLD_CIK, "hyphen form"), "BF.B": (NEW_CIK, "dot form")})
+
+    assert resolve_symbol("BF-B", date(2021, 9, 3), read) == "BF-B"
+
+
+def test_resolution_falls_through_to_the_dot_form():
+    read = _by_symbol({"BF.B": (OLD_CIK, "Brown-Forman Corporation Class B")})
+
+    assert resolve_symbol("BF-B", date(2021, 9, 3), read) == "BF.B"
+
+
+def test_an_unknown_symbol_resolves_to_nothing_rather_than_a_guess():
+    """MRSH's shape: a genuine 404 under every spelling worth trying."""
+    read = _by_symbol({})
+
+    assert resolve_symbol("MRSH", date(2021, 9, 3), read) is None
+
+
+def test_a_class_share_is_priced_under_the_spelling_the_provider_knows():
+    """BF-B end to end: bars and probes both go out as BF.B."""
+    read = _by_symbol({"BF.B": (OLD_CIK, "Brown-Forman Corporation Class B")})
+    asked: list[str] = []
+
+    def bars_for(ticker: str, start: date, end: date) -> list[Bar]:
+        asked.append(ticker)
+        return _bars(date(2021, 9, 8), 1083) if ticker == "BF.B" else []
+
+    bars, coverage = load_ticker(
+        "BF-B",
+        date(2021, 9, 3),
+        date(2025, 12, 31),
+        read_issuer_fn=read,
+        read_bars_fn=bars_for,
+    )
+
+    assert asked == ["BF.B"]
+    assert len(bars) == 1083
+    assert coverage.provider_symbol == "BF.B"
+    assert coverage.intended_cik == OLD_CIK
+    # The caller keeps its own vocabulary throughout.
+    assert coverage.ticker == "BF-B"
+    assert all(s.cik == OLD_CIK for s in coverage.spans)
+    assert "(as BF.B)" in coverage.summary()
+
+
+def test_an_unspellable_symbol_is_not_counted_as_survivorship():
+    """The measurement this whole provider exists for must not absorb our bug."""
+    read = _by_symbol({})
+
+    _, coverage = load_ticker(
+        "MRSH",
+        date(2021, 9, 3),
+        date(2025, 12, 31),
+        read_issuer_fn=read,
+        read_bars_fn=lambda t, s, e: [],
+    )
+
+    assert coverage.usable is False
+    assert coverage.unlisted is True
+    assert "does not list this symbol" in coverage.note
+
+
+def test_bars_without_an_identity_stay_in_the_survivorship_count():
+    """SIVB's shape: listed, but the guard drops all of it. Not a spelling bug."""
+    read = _by_symbol({})
+
+    _, coverage = load_ticker(
+        "SIVB",
+        date(2021, 9, 3),
+        date(2023, 3, 10),
+        read_issuer_fn=read,
+        read_bars_fn=lambda t, s, e: _bars(date(2021, 9, 8), 200),
+    )
+
+    assert coverage.usable is False
+    # The spelling was fine and the provider answered with 200 bars; what is
+    # missing is the identity behind them, which is a real hole in the history.
+    assert coverage.provider_symbol == "SIVB"
+    assert coverage.bars_offered == 200
+    assert coverage.unlisted is False
+
+
+def test_resolution_cannot_take_coverage_away_from_a_plain_ticker():
+    """The safety property: this change only ever adds names to a run."""
+    read = _issuers({date(2000, 1, 1): (OLD_CIK, "known")})
+
+    bars, coverage = load_ticker(
+        "AAPL",
+        date(2021, 9, 3),
+        date(2025, 12, 31),
+        read_issuer_fn=read,
+        read_bars_fn=lambda t, s, e: _bars(date(2021, 9, 8), 50),
+    )
+
+    assert len(bars) == 50
+    assert coverage.provider_symbol == "AAPL"
+    assert coverage.unlisted is False
+    assert "(as " not in coverage.summary()
 
 
 def test_bar_rejects_an_inverted_high_low():

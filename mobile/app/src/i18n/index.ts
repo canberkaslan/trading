@@ -7,6 +7,10 @@ import tr from './tr.json';
 
 const detected = Localization.getLocales()[0]?.languageCode ?? 'en';
 
+// `i18n.use(...)` is i18next's documented entrypoint. The import plugin warns
+// because i18next also exposes a named `use` export, but the default export's
+// method is what is wanted here.
+// eslint-disable-next-line import/no-named-as-default-member
 i18n.use(initReactI18next).init({
   resources: { en: { translation: en }, tr: { translation: tr } },
   lng: detected === 'tr' ? 'tr' : 'en',

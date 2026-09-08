@@ -38,7 +38,9 @@ export default function ChartsScreen() {
   const [mode, setMode] = useState<'area' | 'candle'>('area');
   const { data, isLoading, isError, refetch, isRefetching } = usePrices(ticker, days);
 
-  const bars = data?.bars ?? [];
+  // Memoized so the `?? []` fallback does not hand a fresh array identity to
+  // the min/max useMemo below on every render.
+  const bars = useMemo(() => data?.bars ?? [], [data?.bars]);
   const up = (data?.change_pct ?? 0) >= 0;
   const lineColor = up ? colors.up : colors.down;
 

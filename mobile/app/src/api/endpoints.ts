@@ -17,6 +17,7 @@ import type {
   PriceSeries,
   Readiness,
   TradesResponse,
+  StopCoverage,
 } from './types';
 
 export const api = {
@@ -32,6 +33,11 @@ export const api = {
   // same series the weekly eval report eyeballs.
   getConcentration: () =>
     apiClient.get('v1/portfolio/concentration').json<Concentration>(),
+
+  // What is standing behind the book if it gaps down tonight. Read-only, and
+  // deliberately not part of the portfolio snapshot: the snapshot's per-position
+  // stop_loss is a placeholder zero, because the protective leg is an order.
+  getStopCoverage: () => apiClient.get('v1/risk/stop-coverage').json<StopCoverage>(),
 
   // Realized round trips from the FIFO fill ledger. Read-only and does not
   // trigger a reconcile — `reconciled_at_utc` is how the app knows the age of

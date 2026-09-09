@@ -190,6 +190,22 @@ export function useEval(period = '1M') {
   });
 }
 
+/**
+ * How much of the book has a protective stop behind it.
+ *
+ * Polled on the same 5-minute cadence as the scorecard rather than live: the
+ * number changes when an order fills or a bracket arms, not tick by tick, and
+ * this hits the broker.
+ */
+export function useStopCoverage() {
+  return useQuery({
+    queryKey: ['stop-coverage'],
+    queryFn: api.getStopCoverage,
+    refetchInterval: 5 * 60_000,
+    retry: false,
+  });
+}
+
 export function useHealth() {
   return useQuery({
     queryKey: ['health'],

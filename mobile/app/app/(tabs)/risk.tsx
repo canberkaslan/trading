@@ -44,6 +44,7 @@ import {
   useOrders,
   usePortfolio,
   useSetKillSwitch,
+  useStopCoverage,
 } from '@/api/hooks';
 import type { Concentration, KillSwitchState,
   ConcentrationFlag,
@@ -213,6 +214,7 @@ export default function RiskScreen() {
   const concentration = useConcentration();
   const flow = useActionability();
   const orders = useOrders();
+  const coverage = useStopCoverage();
 
   const conc = concentration.data;
   const flags = useMemo(() => concentrationFlags(conc), [conc]);
@@ -497,6 +499,72 @@ export default function RiskScreen() {
           </View>
         ) : (
           <>
+            {/* ── Koruyucu stoplar ──────────────────────────────────────── */}
+            {/*
+              First on the screen, above the circuit breakers, because it is the
+              only section that answers "what happens if the book gaps down
+              tonight". It sits here rather than on Portföy because the snapshot
+              cannot answer it: Position.stop_loss is a placeholder zero — the
+              protective leg is an ORDER, not a property of the position.
+            */}
+            <View style={styles.block}>
+              <Text style={styles.sectionTitle}>Koruyucu stoplar</Text>
+              {coverage.isLoading ? (
+                <Text style={styles.muted}>Yükleniyor…</Text>
+              ) : coverage.isError || !coverage.data ? (
+                <View style={styles.gutterReset}>
+                  {/* Never render "0% çıplak" on a failed read: that says the
+                      book is safe because nothing was checked. */}
+                  <ErrorState title="Stop kapsaması okunamadı" onRetry={coverage.refetch} />
+                </View>
+              ) : coverage.data.total_qty === 0 ? (
+                <Text style={styles.helper}>Açık pozisyon yok — korunacak bir şey yok.</Text>
+              ) : (
+                <>
+                  <View style={[styles.meterHead, styles.meter]}>
+                    <Text style={styles.meterName}>Korumasız</Text>
+                    <Text
+                      style={[
+                        styles.meterNow,
+                        {
+                          color:
+                            coverage.data.naked_pct > 0
+                              ? t.downText ?? t.down
+                              : t.textPrimary,
+                        },
+                      ]}
+                    >
+                      {formatPct(coverage.data.naked_pct / 100)} ·{' '}
+                      {coverage.data.naked_qty.toFixed(0)}/{coverage.data.total_qty.toFixed(0)} lot
+                    </Text>
+                  </View>
+                  {coverage.data.indeterminate_qty > 0 ? (
+                    <Text style={styles.helper}>
+                      {coverage.data.indeterminate_qty.toFixed(0)} lot belirsiz durumda —
+                      korumalı da sayılmıyor, korumasız da.
+                    </Text>
+                  ) : null}
+                  {coverage.data.symbols
+                    .filter((sym) => sym.naked_qty > 0)
+                    .map((sym) => (
+                      <View key={sym.symbol} style={styles.meterHead}>
+                        <Text style={styles.meterName}>{sym.symbol}</Text>
+                        <Text style={styles.meterNow}>
+                          {sym.naked_qty.toFixed(0)} lot stopsuz
+                          {sym.protected_qty > 0 ? ` · ${sym.protected_qty.toFixed(0)} korumalı` : ''}
+                        </Text>
+                      </View>
+                    ))}
+                  {coverage.data.orphan_stop_symbols.length > 0 ? (
+                    <Text style={styles.helper}>
+                      Pozisyonu olmayan stop emri: {coverage.data.orphan_stop_symbols.join(', ')} —
+                      tetiklenirse açığa satış olur.
+                    </Text>
+                  ) : null}
+                </>
+              )}
+            </View>
+
             {/* ── Devre kesiciler ───────────────────────────────────────── */}
             <View style={styles.block}>
               <Text style={styles.sectionTitle}>Devre kesiciler</Text>

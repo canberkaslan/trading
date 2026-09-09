@@ -31,6 +31,7 @@ from .routes import (
     agents,
     analyze,
     diagnostics,
+    risk,
     learn,
     notifications,
     orders,
@@ -76,6 +77,7 @@ app.include_router(eval_routes.router, prefix="/v1/eval", tags=["eval"])
 app.include_router(notifications.router, prefix="/v1/notifications", tags=["notifications"])
 app.include_router(trades.router, prefix="/v1/trades", tags=["trades"])
 app.include_router(diagnostics.router, prefix="/v1/diagnostics", tags=["diagnostics"])
+app.include_router(risk.router, prefix="/v1/risk", tags=["risk"])
 
 
 _STATIC = Path(__file__).resolve().parent / "static"

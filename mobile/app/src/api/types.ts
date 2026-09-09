@@ -180,6 +180,40 @@ export interface Concentration {
   trend: ConcentrationTrendPoint[];
 }
 
+/**
+ * What is actually protecting a position right now.
+ *
+ * `Position.stop_loss` cannot answer this: the snapshot route hardcodes it to
+ * 0.0 because the protective leg lives on an ORDER, not on the position. This
+ * comes from the order book instead.
+ */
+export interface SymbolStopCoverage {
+  symbol: string;
+  position_qty: number;
+  protected_qty: number;
+  naked_qty: number;
+  /** Behind an order whose status the accounting does not recognise — neither. */
+  indeterminate_qty: number;
+  /** Protection BEYOND the holding. A stop for more shares than are held opens
+   *  a short when it fires, so this is a fault, not a margin. */
+  excess_qty: number;
+  stop_prices: number[];
+  /** Safe to back-fill: naked shares, and nothing indeterminate on this name. */
+  is_actionable: boolean;
+}
+
+export interface StopCoverage {
+  total_qty: number;
+  protected_qty: number;
+  naked_qty: number;
+  indeterminate_qty: number;
+  /** 0 on an empty book — holding nothing is not an exposure. */
+  naked_pct: number;
+  symbols: SymbolStopCoverage[];
+  /** Protective orders with no position under them. */
+  orphan_stop_symbols: string[];
+}
+
 export type TradingMode = 'paper' | 'live';
 
 export interface Health {

@@ -14,16 +14,20 @@ import {
   useTrades,
   useActionability,
 } from '@/api/hooks';
+import type { Position } from '@/api/types';
 import { useTheme } from '@/theme/useTheme';
-import { MIN_TOUCH_TARGET } from '@/utils/a11y';
+import { hitSlopFor } from '@/utils/a11y';
 import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
 import { EquityChart } from '@/components/EquityChart';
+import { Seg, type SegOption } from '@/components/Seg';
+import { Tag } from '@/components/Tag';
 import { formatUsd, formatPct } from '@/utils/format';
 import { verdictTheme, PERIODS, PERIOD_DAYS, type Period } from '@/utils/equity';
-import { font, TABULAR } from '@/theme/type';
+import { font, TABULAR, TYPE } from '@/theme/type';
 import {
   sectorAllocation,
+  sectorLabelTr,
   topWeightTone,
   diversificationLabel,
   type Tone,
@@ -74,6 +78,51 @@ const flowToneColors = (t: Palette): Record<ActionabilityTone, string> => ({
   muted: t.textSecondary,
 });
 
+/** The prototype's segment labels: 1A/3A/6A over the API's 1M/3M/6M windows. */
+const PERIOD_LABELS: Record<Period, string> = { '1M': '1A', '3M': '3A', '6M': '6A' };
+const PERIOD_OPTIONS: readonly SegOption<Period>[] = PERIODS.map((p) => ({
+  value: p,
+  label: PERIOD_LABELS[p],
+  accessibilityLabel: `${PERIOD_LABELS[p]} dönem`,
+}));
+
+/**
+ * "başlangıçtan" needs the book's first day, not the selected window's.
+ *
+ * /v1/portfolio/history trims every curve at EVAL_START_DATE — the day the
+ * paper book opened — so the longest window the API offers *is* inception for
+ * any book younger than that window. Asking for it costs nothing extra when
+ * the user is already on 6A: TanStack dedupes on the same query key.
+ */
+const INCEPTION_PERIOD: Period = PERIODS[PERIODS.length - 1] ?? '1M';
+
+/**
+ * Whether that actually held this time — the "younger than that window" half of
+ * the paragraph above, checked instead of assumed.
+ *
+ * The trim is what makes the window's first point the book's first day. Once
+ * the book outlives the longest window — or on a deployment that configures no
+ * cutoff at all — the curve simply starts at the window's edge, and labelling
+ * that "başlangıçtan" would put a date on screen that no endpoint ever gave
+ * us. /v1/trades reports the same cutoff (`eval_start_utc`, one env var and one
+ * meaning across both routes), so the two can be compared: if the curve opens
+ * on the cutoff, it opens on day one. The first trading day can lag the cutoff
+ * across a long weekend or a holiday, hence the slack.
+ */
+const INCEPTION_SLACK_MS = 7 * 24 * 60 * 60 * 1000;
+
+function startsAtInception(
+  curve: { points: { date: string }[] } | undefined,
+  evalStartUtc: string | null | undefined,
+): boolean {
+  const first = curve?.points?.[0]?.date;
+  if (!first || !evalStartUtc) return false;
+  const utcDay = (iso: string) => Date.parse(`${iso.slice(0, 10)}T00:00:00Z`);
+  const gap = utcDay(first) - utcDay(evalStartUtc);
+  // Negative means the curve predates the cutoff, i.e. it was never trimmed.
+  return Number.isFinite(gap) && gap >= 0 && gap <= INCEPTION_SLACK_MS;
+}
+
 export default function PortfolioScreen() {
   const { t } = useTranslation();
   const theme = useTheme();
@@ -86,6 +135,7 @@ export default function PortfolioScreen() {
   const [period, setPeriod] = useState<Period>('1M');
   const { data: evalData } = useEval(period);
   const { data: history } = usePortfolioHistory(period);
+  const { data: inception } = usePortfolioHistory(INCEPTION_PERIOD);
   const { data: spy } = usePrices('SPY', PERIOD_DAYS[period]);
   const { data: concentration } = useConcentration();
   const { data: realized } = useTrades();
@@ -120,8 +170,27 @@ export default function PortfolioScreen() {
     );
   }
 
-  const pnlColor = data.daily_pnl_usd >= 0 ? theme.up : theme.downText ?? theme.down;
+  // Accounting palette, via the util that owns the sign→tone rule: a gain is
+  // ink, a loss is the accent, and exactly flat is neither. Restating
+  // `>= 0 ? up : down` here would quietly disagree with `pnlTone` on zero.
+  const dailyColor = PNL_TONE_COLORS[pnlTone(data.daily_pnl_usd)];
   const badge = evalData ? verdictTheme(evalData.verdict, theme) : null;
+
+  // Since the book opened — when the curve can be shown to reach that far. The
+  // dollar leg is measured against live equity (the hero number right above it)
+  // so the two can never disagree on screen; the label says which start it is
+  // measured from, because a window return worn as an inception return is the
+  // kind of number people quote.
+  const sinceLabel = startsAtInception(inception, realized?.eval_start_utc)
+    ? 'başlangıçtan'
+    : `son ${PERIOD_LABELS[INCEPTION_PERIOD]}`;
+  const sinceStart =
+    inception && inception.start_equity > 0
+      ? {
+          usd: data.total_equity_usd - inception.start_equity,
+          pct: (data.total_equity_usd - inception.start_equity) / inception.start_equity,
+        }
+      : null;
   // A GO badge over a book that has submitted nothing for days is the single
   // most misleading thing on this screen — qualify it where it is read.
   const badgeQualifier = verdictQualifier(flow);
@@ -133,7 +202,7 @@ export default function PortfolioScreen() {
       >
         <View style={styles.hero}>
           <View style={styles.heroTop}>
-            <Text style={styles.heroLabel}>{t('portfolio.totalEquity')}</Text>
+            <Text style={styles.heroLabel}>Portföy değeri</Text>
             {badge && evalData ? (
               <View style={styles.badgeWrap}>
                 <View style={[styles.badge, { borderColor: badge.color }]}>
@@ -148,41 +217,56 @@ export default function PortfolioScreen() {
                     {badge.emoji} {evalData.verdict}
                   </Text>
                 </View>
-                {badgeQualifier ? (
-                  <Text style={styles.badgeQualifier}>⚠︎ {badgeQualifier}</Text>
-                ) : null}
+                <Text style={styles.evalDays}>
+                  {evalData.days} / {evalData.days_required} işlem günü
+                </Text>
               </View>
             ) : null}
           </View>
+
           <Text style={styles.heroValue}>{formatUsd(data.total_equity_usd)}</Text>
-          <Text style={[styles.heroChange, { color: pnlColor }]}>
-            {formatUsd(data.daily_pnl_usd, { signed: true })} ({formatPct(data.daily_pnl_pct, { signed: true })})
+
+          {/* One row of three, in the handoff's order: since inception ·
+              today · cash. Each figure signed where it is a P&L delta, and
+              tabular so the three stay on one baseline as they tick. */}
+          <Text style={styles.heroSubRow}>
+            <Text style={styles.subLabel}>{sinceLabel} </Text>
+            <Text
+              style={[
+                styles.subValue,
+                sinceStart ? { color: PNL_TONE_COLORS[pnlTone(sinceStart.usd)] } : null,
+              ]}
+            >
+              {sinceStart
+                ? `${formatUsd(sinceStart.usd, { signed: true })} (${formatPct(sinceStart.pct, { signed: true })})`
+                : '—'}
+            </Text>
+            <Text style={styles.subSep}> · </Text>
+            <Text style={styles.subLabel}>Bugün </Text>
+            <Text style={[styles.subValue, { color: dailyColor }]}>
+              {`${formatUsd(data.daily_pnl_usd, { signed: true })} (${formatPct(data.daily_pnl_pct, { signed: true })})`}
+            </Text>
+            <Text style={styles.subSep}> · </Text>
+            <Text style={styles.subLabel}>Nakit </Text>
+            <Text style={styles.subValue}>{formatUsd(data.cash_usd)}</Text>
           </Text>
-          <Text style={styles.muted}>
-            Cash: {formatUsd(data.cash_usd)}  •  {isFetching ? 'updating…' : 'live'}
-          </Text>
+
+          {/* The one mark that outranks the verdict badge: a GO over a book
+              that has submitted nothing for days. Outline = awaiting a
+              decision, per the tag vocabulary. */}
+          {badgeQualifier ? (
+            <Tag label={`⚠ ${badgeQualifier}`} variant="outline" style={styles.inertTag} />
+          ) : null}
+
           <Text style={styles.timestamp}>
             Son güncelleme:{' '}
             {new Date(data.timestamp_utc).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            {isFetching ? ' · güncelleniyor…' : ''}
           </Text>
         </View>
 
         <View style={styles.periodRow}>
-          {PERIODS.map((p) => {
-            const active = p === period;
-            return (
-              <Pressable
-                key={p}
-                onPress={() => setPeriod(p)}
-                accessibilityRole="button"
-                accessibilityLabel={`${p} dönem`}
-                accessibilityState={{ selected: active }}
-                style={[styles.periodPill, active && styles.periodPillActive]}
-              >
-                <Text style={[styles.periodText, active && styles.periodTextActive]}>{p}</Text>
-              </Pressable>
-            );
-          })}
+          <Seg options={PERIOD_OPTIONS} value={period} onChange={setPeriod} />
         </View>
 
         {history && history.points.length > 1 ? <EquityChart history={history} spy={spy} /> : null}
@@ -223,7 +307,11 @@ export default function PortfolioScreen() {
                   <Text
                     style={[
                       styles.statValue,
-                      flow.verdict === 'inert' ? { color: theme.warning } : null,
+                      // "Donmuş is a warning" is `actionabilityVerdictMeta`'s rule.
+                      // Testing `flow.verdict === 'inert'` here would be a second
+                      // copy of it — one that keeps this figure black on the day
+                      // the backend renames the state or grows a fourth one.
+                      meta.tone === 'warning' ? { color: FLOW_TONE_COLORS[meta.tone] } : null,
                     ]}
                   >
                     {lastSubmitLabel(flow.last_submitted_at_utc, new Date())}
@@ -488,50 +576,145 @@ export default function PortfolioScreen() {
               ))}
 
               {concentration && concentration.flags.length > 0 ? (
+                // The cap itself is `topWeightTone`'s to know — naming a
+                // percentage here would be a second copy of it, free to drift.
                 <Text style={styles.flagText}>
-                  ⚠︎ {concentration.flags.length} isim %10 tek-isim sınırının üzerinde
+                  ⚠ {concentration.flags.length} isim tek-isim tavanının üstünde
                 </Text>
               ) : null}
             </View>
           );
         })()}
 
-        <Text style={styles.section}>{t('portfolio.positions')}</Text>
-        {data.positions.length === 0 ? (
-          <EmptyState title="Açık pozisyon yok" hint="Günlük çalışma yeni pozisyon açtığında burada görünür." />
-        ) : (
-          data.positions.map((p) => {
-            const c = p.unrealized_pnl >= 0 ? theme.up : theme.downText ?? theme.down;
-            return (
-              <Pressable
-                key={p.ticker}
-                style={styles.positionCard}
-                onPress={() => router.push(`/(tabs)/ask?ticker=${p.ticker}` as never)}
-                accessibilityRole="button"
-                accessibilityLabel={`${p.ticker} pozisyonunu analiz et`}
-                accessibilityHint={`${p.quantity} lot, kâr/zarar ${formatUsd(p.unrealized_pnl, { signed: true })}`}
-              >
-                <View style={styles.row}>
-                  <Text style={styles.posTicker}>{p.ticker}</Text>
-                  <Text style={[styles.posPnl, { color: c }]}>
-                    {formatUsd(p.unrealized_pnl, { signed: true })}
-                    {'  '}({formatPct(p.unrealized_pnl_pct, { signed: true })})
-                  </Text>
-                </View>
-                <View style={styles.row}>
-                  <Text style={styles.muted}>
-                    {p.quantity} @ {formatUsd(p.avg_entry_price)}  •  now {formatUsd(p.current_price)}
-                  </Text>
-                  <Text style={styles.analyzeHint}>Analiz →</Text>
-                </View>
-              </Pressable>
-            );
-          })
-        )}
+        {(() => {
+          // Weight goes through the concentration util rather than being
+          // multiplied out here: a one-position allocation is that position's
+          // share of total equity, the same denominator the sector bars above
+          // use — so a name's weight means one thing on this screen. Whether
+          // that weight breaches the single-name cap is `topWeightTone`'s
+          // call; the threshold lives there, not in this file.
+          const rows = data.positions.map((p) => {
+            const weightPct = sectorAllocation([p], data.total_equity_usd)[0]?.weightPct ?? 0;
+            return { p, weightPct, overCap: topWeightTone(weightPct) !== 'up' };
+          });
+          const overCapCount = rows.filter((r) => r.overCap).length;
+          return (
+            <View style={styles.riskCard}>
+              <View style={styles.row}>
+                <Text style={styles.cardTitle}>{t('portfolio.positions')}</Text>
+                <Text style={styles.freshness}>
+                  {rows.length} açık · {overCapCount} cap üstü
+                </Text>
+              </View>
+              {rows.length === 0 ? (
+                <EmptyState title="Açık pozisyon yok" hint="Günlük çalışma yeni pozisyon açtığında burada görünür." />
+              ) : (
+                rows.map((r) => (
+                  <PositionRow
+                    key={r.p.ticker}
+                    position={r.p}
+                    weightPct={r.weightPct}
+                    overCap={r.overCap}
+                    onAnalyze={() => router.push(`/(tabs)/ask?ticker=${r.p.ticker}` as never)}
+                    onChart={() => router.push(`/(tabs)/charts?ticker=${r.p.ticker}` as never)}
+                  />
+                ))
+              )}
+            </View>
+          );
+        })()}
 
         <Text style={styles.disclaimer}>{t('disclaimer.short')}</Text>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+/** The prototype's ghost-button height; `hitSlopFor` takes it to 44. */
+const GHOST_H = 36;
+
+/**
+ * One position, as the handoff's table read top to bottom.
+ *
+ * The web table's columns — Sembol+sektör, Adet, Ort., Son, Değer, Ağırlık,
+ * K/Z, K/Z %, Stop, then Grafik/Analiz — become label→value rows in that exact
+ * order, which is what "mobilde aynı sıra dikey" asks for: the same reading
+ * order on both surfaces, so a name means the same thing wherever it is read.
+ */
+function PositionRow({
+  position: p,
+  weightPct,
+  overCap,
+  onAnalyze,
+  onChart,
+}: {
+  position: Position;
+  weightPct: number;
+  overCap: boolean;
+  onAnalyze: () => void;
+  onChart: () => void;
+}) {
+  const t = useTheme();
+  const styles = useMemo(() => makeStyles(t), [t]);
+  // Accounting palette through the util that owns the rule — same call the
+  // hero and the Gerçekleşen card make, so one flat position cannot render
+  // green here and neutral there.
+  const pnlColor = pnlToneColors(t)[pnlTone(p.unrealized_pnl)];
+
+  const fields: { label: string; value: string; color?: string; cap?: boolean }[] = [
+    { label: 'Adet', value: String(p.quantity) },
+    { label: 'Ort.', value: formatUsd(p.avg_entry_price) },
+    { label: 'Son', value: formatUsd(p.current_price) },
+    { label: 'Değer', value: formatUsd(p.quantity * p.current_price) },
+    { label: 'Ağırlık', value: formatPct(weightPct / 100), cap: overCap },
+    { label: 'K/Z', value: formatUsd(p.unrealized_pnl, { signed: true }), color: pnlColor },
+    { label: 'K/Z %', value: formatPct(p.unrealized_pnl_pct, { signed: true }), color: pnlColor },
+    // The stop leg lives on the broker order, not on the position: a book with
+    // no bracket answers 0, which must read as "no stop", never as a $0.00 one.
+    { label: 'Stop', value: formatUsd(p.stop_loss > 0 ? p.stop_loss : null) },
+  ];
+
+  return (
+    // `accessible={false}`: the block stays one tap target for Sor, but the two
+    // actions inside remain their own elements for a screen reader.
+    <Pressable style={styles.posBlock} onPress={onAnalyze} accessible={false}>
+      <View style={styles.posHead}>
+        <Text style={styles.posTicker}>{p.ticker}</Text>
+        <Text style={styles.posSector}>{sectorLabelTr(p.sector)}</Text>
+      </View>
+
+      {fields.map((f) => (
+        <View key={f.label} style={styles.posField}>
+          <Text style={styles.posFieldLabel}>{f.label}</Text>
+          <View style={styles.posFieldValue}>
+            <Text style={[styles.posFieldText, f.color ? { color: f.color } : null]}>{f.value}</Text>
+            {f.cap ? <Tag label="cap" variant="accent" /> : null}
+          </View>
+        </View>
+      ))}
+
+      <View style={styles.posActions}>
+        <Pressable
+          style={styles.ghost}
+          hitSlop={hitSlopFor(GHOST_H)}
+          onPress={onChart}
+          accessibilityRole="button"
+          accessibilityLabel={`${p.ticker} grafiğini aç`}
+        >
+          <Text style={styles.ghostText}>Grafik</Text>
+        </Pressable>
+        <Pressable
+          style={styles.ghost}
+          hitSlop={hitSlopFor(GHOST_H)}
+          onPress={onAnalyze}
+          accessibilityRole="button"
+          accessibilityLabel={`${p.ticker} pozisyonunu analiz et`}
+          accessibilityHint={`${p.quantity} lot, ağırlık ${formatPct(weightPct / 100)}, kâr/zarar ${formatUsd(p.unrealized_pnl, { signed: true })}`}
+        >
+          <Text style={styles.ghostText}>Analiz →</Text>
+        </Pressable>
+      </View>
+    </Pressable>
   );
 }
 
@@ -551,72 +734,82 @@ const makeStyles = (t: Palette) =>
     // Square, outlined — the verdict is a stamp, not a pill.
     badge: { borderWidth: 1, paddingHorizontal: 10, paddingVertical: 4 },
     badgeText: { fontSize: 13, ...font(800), letterSpacing: 0.5 },
-    badgeQualifier: { color: t.warning, fontSize: 11, marginTop: 4 },
+    evalDays: { color: t.textSecondary, marginTop: 4, ...TYPE.helper, ...TABULAR },
     // Kicker: the label above the number, in accent-700 so small red type stays
     // legible where the base accent would not be.
-    heroLabel: { color: t.accent700 ?? t.accent, fontSize: 11, ...font(600), letterSpacing: 1.1, textTransform: 'uppercase' },
-    heroValue: { color: t.textPrimary, fontSize: 44, ...font(800), marginTop: 6, letterSpacing: -0.5 },
-    heroChange: { fontSize: 15, marginTop: 8, ...font(600) },
-    muted: { color: t.textSecondary, marginTop: 4 },
-    timestamp: { color: t.textSecondary, fontSize: 11, marginTop: 2 },
+    heroLabel: { color: t.accent700 ?? t.accent, ...TYPE.kicker },
+    heroValue: { color: t.textPrimary, marginTop: 6, ...TYPE.hero },
 
-    periodRow: { flexDirection: 'row', gap: 0, paddingHorizontal: 16, marginTop: 4 },
-    // A segmented control, not pills: one continuous outlined strip.
-    periodPill: {
-      paddingHorizontal: 16,
-      borderWidth: 1,
-      borderColor: t.textPrimary,
-      marginRight: -1,
-      minHeight: MIN_TOUCH_TARGET,
-      minWidth: MIN_TOUCH_TARGET,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    periodPillActive: { backgroundColor: t.textPrimary },
-    periodText: { color: t.textPrimary, fontSize: 13, ...font(600) },
-    periodTextActive: { color: t.background },
+    // The handoff's one row of three: başlangıçtan · Bugün · Nakit. One Text,
+    // not three Views, so a narrow phone reflows it as prose instead of
+    // orphaning a separator or clipping a figure.
+    heroSubRow: { color: t.textSecondary, marginTop: 10, lineHeight: 20, ...TYPE.body },
+    subLabel: { color: t.textSecondary, ...TYPE.body },
+    subValue: { color: t.textPrimary, fontSize: 13, ...font(600), ...TABULAR },
+    subSep: { color: t.neutral500 ?? t.textSecondary, ...TYPE.body },
+    inertTag: { marginTop: 10 },
 
-    section: { color: t.textPrimary, fontSize: 15, ...font(800), paddingHorizontal: 16, marginTop: 24 },
+    muted: { color: t.textSecondary, marginTop: 4, ...TYPE.body },
+    timestamp: { color: t.textSecondary, marginTop: 8, ...TYPE.helper },
+
+    // The 1A/3A/6A control sits with the curve it scopes, right-aligned as in
+    // the prototype's chart header.
+    periodRow: { paddingHorizontal: 16, marginTop: 16, alignItems: 'flex-end' },
     // The 2px top rule is what separates one block from the next.
     riskCard: { marginTop: 24, paddingHorizontal: 16, paddingTop: 16, borderTopWidth: 2, borderTopColor: t.divider },
     cardTitle: { color: t.textPrimary, fontSize: 15, ...font(800), marginBottom: 12 },
     statRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4, marginBottom: 12 },
     stat: { flex: 1 },
-    statLabel: { color: t.textSecondary, fontSize: 11 },
+    statLabel: { color: t.textSecondary, ...TYPE.helper },
     statValue: { color: t.textPrimary, fontSize: 17, ...font(800), marginTop: 2, ...TABULAR },
-    statSub: { color: t.textSecondary, fontSize: 11, marginTop: 1 },
+    statSub: { color: t.textSecondary, marginTop: 1, ...TYPE.helper },
 
     sectorRow: { marginTop: 10 },
     sectorHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
-    sectorLabel: { color: t.textSecondary, fontSize: 13 },
-    sectorWeight: { color: t.textPrimary, fontSize: 13, ...font(600) },
+    sectorLabel: { color: t.textSecondary, ...TYPE.body },
+    sectorWeight: { color: t.textPrimary, ...TYPE.bodyStrong, ...TABULAR },
     barTrack: { height: 6, backgroundColor: t.neutral300 ?? t.surfaceElevated, overflow: 'hidden' },
     barFill: { height: 6, backgroundColor: t.textPrimary },
     // Blocked order flow is not an allocation — it gets the accent, so the two
     // bar lists on this screen do not read alike.
     barBlocked: { height: 6, backgroundColor: t.accent500 ?? t.warning },
-    flagText: { color: t.warning, fontSize: 12, marginTop: 12 },
-    freshness: { color: t.textSecondary, fontSize: 11 },
+    flagText: { color: t.warning, fontSize: 12, lineHeight: 18, marginTop: 12, ...font(400) },
+    freshness: { color: t.textSecondary, ...TYPE.helper },
 
     realizedValue: { fontSize: 26, ...font(800), marginTop: 2 },
     splitTrack: { flexDirection: 'row', height: 6, overflow: 'hidden', marginTop: 14, marginBottom: 6 },
     // The strategy block is fenced off from the blended stats above it: the two
     // answer different questions and must not read as one continuous list.
     exitBlock: { marginTop: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: t.divider },
-    exitTitle: { color: t.textSecondary, fontSize: 13, ...font(600) },
-    sampleBadge: { color: t.textSecondary, fontSize: 11, ...font(600) },
+    exitTitle: { color: t.textSecondary, ...TYPE.bodyStrong },
+    sampleBadge: { color: t.textSecondary, fontSize: 11, ...font(600), ...TABULAR },
     exitRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
-    exitLabel: { color: t.textSecondary, fontSize: 12, flex: 1 },
-    exitCount: { color: t.textSecondary, fontSize: 12, width: 28, textAlign: 'right' },
-    exitPnl: { fontSize: 12, ...font(600), width: 90, textAlign: 'right' },
+    exitLabel: { color: t.textSecondary, fontSize: 12, flex: 1, ...font(400) },
+    exitCount: { color: t.textSecondary, fontSize: 12, width: 28, textAlign: 'right', ...font(400), ...TABULAR },
+    exitPnl: { fontSize: 12, ...font(600), ...TABULAR, width: 90, textAlign: 'right' },
     splitRealized: { backgroundColor: t.textPrimary },
     splitOpen: { backgroundColor: t.neutral300 ?? t.surfaceElevated },
 
-    // Rows in a ruled table, not stacked cards.
-    positionCard: { marginHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: t.divider },
+    // Rows in a ruled table, not stacked cards: 1px between names.
+    posBlock: { paddingTop: 14, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: t.divider },
     row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    posHead: { marginBottom: 8 },
     posTicker: { color: t.textPrimary, fontSize: 17, ...font(800) },
-    posPnl: { fontSize: 14, ...font(600), ...TABULAR },
-    analyzeHint: { color: t.accent700 ?? t.accent, fontSize: 12, ...font(600), marginTop: 4 },
-    disclaimer: { color: t.textSecondary, fontSize: 11, paddingHorizontal: 16, paddingVertical: 24, fontStyle: 'italic', textAlign: 'center' },
+    posSector: { color: t.textSecondary, marginTop: 1, ...TYPE.helper },
+    posField: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingVertical: 3,
+    },
+    posFieldLabel: { color: t.textSecondary, ...TYPE.helper },
+    posFieldValue: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    posFieldText: { color: t.textPrimary, fontSize: 13, ...font(600), ...TABULAR },
+    posActions: { flexDirection: 'row', gap: 20, marginTop: 8 },
+    ghost: { height: GHOST_H, justifyContent: 'center' },
+    ghostText: { color: t.accent700 ?? t.accent, fontSize: 13, ...font(600) },
+    // No italic: three Archivo faces are loaded and none of them is one, so
+    // `fontStyle` here only buys a synthesized oblique — or Android's system
+    // italic, which is the fallback this file is meant to avoid.
+    disclaimer: { color: t.textSecondary, paddingHorizontal: 16, paddingVertical: 24, textAlign: 'center', ...TYPE.helper },
   });

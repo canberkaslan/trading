@@ -1,16 +1,126 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, LayoutAnimation, Platform, UIManager } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
+import { create } from 'zustand';
+import * as SecureStore from 'expo-secure-store';
 
 import { LESSONS, type LessonText } from '@/content/lessons';
 import { useTheme } from '@/theme/useTheme';
 import { MIN_TOUCH_TARGET } from '@/utils/a11y';
-import { font } from '@/theme/type';
+import { font, TABULAR, TYPE } from '@/theme/type';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
+
+/* -------------------------------------------------------------------------- */
+/* Persisted quiz answers                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A solved lesson has to stay solved. The progress rule reads "n/8 of the
+ * things this panel assumes you know" — a counter that resets to 0/8 on every
+ * cold start is not a progress bar, it is a decoration.
+ *
+ * Backed by expo-secure-store, the same write-behind pattern as the
+ * notification inbox: it is the only storage module linked into the native
+ * build, so this ships over-the-air. A storage failure is never fatal — the
+ * quiz degrades to memory-only for the session rather than blocking the tab.
+ */
+
+const STORAGE_KEY = 'lesson_answers_v1';
+
+type Lang = 'tr' | 'en';
+
+/** `${lang}:${lessonId}` -> index the reader picked in that language's `quizOptions`. */
+type LessonAnswers = Record<string, number>;
+
+/**
+ * The stored value is an index into `quizOptions`, and the two languages do not
+ * order their options the same way — `go_live_gates` answers 2 in Turkish and 1
+ * in English. An index is only meaningful against the list it was picked from,
+ * so it is stored under that language. Keyed by lesson id alone, flipping the
+ * language in Settings would paint the wrong-answer border on a sentence the
+ * reader never chose and quietly drop a solved lesson out of the n/8 count.
+ */
+function answerKey(lang: Lang, lessonId: string): string {
+  return `${lang}:${lessonId}`;
+}
+
+/**
+ * Storage is untrusted input: it survives app upgrades, so it can hold ids that
+ * no longer exist and indexes into an option list that has since been rewritten.
+ * Anything that is not a plain non-negative integer is dropped rather than
+ * rendered as a phantom selection.
+ */
+function parseAnswers(raw: string | null): LessonAnswers {
+  if (!raw) return {};
+  try {
+    const data: unknown = JSON.parse(raw);
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
+    const out: LessonAnswers = {};
+    for (const [id, value] of Object.entries(data as Record<string, unknown>)) {
+      if (typeof value === 'number' && Number.isInteger(value) && value >= 0) out[id] = value;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+async function persist(answers: LessonAnswers): Promise<void> {
+  try {
+    await SecureStore.setItemAsync(STORAGE_KEY, JSON.stringify(answers));
+  } catch {
+    // Memory-only for this session — a quiz answer is not worth an error dialog.
+  }
+}
+
+interface LessonAnswerState {
+  answers: LessonAnswers;
+  /** False until storage has been read once. */
+  hydrated: boolean;
+  hydrate: () => Promise<void>;
+  /** `key` is an {@link answerKey}, not a bare lesson id. */
+  pick: (key: string, option: number) => void;
+}
+
+const useLessonAnswers = create<LessonAnswerState>((set, get) => ({
+  answers: {},
+  hydrated: false,
+
+  hydrate: async () => {
+    if (get().hydrated) return;
+    let stored: string | null = null;
+    try {
+      stored = await SecureStore.getItemAsync(STORAGE_KEY);
+    } catch {
+      stored = null;
+    }
+    // Anything answered while storage was being read wins the merge.
+    const pending = get().answers;
+    const merged = { ...parseAnswers(stored), ...pending };
+    set({ answers: merged, hydrated: true });
+    // That early answer has already written itself to storage as the WHOLE set,
+    // on top of a set it had not read yet — so every previously solved lesson
+    // is sitting only in `stored` at this point. Write the merge back or the
+    // next cold start comes up with one answer and no history.
+    if (Object.keys(pending).length > 0) void persist(merged);
+  },
+
+  pick: (key, option) => {
+    // The first answer stands; the options go read-only once one is revealed.
+    if (get().answers[key] !== undefined) return;
+    const answers = { ...get().answers, [key]: option };
+    set({ answers });
+    void persist(answers);
+  },
+}));
+
+/* -------------------------------------------------------------------------- */
+/* Screen                                                                     */
+/* -------------------------------------------------------------------------- */
 
 /**
  * The lessons explain this system's own metrics — Sharpe, drawdown, the
@@ -23,19 +133,25 @@ export default function LearnScreen() {
   const { t, i18n } = useTranslation();
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  const lang: 'tr' | 'en' = i18n.language?.startsWith('tr') ? 'tr' : 'en';
+  const lang: Lang = i18n.language?.startsWith('tr') ? 'tr' : 'en';
   const [openId, setOpenId] = useState<string | null>(null);
-  const [answered, setAnswered] = useState<Record<string, number>>({});
+
+  const answered = useLessonAnswers((s) => s.answers);
+  const pick = useLessonAnswers((s) => s.pick);
+
+  // Read once on mount. The lesson text needs no storage, so the tab renders
+  // immediately and the solved marks arrive a frame or two later rather than
+  // holding readable copy behind a spinner.
+  useEffect(() => {
+    void useLessonAnswers.getState().hydrate();
+  }, []);
 
   const toggle = useCallback((id: string) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setOpenId((cur) => (cur === id ? null : id));
   }, []);
 
-  const done = Object.keys(answered).filter((id) => {
-    const lesson = LESSONS.find((l) => l.id === id);
-    return lesson && answered[id] === lesson[lang].quizAnswer;
-  }).length;
+  const done = LESSONS.filter((l) => answered[answerKey(lang, l.id)] === l[lang].quizAnswer).length;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -43,7 +159,11 @@ export default function LearnScreen() {
         <Text style={styles.heading}>{t('learn.title')}</Text>
         <Text style={styles.subheading}>{t('learn.subtitle')}</Text>
 
-        <View style={styles.progressRow}>
+        <View
+          style={styles.progressRow}
+          accessibilityRole="progressbar"
+          accessibilityValue={{ min: 0, max: LESSONS.length, now: done }}
+        >
           <View style={styles.progressTrack}>
             <View style={[styles.progressFill, { width: `${(done / LESSONS.length) * 100}%` }]} />
           </View>
@@ -57,9 +177,9 @@ export default function LearnScreen() {
             key={lesson.id}
             text={lesson[lang]}
             open={openId === lesson.id}
-            picked={answered[lesson.id]}
+            picked={answered[answerKey(lang, lesson.id)]}
             onToggle={() => toggle(lesson.id)}
-            onPick={(i) => setAnswered((a) => ({ ...a, [lesson.id]: i }))}
+            onPick={(i) => pick(answerKey(lang, lesson.id), i)}
             correctLabel={t('learn.correct')}
             wrongLabel={t('learn.wrong')}
             takeawayLabel={t('learn.takeaway')}
@@ -112,7 +232,9 @@ function LessonCard({
         accessibilityState={{ expanded: open }}
         accessibilityLabel={text.title}
       >
-        <View style={[styles.dot, solved && styles.dotDone]} />
+        <View style={styles.dotCell}>
+          <View style={[styles.dot, solved && styles.dotDone]} />
+        </View>
         <View style={{ flex: 1 }}>
           <Text style={styles.cardTitle}>{text.title}</Text>
           <Text style={styles.cardSummary}>{text.summary}</Text>
@@ -149,6 +271,7 @@ function LessonCard({
                 onPress={() => onPick(i)}
                 disabled={reveal}
                 accessibilityRole="button"
+                accessibilityState={{ disabled: reveal, selected: isPicked }}
                 accessibilityLabel={opt}
               >
                 <Text style={styles.optionText}>{opt}</Text>
@@ -157,15 +280,19 @@ function LessonCard({
           })}
 
           {picked !== undefined ? (
-            <View style={styles.explain}>
-              {/* Not the accounting scheme: a right answer is not a gain, so it
-                  keeps the conventional green (`upAlt`) rather than rendering as
-                  plain ink, which here would be indistinguishable from body copy. */}
-              <Text style={[styles.explainHead, { color: solved ? theme.upAltText ?? theme.up : theme.downText ?? theme.down }]}>
+            /*
+             * One line, as the prototype has it: verdict word, em dash,
+             * explanation. The verdict is the system's own two-colour logic —
+             * ink for the expected case, accent for the exception — and not the
+             * conventional green/red, which this palette does not contain.
+             */
+            <Text style={styles.explainText}>
+              <Text style={[styles.explainHead, solved ? styles.verdictRight : styles.verdictWrong]}>
                 {solved ? correctLabel : wrongLabel}
               </Text>
-              <Text style={styles.explainText}>{text.quizExplain}</Text>
-            </View>
+              {' — '}
+              {text.quizExplain}
+            </Text>
           ) : null}
         </View>
       ) : null}
@@ -175,55 +302,69 @@ function LessonCard({
 
 type Palette = ReturnType<typeof useTheme>;
 
+/** The dot column: a 10px square in a 14px cell, so the body copy lines up under it. */
+const DOT_CELL = 14;
+const DOT = 10;
+
 const makeStyles = (t: Palette) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: t.background },
-    scroll: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 24, gap: 0 },
-    heading: { color: t.textPrimary, fontSize: 24, ...font(800) },
-    subheading: { color: t.textSecondary, fontSize: 13 },
+    scroll: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 24 },
+    heading: { color: t.textPrimary, ...TYPE.h2 },
+    subheading: { color: t.textSecondary, marginTop: 4, ...TYPE.helper },
 
-    progressRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 16, marginBottom: 12 },
-    // Square track, ink fill — a rule that fills rather than a pill.
-    progressTrack: { flex: 1, height: 6, borderWidth: 1, borderColor: t.textPrimary, overflow: 'hidden' },
+    progressRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 14, marginBottom: 6 },
+    // A rule that fills, not a pill: 4px of neutral-200 overwritten in ink.
+    progressTrack: { flex: 1, height: 4, backgroundColor: t.neutral200 ?? t.surface },
     progressFill: { height: 4, backgroundColor: t.textPrimary },
-    progressText: { color: t.textSecondary, fontSize: 12, fontVariant: ['tabular-nums'], ...font(800) },
+    progressText: { color: t.textPrimary, ...TYPE.helper, ...font(800), ...TABULAR },
 
     // Ruled rows: each lesson is separated by a hairline, not floated on a card.
-    card: { paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: t.divider },
-    cardHead: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, minHeight: MIN_TOUCH_TARGET },
-    dot: { width: 8, height: 8, borderWidth: 1, borderColor: t.textPrimary, marginTop: 6 },
+    card: { borderBottomWidth: 1, borderBottomColor: t.divider },
+    cardHead: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 12,
+      paddingVertical: 14,
+      minHeight: MIN_TOUCH_TARGET,
+    },
+    dotCell: { width: DOT_CELL },
+    dot: { width: DOT, height: DOT, borderWidth: 2, borderColor: t.textPrimary, marginTop: 5 },
     dotDone: { backgroundColor: t.textPrimary },
-    cardTitle: { color: t.textPrimary, fontSize: 16, ...font(800) },
-    cardSummary: { color: t.textSecondary, fontSize: 12.5, marginTop: 3, lineHeight: 17 },
-    chevron: { color: t.textPrimary, fontSize: 20, ...font(800), width: 20, textAlign: 'center' },
+    cardTitle: { color: t.textPrimary, ...TYPE.section },
+    cardSummary: { color: t.textSecondary, marginTop: 3, lineHeight: 16, ...TYPE.helper },
+    chevron: { color: t.textSecondary, fontSize: 20, ...font(800), width: 20, textAlign: 'center' },
 
-    body: { marginTop: 14, gap: 12, borderTopWidth: 1, borderTopColor: t.divider, paddingTop: 14 },
-    para: { color: t.textSecondary, fontSize: 13.5, lineHeight: 20 },
+    // Indented to the dot column so the opened lesson hangs off the marker.
+    body: { paddingLeft: DOT_CELL + 12, paddingBottom: 18, gap: 12 },
+    para: { color: t.textPrimary, lineHeight: 21, ...TYPE.body },
 
-    takeaway: { backgroundColor: t.surface, padding: 12, gap: 4, borderLeftWidth: 3, borderLeftColor: t.textPrimary },
-    takeawayLabel: { color: t.textSecondary, fontSize: 10.5, ...font(800), letterSpacing: 1, textTransform: 'uppercase' },
-    takeawayText: { color: t.textPrimary, fontSize: 13.5, lineHeight: 19 },
+    takeaway: { backgroundColor: t.surface, paddingVertical: 10, paddingHorizontal: 14 },
+    takeawayLabel: { color: t.accent700 ?? t.accent, ...TYPE.kicker },
+    takeawayText: { color: t.textPrimary, marginTop: 4, lineHeight: 19, ...TYPE.bodyStrong },
 
-    quizQ: { color: t.textPrimary, fontSize: 14, ...font(800), marginTop: 4, lineHeight: 20 },
+    quizQ: { color: t.textPrimary, lineHeight: 19, ...TYPE.body, ...font(800) },
     option: {
       minHeight: MIN_TOUCH_TARGET,
       justifyContent: 'center',
       borderWidth: 1,
-      borderColor: t.neutral400 ?? t.textSecondary,
-      paddingHorizontal: 14,
+      borderColor: t.neutral300 ?? t.divider,
+      paddingHorizontal: 12,
       paddingVertical: 10,
-      marginBottom: -1,
     },
-    // Marked by a heavier rule rather than a wash: the two tints this replaced
-    // were rgba literals of the DARK palette's green and red, which on the light
-    // ground rendered as two barely-distinguishable greys.
-    optionRight: { borderWidth: 2, borderColor: t.upAlt ?? t.up, zIndex: 1 },
-    optionWrong: { borderWidth: 2, borderColor: t.accent, backgroundColor: t.accent100 ?? 'transparent', zIndex: 1 },
-    optionText: { color: t.textPrimary, fontSize: 13.5, lineHeight: 19 },
+    // The right answer is INK, not green: this palette spends colour on the
+    // exception only, so the correct option is stated in the page's own voice
+    // and the accent is reserved for the one that was wrong.
+    optionRight: { borderColor: t.textPrimary, backgroundColor: t.neutral200 ?? t.surface },
+    optionWrong: { borderColor: t.accent, backgroundColor: t.accent100 ?? 'transparent' },
+    optionText: { color: t.textPrimary, lineHeight: 19, ...TYPE.body },
 
-    explain: { gap: 4, marginTop: 12 },
-    explainHead: { fontSize: 12, ...font(800), letterSpacing: 0.4 },
-    explainText: { color: t.textSecondary, fontSize: 13, lineHeight: 19 },
+    explainHead: { ...font(800) },
+    // accent-700 rather than the base accent: a 13px word has to be read, and
+    // the base accent is a fill colour on this ground.
+    verdictRight: { color: t.textPrimary },
+    verdictWrong: { color: t.accent700 ?? t.downText },
+    explainText: { color: t.textSecondary, lineHeight: 19, ...TYPE.body },
 
-    disclaimer: { color: t.textSecondary, fontSize: 11, paddingVertical: 20, textAlign: 'center' },
+    disclaimer: { color: t.textSecondary, paddingVertical: 20, textAlign: 'center', ...TYPE.helper },
   });

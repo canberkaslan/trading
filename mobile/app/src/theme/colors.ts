@@ -130,6 +130,61 @@ export const modernist = {
   upAltText: '#0e703f',
 } as const;
 
+/**
+ * The shape both palettes satisfy.
+ *
+ * `Colors` is `typeof dark` — the DARK palette's literal type — so anything
+ * typed against it rejects `modernist` outright. That is why helpers kept
+ * re-declaring their own local `Palette` interface: there was no shared name for
+ * "a palette", only for "the dark one". This is that name.
+ *
+ * The ramp steps are optional because they are genuinely absent from `dark`;
+ * a helper that wants one has to say what it falls back to.
+ */
+export interface Palette {
+  background: string;
+  surface: string;
+  surfaceElevated: string;
+  textPrimary: string;
+  textSecondary: string;
+  textMuted: string;
+  up: string;
+  down: string;
+  downText: string;
+  upCB: string;
+  downCB: string;
+  accent: string;
+  warning: string;
+  danger: string;
+  dangerDeep: string;
+  divider: string;
+  shadowColor: string;
+  liveStrip?: string;
+  upAlt?: string;
+  upAltText?: string;
+  neutral100?: string;
+  neutral200?: string;
+  neutral300?: string;
+  neutral400?: string;
+  neutral500?: string;
+  neutral700?: string;
+  neutral800?: string;
+  neutral900?: string;
+  accent100?: string;
+  accent200?: string;
+  accent300?: string;
+  accent500?: string;
+  accent600?: string;
+  accent700?: string;
+  accent800?: string;
+}
+
+// Compile-time proof that neither palette has drifted out of the shape.
+const _darkSatisfies: Palette = dark;
+const _modernistSatisfies: Palette = modernist;
+void _darkSatisfies;
+void _modernistSatisfies;
+
 /** The palette screens import today. */
 export const colors = dark;
 

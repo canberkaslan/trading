@@ -83,3 +83,26 @@ export function debateRoleLabel(role: string): string {
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(' ');
 }
+
+/**
+ * "Opus · 4 ajan" chips summarising which models sat on the council.
+ *
+ * Lived byte-for-byte in both agents.tsx and trade/[ticker].tsx. It is a pure
+ * function over `reasoning[]`, so it belongs here beside formatTokens and
+ * formatLatency where it can be unit-tested — the two copies could otherwise
+ * have counted differently and nothing would have caught it.
+ *
+ * Takes the label resolver rather than the palette so this module stays free of
+ * theme imports; callers pass `(m) => modelBadge(theme, m).label`.
+ */
+export function councilChips(
+  reasoning: { model: string }[] | null | undefined,
+  labelFor: (model: string) => string,
+): string[] {
+  const counts = new Map<string, number>();
+  for (const r of reasoning ?? []) {
+    const label = labelFor(r.model);
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  return Array.from(counts.entries()).map(([label, n]) => `${label} · ${n} ajan`);
+}

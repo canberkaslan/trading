@@ -61,6 +61,13 @@ export interface PriceSeries {
 }
 
 export interface EvalGate {
+  /**
+   * The stable identity to match on. `name` is the English label kept for
+   * older builds; matching on it couples the client to display copy, which is
+   * exactly what this field was added to avoid. Empty on a deployment that
+   * predates it.
+   */
+  key?: string;
   name: string;
   passed: boolean | null;
   detail: string;
@@ -145,6 +152,20 @@ export interface ConcentrationTrendPoint {
   equity: number;
 }
 
+/**
+ * A machine-readable concentration breach. The route has serialized these since
+ * `flag_items` was added beside the English `flags` sentences, and they are the
+ * only place a real risk LIMIT (as opposed to a breached value) reaches the
+ * client — the Risk screen would otherwise have to parse the prose.
+ * `ticker` is absent on book-level codes such as `low_effective_n`.
+ */
+export interface ConcentrationFlag {
+  code: 'single_name_cap' | 'low_effective_n' | (string & {});
+  ticker?: string;
+  value: number;
+  limit: number;
+}
+
 export interface Concentration {
   n_positions: number;
   gross_exposure_pct: number;
@@ -154,6 +175,8 @@ export interface Concentration {
   hhi: number;
   effective_n: number;
   flags: string[];
+  /** Optional: a deployment older than `flag_items` sends only `flags`. */
+  flag_items?: ConcentrationFlag[];
   trend: ConcentrationTrendPoint[];
 }
 

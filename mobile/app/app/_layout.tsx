@@ -9,6 +9,7 @@ import { FONT_ASSETS } from '@/theme/fonts';
 
 import i18n, { hydrateLanguage } from '@/i18n';
 import { hydrateTheme } from '@/theme/useTheme';
+import { hydrateWatchlist } from '@/stores/watchlist';
 import { registerReceivedHandler, registerTapHandler, syncPushTokenIfGranted } from '@/notifications';
 import { useInboxStore } from '@/stores/notifications';
 
@@ -30,6 +31,7 @@ export default function RootLayout() {
     void hydrate();
     void hydrateTheme();
     void hydrateLanguage();
+    void hydrateWatchlist();
     // Startup never prompts — permission is asked contextually (Settings row,
     // or the first pending order). This only refreshes an existing grant.
     void syncPushTokenIfGranted();

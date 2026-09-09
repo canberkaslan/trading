@@ -62,6 +62,36 @@ export function ratingChip(t: Palette, rating: Rating | string): RatingChip {
   }
 }
 
+/**
+ * The same decision as `ratingChip`, expressed as a `<Tag>` variant so a screen
+ * can render `<Tag label={rating} variant={ratingVariant(rating)} />` instead of
+ * hand-rolling a chip. Five screens were doing the latter.
+ *
+ * Stated as a switch rather than derived by matching `ratingChip`'s colours back
+ * against the variants: a reverse lookup silently degrades to the fallback the
+ * moment two variants happen to share a fill, and it re-runs per row per render.
+ * The pairing is pinned by a test instead.
+ */
+export type RatingVariant = 'ink' | 'accent' | 'neutral' | 'outlineMuted';
+
+export function ratingVariant(rating: Rating | string): RatingVariant {
+  switch (rating) {
+    case 'Buy':
+    case 'Overweight':
+      return 'ink';
+    case 'Underweight':
+    case 'Sell':
+      return 'accent';
+    case 'Hold':
+      return 'neutral';
+    default:
+      // Muted, not the accent outline: the accent outline is the system's
+      // warning mark, so painting an unrecognised rating with it would turn a
+      // schema change into an alarm.
+      return 'outlineMuted';
+  }
+}
+
 /** The five ratings in conviction order, for legends and pickers. */
 export const RATINGS: Rating[] = ['Buy', 'Overweight', 'Hold', 'Underweight', 'Sell'];
 

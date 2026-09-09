@@ -5,6 +5,8 @@
  *   accent   — accent-100 fill, accent-800 text. A thing that went wrong.
  *   neutral  — neutral-100 fill, neutral-800 text. A thing that is just so.
  *   outline  — 1px accent border, accent text. A thing awaiting a decision.
+ *   outlineMuted — 1px secondary-ink border. A thing the app does not recognise;
+ *                  it must NOT wear the accent, or API drift reads as a warning.
  *   ink      — ink fill, ground text. The strongest mark; ratings use it.
  *
  * It exists because five screens were each drawing their own chip with slightly
@@ -17,11 +19,10 @@ import { View, Text, StyleSheet, type StyleProp, type ViewStyle } from 'react-na
 import { useMemo } from 'react';
 
 import { useTheme } from '@/theme/useTheme';
+import type { Palette } from '@/theme/colors';
 import { font } from '@/theme/type';
 
-export type TagVariant = 'accent' | 'neutral' | 'outline' | 'ink';
-
-type Palette = ReturnType<typeof useTheme>;
+export type TagVariant = 'accent' | 'neutral' | 'outline' | 'outlineMuted' | 'ink';
 
 export function tagColors(t: Palette, variant: TagVariant) {
   switch (variant) {
@@ -31,6 +32,8 @@ export function tagColors(t: Palette, variant: TagVariant) {
       return { backgroundColor: t.neutral100 ?? t.surface, color: t.neutral800 ?? t.textSecondary, borderColor: 'transparent' };
     case 'outline':
       return { backgroundColor: 'transparent', color: t.accent700 ?? t.accent, borderColor: t.accent };
+    case 'outlineMuted':
+      return { backgroundColor: 'transparent', color: t.textSecondary, borderColor: t.textSecondary };
     case 'ink':
       return { backgroundColor: t.textPrimary, color: t.background, borderColor: 'transparent' };
   }

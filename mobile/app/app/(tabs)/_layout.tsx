@@ -105,6 +105,8 @@ export default function TabLayout() {
         <Tabs.Screen name="more" options={{ title: tr('tabs.more') }} />
         {/* Reachable by route, not shown in the bar. */}
         <Tabs.Screen name="charts" options={{ title: tr('tabs.charts'), href: null }} />
+        <Tabs.Screen name="watchlist" options={{ title: tr('tabs.watchlist'), href: null }} />
+        <Tabs.Screen name="risk" options={{ title: tr('tabs.risk'), href: null }} />
         <Tabs.Screen name="learn" options={{ title: tr('tabs.learn'), href: null }} />
         <Tabs.Screen name="settings" options={{ title: tr('tabs.settings'), href: null }} />
       </Tabs>

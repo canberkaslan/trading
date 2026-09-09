@@ -7,6 +7,8 @@
  * View over already-fetched data (item 5 slice-1, read-only, OTA-safe).
  */
 
+import { parseUtc } from '@/utils/format';
+
 export type OrderTone = 'up' | 'down' | 'warning' | 'muted';
 
 export interface OrderStatusMeta {
@@ -170,12 +172,44 @@ function unwrapParens(detail: string): string {
 
 export function formatOrderDate(iso: string | null | undefined): string {
   if (!iso) return '—';
-  const d = new Date(iso);
-  const ms = d.getTime();
-  if (Number.isNaN(ms)) return '—';
+  // `parseUtc`, not `new Date`. The backend writes naive SQLite stamps
+  // (`2026-09-08T21:30:04`, no zone), which JS parses as LOCAL per spec — and
+  // this function then read them back with the getUTC* getters, shifting every
+  // rendered time by the device's offset. Three hours in Istanbul: enough to
+  // print the wrong day for anything stamped after 21:00 UTC, which is exactly
+  // when the 22:30 run submits its orders.
+  const d = parseUtc(iso);
+  if (!d) return '—';
   const day = d.getUTCDate();
   const mon = TR_MONTHS[d.getUTCMonth()];
   const hh = String(d.getUTCHours()).padStart(2, '0');
   const mm = String(d.getUTCMinutes()).padStart(2, '0');
   return `${day} ${mon} ${hh}:${mm}`;
+}
+
+/**
+ * The leading token of a rejection reason (`max_position_pct=0.12` -> the code
+ * before the separator). `rejectionReasonTr` owns this split privately; the
+ * risk screen needs the same key to bucket a refusal as a breaker or a cap, and
+ * re-deriving it there meant the two could drift apart silently.
+ */
+export function rejectionReasonKey(reason: string): string {
+  return reason.split(/[=:\s]/, 1)[0] ?? '';
+}
+
+/**
+ * Did the RISK layer refuse this order, as opposed to the broker?
+ *
+ * `orderStatusMeta` reports what the broker said, which is nothing at all when
+ * the order never reached it. The distinction matters on the history list: a
+ * broker rejection is a market problem, a risk rejection is the system doing
+ * its job, and they were rendering identically.
+ */
+export function riskRejected(order: {
+  risk_approved?: boolean | null;
+  rejection_reasons?: string[] | null;
+  broker_order_id?: string | null;
+}): boolean {
+  if (order.risk_approved === false) return true;
+  return (order.rejection_reasons?.length ?? 0) > 0 && !order.broker_order_id;
 }

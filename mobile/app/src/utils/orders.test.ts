@@ -6,6 +6,8 @@ import {
   formatOrderDate,
   isCancellable,
   rejectionReasonTr,
+  riskRejected,
+  rejectionReasonKey,
 } from './orders';
 
 describe('orderStatusMeta', () => {
@@ -165,5 +167,67 @@ describe('rejectionReasonTr', () => {
   it('returns an empty string for null/blank input', () => {
     expect(rejectionReasonTr(null)).toBe('');
     expect(rejectionReasonTr('   ')).toBe('');
+  });
+});
+
+describe('formatOrderDate reads naive stamps as UTC', () => {
+  // The backend writes SQLite-naive timestamps. JS parses those as LOCAL, and
+  // this helper then formatted them with the getUTC* getters — so every time on
+  // every screen was shifted by the device offset. In Istanbul (UTC+3) an order
+  // stamped 21:30 UTC printed as 8 Eyl 18:30, and anything after 21:00 UTC
+  // printed the previous day. The 22:30 run submits in exactly that window.
+  it('does not shift a zoneless stamp by the device offset', () => {
+    expect(formatOrderDate('2026-09-08T21:30:04')).toBe('8 Eyl 21:30');
+  });
+
+  it('agrees with the same instant written with an explicit zone', () => {
+    expect(formatOrderDate('2026-09-08T21:30:04')).toBe(formatOrderDate('2026-09-08T21:30:04Z'));
+  });
+
+  it('keeps the day right across the UTC midnight boundary', () => {
+    expect(formatOrderDate('2026-09-08T23:45:00')).toBe('8 Eyl 23:45');
+    expect(formatOrderDate('2026-09-09T00:15:00')).toBe('9 Eyl 00:15');
+  });
+
+  it('still honours an offset that is actually present', () => {
+    // 21:30+03:00 is 18:30 UTC, and the helper renders UTC.
+    expect(formatOrderDate('2026-09-08T21:30:00+03:00')).toBe('8 Eyl 18:30');
+  });
+
+  it('renders an em dash for junk rather than "NaN Invalid"', () => {
+    expect(formatOrderDate('not-a-date')).toBe('—');
+    expect(formatOrderDate(null)).toBe('—');
+  });
+});
+
+describe('riskRejected separates a risk refusal from a broker one', () => {
+  it('is true when the risk layer said no', () => {
+    expect(riskRejected({ risk_approved: false })).toBe(true);
+  });
+
+  it('is true when reasons were recorded and nothing reached the broker', () => {
+    expect(riskRejected({ rejection_reasons: ['max_position_pct=0.12'], broker_order_id: null })).toBe(true);
+  });
+
+  it('is false once the broker has the order, whatever the reasons say', () => {
+    // A reason recorded alongside a broker id is advisory, not a refusal.
+    expect(riskRejected({ rejection_reasons: ['near_cap'], broker_order_id: 'alp_1' })).toBe(false);
+  });
+
+  it('is false for an ordinary approved order', () => {
+    expect(riskRejected({ risk_approved: true, broker_order_id: 'alp_1' })).toBe(false);
+    expect(riskRejected({})).toBe(false);
+  });
+});
+
+describe('rejectionReasonKey', () => {
+  it('takes the code before the separator', () => {
+    expect(rejectionReasonKey('max_position_pct=0.12')).toBe('max_position_pct');
+    expect(rejectionReasonKey('daily_drawdown: 3.1%')).toBe('daily_drawdown');
+    expect(rejectionReasonKey('sector_cap 0.33')).toBe('sector_cap');
+  });
+
+  it('returns a bare code unchanged', () => {
+    expect(rejectionReasonKey('halted')).toBe('halted');
   });
 });

@@ -33,6 +33,8 @@ export default function MoreScreen() {
 
   const items: { route: string; label: string; hint: string; badge?: string | null }[] = [
     { route: '/(tabs)/charts', label: tr('tabs.charts'), hint: 'Fiyat grafiği ve sembol arama' },
+    { route: '/(tabs)/watchlist', label: tr('tabs.watchlist'), hint: 'Takip edilen semboller ve son kararları' },
+    { route: '/(tabs)/risk', label: tr('tabs.risk'), hint: 'Kill switch, devre kesiciler ve limitler' },
     { route: '/(tabs)/learn', label: tr('tabs.learn'), hint: 'Paneldeki sayıların ne anlama geldiği' },
     { route: '/notifications', label: tr('tabs.notifications'), hint: 'Onay istekleri ve uyarılar', badge: badgeLabel(unread) },
     { route: '/(tabs)/settings', label: tr('tabs.settings'), hint: 'Hesap, mod, risk ve bildirimler' },

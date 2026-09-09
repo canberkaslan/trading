@@ -165,4 +165,38 @@ describe('modernist palette', () => {
     expect(modernist.up).toBe(modernist.textPrimary);
     expect(modernist.down).toBe(modernist.accent);
   });
+
+  it('a loss FIGURE uses downText, because `down` is a fill', () => {
+    // `down` is the base accent: right for a candle body or a drawdown ribbon,
+    // and 3.6:1 — below AA — for the 14px P&L figures that were drawn in it.
+    // Screens now split the two: graphics keep `down`, text takes `downText`.
+    expect(meetsAA(modernist.down, modernist.background)).toBe(false);
+    for (const bg of grounds) {
+      expect(meetsAA(modernist.downText, bg)).toBe(true);
+    }
+  });
+
+  it('the quiz keeps the conventional green, and it is legible', () => {
+    // Learn is the one screen where colour does not mean P&L — a right answer
+    // is not a gain — so it uses `upAlt` rather than rendering "Doğru" in ink,
+    // which would be indistinguishable from the body copy beneath it.
+    expect(modernist.upAltText).not.toBe(modernist.textPrimary);
+    // Same fill-vs-text split as the accent — the handoff's own green is a mark.
+    expect(meetsAA(modernist.upAlt, modernist.background)).toBe(false);
+    for (const bg of grounds) {
+      expect(meetsAA(modernist.upAltText, bg)).toBe(true);
+    }
+  });
+});
+
+describe('dark palette loss figures', () => {
+  it('downText clears AA on every dark ground, and plain `down` does not', () => {
+    // Not a Modernist-only problem: red-500 is 5.4:1 on the page ground but
+    // 4.2:1 on surfaceElevated, which is exactly where position rows are drawn.
+    const grounds = [colors.background, colors.surface, colors.surfaceElevated];
+    for (const bg of grounds) {
+      expect(meetsAA(colors.downText, bg)).toBe(true);
+    }
+    expect(meetsAA(colors.down, colors.surfaceElevated)).toBe(false);
+  });
 });

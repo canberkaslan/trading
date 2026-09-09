@@ -4,7 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { I18nextProvider } from 'react-i18next';
 
-import i18n from '@/i18n';
+import i18n, { hydrateLanguage } from '@/i18n';
+import { hydrateTheme } from '@/theme/useTheme';
 import { registerReceivedHandler, registerTapHandler, syncPushTokenIfGranted } from '@/notifications';
 import { useInboxStore } from '@/stores/notifications';
 
@@ -23,6 +24,8 @@ export default function RootLayout() {
   useEffect(() => {
     const { hydrate, push } = useInboxStore.getState();
     void hydrate();
+    void hydrateTheme();
+    void hydrateLanguage();
     // Startup never prompts — permission is asked contextually (Settings row,
     // or the first pending order). This only refreshes an existing grant.
     void syncPushTokenIfGranted();

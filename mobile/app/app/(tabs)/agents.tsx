@@ -1,31 +1,17 @@
 import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
 import { useDecisions } from '@/api/hooks';
-import { colors } from '@/theme/colors';
+import { useTheme } from '@/theme/useTheme';
+import { ratingChip, modelBadge } from '@/theme/rating';
 import { hitSlopFor } from '@/utils/a11y';
 import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
-import type { Rating } from '@/api/types';
 
-const RATING_COLOR: Record<Rating, string> = {
-  Buy: colors.up,
-  Overweight: '#86efac',
-  Hold: colors.textSecondary,
-  Underweight: '#fda4af',
-  Sell: colors.down,
-};
-
-function modelBadge(model: string): { label: string; color: string } {
-  if (model.includes('opus')) return { label: 'Opus', color: colors.accent };
-  if (model.includes('sonnet')) return { label: 'Sonnet', color: '#3b82f6' };
-  if (model.includes('haiku')) return { label: 'Haiku', color: colors.textMuted };
-  return { label: model.slice(0, 8), color: colors.textMuted };
-}
 
 function formatTs(iso: string): string {
   const d = new Date(iso);
@@ -34,6 +20,8 @@ function formatTs(iso: string): string {
 
 export default function AgentsScreen() {
   const { t } = useTranslation();
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const { data, isLoading, isError, isFetching, refetch } = useDecisions({ limit: 25 });
   const queryClient = useQueryClient();
@@ -52,7 +40,7 @@ export default function AgentsScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       <ScrollView
         contentContainerStyle={styles.scroll}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.textPrimary} />}
       >
         <Text style={styles.heading}>Decisions</Text>
         <Text style={styles.subheading}>
@@ -80,7 +68,9 @@ export default function AgentsScreen() {
               >
                 <View style={styles.row}>
                   <Text style={styles.ticker}>{d.ticker}</Text>
-                  <Text style={[styles.rating, { color: RATING_COLOR[d.rating] }]}>{d.rating}</Text>
+                  <View style={[styles.ratingChip, ratingChip(theme, d.rating)]}>
+                    <Text style={[styles.rating, { color: ratingChip(theme, d.rating).color }]}>{d.rating}</Text>
+                  </View>
                 </View>
                 <View style={[styles.row, { marginTop: 8 }]}>
                   <Text style={styles.muted}>Entry ${d.entry_price ?? '—'}</Text>
@@ -99,7 +89,7 @@ export default function AgentsScreen() {
                 {isOpen && d.reasoning?.length ? (
                   <View style={styles.reasoningBox}>
                     {d.reasoning.map((r, i) => {
-                      const badge = modelBadge(r.model);
+                      const badge = modelBadge(theme, r.model);
                       return (
                         <View key={i} style={styles.reasoning}>
                           <View style={styles.reasoningHead}>
@@ -132,23 +122,31 @@ export default function AgentsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  scroll: { padding: 24, gap: 12 },
-  heading: { color: colors.textPrimary, fontSize: 28, fontWeight: '700' },
-  subheading: { color: colors.textSecondary, fontSize: 13, marginBottom: 16 },
-  card: { padding: 16, backgroundColor: colors.surface, borderRadius: 12 },
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  ticker: { color: colors.textPrimary, fontSize: 18, fontWeight: '600' },
-  rating: { fontSize: 15, fontWeight: '700' },
-  expandHint: { color: colors.accent, fontSize: 11, fontWeight: '600' },
-  reasoningBox: { marginTop: 12, gap: 12, borderTopWidth: 1, borderTopColor: colors.surfaceElevated, paddingTop: 12 },
-  reasoning: { gap: 4 },
-  reasoningHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  agentName: { color: colors.textPrimary, fontSize: 13, fontWeight: '600' },
-  badge: { fontSize: 10, fontWeight: '700', borderWidth: 1, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 1, overflow: 'hidden' },
-  reasoningText: { color: colors.textSecondary, fontSize: 12, lineHeight: 17 },
-  detailLink: { color: colors.accent, fontSize: 13, fontWeight: '600', marginTop: 4 },
-  muted: { color: colors.textMuted, fontSize: 12 },
-  disclaimer: { color: colors.textMuted, fontSize: 11, paddingVertical: 20, fontStyle: 'italic', textAlign: 'center' },
-});
+type Palette = ReturnType<typeof useTheme>;
+
+const makeStyles = (t: Palette) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: t.background },
+    scroll: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 24, gap: 0 },
+    heading: { color: t.textPrimary, fontSize: 24, fontWeight: '800' },
+    subheading: { color: t.textSecondary, fontSize: 13, marginBottom: 16 },
+    card: { paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: t.divider },
+    row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+    ticker: { color: t.textPrimary, fontSize: 18, fontWeight: '800' },
+    // A filled chip, not tinted text: on a light ground a coloured word carries
+    // far less than a filled block, and buy/hold/sell is the distinction that
+    // actually drives a decision.
+    ratingChip: { paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: 'transparent' },
+    rating: { fontSize: 12, fontWeight: '800', letterSpacing: 0.3 },
+    expandHint: { color: t.accent700 ?? t.accent, fontSize: 11, fontWeight: '600' },
+    reasoningBox: { marginTop: 12, gap: 12, borderTopWidth: 1, borderTopColor: t.divider, paddingTop: 12 },
+    reasoning: { gap: 4 },
+    reasoningHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    agentName: { color: t.textPrimary, fontSize: 13, fontWeight: '800' },
+    // Model tag: outlined, so it reads as metadata rather than as a rating.
+    badge: { fontSize: 10, fontWeight: '700', borderWidth: 1, paddingHorizontal: 6, paddingVertical: 1, overflow: 'hidden' },
+    reasoningText: { color: t.textSecondary, fontSize: 12, lineHeight: 17 },
+    detailLink: { color: t.accent700 ?? t.accent, fontSize: 13, fontWeight: '600', marginTop: 4 },
+    muted: { color: t.textSecondary, fontSize: 12 },
+    disclaimer: { color: t.textSecondary, fontSize: 11, paddingVertical: 20, fontStyle: 'italic', textAlign: 'center' },
+  });

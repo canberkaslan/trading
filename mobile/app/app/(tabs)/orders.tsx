@@ -50,7 +50,7 @@ async function maybeAskForPush(): Promise<void> {
 // cannot be a module constant.
 const toneColor = (t: Palette): Record<OrderTone, string> => ({
   up: t.up,
-  down: t.down,
+  down: t.downText ?? t.down,
   warning: t.warning,
   muted: t.textSecondary,
 });
@@ -121,7 +121,7 @@ export default function OrdersScreen() {
           )
         ) : tab === 'pending' ? (
           active.data.map((o) => {
-            const sideColor = o.side === 'BUY' ? theme.up : theme.down;
+            const sideColor = o.side === 'BUY' ? theme.up : theme.downText ?? theme.down;
             return (
               <Pressable
                 key={o.order_id}
@@ -158,7 +158,7 @@ function HistoryCard({ order: o }: { order: OrderListItem }) {
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const TONE_COLOR = useMemo(() => toneColor(theme), [theme]);
   const cancel = useCancelOrder();
-  const sideColor = o.side === 'BUY' ? theme.up : theme.down;
+  const sideColor = o.side === 'BUY' ? theme.up : theme.downText ?? theme.down;
   const meta = orderStatusMeta(o.broker_status);
   const cancellable = isCancellable(o.broker_status, o.broker_order_id);
   const reasons = o.rejection_reasons ?? [];

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -14,17 +14,9 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
 import { useStartAnalysis, useAnalysisJob } from '@/api/hooks';
-import { colors } from '@/theme/colors';
+import { useTheme } from '@/theme/useTheme';
+import { ratingChip } from '@/theme/rating';
 import { MIN_TOUCH_TARGET } from '@/utils/a11y';
-import type { Rating } from '@/api/types';
-
-const RATING_COLOR: Record<Rating, string> = {
-  Buy: colors.up,
-  Overweight: '#86efac',
-  Hold: colors.textSecondary,
-  Underweight: '#fda4af',
-  Sell: colors.down,
-};
 
 const STATUS_LABEL: Record<string, string> = {
   queued: 'Sıraya alındı…',
@@ -35,6 +27,8 @@ const STATUS_LABEL: Record<string, string> = {
 
 export default function AskScreen() {
   const { t } = useTranslation();
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const params = useLocalSearchParams<{ ticker?: string }>();
   const [ticker, setTicker] = useState('');
@@ -83,7 +77,7 @@ export default function AskScreen() {
             value={ticker}
             onChangeText={setTicker}
             placeholder="AAPL"
-            placeholderTextColor={colors.textMuted}
+            placeholderTextColor={theme.textSecondary}
             autoCapitalize="characters"
             autoCorrect={false}
             maxLength={6}
@@ -100,7 +94,7 @@ export default function AskScreen() {
             accessibilityState={{ disabled: busy, busy }}
           >
             {busy ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color={theme.background} />
             ) : (
               <Text style={styles.btnText}>Analiz</Text>
             )}
@@ -137,7 +131,7 @@ export default function AskScreen() {
 
         {job && !decision ? (
           <View style={styles.statusCard}>
-            {busy ? <ActivityIndicator color={colors.accent} /> : null}
+            {busy ? <ActivityIndicator color={theme.textPrimary} /> : null}
             <Text style={styles.statusText}>
               {job.ticker}: {STATUS_LABEL[job.status] ?? job.status}
             </Text>
@@ -156,9 +150,11 @@ export default function AskScreen() {
           >
             <View style={styles.row}>
               <Text style={styles.ticker}>{decision.ticker}</Text>
-              <Text style={[styles.rating, { color: RATING_COLOR[decision.rating] }]}>
-                {decision.rating}
-              </Text>
+              <View style={[styles.ratingChip, ratingChip(theme, decision.rating)]}>
+                <Text style={[styles.rating, { color: ratingChip(theme, decision.rating).color }]}>
+                  {decision.rating}
+                </Text>
+              </View>
             </View>
             <View style={[styles.row, { marginTop: 10 }]}>
               <Metric label="Entry" value={decision.entry_price} />
@@ -197,6 +193,7 @@ export default function AskScreen() {
 }
 
 function Metric({ label, value }: { label: string; value: number | null }) {
+  const styles = makeStyles(useTheme());
   return (
     <View style={styles.metric}>
       <Text style={styles.metricLabel}>{label}</Text>
@@ -205,72 +202,79 @@ function Metric({ label, value }: { label: string; value: number | null }) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  scroll: { padding: 24, gap: 12 },
-  heading: { color: colors.textPrimary, fontSize: 28, fontWeight: '700' },
-  subheading: { color: colors.textSecondary, fontSize: 13, marginBottom: 8 },
-  inputRow: { flexDirection: 'row', gap: 10, marginTop: 4 },
-  input: {
-    flex: 1,
-    backgroundColor: colors.surface,
-    color: colors.textPrimary,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 18,
-    fontWeight: '600',
-    letterSpacing: 2,
-  },
-  btn: {
-    backgroundColor: colors.accent,
-    borderRadius: 12,
-    paddingHorizontal: 22,
-    justifyContent: 'center',
-    minWidth: 96,
-    alignItems: 'center',
-  },
-  btnDisabled: { opacity: 0.5 },
-  btnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  statusCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    padding: 16,
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    marginTop: 4,
-  },
-  statusText: { color: colors.textSecondary, fontSize: 14, flexShrink: 1 },
-  card: { padding: 18, backgroundColor: colors.surface, borderRadius: 12, gap: 4 },
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  ticker: { color: colors.textPrimary, fontSize: 22, fontWeight: '700' },
-  rating: { fontSize: 16, fontWeight: '700' },
-  metric: { alignItems: 'flex-start' },
-  metricLabel: { color: colors.textMuted, fontSize: 11 },
-  metricValue: { color: colors.textPrimary, fontSize: 15, fontWeight: '600', marginTop: 2 },
-  horizon: { color: colors.textMuted, fontSize: 12, marginTop: 8 },
-  rationale: { color: colors.textSecondary, fontSize: 13, lineHeight: 19, marginTop: 12 },
-  agentsBox: { marginTop: 14, gap: 6, borderTopWidth: 1, borderTopColor: colors.surfaceElevated, paddingTop: 12 },
-  agentsTitle: { color: colors.textMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: 1 },
-  agentLine: { color: colors.textSecondary, fontSize: 12, lineHeight: 17 },
-  agentName: { color: colors.accent, fontWeight: '600' },
-  tapHint: { color: colors.textMuted, fontSize: 11, marginTop: 12, textAlign: 'right' },
-  err: { color: colors.danger, fontSize: 13, marginTop: 4 },
-  empty: { alignItems: 'center', paddingVertical: 32, gap: 10 },
-  emptyIcon: { fontSize: 40 },
-  emptyTitle: { color: colors.textPrimary, fontSize: 17, fontWeight: '700' },
-  emptyText: { color: colors.textSecondary, fontSize: 13, lineHeight: 19, textAlign: 'center', paddingHorizontal: 8 },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center', marginTop: 8 },
-  chip: {
-    paddingHorizontal: 18,
-    paddingVertical: 8,
-    borderRadius: 18,
-    backgroundColor: colors.surfaceElevated,
-    minHeight: MIN_TOUCH_TARGET,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  chipText: { color: colors.textPrimary, fontSize: 14, fontWeight: '600', letterSpacing: 1 },
-  disclaimer: { color: colors.textMuted, fontSize: 11, paddingVertical: 20, fontStyle: 'italic', textAlign: 'center' },
-});
+type Palette = ReturnType<typeof useTheme>;
+
+const makeStyles = (t: Palette) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: t.background },
+    scroll: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 24, gap: 0 },
+    heading: { color: t.textPrimary, fontSize: 24, fontWeight: '800' },
+    subheading: { color: t.textSecondary, fontSize: 13, marginBottom: 16 },
+    // Square field + square ink button, sharing one baseline height.
+    inputRow: { flexDirection: 'row', marginTop: 4 },
+    input: {
+      flex: 1,
+      backgroundColor: t.surfaceElevated,
+      color: t.textPrimary,
+      borderWidth: 1,
+      borderColor: t.textPrimary,
+      paddingHorizontal: 14,
+      paddingVertical: 13,
+      fontSize: 18,
+      fontWeight: '700',
+      letterSpacing: 2,
+    },
+    btn: {
+      backgroundColor: t.textPrimary,
+      paddingHorizontal: 22,
+      justifyContent: 'center',
+      alignItems: 'center',
+      minWidth: 96,
+      minHeight: MIN_TOUCH_TARGET,
+      marginLeft: -1,
+    },
+    btnDisabled: { opacity: 0.45 },
+    btnText: { color: t.background, fontSize: 15, fontWeight: '800', letterSpacing: 0.5 },
+    statusCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingVertical: 14,
+      borderBottomWidth: 1,
+      borderBottomColor: t.divider,
+    },
+    statusText: { color: t.textSecondary, fontSize: 14, flexShrink: 1 },
+    // A ruled block, not a floating card: 2px above, hairline rows within.
+    card: { marginTop: 20, paddingTop: 16, borderTopWidth: 2, borderTopColor: t.textPrimary },
+    row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    ticker: { color: t.textPrimary, fontSize: 22, fontWeight: '800' },
+    ratingChip: { paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: 'transparent' },
+    rating: { fontSize: 13, fontWeight: '800', letterSpacing: 0.6 },
+    metric: { alignItems: 'flex-start' },
+    metricLabel: { color: t.textSecondary, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8 },
+    metricValue: { color: t.textPrimary, fontSize: 16, fontWeight: '700', marginTop: 3 },
+    horizon: { color: t.textSecondary, fontSize: 12, marginTop: 10 },
+    rationale: { color: t.textSecondary, fontSize: 13, lineHeight: 19, marginTop: 12 },
+    agentsBox: { marginTop: 14, gap: 6, borderTopWidth: 1, borderTopColor: t.divider, paddingTop: 12 },
+    agentsTitle: { color: t.textSecondary, fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, fontWeight: '700' },
+    agentLine: { color: t.textSecondary, fontSize: 12, lineHeight: 17 },
+    agentName: { color: t.textPrimary, fontWeight: '700' },
+    tapHint: { color: t.accent700 ?? t.accent, fontSize: 12, marginTop: 12, textAlign: 'right', fontWeight: '600' },
+    err: { color: t.accent700 ?? t.danger, fontSize: 13, marginTop: 4 },
+    empty: { alignItems: 'center', paddingVertical: 32, gap: 10 },
+    emptyIcon: { fontSize: 40 },
+    emptyTitle: { color: t.textPrimary, fontSize: 17, fontWeight: '800' },
+    emptyText: { color: t.textSecondary, fontSize: 13, lineHeight: 19, textAlign: 'center', paddingHorizontal: 8 },
+    chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center', marginTop: 8 },
+    chip: {
+      paddingHorizontal: 18,
+      paddingVertical: 8,
+      borderWidth: 1,
+      borderColor: t.textPrimary,
+      minHeight: MIN_TOUCH_TARGET,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    chipText: { color: t.textPrimary, fontSize: 14, fontWeight: '700', letterSpacing: 1 },
+    disclaimer: { color: t.textSecondary, fontSize: 11, paddingVertical: 20, textAlign: 'center' },
+  });

@@ -25,6 +25,11 @@ export const dark = {
   up: '#22c55e',
   down: '#ef4444',
 
+  // `down` as TEXT. red-500 reads fine on the page ground (5.4:1) but only
+  // reaches 4.2:1 on surfaceElevated, where P&L rows are actually drawn — so
+  // small loss figures get red-400 and the fill keeps red-500.
+  downText: '#f87171',
+
   // Colorblind-safe variant (blue/orange)
   upCB: '#3b82f6',
   downCB: '#f97316',
@@ -67,6 +72,11 @@ export const modernist = {
   upCB: '#0b62c4',
   downCB: '#ec3013',
 
+  // The loss colour as TEXT. `down` is the base accent — a 3.6:1 fill, which is
+  // right for a candle body or a chart line and wrong for a 14px figure. This
+  // is the same accent-700 the handoff designates for small red type.
+  downText: '#ae1800',
+
   accent: '#ec3013',
   // The base accent is 3.6:1 on the page ground — fine as a fill or a rule,
   // not as small text. accent-700 is what small red type uses.
@@ -105,8 +115,12 @@ export const modernist = {
   accent700: '#ae1800',
   accent800: '#7c1405',
   // The alternate P&L green from the handoff, for anyone who wants the
-  // conventional palette instead of the accounting one.
+  // conventional palette instead of the accounting one. Same fill-vs-text split
+  // as the accent: the handoff value is 3.94:1 on the page ground and 3.63:1 on
+  // the surface, so it marks and fills, and `upAltText` is what a green WORD
+  // uses. Darkened by two ramp steps rather than re-hued.
   upAlt: '#118a4e',
+  upAltText: '#0e703f',
 } as const;
 
 /** The palette screens import today. */

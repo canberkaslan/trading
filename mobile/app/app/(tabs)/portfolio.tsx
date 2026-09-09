@@ -60,11 +60,11 @@ type Palette = ReturnType<typeof useTheme>;
 const toneColors = (t: Palette): Record<Tone, string> => ({
   up: t.up,
   warning: t.warning,
-  down: t.down,
+  down: t.downText ?? t.down,
 });
 const pnlToneColors = (t: Palette): Record<PnlToneName, string> => ({
   up: t.up,
-  down: t.down,
+  down: t.downText ?? t.down,
   neutral: t.textPrimary,
 });
 const flowToneColors = (t: Palette): Record<ActionabilityTone, string> => ({
@@ -119,7 +119,7 @@ export default function PortfolioScreen() {
     );
   }
 
-  const pnlColor = data.daily_pnl_usd >= 0 ? theme.up : theme.down;
+  const pnlColor = data.daily_pnl_usd >= 0 ? theme.up : theme.downText ?? theme.down;
   const badge = evalData ? verdictTheme(evalData.verdict, theme) : null;
   // A GO badge over a book that has submitted nothing for days is the single
   // most misleading thing on this screen — qualify it where it is read.
@@ -500,7 +500,7 @@ export default function PortfolioScreen() {
           <EmptyState title="Açık pozisyon yok" hint="Günlük çalışma yeni pozisyon açtığında burada görünür." />
         ) : (
           data.positions.map((p) => {
-            const c = p.unrealized_pnl >= 0 ? theme.up : theme.down;
+            const c = p.unrealized_pnl >= 0 ? theme.up : theme.downText ?? theme.down;
             return (
               <Pressable
                 key={p.ticker}

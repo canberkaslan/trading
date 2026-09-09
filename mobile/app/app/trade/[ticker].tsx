@@ -3,8 +3,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
+import { useMemo } from 'react';
+
 import { useDecisions } from '@/api/hooks';
-import { colors } from '@/theme/colors';
+import { useTheme } from '@/theme/useTheme';
+import { ratingChip, modelBadge } from '@/theme/rating';
 import { formatUsd, formatPct } from '@/utils/format';
 import {
   formatTokens,
@@ -14,15 +17,11 @@ import {
 } from '@/utils/decision';
 import { hitSlopFor } from '@/utils/a11y';
 
-function modelBadge(model: string): { label: string; color: string } {
-  if (model.includes('opus')) return { label: 'Opus', color: colors.accent };
-  if (model.includes('sonnet')) return { label: 'Sonnet', color: '#3b82f6' };
-  if (model.includes('haiku')) return { label: 'Haiku', color: colors.textMuted };
-  return { label: model.slice(0, 8) || 'model', color: colors.textMuted };
-}
 
 export default function TradeApproveScreen() {
   const { t } = useTranslation();
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const { ticker } = useLocalSearchParams<{ ticker: string }>();
   const router = useRouter();
   const { data, isLoading } = useDecisions({ ticker, limit: 1 });
@@ -55,7 +54,16 @@ export default function TradeApproveScreen() {
           <>
             <View style={styles.headlineCard}>
               <Text style={styles.headlineLabel}>Son karar</Text>
-              <Text style={styles.headlineValue}>{decision.rating}</Text>
+              {/* The rating used to render as plain body ink here, so the one
+                  screen that shows the FULL reasoning was also the one that
+                  dropped the buy/hold/sell encoding. Same chip as everywhere. */}
+              <View style={styles.headlineRow}>
+                <View style={[styles.ratingChip, ratingChip(theme, decision.rating)]}>
+                  <Text style={[styles.headlineValue, { color: ratingChip(theme, decision.rating).color }]}>
+                    {decision.rating}
+                  </Text>
+                </View>
+              </View>
               <View style={styles.row}>
                 <Stat label="Giriş" value={formatUsd(decision.entry_price)} />
                 <Stat label="Stop" value={formatUsd(decision.stop_loss)} />
@@ -82,7 +90,7 @@ export default function TradeApproveScreen() {
                   ) : null}
                 </View>
                 {decision.reasoning.map((r, i) => {
-                  const badge = modelBadge(r.model);
+                  const badge = modelBadge(theme, r.model);
                   return (
                     <View key={i} style={styles.agentCard}>
                       <View style={styles.agentHead}>
@@ -125,6 +133,7 @@ export default function TradeApproveScreen() {
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
+  const statStyles = makeStatStyles(useTheme());
   return (
     <View style={statStyles.stat}>
       <Text style={statStyles.label}>{label}</Text>
@@ -133,49 +142,72 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-const statStyles = StyleSheet.create({
-  stat: { flex: 1 },
-  label: { color: colors.textMuted, fontSize: 11 },
-  value: { color: colors.textPrimary, fontSize: 15, fontWeight: '600', marginTop: 2 },
-});
+type Palette = ReturnType<typeof useTheme>;
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  back: { marginBottom: 12 },
-  backText: { color: colors.accent, fontSize: 14 },
-  title: { color: colors.textPrimary, fontSize: 32, fontWeight: '700', marginBottom: 16 },
-  headlineCard: { backgroundColor: colors.surface, borderRadius: 12, padding: 16, gap: 12 },
-  headlineLabel: { color: colors.textMuted, fontSize: 12 },
-  headlineValue: { color: colors.textPrimary, fontSize: 24, fontWeight: '700' },
-  row: { flexDirection: 'row', gap: 12, marginTop: 8 },
-  muted: { color: colors.textMuted, fontSize: 12 },
-  note: { color: colors.textMuted, fontSize: 12, lineHeight: 18, marginTop: 16 },
-  sectionHead: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    justifyContent: 'space-between',
-    marginTop: 24,
-    marginBottom: 8,
-  },
-  section: { color: colors.textPrimary, fontSize: 16, fontWeight: '600', marginTop: 24, marginBottom: 8 },
-  sectionInline: { marginTop: 0, marginBottom: 0 },
-  sectionMeta: { color: colors.textMuted, fontSize: 11 },
-  agentCard: { backgroundColor: colors.surface, borderRadius: 10, padding: 12, gap: 6, marginBottom: 8 },
-  agentHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  agentName: { color: colors.textPrimary, fontSize: 13, fontWeight: '600' },
-  badge: {
-    fontSize: 10,
-    fontWeight: '700',
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    overflow: 'hidden',
-  },
-  agentBody: { color: colors.textSecondary, fontSize: 12, lineHeight: 17 },
-  agentMeta: { color: colors.textMuted, fontSize: 10 },
-  debateCard: { backgroundColor: colors.surface, borderRadius: 10, padding: 12, gap: 4, marginBottom: 8 },
-  debateRole: { color: colors.textPrimary, fontSize: 12, fontWeight: '700' },
-  body: { color: colors.textSecondary, fontSize: 13, lineHeight: 20 },
-  disclaimer: { color: colors.textMuted, fontSize: 11, paddingVertical: 20, fontStyle: 'italic', textAlign: 'center' },
-});
+const makeStatStyles = (t: Palette) =>
+  StyleSheet.create({
+    stat: { flex: 1 },
+    label: { color: t.textSecondary, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8 },
+    value: { color: t.textPrimary, fontSize: 15, fontWeight: '700', marginTop: 3 },
+  });
+
+const makeStyles = (t: Palette) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: t.background },
+    back: { marginBottom: 12 },
+    backText: { color: t.textPrimary, fontSize: 14, fontWeight: '700' },
+    title: { color: t.textPrimary, fontSize: 32, fontWeight: '800', marginBottom: 16 },
+    // Ruled block rather than a filled card: 2px rule above, hairlines within.
+    headlineCard: { borderTopWidth: 2, borderTopColor: t.textPrimary, paddingTop: 14, gap: 10 },
+    headlineLabel: { color: t.textSecondary, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8 },
+    headlineRow: { flexDirection: 'row' },
+    ratingChip: { paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: 'transparent' },
+    headlineValue: { fontSize: 20, fontWeight: '800', letterSpacing: 0.5 },
+    row: { flexDirection: 'row', gap: 12, marginTop: 8 },
+    muted: { color: t.textSecondary, fontSize: 12 },
+    note: { color: t.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 16 },
+    // The rule belongs to the ROW, not to the label: inside a row a Text sizes
+    // to its content, so the underline stopped at the last letter while every
+    // other section rule on the screen spanned the column.
+    sectionHead: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      justifyContent: 'space-between',
+      marginTop: 24,
+      marginBottom: 8,
+      borderBottomWidth: 2,
+      borderBottomColor: t.textPrimary,
+      paddingBottom: 6,
+    },
+    section: {
+      color: t.textPrimary,
+      fontSize: 11,
+      fontWeight: '800',
+      textTransform: 'uppercase',
+      letterSpacing: 1,
+      marginTop: 24,
+      marginBottom: 8,
+      borderBottomWidth: 2,
+      borderBottomColor: t.textPrimary,
+      paddingBottom: 6,
+    },
+    sectionInline: { marginTop: 0, marginBottom: 0, borderBottomWidth: 0, paddingBottom: 0 },
+    sectionMeta: { color: t.textSecondary, fontSize: 11 },
+    agentCard: { paddingVertical: 12, gap: 6, borderBottomWidth: 1, borderBottomColor: t.divider },
+    agentHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    agentName: { color: t.textPrimary, fontSize: 13, fontWeight: '800' },
+    badge: {
+      fontSize: 10,
+      fontWeight: '700',
+      borderWidth: 1,
+      paddingHorizontal: 6,
+      paddingVertical: 1,
+      overflow: 'hidden',
+    },
+    agentBody: { color: t.textSecondary, fontSize: 12, lineHeight: 17 },
+    agentMeta: { color: t.textSecondary, fontSize: 10 },
+    debateCard: { paddingVertical: 12, gap: 4, borderBottomWidth: 1, borderBottomColor: t.divider },
+    debateRole: { color: t.textPrimary, fontSize: 12, fontWeight: '800' },
+    body: { color: t.textSecondary, fontSize: 13, lineHeight: 20 },
+    disclaimer: { color: t.textSecondary, fontSize: 11, paddingVertical: 20, textAlign: 'center' },
+  });

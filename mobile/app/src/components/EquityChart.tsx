@@ -39,7 +39,10 @@ export function EquityChart({ history, spy }: { history: EquityHistory; spy?: Pr
   const scale = combinedScale(pts, spyPts);
   const slot = pts.length ? chartW / pts.length : chartW;
   const up = history.total_return_pct >= 0;
-  const barColor = up ? theme.up : theme.down;
+  // The equity line is drawn in body ink (see the Path below), so the only
+  // thing the direction still colours is the % figure beside it — which is
+  // 15px text and therefore takes the legible loss colour, not the fill.
+  const returnColor = up ? theme.up : theme.downText ?? theme.down;
   const maxDd = worstDrawdown(pts);
   const alpha = alphaPct(history.total_return_pct, spyReturnPct(spyPts));
 
@@ -77,12 +80,12 @@ export function EquityChart({ history, spy }: { history: EquityHistory; spy?: Pr
         <View style={styles.headerRight}>
           {alpha != null ? (
             <View style={[styles.alphaChip, { borderColor: alpha >= 0 ? theme.up : theme.down }]}>
-              <Text style={[styles.alphaText, { color: alpha >= 0 ? theme.up : theme.down }]}>
+              <Text style={[styles.alphaText, { color: alpha >= 0 ? theme.up : theme.downText ?? theme.down }]}>
                 α {formatPct(alpha / 100, { signed: true })}
               </Text>
             </View>
           ) : null}
-          <Text style={[styles.return, { color: barColor }]}>
+          <Text style={[styles.return, { color: returnColor }]}>
             {formatPct(history.total_return_pct / 100, { signed: true })}
           </Text>
         </View>

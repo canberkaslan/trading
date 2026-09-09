@@ -112,11 +112,20 @@ jobs:
       # would also apply to the mobile-v* tag pushes the build job needs.
       - name: Did the app change?
         id: changed
+        # The workflow's `defaults.run.working-directory` is mobile/app, so a
+        # path of `mobile/app` here resolved to mobile/app/mobile/app — which
+        # never exists, so the diff was always empty and the publish was always
+        # skipped. Pinned to the workspace root, and the answer is echoed so a
+        # skipped publish says why instead of looking like a silent success.
+        working-directory: ${{ github.workspace }}
         run: |
           if git diff --quiet HEAD^ HEAD -- mobile/app; then
             echo "app=false" >> "$GITHUB_OUTPUT"
+            echo "No change under mobile/app since ${{ github.event.before && 'the previous commit' || 'HEAD^' }} — skipping the publish."
           else
             echo "app=true" >> "$GITHUB_OUTPUT"
+            echo "Changed under mobile/app:"
+            git diff --name-only HEAD^ HEAD -- mobile/app
           fi
       - uses: actions/setup-node@v4
         if: steps.changed.outputs.app == 'true'

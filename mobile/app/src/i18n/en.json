@@ -24,11 +24,13 @@
   "tabs": {
     "portfolio": "Portfolio",
     "ask": "Ask",
-    "orders": "Pending",
+    "orders": "Orders",
     "agents": "Agents",
     "charts": "Charts",
     "learn": "Learn",
-    "settings": "Settings"
+    "settings": "Settings",
+    "more": "More",
+    "notifications": "Notifications"
   },
   "learn": {
     "title": "Learn",

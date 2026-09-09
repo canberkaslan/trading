@@ -32,6 +32,15 @@ dependencies = [
     "numpy>=2.0.0",
     "pyarrow>=17.0.0",             # parquet
     "vectorbt>=0.27.0",
+    # vectorbt declares `plotly>=4.12.0` with no upper bound, and that metadata
+    # is wrong: its `_settings.py` builds a theme template referencing the
+    # `scattermapbox` trace, which plotly removed in 6.0. So a clean resolve
+    # picks plotly 7, and `import vectorbt` raises at module scope — taking
+    # `backtest/run.py`, `backtest/optimize.py` and
+    # `tradingagents_us/backtest/engine.py` down with it. The bound belongs
+    # here because upstream will not add it. Lift it only after checking that
+    # the installed vectorbt no longer names a mapbox trace.
+    "plotly>=5.24,<6",
     "stockstats>=0.6.0",
 
     # Storage

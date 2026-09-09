@@ -108,6 +108,59 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - 7e Charts, 7f Analiz-Et deep-link, 7g Settings kill-switch+health, snapshot logger
 - cost-opt routing on branch (opt-in, not deployed)
 
+## Daily loop 2026-09-09 (🟢 BOX GERİ DÖNDÜ; "S3'te düşüyor, normal" dediğimiz test 16 gündür başka bir şeyde düşüyormuş)
+- **Box canlı, 16 günlük karanlık bitti.** `trader.fusapp.com` cevap veriyor: `/healthz` ok
+  (`trading_mode: paper`), `/readyz` `alpaca:true db:true`. Ajan **08-09'da koşmuş** — DB'de
+  2026-09-08 tarihli taze UNH kararı var (Overweight, entry 398.5, stop 370.0), yani günlük döngü
+  kendi kendine yeniden başlamış. Portföy (06:22 UTC snapshot): equity **$109,273.74**, cash
+  $2,829.16, 10 pozisyon, unrealized **+$10,214.99**, günlük **−$601.80 / −%0.55**, intraday DD
+  −%0.65, gross exposure %97.4, 5 isim %10 tek-isim tavanının üstünde.
+  **SSH hâlâ kapalı** — 22/80/443 hepsi filtreli, ICMP %100 kayıp; sadece cloudflared tüneli
+  (outbound) ayakta. Yani **deploy bugün mümkün değil**, ve stop backfill / reconcile hâlâ bekliyor.
+- [x] 🔴 **`import vectorbt` aylardır patlıyormuş ve tam da onu yakalayacak test rutin olarak
+  deselect ediliyormuş** — vectorbt metadata'sında `plotly>=4.12.0` var, üst sınır yok; ama kendi
+  `_settings.py`'ı plotly'nin **6.0'da kaldırdığı** `scattermapbox` trace'ini isimlendiriyor.
+  Temiz bir resolve plotly 7.0.0 çekiyor → `backtest/run.py`, `backtest/optimize.py` ve
+  `tradingagents_us/backtest/engine.py` **üçü de import anında** `ValueError` atıyor.
+  - **Neden 16 gün görünmedi — ölçüldü, tahmin değil:** bunu görecek tek test
+    `test_synthetic_sma_crossover_on_aapl_2024`, ve günlük döngü talimatı onu
+    *"S3 yüzünden local'de fail, CI'da skip — normal"* diye deselect ettiriyor. Bugün deselect'siz
+    koşturdum: **S3'e hiç gelmiyordu**, `import vectorbt` satırında ölüyordu. CI'da da yakalanmıyor,
+    çünkü orada `AWS_PROFILE` yok → test **skip** oluyor → vectorbt hiç import edilmiyor.
+    Yani açıklama semptomu kapatmış: yanlış gerekçeyle susturulan bir test, ikinci ve alakasız bir
+    kırığı taşıyordu.
+  - **Fix:** `agent/pyproject.toml`'a `"plotly>=5.24,<6"` + gerekçe yorumu (sınır bize ait, çünkü
+    upstream'in metadata'sı yanlış). `uv lock` → plotly 7.0.0 → 5.24.1; başka hiçbir paket runtime'da
+    plotly istemiyor (scikit-learn sadece `docs`/`examples` extra'sında).
+  - **Kanıt:** `import vectorbt` OK; `python -m backtest.run --start 2024-01-01 --end 2024-12-31`
+    uçtan uca koştu (momentum_6m −0.13 / mean_reversion_rsi 0.65 / ma_crossover 0.56 Sharpe,
+    SPY buy&hold 2.30 — yani 2024'te üç baseline de SPY'ın çok altında, ayrı bir konu).
+    S3 testi artık **belgelenen sebeple** düşüyor: `InvalidAccessKeyId` (creds gerçekten geçersiz).
+- [x] **Motor sinyali artık bir credential'ın arkasında değil** — `tests/test_backtest_engine_offline.py`:
+  elle kurulmuş deterministik down→up→down serisi üzerinde 10/30 SMA crossover; S3 yok, ağ yok,
+  anahtar yok. 4 test: (a) temiz bir interpreter'da `import` (subprocess — pytest zaten import
+  ettiği için in-process assert soğuk resolve'u kanıtlamaz), (b) tamamlanmış round-trip + her
+  headline metrik finite (NaN burada asıl failure mode: vectorbt hiç pozisyon açmayınca raise
+  etmiyor, NaN dönüyor), (c) yön kontrolü (%75'lik rally bacağında long olan strateji zarar
+  edemez; fee/slippage internals'ını pinlememek için kasıtlen zayıf), (d) shape mismatch guard.
+  **Ayrı dosyada, bilerek:** mevcut deselect tek bir test id'sini adlandırıyor ama
+  `--deselect tests/test_backtest_engine.py` bütün dosyayı götürürdü ve bu kontrol ondan sağ çıkmalı.
+  **687 test yeşil** (683 + 4), ruff temiz, mypy'de yeni hata yok (109 pre-existing, dokunmadığım
+  dosyalarda).
+- **Yan bulgu (fix EDİLMEDİ, backlog'a):** `engine.summary_stats` çok kolonlu bir portföyde
+  vectorbt'nin `stats()`'ını **sessizce ticker'lar arasında mean'liyor** ("Object has multiple
+  columns. Aggregating using mean" uyarısı her koşuda çıkıyor). Tek isimlik testte zararsız, ama
+  bir universe backtest'inde "portföyün Sharpe'ı" diye raporlanan sayı aslında **per-ticker Sharpe
+  ortalaması** — bu ikisi aynı şey değil. Ölçülmeden düzeltilmemeli.
+- **DEPLOY YOK — iki sebeple.** (1) SSH kapalı, box'a erişim yok. (2) Zaten gerek yok: değişiklik
+  dependency pin + test, karar yolunda ve eval yolunda hiçbir şey çalıştırmıyor; laptop/CI tarafı.
+- **Sıradaki:** (a) box'un inbound'unu açmak = Canberk (Hetzner firewall / nftables — tünel ayakta,
+  yani kutu sağ), (b) SSH dönünce reconcile + stop backfill (265 çıplak hisse) ve `git pull` ile
+  bugünün pin'ini box'a taşımak, (c) `backtest/data.py` → `survivor_prices` geçişi — artık
+  `run.py`/`optimize.py` gerçekten koştuğu için geçiş **doğrulanabilir** hale geldi (dün mümkün
+  değildi, ikisi de import'ta ölüyordu), (d) `summary_stats` mean-aggregation'ını ölçmek,
+  (e) 6-bracket survivorship tablosunu commit'li, seed'li bir script'le yeniden üretmek.
+
 ## Daily loop 2026-09-08 (🔴 BOX DARK 15. gün; survivorship sayacı kendi yazım hatamızı sayıyormuş)
 - **Canlı durum ALINAMADI, 15. gün.** `trader.fusapp.com` → CF **1033**, SSH 22 timeout, %100 ICMP
   kaybı. Broker'dan doğrudan (read-only): equity **$109,875.54**, last_equity aynı (günlük **$0.00**),

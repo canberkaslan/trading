@@ -30,6 +30,13 @@ Single feature commit `1e26449`, +178/−14 across 5 files.
 - **Rebased clean** onto current `main` (was 40 behind / 1 ahead) — no conflicts.
 - **Full suite green:** `167 passed, 1 skipped, 1 deselected` (the deselected
   `test_synthetic_sma_crossover_on_aapl_2024` fails locally on S3, skipped in CI — normal).
+  > Correction (2026-09-09): "fails locally on S3" was only half true, and the half that
+  > was wrong hid a real break. On 2026-09-09 the test was failing at `import vectorbt`
+  > — plotly 7 removed the `scattermapbox` trace that vectorbt's settings module names —
+  > so the whole vectorbt engine was unrunnable and this line explained the symptom away.
+  > `plotly<6` is now pinned in `agent/pyproject.toml` and the engine is covered by
+  > credential-free tests (`tests/test_backtest_engine_offline.py`) that no deselect
+  > can take with it. The S3 failure is real and is the only one left.
 
 ## Go-live steps (human, post-funding)
 

@@ -1,0 +1,524 @@
+<!-- @dsCard group="Components" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=880">
+<title>Lesson card — TRADER design system</title>
+<style>
+  /* ---- product tokens, verbatim from agent/api/static/dashboard.html :root (L11-L19) ---- */
+  :root{
+    color-scheme:dark;
+    --bg:#0a0b0d; --s1:#101216; --s2:#15181d; --s3:#1c2027;
+    --hair:rgba(255,255,255,.06); --hair2:rgba(255,255,255,.12);
+    --ink:#eef0f3; --ink2:#9aa3b2; --ink3:#828b9a;
+    --pos:#00d17a; --neg:#ff5d6c; --warn:#e2b93b; --bench:#767f8c;
+    --pos-dim:rgba(0,209,122,.12); --neg-dim:rgba(255,93,108,.12);
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,Inter,sans-serif;
+
+    /* ---- mobile/app/src/theme/colors.ts, verbatim ---- */
+    --m-bg:#0a0a0a; --m-surface:#171717; --m-elev:#262626;
+    --m-ink:#ffffff; --m-ink2:#a3a3a3; --m-ink3:#949494;
+    --m-up:#22c55e; --m-down:#ef4444; --m-accent:#a855f7;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{background:var(--bg)}
+  body{font-family:var(--sans);color:var(--ink);font-size:14px;line-height:1.45;
+    -webkit-font-smoothing:antialiased;width:880px;background:var(--bg)}
+  .page{padding:28px 28px 44px}
+
+  /* dashboard.html L29 — the global reset .lopt depends on. Reproduced so the
+     .lopt rule below can stay byte-identical to source. */
+  button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+
+  /* ---- documentation chrome ---- */
+  .eyebrow{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
+  h1{font-size:22px;font-weight:700;letter-spacing:-.01em;margin:8px 0 6px}
+  .lede{font-size:13px;color:var(--ink2);line-height:1.6;max-width:640px}
+  .srcs{margin-top:14px;font-family:var(--mono);font-size:10.5px;line-height:1.85;color:var(--ink3)}
+  .srcs b{color:var(--ink2);font-weight:400}
+  .rule{height:1px;background:var(--hair);margin:24px 0}
+  .sh{font-size:12px;font-weight:650;letter-spacing:.1em;color:var(--ink2);text-transform:uppercase}
+  .shn{font-size:12px;color:var(--ink3);margin-left:10px;letter-spacing:0;text-transform:none;font-weight:400}
+  .sec{margin-top:26px}
+  .sec>.sh{margin-bottom:12px}
+  .cap{font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-bottom:8px}
+  .val{font-family:var(--mono);font-size:10.5px;line-height:1.75;color:var(--ink2);margin-top:9px}
+  .val i{color:var(--ink3);font-style:normal}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+  .note{font-size:12px;color:var(--ink3);line-height:1.6;margin-top:10px}
+  .note b{color:var(--ink2);font-weight:600}
+  code{font-family:var(--mono)}
+
+  /* ---- product: card shell the lesson list sits inside (dashboard.html L108-L112).
+         ADAPTED: source .card also carries margin-top:16px, dropped here so the
+         two specimens in a .grid2 cell line up with their captions. ---- */
+  .card{background:var(--s1);border:1px solid var(--hair);border-radius:16px}
+  .card>.hd{display:flex;align-items:baseline;gap:10px;padding:18px 22px 0}
+  .card>.hd h2{font-size:12px;font-weight:650;letter-spacing:.1em;color:var(--ink2);text-transform:uppercase}
+  .card>.hd .sub{font-size:12px;color:var(--ink3);margin-left:auto}
+  .card>.bd{padding:14px 22px 18px}
+
+  /* ---- product: learn — dashboard.html L177-L203, verbatim ---- */
+  .lesson{border-bottom:1px solid var(--hair)}
+  .lesson:last-child{border-bottom:0}
+  .lesson>summary{list-style:none;cursor:pointer;padding:13px 0;display:flex;align-items:flex-start;gap:12px}
+  .lesson>summary::-webkit-details-marker{display:none}
+  .lesson .ld{width:8px;height:8px;border-radius:50%;background:var(--s3);margin-top:6px;flex:0 0 8px;transition:background .2s}
+  .lesson.solved .ld{background:var(--pos)}
+  .lesson .lt{font-size:14px;font-weight:650}
+  .lesson .ls{font-size:12.5px;color:var(--ink3);margin-top:3px;line-height:1.5}
+  .lesson .lx{margin-left:auto;color:var(--ink3);font-size:18px;line-height:1;transition:transform .2s}
+  .lesson[open] .lx{transform:rotate(45deg)}
+  .lbody{padding:0 0 16px 20px;display:flex;flex-direction:column;gap:12px}
+  .lbody p{font-size:13.5px;color:var(--ink2);line-height:1.65}
+  .ltake{background:var(--s2);border-radius:10px;padding:12px 14px}
+  .ltake b{display:block;font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-bottom:4px}
+  .ltake span{font-size:13.5px;line-height:1.55}
+  .lq{font-size:13.5px;font-weight:600;line-height:1.55}
+  .lopt{display:block;width:100%;text-align:left;border:1px solid var(--hair2);border-radius:10px;
+    padding:10px 14px;font-size:13.5px;line-height:1.5;transition:all .15s;margin-bottom:8px}
+  .lopt:hover:not(:disabled){border-color:rgba(255,255,255,.25)}
+  .lopt:disabled{cursor:default}
+  .lopt.right{border-color:var(--pos);background:var(--pos-dim)}
+  .lopt.wrong{border-color:var(--neg);background:var(--neg-dim)}
+  .lexp{font-size:13px;color:var(--ink2);line-height:1.6}
+  .lexp b{display:block;font-size:12px;margin-bottom:3px}
+  .lprog{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+  .lprog .tr{flex:1;height:4px;border-radius:2px;background:var(--s3);overflow:hidden}
+  .lprog .tr i{display:block;height:4px;border-radius:2px;background:var(--pos);width:0;transition:width .5s cubic-bezier(.2,.7,.3,1)}
+
+  /* dashboard.html L30 — the only focus treatment any lesson control gets. */
+  :focus-visible{outline:2px solid var(--pos);outline-offset:2px;border-radius:4px}
+
+  /* dashboard.html L36-L40 — reduced motion. The `*` rule is what removes the
+     dot fade, the chevron rotation, the option transition and the bar fill. */
+  @media(prefers-reduced-motion:reduce){
+    *{transition:none!important}
+  }
+
+  /* documentation-only: an elision marker where real body copy is repeated */
+  .elide{font-family:var(--mono);font-size:10.5px;color:var(--ink3);line-height:1.7;
+    border-left:1px solid var(--hair2);padding:2px 0 2px 12px}
+
+  /* ---- documentation-only framing for the mobile specimens. NOT a product style:
+         the real screen is a full-bleed SafeAreaView, not a rounded panel.
+         padding/gap do mirror learn.tsx `scroll: { padding: 24, gap: 12 }`. ---- */
+  .m-screen{background:var(--m-bg);border-radius:12px;padding:24px;font-family:var(--sans);
+    display:flex;flex-direction:column;gap:12px}
+
+  /* ---- mobile: app/(tabs)/learn.tsx StyleSheet (L160-L205), transcribed to CSS.
+         Not verbatim — it is a React Native StyleSheet object, so every rule here
+         is a translation. Deviations that are more than syntax are called out
+         inline below. ---- */
+  .m-card{background:var(--m-surface);border-radius:14px;padding:16px}
+  .m-head{display:flex;align-items:flex-start;gap:12px}
+  .m-dot{width:8px;height:8px;border-radius:4px;background:var(--m-elev);margin-top:6px;flex:0 0 8px}
+  .m-dot.done{background:var(--m-up)}
+  .m-title{color:var(--m-ink);font-size:16px;font-weight:700}
+  .m-sum{color:var(--m-ink2);font-size:12.5px;margin-top:3px;line-height:17px}
+  .m-chev{color:var(--m-ink3);font-size:20px;font-weight:600;width:20px;text-align:center}
+  .m-body{margin-top:14px;border-top:1px solid var(--m-elev);padding-top:14px;
+    display:flex;flex-direction:column;gap:12px}
+  .m-para{color:var(--m-ink2);font-size:13.5px;line-height:20px}
+  .m-take{background:var(--m-elev);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:4px}
+  .m-take-l{color:var(--m-ink3);font-size:10.5px;font-weight:700;letter-spacing:1px;text-transform:uppercase}
+  .m-take-t{color:var(--m-ink);font-size:13.5px;line-height:19px}
+  .m-q{color:var(--m-ink);font-size:14px;font-weight:600;margin-top:4px;line-height:20px}
+  /* DEVIATION: source is justifyContent:'center' in RN's default column flex,
+     which centres on the vertical axis. align-items:center in a CSS row flex is
+     the equivalent, not a copy. */
+  .m-opt{min-height:44px;display:flex;align-items:center;border:1px solid var(--m-elev);
+    border-radius:10px;padding:10px 14px}
+  .m-opt.right{border-color:var(--m-up);background:rgba(34,197,94,0.10)}
+  .m-opt.wrong{border-color:var(--m-down);background:rgba(239,68,68,0.10)}
+  .m-opt-t{color:var(--m-ink);font-size:13.5px;line-height:19px}
+  .m-exp{display:flex;flex-direction:column;gap:4px;margin-top:4px}
+  .m-exp-h{font-size:12px;font-weight:700}
+  .m-exp-t{color:var(--m-ink2);font-size:13px;line-height:19px}
+  .m-prog{display:flex;align-items:center;gap:12px;margin-bottom:4px}
+  .m-prog .tr{flex:1;height:4px;border-radius:2px;background:var(--m-elev);overflow:hidden}
+  .m-prog .tr i{display:block;height:4px;border-radius:2px;background:var(--m-accent)}
+  .m-prog .n{color:var(--m-ink3);font-size:12px;font-variant-numeric:tabular-nums}
+
+  /* token table */
+  table{border-collapse:collapse;width:100%;font-size:11.5px}
+  th{text-align:left;font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--ink3);padding:0 12px 8px 0;border-bottom:1px solid var(--hair)}
+  td{padding:7px 12px 7px 0;border-bottom:1px solid var(--hair);color:var(--ink2);vertical-align:top}
+  td.k{font-family:var(--mono);color:var(--ink);white-space:nowrap}
+  td.v{font-family:var(--mono);color:var(--ink2);white-space:nowrap}
+  tr:last-child td{border-bottom:0}
+  .sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:-1px;
+    border:1px solid var(--hair2)}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="eyebrow">Components</div>
+  <h1>Lesson card</h1>
+  <p class="lede">A row in the Learn list: a solved dot, a title and one-line summary, and a disclosure that
+  opens onto the lesson body, a takeaway block and a three-option quiz. Answering reveals the
+  correct option, the picked option and an explanation — and, if the pick was right, turns the dot green
+  and advances the progress bar.</p>
+  <div class="srcs">
+    web &nbsp;<b>agent/api/static/dashboard.html</b> &nbsp;·&nbsp; css L177–L203 &nbsp;·&nbsp; <b>renderLearn()</b> L583–L607
+    &nbsp;·&nbsp; button reset L29 &nbsp;·&nbsp; focus L30 &nbsp;·&nbsp; reduced motion L36–L40<br>
+    mobile &nbsp;<b>mobile/app/app/(tabs)/learn.tsx</b> &nbsp;·&nbsp; tokens <b>mobile/app/src/theme/colors.ts</b>
+    &nbsp;·&nbsp; <b>MIN_TOUCH_TARGET</b> = 44 from <b>src/utils/a11y.ts</b><br>
+    content &nbsp;web fetches <b>agent/api/static/lessons.json</b> at <b>GET /v1/learn</b>; mobile bundles a checked-in
+    copy at <b>src/content/lessons.json</b>. 8 lessons, id <b>sharpe</b> shown throughout<br>
+    language &nbsp;web default <b>LANG='tr'</b> (localStorage <b>trader_lang</b>); every specimen here is the <b>en</b> variant
+  </div>
+
+  <div class="rule"></div>
+
+  <!-- ============ 1. progress ============ -->
+  <section class="sec">
+    <div class="sh">Progress bar<span class="shn">.lprog — sits above the first lesson, inside .card &gt; .bd</span></div>
+    <div class="grid2">
+      <div>
+        <div class="cap">0 of 8 solved</div>
+        <div class="card">
+          <div class="hd"><h2>Learn</h2><span class="sub">0/8</span></div>
+          <div class="bd" style="padding-bottom:14px">
+            <div class="lprog"><span class="tr"><i style="width:0%"></i></span></div>
+          </div>
+        </div>
+        <div class="val"><i>track</i> 4px h · r2 · --s3 #1c2027<br><i>fill</i> --pos #00d17a · width 0%<br><i>header sub</i> 12px --ink3 #828b9a</div>
+      </div>
+      <div>
+        <div class="cap">3 of 8 solved</div>
+        <div class="card">
+          <div class="hd"><h2>Learn</h2><span class="sub">3/8</span></div>
+          <div class="bd" style="padding-bottom:14px">
+            <div class="lprog"><span class="tr"><i style="width:38%"></i></span></div>
+          </div>
+        </div>
+        <div class="val"><i>fill</i> width:38% <i>— (3/8*100).toFixed(0), not 37.5</i><br>
+        <i>transition</i> width .5s cubic-bezier(.2,.7,.3,1)<br>
+        <i>lprog</i> gap 12px · margin-bottom 6px</div>
+      </div>
+    </div>
+    <p class="note"><b>Counted, not tallied.</b> <span style="color:var(--ink3)">done = lessons whose stored pick equals
+    <code>quizAnswer</code>. A wrong answer is stored but never counts, so the bar can stay put
+    after an answer.</span></p>
+    <p class="note"><b>Painted twice.</b> <span style="color:var(--ink3)">renderLearn() writes the fill at its final width
+    in the template string, then a <code>requestAnimationFrame</code> callback sets the same width again on the live node —
+    that second write is what the <code>.5s</code> transition animates from 0.</span></p>
+  </section>
+
+  <div class="rule"></div>
+
+  <!-- ============ 2. collapsed ============ -->
+  <section class="sec">
+    <div class="sh">Collapsed<span class="shn">&lt;details&gt; closed — the default row</span></div>
+    <div class="grid2">
+      <div>
+        <div class="cap">Unsolved · dot --s3</div>
+        <div class="card"><div class="bd" style="padding-top:4px;padding-bottom:4px">
+          <details class="lesson">
+            <summary><span class="ld"></span><span><span class="lt">Return Per Unit Risk</span>
+              <span class="ls" style="display:block">Why a return number means nothing until you divide it by the risk that bought it.</span></span><span class="lx">+</span></summary>
+          </details>
+        </div></div>
+        <div class="val"><i>.ld</i> 8px · r50% · --s3 #1c2027 · margin-top 6px<br>
+        <i>.lt</i> 14px / 650 · --ink #eef0f3 <i>(inherited, not declared)</i><br>
+        <i>.ls</i> 12.5px / 1.5 · --ink3 #828b9a · mt 3px<br>
+        <i>.lx</i> "+" 18px · --ink3 · rotate 0deg</div>
+      </div>
+      <div>
+        <div class="cap">Solved · dot --pos</div>
+        <div class="card"><div class="bd" style="padding-top:4px;padding-bottom:4px">
+          <details class="lesson solved">
+            <summary><span class="ld"></span><span><span class="lt">Return Per Unit Risk</span>
+              <span class="ls" style="display:block">Why a return number means nothing until you divide it by the risk that bought it.</span></span><span class="lx">+</span></summary>
+          </details>
+        </div></div>
+        <div class="val"><i>.lesson.solved .ld</i> --pos #00d17a<br>
+        <i>transition</i> background .2s<br>
+        <i>summary</i> padding 13px 0 · gap 12px · align flex-start<br>
+        <i>row divider</i> border-bottom 1px --hair rgba(255,255,255,.06)</div>
+      </div>
+    </div>
+    <p class="note"><b>No divider on these specimens.</b> <span style="color:var(--ink3)">Each row above is the only
+    child of its <code>.bd</code>, so <code>.lesson:last-child{border-bottom:0}</code> wins. In the product the hairline
+    shows on all rows but the last.</span></p>
+  </section>
+
+  <div class="rule"></div>
+
+  <!-- ============ 3. expanded, unanswered ============ -->
+  <section class="sec">
+    <div class="sh">Expanded — unanswered<span class="shn">&lt;details open&gt; · .lbody, .ltake, .lq, three .lopt · no .lexp yet</span></div>
+    <div class="card"><div class="bd" style="padding-top:4px;padding-bottom:4px">
+      <details class="lesson" open>
+        <summary><span class="ld"></span><span><span class="lt">Return Per Unit Risk</span>
+          <span class="ls" style="display:block">Why a return number means nothing until you divide it by the risk that bought it.</span></span><span class="lx">+</span></summary>
+        <div class="lbody">
+          <p>Two accounts can both finish a window up 4% and be nothing alike: one drifted there, the other swung six percent in a week and happened to land on the same figure. Sharpe collapses that difference into a single number — it takes the mean of the daily excess returns, divides by the standard deviation of that same excess series, and annualizes by multiplying by the square root of 252. The question it answers is not "how much did we make" but "how much were we paid for each unit of wobble we agreed to carry".</p>
+          <p>The "excess" part is a deliberate choice in this system. The scorecard pulls a real risk-free rate — the latest 3-month T-bill print from FRED, falling back to a manually set environment override and then to zero — and grades the strategy only on return above that rate. Measuring against a 0% baseline while idle cash yields 4-5% would quietly inflate the ratio and tilt the GO/NO-GO toward GO, so the report prints the rate it used and which of those three sources it came from right beside the number.</p>
+          <div class="elide">lessons.json → sharpe.en.body[2], 1238 chars — elided here only so this card stays legible. Rendered in full by the product.</div>
+          <div class="ltake"><b>Takeaway</b><span>A return figure is uninterpretable until you know what volatility was spent to get it.</span></div>
+          <div class="lq">Two strategies both returned +6% over the same window, but A's Sharpe is 1.4 and B's is 0.3. What does that gap actually tell you?</div>
+          <div>
+            <button class="lopt">B reached the same result along a much rougher path — the same money was bought with more volatility</button>
+            <button class="lopt">B closed more days at a loss than A did</button>
+            <button class="lopt">B will lag A over the next period</button>
+          </div>
+        </div>
+      </details>
+    </div></div>
+    <div class="val">
+      <i>.lbody</i> padding 0 0 16px 20px · flex column · gap 12px &nbsp;<i>(20px left = 8px dot + 12px gap)</i><br>
+      <i>.lbody p</i> 13.5px / 1.65 · --ink2 #9aa3b2 &nbsp;<i>— one &lt;p&gt; per lessons.json body[] entry; sharpe has 3</i><br>
+      <i>.ltake</i> --s2 #15181d · r10 · padding 12px 14px &nbsp;·&nbsp; <i>b</i> 10.5px / 700 · ls .1em · uppercase · --ink3 · mb 4px &nbsp;·&nbsp; <i>span</i> 13.5px / 1.55 · --ink (inherited)<br>
+      <i>.lq</i> 13.5px / 600 / 1.55 · --ink (inherited)<br>
+      <i>.lopt</i> border 1px --hair2 rgba(255,255,255,.12) · r10 · padding 10px 14px · 13.5px / 1.5 · mb 8px · transition all .15s<br>
+      <i>.lopt</i> <i>font, colour and transparent background all come from the global</i> <code>button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}</code> <i>at L29, not from .lopt itself</i><br>
+      <i>.lopt:hover:not(:disabled)</i> border-color rgba(255,255,255,.25) &nbsp;<i>— hover the middle option to see it</i><br>
+      <i>.lesson[open] .lx</i> transform rotate(45deg) — the same "+" glyph, no icon swap
+    </div>
+  </section>
+
+  <div class="rule"></div>
+
+  <!-- ============ 4. answered ============ -->
+  <section class="sec">
+    <div class="sh">Answered<span class="shn">picked !== undefined → every .lopt disabled, correct one marked, .lexp appended</span></div>
+    <div class="grid2">
+
+      <div>
+        <div class="cap">Answered correct · picked 0 · dot goes green</div>
+        <div class="card"><div class="bd" style="padding-top:4px;padding-bottom:4px">
+          <details class="lesson solved" open>
+            <summary><span class="ld"></span><span><span class="lt">Return Per Unit Risk</span>
+              <span class="ls" style="display:block">Why a return number means nothing until you divide it by the risk that bought it.</span></span><span class="lx">+</span></summary>
+            <div class="lbody">
+              <div class="elide">body[0..2] + .ltake unchanged — elided</div>
+              <div class="lq">Two strategies both returned +6% over the same window, but A's Sharpe is 1.4 and B's is 0.3. What does that gap actually tell you?</div>
+              <div>
+                <button class="lopt right" disabled>B reached the same result along a much rougher path — the same money was bought with more volatility</button>
+                <button class="lopt" disabled>B closed more days at a loss than A did</button>
+                <button class="lopt" disabled>B will lag A over the next period</button>
+              </div>
+              <div class="lexp"><b style="color:var(--pos)">Correct</b>Sharpe divides excess return by its own standard deviation, so with returns equal the lower one simply describes a noisier path; how many days closed green is a different metric entirely (the report shows it separately as "Positive days"), and Sharpe measures a past series rather than making any claim about the next one.</div>
+            </div>
+          </details>
+        </div></div>
+        <div class="val">
+          <i>.lopt.right</i> border --pos #00d17a · bg --pos-dim rgba(0,209,122,.12)<br>
+          <i>.lexp b</i> 12px · block · mb 3px · <span style="color:var(--pos)">var(--pos)</span> — colour set inline by renderLearn()<br>
+          <i>.lexp b</i> <i>weight is the &lt;b&gt; UA default (bold); unlike .ltake b, no font-weight is declared</i><br>
+          <i>.lexp</i> 13px / 1.6 · --ink2<br>
+          <i>label</i> l_correct — en "Correct", tr "Doğru"<br>
+          <i>.lesson.solved .ld</i> --pos · progress bar +1
+        </div>
+      </div>
+
+      <div>
+        <div class="cap">Answered wrong · picked 2 · dot stays --s3</div>
+        <div class="card"><div class="bd" style="padding-top:4px;padding-bottom:4px">
+          <details class="lesson" open>
+            <summary><span class="ld"></span><span><span class="lt">Return Per Unit Risk</span>
+              <span class="ls" style="display:block">Why a return number means nothing until you divide it by the risk that bought it.</span></span><span class="lx">+</span></summary>
+            <div class="lbody">
+              <div class="elide">body[0..2] + .ltake unchanged — elided</div>
+              <div class="lq">Two strategies both returned +6% over the same window, but A's Sharpe is 1.4 and B's is 0.3. What does that gap actually tell you?</div>
+              <div>
+                <button class="lopt right" disabled>B reached the same result along a much rougher path — the same money was bought with more volatility</button>
+                <button class="lopt" disabled>B closed more days at a loss than A did</button>
+                <button class="lopt wrong" disabled>B will lag A over the next period</button>
+              </div>
+              <div class="lexp"><b style="color:var(--neg)">Not quite</b>Sharpe divides excess return by its own standard deviation, so with returns equal the lower one simply describes a noisier path; how many days closed green is a different metric entirely (the report shows it separately as "Positive days"), and Sharpe measures a past series rather than making any claim about the next one.</div>
+            </div>
+          </details>
+        </div></div>
+        <div class="val">
+          <i>.lopt.wrong</i> border --neg #ff5d6c · bg --neg-dim rgba(255,93,108,.12)<br>
+          <i>.lexp b</i> <span style="color:var(--neg)">var(--neg)</span> · label l_wrong — en "Not quite", tr "Yanlış"<br>
+          <i>correct option</i> still gets .right — the answer is revealed either way<br>
+          <i>untouched option</i> keeps --hair2 border, no fill<br>
+          <i>same .lexp copy</i> — quizExplain is one string, not branched on the pick
+        </div>
+      </div>
+
+    </div>
+    <p class="note"><b>One shot, then frozen.</b> <span style="color:var(--ink3)">A pick is written to
+    <code>localStorage['trader_learn']</code> and every option in that lesson gets
+    <code>disabled</code>. There is no retry, no reset control and no visual difference
+    between a disabled and an enabled option other than the hover — <code>.lopt:disabled</code>
+    only sets <code>cursor:default</code>.</span></p>
+    <p class="note"><b>Re-render keeps the disclosure open.</b> <span style="color:var(--ink3)">Answering rebuilds the whole
+    list from scratch, so the click handler collects the ids of every open <code>&lt;details&gt;</code> first and re-opens
+    them afterwards. More than one lesson can be open at once on web.</span></p>
+  </section>
+
+  <div class="rule"></div>
+
+  <!-- ============ 5. mobile ============ -->
+  <section class="sec">
+    <div class="sh">Mobile<span class="shn">app/(tabs)/learn.tsx — same anatomy, different tokens and a card per lesson</span></div>
+    <div class="grid2">
+
+      <div>
+        <div class="cap">Collapsed — unsolved / solved, plus .progressRow</div>
+        <div class="m-screen">
+          <div class="m-prog"><span class="tr"><i style="width:37.5%"></i></span><span class="n">3/8</span></div>
+          <div class="m-card">
+            <div class="m-head">
+              <span class="m-dot"></span>
+              <div style="flex:1">
+                <div class="m-title">Return Per Unit Risk</div>
+                <div class="m-sum">Why a return number means nothing until you divide it by the risk that bought it.</div>
+              </div>
+              <span class="m-chev">+</span>
+            </div>
+          </div>
+          <div class="m-card">
+            <div class="m-head">
+              <span class="m-dot done"></span>
+              <div style="flex:1">
+                <div class="m-title">Return Per Unit Risk</div>
+                <div class="m-sum">Why a return number means nothing until you divide it by the risk that bought it.</div>
+              </div>
+              <span class="m-chev">&minus;</span>
+            </div>
+          </div>
+        </div>
+        <div class="val">
+          <i>card</i> #171717 · r14 · padding 16 &nbsp;<i>(web: no card, a --hair row divider)</i><br>
+          <i>title</i> 16px / 700 · #ffffff &nbsp;<i>(web: 14px / 650 · #eef0f3)</i><br>
+          <i>summary</i> 12.5px · lh 17 · #a3a3a3 &nbsp;<i>(web: --ink3 #828b9a)</i><br>
+          <i>chevron</i> 20px / 600 · #949494 · w20 · centred — glyph swaps + / &minus;<br>
+          <i>progressFill</i> <span class="sw" style="background:var(--m-accent)"></span>colors.accent #a855f7 &nbsp;<i>(web: --pos #00d17a)</i><br>
+          <i>progress width</i> 37.5% <i>— unrounded, no toFixed (web rounds to 38%)</i><br>
+          <i>progressText</i> 12px · #949494 · tabular-nums, default family <i>(web sub: 12px --ink3, no tabular-nums)</i>
+        </div>
+      </div>
+
+      <div>
+        <div class="cap">Expanded — answered wrong</div>
+        <div class="m-screen">
+          <div class="m-card">
+            <div class="m-head">
+              <span class="m-dot"></span>
+              <div style="flex:1">
+                <div class="m-title">Return Per Unit Risk</div>
+                <div class="m-sum">Why a return number means nothing until you divide it by the risk that bought it.</div>
+              </div>
+              <span class="m-chev">&minus;</span>
+            </div>
+            <div class="m-body">
+              <div class="elide" style="border-left-color:var(--m-elev);color:var(--m-ink3)">body paragraphs elided</div>
+              <div class="m-take">
+                <div class="m-take-l">Takeaway</div>
+                <div class="m-take-t">A return figure is uninterpretable until you know what volatility was spent to get it.</div>
+              </div>
+              <div class="m-q">Two strategies both returned +6% over the same window, but A's Sharpe is 1.4 and B's is 0.3. What does that gap actually tell you?</div>
+              <div class="m-opt right"><span class="m-opt-t">B reached the same result along a much rougher path — the same money was bought with more volatility</span></div>
+              <div class="m-opt"><span class="m-opt-t">B closed more days at a loss than A did</span></div>
+              <div class="m-opt wrong"><span class="m-opt-t">B will lag A over the next period</span></div>
+              <div class="m-exp">
+                <div class="m-exp-h" style="color:var(--m-down)">Not quite</div>
+                <div class="m-exp-t">Sharpe divides excess return by its own standard deviation, so with returns equal the lower one simply describes a noisier path.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="val">
+          <i>body</i> mt 14 · borderTop 1px #262626 · pt 14 · gap 12 &nbsp;<i>(web has no top rule)</i><br>
+          <i>option</i> minHeight 44 (MIN_TOUCH_TARGET) · border #262626 · r10 · pv 10 / ph 14<br>
+          <i>option spacing</i> from body gap 12 &nbsp;<i>(web: .lopt margin-bottom 8px)</i><br>
+          <i>optionRight</i> border colors.up #22c55e · fill rgba(34,197,94,0.10) &nbsp;<i>fill is a literal, not a token</i><br>
+          <i>optionWrong</i> border colors.down #ef4444 · fill rgba(239,68,68,0.10) &nbsp;<i>fill is a literal, not a token</i><br>
+          <i>takeaway</i> #262626 · r10 · p12 · gap 4 &nbsp;·&nbsp; label ls 1px (web: .1em)<br>
+          <i>explainHead</i> 12px / 700, colour inline colors.up / colors.down<br>
+          <i>quizQ</i> 14px / 600 · lh 20 · mt 4 · #ffffff &nbsp;<i>(web .lq: 13.5px / 600 / 1.55)</i>
+        </div>
+      </div>
+
+    </div>
+    <p class="note"><b>One open at a time.</b> <span style="color:var(--ink3)">Mobile holds a single
+    <code>openId</code>, so opening a lesson closes the previous one — the web <code>&lt;details&gt;</code> list has no such
+    limit. The whole card is one <code>Pressable</code>, so a tap anywhere on it toggles; the option rows are nested
+    <code>Pressable</code>s inside that.</span></p>
+    <p class="note"><b>Answers are not persisted on mobile.</b> <span style="color:var(--ink3)">Picks live in a
+    <code>useState</code> map, so progress resets on relaunch. Web writes
+    <code>localStorage['trader_learn']</code>. Same anatomy, different lifetime.</span></p>
+  </section>
+
+  <div class="rule"></div>
+
+  <!-- ============ 6. tokens ============ -->
+  <section class="sec">
+    <div class="sh">Token map<span class="shn">web ↔ mobile, same role, different value</span></div>
+    <table>
+      <thead><tr><th style="width:150px">Role</th><th style="width:250px">Web (dashboard.html)</th><th style="width:230px">Mobile (colors.ts)</th><th>Same?</th></tr></thead>
+      <tbody>
+        <tr><td>Page surface</td><td class="v"><span class="sw" style="background:#0a0b0d"></span>--bg #0a0b0d</td><td class="v"><span class="sw" style="background:#0a0a0a"></span>background #0a0a0a</td><td>near</td></tr>
+        <tr><td>Card surface</td><td class="v"><span class="sw" style="background:#101216"></span>--s1 #101216</td><td class="v"><span class="sw" style="background:#171717"></span>surface #171717</td><td>no</td></tr>
+        <tr><td>Takeaway / dot rest</td><td class="v"><span class="sw" style="background:#15181d"></span>--s2 #15181d · <span class="sw" style="background:#1c2027"></span>--s3 #1c2027</td><td class="v"><span class="sw" style="background:#262626"></span>surfaceElevated #262626</td><td>no — one token for two</td></tr>
+        <tr><td>Primary text</td><td class="v"><span class="sw" style="background:#eef0f3"></span>--ink #eef0f3</td><td class="v"><span class="sw" style="background:#ffffff"></span>textPrimary #ffffff</td><td>no</td></tr>
+        <tr><td>Body text</td><td class="v"><span class="sw" style="background:#9aa3b2"></span>--ink2 #9aa3b2</td><td class="v"><span class="sw" style="background:#a3a3a3"></span>textSecondary #a3a3a3</td><td>near</td></tr>
+        <tr><td>Muted / summary</td><td class="v"><span class="sw" style="background:#828b9a"></span>--ink3 #828b9a</td><td class="v"><span class="sw" style="background:#949494"></span>textMuted #949494</td><td>near — both lifted for WCAG AA</td></tr>
+        <tr><td>Correct / solved</td><td class="v"><span class="sw" style="background:#00d17a"></span>--pos #00d17a</td><td class="v"><span class="sw" style="background:#22c55e"></span>up #22c55e</td><td>no</td></tr>
+        <tr><td>Wrong</td><td class="v"><span class="sw" style="background:#ff5d6c"></span>--neg #ff5d6c</td><td class="v"><span class="sw" style="background:#ef4444"></span>down #ef4444</td><td>no</td></tr>
+        <tr><td>Option fill</td><td class="v">--pos-dim .12 / --neg-dim .12</td><td class="v">rgba(…,0.10) inline</td><td>no</td></tr>
+        <tr><td>Progress fill</td><td class="v"><span class="sw" style="background:#00d17a"></span>--pos #00d17a</td><td class="v"><span class="sw" style="background:#a855f7"></span>accent #a855f7</td><td>no</td></tr>
+        <tr><td>Option border</td><td class="v">--hair2 rgba(255,255,255,.12)</td><td class="v">#262626 (opaque)</td><td>no</td></tr>
+        <tr><td>Option hover border</td><td class="v">rgba(255,255,255,.25) literal</td><td class="v">— no hover state</td><td>web only</td></tr>
+      </tbody>
+    </table>
+    <p class="note"><b>--ink3 moved.</b> <span style="color:var(--ink3)">It was #5d6673 and now reads #828b9a, lifted so the
+    lesson summary and the takeaway label clear WCAG AA on --s1 and --s2. Mobile's textMuted made the same move (#666 →
+    #949494, guarded by <code>utils/contrast.test.ts</code>), which is why the two are now close rather than far apart.</span></p>
+  </section>
+
+  <div class="rule"></div>
+
+  <!-- ============ 7. motion ============ -->
+  <section class="sec">
+    <div class="sh">Motion<span class="shn">four transitions on web, one layout animation on mobile</span></div>
+    <div class="val" style="margin-top:0">
+      <i>dot</i> background .2s — --s3 → --pos when a lesson turns solved<br>
+      <i>chevron</i> transform .2s — 0 → 45deg on <code>[open]</code><br>
+      <i>option</i> all .15s — carries the hover border and the right/wrong reveal<br>
+      <i>progress fill</i> width .5s cubic-bezier(.2,.7,.3,1) — driven by the rAF re-write, not the first paint<br>
+      <i>disclosure itself</i> — none. <code>&lt;details&gt;</code> opens instantly; no height animation exists<br>
+      <i>reduced motion</i> — <code>@media(prefers-reduced-motion:reduce){*{transition:none!important}}</code> at L36–L40
+      removes all four at once. There is no reduced-motion variant, only the removal<br>
+      <i>mobile</i> — <code>LayoutAnimation.Presets.easeInEaseOut</code> on every toggle, so the mobile disclosure
+      <i>does</i> animate its height where web does not. No token colour transitions on mobile
+    </div>
+  </section>
+
+  <div class="rule"></div>
+
+  <!-- ============ 8. what the source does not have ============ -->
+  <section class="sec">
+    <div class="sh">States that do not exist</div>
+    <div class="val" style="margin-top:0">
+      <i>loading</i> — no <code>.sk</code> skeleton is applied to <code>#learn</code> (the rule exists at L208 but is only
+      used by <code>#chart</code>); the list appears in one paint<br>
+      <i>error</i> — a failed <code>GET /v1/learn</code> hides the whole section: <code>$('#learn').closest('section').style.display='none'</code>.
+      There is no error row and nothing for this card to draw. Mobile cannot fail here at all — its content is bundled<br>
+      <i>empty</i> — none; <code>renderLearn()</code> divides by <code>LESSONS.length</code>, so a zero-length payload
+      would print <code>width:NaN%</code> and <code>0/0</code> rather than an empty state. The shared mobile
+      <code>EmptyState</code> / <code>ErrorState</code> components are not imported by the Learn tab<br>
+      <i>retry / reset</i> — none on web: a pick is permanent per browser. Mobile has no reset control either, but its
+      picks are in-memory, so relaunching the app is the de-facto reset<br>
+      <i>focus</i> — global only: <code>:focus-visible{outline:2px solid var(--pos);outline-offset:2px;border-radius:4px}</code>.
+      No per-option focus style, and the 4px radius does not match the option's own 10px<br>
+      <i>active / pressed</i> — none. Neither <code>.lopt</code> nor the mobile <code>Pressable</code> defines a pressed
+      appearance; the reveal is the only feedback<br>
+      <i>icons</i> — the lesson card ships no SVG. The disclosure is the literal glyph "+", rotated 45° when open on web,
+      and swapped for "−" (U+2212) on mobile
+    </div>
+  </section>
+
+</div>
+</body>
+</html>

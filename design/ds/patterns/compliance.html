@@ -1,0 +1,639 @@
+<!-- @dsCard group="Patterns" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Compliance Surface</title>
+<style>
+  :root{
+    /* token values as declared in agent/api/static/dashboard.html :root
+       (the whole block, unedited — only `color-scheme:dark` is dropped
+       because this card sets its own) */
+    --bg:#0a0b0d; --s1:#101216; --s2:#15181d; --s3:#1c2027;
+    --hair:rgba(255,255,255,.06); --hair2:rgba(255,255,255,.12);
+    --ink:#eef0f3; --ink2:#9aa3b2; --ink3:#828b9a;
+    --pos:#00d17a; --neg:#ff5d6c; --warn:#e2b93b; --bench:#767f8c;
+    --pos-dim:rgba(0,209,122,.12); --neg-dim:rgba(255,93,108,.12);
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,Inter,sans-serif;
+
+    /* mobile/app/src/theme/colors.ts — the six tokens this card renders */
+    --m-bg:#0a0a0a;      /* background */
+    --m-surface:#171717; /* surface */
+    --m-elev:#262626;    /* surfaceElevated */
+    --m-ink:#ffffff;     /* textPrimary */
+    --m-ink2:#a3a3a3;    /* textSecondary */
+    --m-ink3:#949494;    /* textMuted — what all seven disclaimers now use */
+    --m-up:#22c55e;      /* up */
+    --m-down:#ef4444;    /* down */
+    --m-warn:#f59e0b;    /* warning */
+
+    /* two literals the screens write inline rather than through colors.ts */
+    --m-ow:#86efac;      /* RATING_COLOR.Overweight — agents.tsx:17, ask.tsx */
+    --m-ph:#666;         /* login.tsx placeholderTextColor, lines 23 and 31 */
+
+    /* RN default text font — no fontFamily is set anywhere under app/ or src/ */
+    --rn:-apple-system,BlinkMacSystemFont,"SF Pro Text",Roboto,"Helvetica Neue",sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{background:var(--bg)}
+  body{font-family:var(--sans);background:var(--bg);color:var(--ink);
+    font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
+  .page{width:880px;padding:26px 24px 34px}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  h1{font-size:15px;font-weight:700;letter-spacing:.02em}
+  .sub{font-size:12px;color:var(--ink3);margin-top:4px}
+  .cap{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+  .val{font-family:var(--mono);font-size:10.5px;color:var(--ink3);line-height:1.5;
+    font-variant-numeric:tabular-nums}
+  .val b{color:var(--ink2);font-weight:400}
+  hr{border:0;border-top:1px solid var(--hair);margin:22px 0}
+
+  .panel-h{display:flex;align-items:baseline;gap:10px;margin-bottom:12px}
+  .panel-h h2{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+  .panel-h .note{font-size:11px;color:var(--ink3)}
+  .lbl{font-size:10px;color:var(--ink3);letter-spacing:.04em}
+  .spec{display:flex;flex-direction:column;gap:7px}
+  .adapt{font-size:10px;color:var(--ink3);line-height:1.55;font-style:italic;
+    border-left:2px solid var(--hair2);padding-left:9px}
+
+  /* ── THE RULE ─────────────────────────────────────────────────────────── */
+  .rule{display:flex;gap:12px;align-items:flex-start;border:1px solid rgba(0,209,122,.24);
+    background:rgba(0,209,122,.05);border-radius:12px;padding:13px 15px;margin-top:16px}
+  .rule svg{width:15px;height:15px;flex:none;margin-top:1px}
+  .rule p{font-size:12px;color:var(--ink2);line-height:1.6}
+  .rule b{color:var(--ink);font-weight:650}
+
+  /* ══ WEB top bar ═══════════════════════════════════════════════════════
+     Copied from dashboard.html lines 40-66. Two rules are altered so the
+     specimen can sit inside this card; every altered declaration is listed
+     in the caption under the specimen. Nothing here is byte-for-byte. */
+  .top{background:rgba(10,11,13,.75);border-bottom:1px solid var(--hair);
+    border-radius:10px 10px 0 0}
+  .top-in{padding:13px 20px;display:flex;align-items:center;gap:12px}
+  .mark{display:flex;align-items:center;gap:9px}
+  .mark b{font-size:13px;font-weight:700;letter-spacing:.16em}
+  .tag{font-size:10px;font-weight:700;letter-spacing:.1em;color:var(--ink3);
+    border:1px solid var(--hair2);border-radius:5px;padding:2px 7px}
+  .live{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:600;
+    border-radius:999px;padding:5px 12px}
+  .live .d{width:7px;height:7px;border-radius:50%;position:relative}
+  .live .d::after{content:"";position:absolute;inset:-4px;border-radius:50%;opacity:.5;
+    animation:pulse 2s ease-out infinite}
+  @keyframes pulse{0%{transform:scale(.4);opacity:.6}80%{transform:scale(1.6);opacity:0}100%{opacity:0}}
+  .live.wait{color:var(--warn);background:rgba(226,185,59,.12)}
+  .live.wait .d{background:var(--warn)}.live.wait .d::after{background:var(--warn)}
+  .top .r{margin-left:auto;display:flex;align-items:center;gap:12px}
+  .stamp{font-size:12px;color:var(--ink3)}
+  .icobtn{width:32px;height:32px;border:1px solid var(--hair2);border-radius:9px;
+    display:inline-flex;align-items:center;justify-content:center;color:var(--ink2);transition:all .15s}
+  .icobtn svg{width:14px;height:14px}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+  /* ══ WEB footer ════════════════════════════════════════════════════════
+     dashboard.html:207, with margin-top:44px removed so the two language
+     specimens stack tightly. Every other declaration is as written. */
+  footer{font-size:11.5px;color:var(--ink3);text-align:center;line-height:1.8}
+  .footwrap{background:var(--bg);border:1px solid var(--hair);border-radius:10px;padding:18px 20px}
+
+  /* ══ MOBILE: 375pt device column ═══════════════════════════════════════ */
+  .dev{width:375px;background:var(--m-bg);border:1px solid var(--hair);border-radius:14px;
+    overflow:hidden;font-family:var(--rn)}
+  .dev-scroll{padding:24px;display:flex;flex-direction:column;gap:12px}
+  .dev-scroll.nopad{padding:0}
+  .m-card{background:var(--m-surface);border-radius:12px;padding:16px}
+  .m-row{display:flex;justify-content:space-between;align-items:center}
+  .m-ticker{color:var(--m-ink);font-size:18px;font-weight:600}
+  .m-rating{font-size:15px;font-weight:700}
+  .m-muted{color:var(--m-ink3);font-size:12px}
+  .m-hero{padding:24px}
+  .m-herolbl{color:var(--m-ink2);font-size:14px}
+  .m-heroval{color:var(--m-ink);font-size:36px;font-weight:700;margin-top:4px}
+  .m-herochg{font-size:16px;font-weight:600;margin-top:8px}
+
+  /* styles.disclaimer — three declarations, all now on colors.textMuted */
+  .disc{color:var(--m-ink3);font-size:11px;font-style:italic;text-align:center;
+    padding:20px 0}
+  .disc-portfolio{color:var(--m-ink3);font-size:11px;font-style:italic;text-align:center;
+    padding:24px}
+  .disc-login{color:var(--m-ink3);font-size:11px;font-style:italic;margin-top:32px}
+
+  .m-input{background:var(--m-surface);color:var(--m-ink);padding:16px;border-radius:8px;
+    font-size:16px}
+  .m-btn{background:var(--m-up);color:#000;font-weight:700;font-size:16px;padding:16px;
+    border-radius:8px;text-align:center;margin-top:8px}
+
+  /* components/StatusBanner.tsx — the mobile mode marker */
+  .strip{background:var(--m-bg);padding:0 16px 6px}
+  .strip.live{background:#450a0a}
+  .strip.degraded{background:#451a03}
+  .strip-row{display:flex;align-items:center;gap:10px;min-height:24px}
+  .modechip{border-radius:6px;padding:3px 8px}
+  .modechip.paper{background:rgba(245,158,11,0.15)}
+  .modechip.golive{background:var(--m-down)}
+  .modechip.unknown{background:var(--m-elev)}
+  .modetext{font-size:11px;font-weight:800;letter-spacing:.5px}
+  .modetext.paper{color:var(--m-warn)}
+  .modetext.golive{color:var(--m-ink)}
+  .modetext.unknown{color:var(--m-ink3)}
+  .statustext{font-size:11px;font-weight:600}
+
+  .two{display:grid;grid-template-columns:375px 375px;gap:14px 26px;margin-top:14px;
+    justify-content:start;align-items:start}
+  .one{margin-top:14px}
+  .stack{display:flex;flex-direction:column;gap:8px}
+
+  /* ══ canonical strings ═════════════════════════════════════════════════ */
+  .code{background:var(--s2);border:1px solid var(--hair);border-radius:10px;padding:13px 15px;
+    font-family:var(--mono);font-size:11px;line-height:1.65;color:var(--ink2);
+    white-space:pre-wrap;word-break:break-word}
+  .code .c{color:var(--ink3)}
+
+  /* ══ tables ════════════════════════════════════════════════════════════ */
+  table{border-collapse:collapse;width:100%;margin-top:12px;font-size:11.5px}
+  th{text-align:left;font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--ink3);padding:0 10px 7px 0;border-bottom:1px solid var(--hair)}
+  td{padding:6px 10px 6px 0;border-bottom:1px solid var(--hair);color:var(--ink2);vertical-align:top}
+  td.f{font-family:var(--mono);font-size:10.5px;color:var(--ink2)}
+  td.n{color:var(--ink3);font-size:11px}
+  .ok{color:var(--pos);font-weight:650}
+  .no{color:var(--neg);font-weight:650}
+  .part{color:var(--warn);font-weight:650}
+  .na{color:var(--ink3);font-weight:650}
+
+  .warnbox{display:flex;gap:10px;align-items:flex-start;border:1px solid rgba(226,185,59,.28);
+    background:rgba(226,185,59,.07);border-radius:10px;padding:11px 13px;margin-top:16px}
+  .warnbox svg{width:14px;height:14px;flex:none;margin-top:1px}
+  .warnbox p{font-size:11.5px;color:var(--ink2);line-height:1.55}
+  .warnbox b{color:var(--warn);font-weight:650}
+  .badbox{border-color:rgba(255,93,108,.28);background:rgba(255,93,108,.06)}
+  .badbox b{color:var(--neg)}
+  .okbox{border-color:rgba(0,209,122,.26);background:rgba(0,209,122,.05)}
+  .okbox b{color:var(--pos)}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <h1>Compliance surface</h1>
+  <p class="sub">
+    Canonical text <span class="mono">agent/tradingagents_us/compliance.py</span> &middot;
+    web <span class="mono">footer</span> + <span class="mono">.tag</span> in <span class="mono">dashboard.html</span> &middot;
+    mobile <span class="mono">styles.disclaimer</span> across seven screens +
+    <span class="mono">StatusBanner</span>
+  </p>
+
+  <div class="rule">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#00d17a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/>
+    </svg>
+    <p>
+      <b>Every surface that renders a rating or a price target must carry the disclaimer, and it must be readable.</b>
+      The first half is an App&nbsp;Store requirement &mdash; guideline&nbsp;5.2.1, financial trading &mdash; recorded as a
+      release gate in <span class="mono">mobile/RELEASE.md:61</span>
+      (&ldquo;Risk disclaimer visible on login + every trade screen (Apple 5.2.1)&rdquo;) and again in its
+      rejection-triage table at line&nbsp;77. Until commit <span class="mono">1c6ff0e</span> the gate was
+      unmet: <b>the four screens that actually render ratings and price targets had none</b> &mdash;
+      <span class="mono">(tabs)/agents.tsx</span>, <span class="mono">(tabs)/ask.tsx</span>,
+      <span class="mono">trade/[ticker].tsx</span>, <span class="mono">approve/[orderId].tsx</span>.
+      The same commit made the caveat travel <i>with the data</i>: every
+      <span class="mono">Decision</span> the API serves now carries
+      <span class="mono">disclaimer</span> and <span class="mono">advice_status</span> fields, so a client
+      cannot receive a rating without the caveat already in hand.
+      The second half arrived in <span class="mono">3cecc75</span>, which raised both clients' muted greys
+      off a WCAG&nbsp;AA failure &mdash; the disclaimer was the text those greys carried.
+    </p>
+  </div>
+
+  <hr>
+
+  <!-- ══ 1. MODE MARKER ════════════════════════════════════════════════ -->
+  <div class="panel-h">
+    <h2>1 &middot; Mode marker</h2>
+    <span class="note">the persistent &ldquo;this is not real money&rdquo; signal &mdash; static on web, tri-state on mobile</span>
+  </div>
+
+  <span class="lbl">Web &mdash; <span class="mono">.tag</span>, dashboard.html:247 markup / :48 style, in the sticky top bar</span>
+
+  <div class="top" style="margin-top:8px">
+    <div class="top-in">
+      <span class="mark">
+        <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="var(--s3)"/><path d="M7 21l6-7 4 4 8-10" stroke="var(--pos)" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <b>TRADER</b>
+      </span>
+      <span class="tag">PAPER</span>
+      <span class="live wait"><span class="d"></span><span>EVAL 12/60 &middot; NO-GO</span></span>
+      <span class="r">
+        <span class="stamp">14:32</span>
+        <span class="icobtn" style="width:auto;padding:0 10px;font-size:11px;font-weight:700;letter-spacing:.06em">EN</span>
+        <span class="icobtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
+        </span>
+      </span>
+    </div>
+  </div>
+
+  <p class="adapt" style="margin-top:8px;width:640px">
+    Adapted, not verbatim. Four declarations differ from dashboard.html so the bar renders inside a card:
+    <span class="mono">.top</span> loses <span class="mono">position:sticky;top:0;z-index:30</span> and the
+    <span class="mono">backdrop-filter:blur(14px)</span> pair (nothing scrolls behind it here) and gains
+    <span class="mono">border-radius:10px 10px 0 0</span>;
+    <span class="mono">.top-in</span> loses <span class="mono">max-width:1080px;margin:0 auto</span>.
+    The two buttons are rendered as spans, and the source's ticker tape
+    (<span class="mono">.tape</span>, hidden until data loads) is left out.
+    <span class="mono">.tag</span>, <span class="mono">.mark</span>, <span class="mono">.live</span>,
+    <span class="mono">.stamp</span> and <span class="mono">.icobtn</span> are as written, pulse included.
+    The verdict pill's text is produced by JS (dashboard.html:453&ndash;455); the markup ships with
+    <span class="mono">&mdash;</span> in it.
+  </p>
+
+  <div style="display:grid;grid-template-columns:180px 1fr;gap:26px;margin-top:14px;align-items:start">
+    <div class="spec">
+      <span class="lbl">isolated</span>
+      <div><span class="tag">PAPER</span></div>
+      <p class="val" style="margin-top:2px">
+        <b>font</b> 10px / 700 / ls .1em<br>
+        <b>color</b> var(--ink3) <span style="color:#828b9a">#828b9a</span><br>
+        <b>border</b> 1px solid rgba(255,255,255,.12)<br>
+        <b>radius</b> 5px &middot; <b>pad</b> 2px 7px<br>
+        <b>gap to mark</b> 12px (.top-in)
+      </p>
+    </div>
+    <div>
+      <p class="val" style="line-height:1.7">
+        <b>The web tag has exactly one state.</b> It is static markup &mdash;
+        <span class="mono">&lt;span class="tag"&gt;PAPER&lt;/span&gt;</span> &mdash; with no
+        <span class="mono">id</span>, no <span class="mono">data-i18n</span>, and nothing in the JS that
+        reads or rewrites it. There is no LIVE counterpart, no broker-mode branch, and no hover, focus or
+        pressed styling; <span class="mono">.tag</span> is declared once (line&nbsp;48) and used once
+        (line&nbsp;247).
+        It also stays the literal string <span class="mono">PAPER</span> when the language toggle flips to
+        Turkish, because it is absent from the <span class="mono">I18N</span> table
+        (dashboard.html:328&ndash;365) that every other chrome string goes through.
+        <br><br>
+        <b>Mobile does the opposite.</b> <span class="mono">src/components/StatusBanner.tsx</span> &mdash;
+        mounted once in <span class="mono">(tabs)/_layout.tsx:12</span>, above every tab &mdash; drives the
+        chip from <span class="mono">useReadiness().data.trading_mode</span>, which the API serves on
+        <span class="mono">/healthz</span> and <span class="mono">/readyz</span>
+        (<span class="mono">agent/api/main.py:108</span>, <span class="mono">:130</span>). Three states, not one.
+      </p>
+    </div>
+  </div>
+
+  <span class="lbl" style="display:block;margin-top:18px">Mobile &mdash; <span class="mono">StatusBanner</span> mode chip, all three states at 375pt (bell and its unread badge omitted)</span>
+
+  <div class="two" style="grid-template-columns:375px 375px;gap:10px 26px">
+    <div class="dev" style="border-radius:14px 14px 0 0">
+      <div class="strip" style="padding-top:10px">
+        <div class="strip-row">
+          <span class="modechip paper"><span class="modetext paper">PAPER</span></span>
+          <span class="statustext" style="color:var(--m-up)">&#9679; bağlı</span>
+        </div>
+      </div>
+    </div>
+    <div class="dev" style="border-radius:14px 14px 0 0">
+      <div class="strip live" style="padding-top:10px">
+        <div class="strip-row">
+          <span class="modechip golive"><span class="modetext golive">LIVE &mdash; GER&Ccedil;EK PARA</span></span>
+          <span class="statustext" style="color:var(--m-up)">&#9679; bağlı</span>
+        </div>
+      </div>
+    </div>
+    <div class="dev" style="border-radius:14px 14px 0 0">
+      <div class="strip degraded" style="padding-top:10px">
+        <div class="strip-row">
+          <span class="modechip unknown"><span class="modetext unknown">MOD ?</span></span>
+          <span class="statustext" style="color:var(--m-down)">&#9679; backend offline &mdash; veriler g&uuml;ncel değil</span>
+        </div>
+      </div>
+    </div>
+    <div>
+      <p class="val" style="line-height:1.7">
+        <b>chip</b> radius 6 &middot; pad 3 / 8 &middot; <b>text</b> 11px / 800 / ls 0.5<br>
+        <b>PAPER</b> bg rgba(245,158,11,0.15) &middot; fg colors.warning #f59e0b<br>
+        <b>LIVE</b> bg colors.down #ef4444 &middot; fg colors.textPrimary #ffffff<br>
+        <b>MOD ?</b> bg colors.surfaceElevated #262626 &middot; fg colors.textMuted #949494<br>
+        <b>strip</b> bg colors.background; #450a0a when live, #451a03 when degraded<br>
+        <b>row</b> gap 10 &middot; minHeight 24 &middot; strip pad 0 16 6 + safe-area top
+      </p>
+    </div>
+  </div>
+
+  <p class="val" style="margin-top:12px;line-height:1.7;width:820px">
+    <b>The status line is a fifth axis, five states, all Turkish literals in the component:</b>
+    <span class="mono">&#9679;&nbsp;bağlı</span> (colors.up),
+    <span class="mono">&#9679;&nbsp;bağlanıyor…</span> (textMuted, no data yet),
+    <span class="mono">&#9679;&nbsp;bağlantı yeniden deneniyor…</span> (warning, one failed poll),
+    <span class="mono">&#9679;&nbsp;degraded: broker + db</span> (warning),
+    <span class="mono">&#9679;&nbsp;backend offline — veriler g&uuml;ncel değil</span> (down, only after
+    <span class="mono">failureCount &gt;= 2</span>). The file's own header states the rule the tri-state
+    encodes: never assert PAPER while offline, because after go-live that would be a dangerous lie. The web
+    tag makes exactly that assertion, unconditionally.
+  </p>
+
+  <hr>
+
+  <!-- ══ 2. WEB FOOTER ═════════════════════════════════════════════════ -->
+  <div class="panel-h">
+    <h2>2 &middot; Web footer</h2>
+    <span class="note">dashboard.html:313 markup, :207 style &mdash; the only compliance copy on the whole dashboard</span>
+  </div>
+
+  <div class="stack" style="margin-top:14px">
+    <span class="lbl">TR &mdash; default (<span class="mono">let LANG=localStorage.getItem('trader_lang')||'tr'</span>, line&nbsp;369)</span>
+    <div class="footwrap">
+      <footer>Paper trading &mdash; ger&ccedil;ek para değildir &middot; 60 sn'de bir tazelenir &middot; Yatırım tavsiyesi değildir</footer>
+    </div>
+
+    <span class="lbl" style="margin-top:6px">EN &mdash; after <span class="mono">toggleLang()</span></span>
+    <div class="footwrap">
+      <footer>Paper trading &mdash; not real money &middot; refreshes every 60s &middot; Not investment advice</footer>
+    </div>
+  </div>
+
+  <p class="val" style="margin-top:14px">
+    <b>font-size</b> 11.5px &middot; <b>color</b> var(--ink3) #828b9a &middot; <b>text-align</b> center &middot;
+    <b>line-height</b> 1.8 &middot; <b>margin-top</b> 44px &middot; <b>weight</b> 400 (inherited)<br>
+    <b>family</b> var(--sans) &mdash; -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Inter, sans-serif<br>
+    <b>separator</b> U+00B7 middle dot, single space either side &middot; <b>dash</b> U+2014 em dash after "Paper trading"<br>
+    <b>container</b> .wrap max-width 1080px, padding 0 20px 80px &mdash; so the footer clears the viewport bottom by 80px<br>
+    <b>refresh claim</b> true &mdash; <span class="mono">setInterval(…,60000)</span> at line&nbsp;410<br>
+    <b>states</b> one, per language. No hover, no link, no dismiss, no expanded/collapsed variant &mdash;
+    it is a bare <span class="mono">&lt;footer&gt;</span> with a <span class="mono">data-i18n</span> key.<br>
+    <b>specimen</b> above drops only <span class="mono">margin-top:44px</span>, so the two languages stack.
+  </p>
+
+  <hr>
+
+  <!-- ══ 3. MOBILE DISCLAIMER ══════════════════════════════════════════ -->
+  <div class="panel-h">
+    <h2>3 &middot; Mobile disclaimer</h2>
+    <span class="note">styles.disclaimer &mdash; three distinct declarations across seven screens, all at 375pt below</span>
+  </div>
+
+  <div class="two">
+
+    <!-- variant A: the standard one -->
+    <div class="stack">
+      <span class="lbl">A &mdash; standard, 5 screens: agents:153, ask:275, learn:204, trade/[ticker]:180, approve/[orderId]:241</span>
+      <div class="dev">
+        <div class="dev-scroll">
+          <div class="m-card">
+            <div class="m-row">
+              <span class="m-ticker">NVDA</span>
+              <span class="m-rating" style="color:var(--m-ow)">Overweight</span>
+            </div>
+            <div class="m-row" style="margin-top:8px">
+              <span class="m-muted">Entry $172.40</span>
+              <span class="m-muted">Stop $164.10</span>
+              <span class="m-muted">PT $184.00</span>
+            </div>
+            <div class="m-row" style="margin-top:6px">
+              <span class="m-muted" style="font-size:11px">9/8/2026, 8:18:28 PM &bull; 3-6 months</span>
+            </div>
+          </div>
+          <div class="disc">Yatırım tavsiyesi değildir. Ge&ccedil;miş performans gelecekteki getirileri garanti etmez.</div>
+        </div>
+      </div>
+      <p class="val">
+        <b>color</b> colors.textMuted #949494 <b>fontSize</b> 11<br>
+        <b>fontStyle</b> 'italic' <b>paddingVertical</b> 20 <b>textAlign</b> 'center'<br>
+        <b>lineHeight</b> unset &mdash; RN default (&asymp;1.2&times; on iOS)<br>
+        <b>text</b> t('disclaimer.short') &middot; en.json:22 / tr.json:22<br>
+        <b>card</b> agents.tsx: surface, radius 12, pad 16 &middot; ticker 18/600 &middot;
+        rating 15/700, colour from RATING_COLOR (Overweight = #86efac, a literal) &middot;
+        muted rows textMuted 12, timestamp row 11 &mdash; <span class="mono">toLocaleString()</span>,
+        so its shape follows the device locale
+      </p>
+    </div>
+
+    <!-- variant B: portfolio -->
+    <div class="stack">
+      <span class="lbl">B &mdash; portfolio.tsx:596 (its ScrollView has no contentContainerStyle)</span>
+      <div class="dev">
+        <div class="dev-scroll nopad">
+          <div class="m-hero">
+            <div class="m-herolbl">Toplam varlık</div>
+            <div class="m-heroval">$104,812</div>
+            <div class="m-herochg" style="color:var(--m-up)">+$4,812 (+4.81%)</div>
+          </div>
+          <div class="disc-portfolio">Yatırım tavsiyesi değildir. Ge&ccedil;miş performans gelecekteki getirileri garanti etmez.</div>
+        </div>
+      </div>
+      <p class="val">
+        <b>color</b> colors.textMuted #949494 <b>fontSize</b> 11<br>
+        <b>fontStyle</b> 'italic' <b>textAlign</b> 'center'<br>
+        <b>padding</b> 24 &mdash; all four sides, not paddingVertical<br>
+        Different declaration, near-identical output: the 24 horizontal inset here
+        replaces the padding the other five get from their scroll container
+        (all five declare <span class="mono">padding: 24</span> on it). The vertical
+        rhythm still differs, 24 vs 20.<br>
+        <b>hero</b> pad 24 &middot; label textSecondary 14 &middot; value 36/700 mt 4 &middot; change 16/600 mt 8
+      </p>
+    </div>
+
+  </div>
+
+  <div class="one" style="display:grid;grid-template-columns:375px 1fr;gap:26px;align-items:start">
+    <div class="stack">
+      <span class="lbl">C &mdash; (auth)/login.tsx:68 style, :41 markup &mdash; the only one not routed through i18n</span>
+      <div class="dev">
+        <div class="dev-scroll" style="gap:16px;padding:24px">
+          <div class="m-input" style="color:var(--m-ph)">email</div>
+          <div class="m-input" style="color:var(--m-ph)">password</div>
+          <div class="m-btn">Sign in</div>
+          <div class="disc-login">This app is not investment advice. Past performance does not guarantee future results.</div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <p class="val" style="line-height:1.7">
+        <b>color</b> colors.textMuted #949494 <b>fontSize</b> 11 <b>fontStyle</b> 'italic' <b>marginTop</b> 32<br>
+        <b>textAlign</b> &mdash; <i>not set</i>, so it renders left-aligned while all six others are centred<br>
+        <b>text</b> a hardcoded English JSX literal, split across two source lines &mdash; it does
+        <b>not</b> use <span class="mono">t('disclaimer.short')</span> and does not translate. A Turkish
+        user sees English here and Turkish everywhere else.<br><br>
+        The wording also diverges: login says <span class="mono">"This app is not investment advice."</span>
+        while the i18n key says <span class="mono">"Not investment advice."</span> &mdash; same claim,
+        two strings, one of them uncontrolled by the translation table.<br><br>
+        This screen is also the app's one holdout on tokens generally: container, heading, input and button
+        colours are inline literals (<span class="mono">'#0a0a0a'</span>, <span class="mono">'#fff'</span>,
+        <span class="mono">'#888'</span>, <span class="mono">'#171717'</span>,
+        <span class="mono">'#22c55e'</span>), and both placeholders are
+        <span class="mono">placeholderTextColor="#666"</span>. Only
+        <span class="mono">disclaimer.color</span> was moved onto the palette.
+      </p>
+      <p class="val" style="margin-top:12px;line-height:1.7">
+        <b>States:</b> none of the three variants has a second state. The disclaimer is an unconditional
+        <span class="mono">&lt;Text&gt;</span> at the tail of the scroll view &mdash; it is not collapsible,
+        not dismissible, has no pressed/link affordance, and does not change while a screen is loading or
+        erroring. <span class="mono">agents.tsx</span> renders it after the
+        <span class="mono">EmptyState</span>/<span class="mono">ErrorState</span> branch and
+        <span class="mono">ask.tsx</span> after a <span class="mono">decision ? … : null</span> guard, so both
+        show the caveat with no rating on screen at all; <span class="mono">learn.tsx</span> has no empty
+        branch to sit after &mdash; its lesson list is a static bundled import.
+      </p>
+    </div>
+  </div>
+
+  <hr>
+
+  <!-- ══ 4. CANONICAL TEXT ═════════════════════════════════════════════ -->
+  <div class="panel-h">
+    <h2>4 &middot; Canonical text</h2>
+    <span class="note">agent/tradingagents_us/compliance.py &mdash; the source of truth neither client renders</span>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:12px;align-items:start">
+    <div class="stack">
+      <span class="lbl">DISCLAIMER &mdash; compliance.py:32, shipped on every Decision</span>
+      <div class="code">Automated model output for the operator's own account. Not investment advice, not a solicitation, and not personalized to anyone's circumstances. Past performance does not guarantee future results.</div>
+      <p class="val"><b>tradingagents_us/schemas.py:64</b> disclaimer: str = DISCLAIMER<br><b>schemas.py:63</b> advice_status: str = ADVICE_STATUS = <span class="mono">"not_personalized_advice"</span> (compliance.py:30)</p>
+    </div>
+    <div class="stack">
+      <span class="lbl">DISCLAIMER_TR &mdash; compliance.py:38, defined and never referenced</span>
+      <div class="code" style="opacity:.6">Operat&ouml;r&uuml;n kendi hesabı i&ccedil;in &uuml;retilmiş otomatik model &ccedil;ıktısıdır. Yatırım tavsiyesi değildir, kişiye &ouml;zel değildir. Ge&ccedil;miş performans gelecekteki getirileri garanti etmez.</div>
+      <p class="val">Grep across the repo finds only the definition. <span class="mono">schemas.py:12</span>
+      imports <span class="mono">ADVICE_STATUS, DISCLAIMER</span> and nothing else &mdash; the Turkish
+      canonical string is dead, and the Turkish text users actually see comes from
+      <span class="mono">tr.json</span> instead.</p>
+    </div>
+  </div>
+
+  <div class="stack" style="margin-top:14px">
+    <span class="lbl">AGENT_INSTRUCTION &mdash; compliance.py:19 &mdash; prompt-side, never rendered</span>
+    <div class="code"><span class="c"># appended to every agent's system prompt via get_language_instruction();
+# council.py:155 and :165 append it explicitly. Source is a parenthesised
+# string concat opening with a single leading space.</span>
+Ground every figure you cite in the data provided to you; if a number is not in your inputs, say it is
+unavailable rather than estimating one. Express forecasts as uncertain &mdash; never state or imply that a
+price target, return, or outcome is guaranteed, riskless, or assured. Where your case depends on an
+assumption, name the assumption. Your output is a mechanical signal for one operator's own account, not
+personalized advice for anyone else, so do not address a reader's personal circumstances, tax position,
+or suitability.</div>
+    <p class="val">Not a design surface &mdash; included because it is the other half of the guardrail:
+    the copy above constrains <i>how</i> a rating is reached, the footer and mobile disclaimer label
+    <i>what</i> it is. Deliberately short: compliance.py:17&ndash;18 records why &mdash; it is prepended to
+    a dozen prompts on every run, and a wall of policy text crowds out the analysis instructions.</p>
+  </div>
+
+  <hr>
+
+  <!-- ══ 5. COVERAGE ═══════════════════════════════════════════════════ -->
+  <div class="panel-h">
+    <h2>5 &middot; Coverage today</h2>
+    <span class="note">which surfaces show money and which of them carry the caveat</span>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:250px">Surface</th>
+        <th style="width:210px">Renders</th>
+        <th style="width:110px">Disclaimer</th>
+        <th>Treatment</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td class="f">(tabs)/agents.tsx</td><td class="n">rating, entry / stop / PT</td><td><span class="ok">yes</span></td><td class="n">variant A &mdash; added in 1c6ff0e</td></tr>
+      <tr><td class="f">(tabs)/ask.tsx</td><td class="n">rating, Hedef, agent reasoning</td><td><span class="ok">yes</span></td><td class="n">variant A &mdash; added in 1c6ff0e</td></tr>
+      <tr><td class="f">trade/[ticker].tsx</td><td class="n">rating, Hedef, debate</td><td><span class="ok">yes</span></td><td class="n">variant A &mdash; added in 1c6ff0e</td></tr>
+      <tr><td class="f">approve/[orderId].tsx</td><td class="n">pending order, Hedef, PM rationale</td><td><span class="ok">yes</span></td><td class="n">variant A &mdash; added in 1c6ff0e</td></tr>
+      <tr><td class="f">(tabs)/portfolio.tsx</td><td class="n">equity, P&amp;L, positions</td><td><span class="ok">yes</span></td><td class="n">variant B (padding 24)</td></tr>
+      <tr><td class="f">(tabs)/learn.tsx</td><td class="n">lessons, no ratings</td><td><span class="ok">yes</span></td><td class="n">variant A</td></tr>
+      <tr><td class="f">(auth)/login.tsx</td><td class="n">nothing financial</td><td><span class="ok">yes</span></td><td class="n">variant C &mdash; hardcoded EN, left-aligned</td></tr>
+      <tr><td class="f">(tabs)/charts.tsx</td><td class="n">bars, last, change %, D&uuml;ş&uuml;k / Y&uuml;ksek</td><td><span class="no">none</span></td><td class="n">no disclaimer in the file; its analyze button pushes to ask.tsx, which has one</td></tr>
+      <tr><td class="f">(tabs)/orders.tsx</td><td class="n">side + qty, Stop, Ort. fill price</td><td><span class="no">none</span></td><td class="n">no disclaimer in the file</td></tr>
+      <tr><td class="f">(tabs)/settings.tsx</td><td class="n">eval verdict, gates, kill switch</td><td><span class="no">none</span></td><td class="n">RELEASE.md:68 also wants a KVKK link here &mdash; not built</td></tr>
+      <tr><td class="f">app/notifications.tsx</td><td class="n">push titles / bodies</td><td><span class="no">none</span></td><td class="n">server-authored copy, so the caveat cannot be guaranteed from the client</td></tr>
+      <tr><td class="f">components/StatusBanner.tsx</td><td class="n">trading mode + connection</td><td><span class="na">n/a</span></td><td class="n">mode marker, not a caveat &mdash; mounted only inside (tabs)</td></tr>
+      <tr><td class="f">dashboard.html (web)</td><td class="n">ratings, targets, gates, equity</td><td><span class="part">footer only</span></td><td class="n">one line at the bottom of a long scroll; nothing near the decisions table</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+
+  <!-- ══ 6. LEGIBILITY, AND WHAT IS STILL OPEN ═════════════════════════ -->
+  <div class="warnbox okbox">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#00d17a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M20 6 9 17l-5-5"/>
+    </svg>
+    <p>
+      <b>Resolved in 3cecc75: the compliance copy used to be the least legible text in the product, on both platforms.</b>
+      Mobile styled the disclaimer <span class="mono">color: '#555'</span> in seven StyleSheets &mdash;
+      2.66:1 on <span class="mono">#0a0a0a</span>, <i>darker than the</i>
+      <span class="mono">#666</span> <i>that</i> <span class="mono">theme/colors.ts</span> already records as
+      rejected at 3.4:1. Because the literal never entered the palette, the token suite in
+      <span class="mono">utils/contrast.test.ts</span>, which iterates over
+      <span class="mono">colors</span>, never saw it. All seven now use
+      <span class="mono">colors.textMuted #949494</span> &mdash; 6.53:1 on
+      <span class="mono">#0a0a0a</span>, 5.91:1 on <span class="mono">#171717</span>, 4.99:1 on
+      <span class="mono">#262626</span> &mdash; and a new case in that file walks every
+      <span class="mono">.tsx</span> under <span class="mono">app/</span> and
+      <span class="mono">src/components</span> and fails on that class of literal.
+      The web had drifted into the same bug independently: <span class="mono">--ink3</span> was
+      <span class="mono">#5d6673</span>, 3.39:1 on <span class="mono">--bg</span>, on the token behind the
+      footer, eyebrow labels, table headers, timestamps and unselected period tabs. It is now
+      <span class="mono">#828b9a</span> &mdash; 5.73:1 on <span class="mono">--bg</span>, 4.75:1 worst case
+      on <span class="mono">--s3</span> &mdash; guarded by
+      <span class="mono">agent/tests/test_dashboard_contrast.py</span>, which parses
+      <span class="mono">:root</span> and asserts every text token against every surface.
+    </p>
+  </div>
+
+  <div class="warnbox badbox">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#ff5d6c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="13"/><line x1="12" y1="16.5" x2="12.01" y2="16.5"/>
+    </svg>
+    <p>
+      <b>Four wordings for one obligation, and the canonical one is never shown.</b>
+      The API attaches <span class="mono">DISCLAIMER</span> to every decision precisely so that, in the
+      words of <span class="mono">schemas.py:61&ndash;62</span>, &ldquo;no client can render a rating or
+      price target without the caveat already in hand&rdquo; &mdash; but <b>neither client reads the field</b>.
+      Grep for <span class="mono">disclaimer</span> in <span class="mono">dashboard.html</span> returns
+      nothing, and mobile calls <span class="mono">t('disclaimer.short')</span> from its own bundle. So the
+      shipped text is: the web footer (2 languages, mixes refresh cadence into the legal line), the i18n
+      short form (2 languages), the login literal (English only), and the Python canonical (unused, plus an
+      unused Turkish twin). The wire field is the only one that names
+      <span class="mono">not a solicitation</span> and <span class="mono">not personalized</span> &mdash;
+      the two clauses 5.2.1 actually turns on &mdash; and it is the one no user sees.
+    </p>
+  </div>
+
+  <div class="warnbox">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#e2b93b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+      <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+    </svg>
+    <p>
+      <b>The two clients disagree about what &ldquo;PAPER&rdquo; means, and the gap runs the wrong way.</b>
+      Mobile reads <span class="mono">trading_mode</span> off the readiness poll and refuses to assert a mode
+      it has not been told (<span class="mono">MOD ?</span>); the web tag is a static string that will keep
+      reading <span class="mono">PAPER</span> after a live flip, on the surface that shows real equity.
+      Mobile's own coverage is uneven too: <span class="mono">StatusBanner</span> is mounted in
+      <span class="mono">(tabs)/_layout.tsx</span> only, so <span class="mono">trade/[ticker].tsx</span>,
+      <span class="mono">approve/[orderId].tsx</span> and <span class="mono">notifications.tsx</span> render
+      outside it &mdash; the approve screen, the one place a human commits an order, carries no mode chip.
+      And the <span class="mono">LIVE &mdash; GER&Ccedil;EK PARA</span> chip is
+      <span class="mono">#ffffff</span> on <span class="mono">colors.down #ef4444</span>: <b>3.76:1</b> at
+      11px/800, the one chip in the app that must never be missed and the only text token pair in it that
+      still fails AA. <span class="mono">login.tsx</span>'s two
+      <span class="mono">placeholderTextColor="#666"</span> are a second gap at 3.12:1 on
+      <span class="mono">#171717</span> &mdash; the new file-walking guard matches the literal
+      <span class="mono">color: '#666'</span>, not the <span class="mono">placeholderTextColor</span> prop.
+    </p>
+  </div>
+
+  <p class="val" style="margin-top:14px;line-height:1.7">
+    <b>States deliberately not shown, because the source has none:</b> there is no acknowledged/dismissed
+    state, no first-run consent modal, no expanded &ldquo;full disclosure&rdquo; sheet, no per-region
+    variant, and no link target &mdash; on either platform the disclaimer is inert text.
+    The web <span class="mono">.tag</span> has no LIVE sibling and no i18n key. The web footer has no
+    compact/mobile breakpoint. <span class="mono">advice_status</span> has exactly one value in the
+    codebase, <span class="mono">"not_personalized_advice"</span>, and no branch reads it.
+  </p>
+
+</div>
+</body>
+</html>

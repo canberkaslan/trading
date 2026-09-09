@@ -1,0 +1,280 @@
+<!-- @dsCard group="Components" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ticker tape — TRADER DS</title>
+<style>
+  /* ---- tokens copied verbatim from agent/api/static/dashboard.html :root (L11–20) ---- */
+  :root{
+    color-scheme:dark;
+    --bg:#0a0b0d; --s1:#101216; --s2:#15181d; --s3:#1c2027;
+    --hair:rgba(255,255,255,.06); --hair2:rgba(255,255,255,.12);
+    --ink:#eef0f3; --ink2:#9aa3b2; --ink3:#828b9a;
+    --pos:#00d17a; --neg:#ff5d6c; --warn:#e2b93b; --bench:#767f8c;
+    --pos-dim:rgba(0,209,122,.12); --neg-dim:rgba(255,93,108,.12);
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,Inter,sans-serif;
+  }
+
+  /* ---- card chrome (documentation only, not product) ----
+     body repeats the product's font-family/size/line-height because the strip
+     height depends on them (12.5px x 1.45); width:900px is card-only. */
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{background:var(--bg)}
+  body{font-family:var(--sans);color:var(--ink);font-size:14px;line-height:1.45;
+    -webkit-font-smoothing:antialiased;width:900px;overflow-x:hidden}
+  .pad{padding:0 24px}
+  .head{padding:22px 24px 16px}
+  .head h1{font-size:15px;font-weight:650;letter-spacing:.02em}
+  .head p{font-size:12px;color:var(--ink3);margin-top:5px}
+  .head p code{font-family:var(--mono);font-size:11.5px;color:var(--ink2)}
+  .cap{font-size:11px;color:var(--ink3);letter-spacing:.02em}
+  .cap b{color:var(--ink2);font-weight:650}
+  .cap code{font-family:var(--mono);font-size:10.5px}
+  .tok{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:10.5px;
+    color:var(--ink3);line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}
+  .tok em{font-style:normal;color:var(--ink2)}
+  .rule{height:1px;background:var(--hair);margin:22px 24px}
+  .kicker{font-size:10.5px;font-weight:650;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--ink3);margin-bottom:10px}
+
+  /* ========== PRODUCT CSS — VERBATIM ==========
+     dashboard.html L71–77, byte-for-byte. Nothing in this block is altered. */
+  .tape{border-bottom:1px solid var(--hair);overflow:hidden;background:rgba(255,255,255,.012)}
+  .tape-in{display:flex;width:max-content;gap:34px;padding:8px 0;
+    animation:tape 36s linear infinite}
+  .tape:hover .tape-in{animation-play-state:paused}
+  @keyframes tape{to{transform:translateX(-50%)}}
+  .tk{display:flex;align-items:baseline;gap:8px;font-size:12.5px;white-space:nowrap}
+  .tk b{font-weight:650}.tk .p{color:var(--ink2)}
+
+  /* also verbatim, but they live elsewhere in the sheet, not in the tape section: */
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}          /* L28 */
+  .up{color:var(--pos)}.down{color:var(--neg)}.dim{color:var(--ink3)}       /* L85, hero block */
+
+  /* EXCERPT, not verbatim — the product's reduced-motion block is global
+     (L36–40) and also carries `.rise{animation:none;opacity:1;transform:none}`
+     and `*{transition:none!important}`. Only the tape line is reproduced here. */
+  @media(prefers-reduced-motion:reduce){
+    .tape-in{animation:none!important}
+  }
+
+  /* ADAPTED, not verbatim — `.top` only. The product rule (L43–44) is
+       .top{position:sticky;top:0;z-index:30;background:rgba(10,11,13,.75);
+            backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+            border-bottom:1px solid var(--hair)}
+     sticky+z-index are dropped so the specimen stays in the document flow of
+     this card, and backdrop-filter is dropped because there is nothing
+     scrolling behind it here. Colour, hairline and box model are unchanged.
+     `.top-in`, `.mark`, `.mark b`, `.tag` below ARE verbatim (L45–49). */
+  .top{position:relative;background:rgba(10,11,13,.75);border-bottom:1px solid var(--hair)}
+  .top-in{max-width:1080px;margin:0 auto;padding:13px 20px;display:flex;align-items:center;gap:12px}
+  .mark{display:flex;align-items:center;gap:9px}
+  .mark b{font-size:13px;font-weight:700;letter-spacing:.16em}
+  .tag{font-size:10px;font-weight:700;letter-spacing:.1em;color:var(--ink3);
+    border:1px solid var(--hair2);border-radius:5px;padding:2px 7px}
+  /* =============== end product CSS =============== */
+
+  /* documentation-only modifiers on copies of the specimen */
+  .is-paused .tape-in{animation-play-state:paused}
+  .is-rm .tape-in{animation:none}
+  .frame{position:relative}
+  .frame .edge{position:absolute;left:0;top:0;bottom:1px;width:1px;background:var(--pos);opacity:.5}
+  .hiddenbox{border-bottom:1px solid var(--hair);background:rgba(255,255,255,.012);
+    height:35px;display:flex;align-items:center;justify-content:center}
+  .hiddenbox span{font-size:11px;color:var(--ink3);font-family:var(--mono)}
+
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px}
+  .cell{background:var(--s1);border:1px solid var(--hair);border-radius:12px;padding:13px 15px 12px;min-width:0}
+  .cell .spec{padding:6px 0 10px}
+  .notes{background:var(--s1);border:1px solid var(--hair);border-radius:12px;padding:14px 16px}
+  .notes li{list-style:none;font-size:11.5px;color:var(--ink2);line-height:1.6;
+    padding-left:14px;position:relative;margin-top:7px}
+  .notes li:first-child{margin-top:0}
+  .notes li::before{content:"";position:absolute;left:0;top:8px;width:5px;height:5px;
+    border-radius:50%;background:var(--ink3)}
+  .notes li.flag::before{background:var(--warn)}
+  .notes li code{font-family:var(--mono);font-size:10.5px;color:var(--ink);
+    background:var(--s3);border-radius:4px;padding:1px 4px}
+  .notes li b{color:var(--ink);font-weight:650}
+</style>
+</head>
+<body>
+
+<div class="head">
+  <h1>Ticker tape</h1>
+  <p>Full-bleed marquee that forms the bottom strip <em style="font-style:normal">inside</em> the sticky top bar —
+     <code>.tape</code> is the last child of <code>.top</code>, a sibling of <code>.top-in</code>, so it sticks with it
+     rather than sitting under it. <code>.tape</code> / <code>.tape-in</code> / <code>.tk</code> /
+     <code>@keyframes tape</code> — <code>agent/api/static/dashboard.html</code> CSS L71–77, markup L257,
+     built in <code>render()</code> L463–468.</p>
+</div>
+
+<!-- ============ 1. in context, live ============ -->
+<div class="pad"><div class="kicker">Default — in context, as the base of the top bar</div></div>
+<div class="frame">
+  <div class="top">
+    <div class="top-in">
+      <span class="mark">
+        <svg width="22" height="22" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="var(--s3)"/><path d="M7 21l6-7 4 4 8-10" stroke="var(--pos)" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <b>TRADER</b>
+      </span>
+      <span class="tag">PAPER</span>
+    </div>
+    <div class="tape">
+      <div class="tape-in">
+        <span class="tk"><b>AAPL</b><span class="p mono">$232.14</span><span class="mono up">+2.4%</span></span>
+        <span class="tk"><b>MSFT</b><span class="p mono">$418.72</span><span class="mono down">−1.1%</span></span>
+        <span class="tk"><b>NVDA</b><span class="p mono">$121.40</span><span class="mono up">+5.8%</span></span>
+        <span class="tk"><b>GOOGL</b><span class="p mono">$168.55</span><span class="mono up">+0.3%</span></span>
+        <span class="tk"><b>AMZN</b><span class="p mono">$186.29</span><span class="mono down">−0.7%</span></span>
+        <span class="tk"><b>META</b><span class="p mono">$512.08</span><span class="mono up">+3.1%</span></span>
+        <span class="tk"><b>JPM</b><span class="p mono">$214.66</span><span class="mono down">−0.4%</span></span>
+        <span class="tk"><b>UNH</b><span class="p mono">$584.20</span><span class="mono up">+1.9%</span></span>
+        <span class="tk"><b>AAPL</b><span class="p mono">$232.14</span><span class="mono up">+2.4%</span></span>
+        <span class="tk"><b>MSFT</b><span class="p mono">$418.72</span><span class="mono down">−1.1%</span></span>
+        <span class="tk"><b>NVDA</b><span class="p mono">$121.40</span><span class="mono up">+5.8%</span></span>
+        <span class="tk"><b>GOOGL</b><span class="p mono">$168.55</span><span class="mono up">+0.3%</span></span>
+        <span class="tk"><b>AMZN</b><span class="p mono">$186.29</span><span class="mono down">−0.7%</span></span>
+        <span class="tk"><b>META</b><span class="p mono">$512.08</span><span class="mono up">+3.1%</span></span>
+        <span class="tk"><b>JPM</b><span class="p mono">$214.66</span><span class="mono down">−0.4%</span></span>
+        <span class="tk"><b>UNH</b><span class="p mono">$584.20</span><span class="mono up">+1.9%</span></span>
+      </div>
+    </div>
+  </div>
+  <div class="edge"></div>
+</div>
+
+<div class="pad" style="padding-top:9px">
+  <div class="cap"><b>Hover anywhere on the strip to pause it</b> — <code>.tape:hover .tape-in{animation-play-state:paused}</code>. That is the only interaction; items are plain <code>&lt;span&gt;</code>s — not links, no focus state, no <code>title</code>/tooltip.</div>
+  <div class="tok" style="margin-top:7px">.tape      <em>border-bottom 1px solid rgba(255,255,255,.06) · background rgba(255,255,255,.012) · overflow hidden</em>
+.tape-in   <em>display flex · width max-content · gap 34px · padding 8px 0 · animation tape 36s linear infinite</em>
+@keyframes <em>tape { to { transform: translateX(-50%) } }  — markup is items+items (list rendered twice, L468)</em>
+strip      <em>34.125px content (12.5px × 1.45 line-height + 8px × 2 padding) + 1px hairline = 35.1px</em>
+bleed      <em>.tape is a sibling of .top-in, so it is NOT clipped to the 1080px column
+           and .tape-in has no horizontal padding (green line = x:0, no left gutter)</em></div>
+</div>
+
+<div class="rule"></div>
+
+<!-- ============ 2. states ============ -->
+<div class="pad"><div class="kicker">States</div></div>
+<div class="pad">
+<div class="grid3">
+
+  <div class="cell">
+    <div class="cap"><b>Paused</b> — pointer over the strip</div>
+    <div class="spec">
+      <div class="tape is-paused" style="border-radius:6px;border:1px solid var(--hair)">
+        <div class="tape-in" style="padding-left:12px">
+          <span class="tk"><b>NVDA</b><span class="p mono">$121.40</span><span class="mono up">+5.8%</span></span>
+          <span class="tk"><b>AMZN</b><span class="p mono">$186.29</span><span class="mono down">−0.7%</span></span>
+        </div>
+      </div>
+    </div>
+    <div class="tok">animation-play-state: <em>paused</em>
+trigger  <em>.tape:hover (no touch
+         or keyboard equivalent)</em></div>
+  </div>
+
+  <div class="cell">
+    <div class="cap"><b>Reduced motion</b> — static, never scrolls</div>
+    <div class="spec">
+      <div class="tape is-rm" style="border-radius:6px;border:1px solid var(--hair)">
+        <div class="tape-in">
+          <span class="tk"><b>AAPL</b><span class="p mono">$232.14</span><span class="mono up">+2.4%</span></span>
+          <span class="tk"><b>MSFT</b><span class="p mono">$418.72</span><span class="mono down">−1.1%</span></span>
+        </div>
+      </div>
+    </div>
+    <div class="tok">@media prefers-reduced-motion
+.tape-in <em>{ animation:none !important }</em>
+result   <em>the strip freezes at x:0 —
+only the first few names
+are ever readable, and
+hover has nothing to pause</em></div>
+  </div>
+
+  <div class="cell">
+    <div class="cap"><b>Hidden</b> — no positions / before first render</div>
+    <div class="spec">
+      <div class="hiddenbox" style="border-radius:6px;border:1px dashed var(--hair2)">
+        <span>#tape[hidden]</span>
+      </div>
+    </div>
+    <div class="tok">markup <em>&lt;div class="tape" id="tape" hidden&gt;  (L257)</em>
+reveal <em>if(items){ hidden=false }  (L468)</em>
+<em style="color:var(--warn)">no else — never re-hides;
+a flat book keeps the
+last tape on screen</em></div>
+  </div>
+
+</div>
+<div class="cap" style="margin-top:9px">The three thumbnails add a 6px radius and a full border so they read as separate specimens; the product strip has neither — only the bottom hairline.</div>
+</div>
+
+<div class="rule"></div>
+
+<!-- ============ 3. item anatomy ============ -->
+<div class="pad"><div class="kicker">Item anatomy — <span style="text-transform:none;letter-spacing:0">.tk</span> — sans ticker, mono numbers</div></div>
+<div class="pad">
+<div class="grid3">
+
+  <div class="cell">
+    <div class="cap"><b>Up</b> — <code>pct &gt;= 0</code></div>
+    <div class="spec"><span class="tk"><b>NVDA</b><span class="p mono">$121.40</span><span class="mono up">+5.8%</span></span></div>
+    <div class="tok">.tk    <em>flex · align-items baseline · gap 8px · 12.5px · nowrap</em>
+b      <em>--sans 12.5px/650 · --ink #eef0f3</em>
+.p     <em>--mono 12.5px/400 · --ink2 #9aa3b2 · usd2() → $121.40</em>
+.up    <em>--pos #00d17a · pct(v,1) → "+5.8%"</em></div>
+  </div>
+
+  <div class="cell">
+    <div class="cap"><b>Down</b> — sign is U+2212, not a hyphen</div>
+    <div class="spec"><span class="tk"><b>MSFT</b><span class="p mono">$418.72</span><span class="mono down">−1.1%</span></span></div>
+    <div class="tok">.down  <em>--neg #ff5d6c</em>
+sgn()  <em>(v&gt;0?'+':v&lt;0?'−':'')+abs(v).toFixed(d)   (− = U+2212)</em>
+pct()  <em>sgn(v,d)+'%', called as pct(...,1) — always the EN
+       form even when LANG==='tr' (pctNum, the TR-aware
+       "%5.8" formatter, is never used here); usd2 is
+       likewise hardcoded to the en-US locale</em></div>
+  </div>
+
+  <div class="cell">
+    <div class="cap"><b>Flat</b> — exactly 0 reads green, unsigned</div>
+    <div class="spec"><span class="tk"><b>JPM</b><span class="p mono">$214.66</span><span class="mono up">0.0%</span></span></div>
+    <div class="tok">class  <em>p.unrealized_pnl_pct &gt;= 0 ? 'up' : 'down'</em>
+<em style="color:var(--warn)">0 falls in the up branch and loses its
+sign. A neutral class exists in the
+sheet — .dim{color:var(--ink3)} (L85) —
+but the two-branch ternary never
+assigns it to a tape item.</em></div>
+  </div>
+
+</div>
+</div>
+
+<div class="rule"></div>
+
+<!-- ============ 4. content rule + caveats ============ -->
+<div class="pad" style="padding-bottom:26px">
+  <div class="kicker">Content rule &amp; what the code actually does</div>
+  <div class="notes">
+    <ul>
+      <li class="flag"><b>The tape should carry the INTRADAY change, not position return.</b> A tape that disagrees with the hero number is worse than no tape: on a day the book is down, every name can still read up double digits because each one is measured from its own entry, not from the previous close.</li>
+      <li class="flag"><b>The shipped line reads position P&amp;L, and always has.</b> <code>dashboard.html:466</code> renders <code>pct(p.unrealized_pnl_pct*100,1)</code> — unrealized return since entry, straight off Alpaca's <code>unrealized_plpc</code> (<code>api/routes/portfolio.py:129</code>). Nothing in the snapshot schema carries a per-position daily change yet, so the rule above is not implemented; the tape has shipped this way since it was introduced. Documented as-is rather than drawn as if it were fixed.</li>
+      <li>Order is <b>whatever the snapshot returns</b> — <code>snap.positions.map(...)</code> does not sort. Only the positions table below sorts (<code>L494</code>, by <code>unrealized_pnl</code> desc).</li>
+      <li>Duration is fixed at <b>36s regardless of item count</b>, so a 3-name book crawls and a 12-name book races. The tape's speed is a function of how many positions are open, which is not a signal anyone wants encoded in motion.</li>
+      <li>The <code>translateX(-50%)</code> loop is off by half a <code>gap</code> (<b>17px</b>): the doubled list has 2N−1 gaps, so half its width is N·w + N·g − 17px while one true period is N·w + N·g. The seam jumps 17px once per cycle.</li>
+      <li>With a <b>single position</b> the doubled list is two items and is narrower than the viewport, so the −50% translate slides the pair leftward across empty space and snaps back — the loop never reads as continuous at all.</li>
+      <li><code>refresh()</code> re-renders every <b>60s</b> (<code>L410</code>) but the tape animation is 36s, and <code>innerHTML</code> is reassigned on the still-animating <code>#tapein</code>. Item widths change with the price digits, so the −50% target moves mid-cycle.</li>
+      <li><code>.tape-in</code> has <code>padding:8px 0</code> and no horizontal padding, so items start flush at x:0 while <code>.wrap</code> and <code>.top-in</code> both sit inside a 20px gutter.</li>
+      <li>The whole bar lives inside <code>#app</code>, which is <code>display:none</code> until the access token validates (<code>L224</code>, <code>L406–414</code>) — so before auth the tape has no layout at all, which is a separate condition from <code>[hidden]</code>.</li>
+      <li>There is <b>no mobile counterpart</b>. Nothing in <code>mobile/app</code> renders a tape or any marquee; the RN app shows each position as a tappable card on the Portfolio tab that routes into the Ask tab, and its palette is a different green/red pair (<code>up #22c55e</code> / <code>down #ef4444</code>, <code>src/theme/colors.ts</code>) from the web's <code>--pos #00d17a</code> / <code>--neg #ff5d6c</code>.</li>
+    </ul>
+  </div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,434 @@
+<!-- @dsCard group="Components" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Position row — TRADER design system</title>
+<style>
+  /* ---- :root copied byte-for-byte from agent/api/static/dashboard.html L11–20,
+          then the --m-* block appended from mobile/app/src/theme/colors.ts ---- */
+  :root{
+    color-scheme:dark;
+    --bg:#0a0b0d; --s1:#101216; --s2:#15181d; --s3:#1c2027;
+    --hair:rgba(255,255,255,.06); --hair2:rgba(255,255,255,.12);
+    --ink:#eef0f3; --ink2:#9aa3b2; --ink3:#828b9a;
+    --pos:#00d17a; --neg:#ff5d6c; --warn:#e2b93b; --bench:#767f8c;
+    --pos-dim:rgba(0,209,122,.12); --neg-dim:rgba(255,93,108,.12);
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,Inter,sans-serif;
+    /* appended — mobile/app/src/theme/colors.ts, not part of dashboard :root */
+    --m-bg:#0a0a0a; --m-surface:#171717; --m-elev:#262626;
+    --m-ink:#ffffff; --m-ink2:#a3a3a3; --m-ink3:#949494;
+    --m-up:#22c55e; --m-down:#ef4444; --m-accent:#a855f7;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{background:var(--bg)}
+  /* body: product typography, but the product's own body has overflow-x:hidden and
+     no width — the width/padding here are the documentation frame. */
+  body{font-family:var(--sans);color:var(--ink);font-size:14px;line-height:1.45;
+    -webkit-font-smoothing:antialiased;width:900px;padding:28px 24px 40px}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  /* ---- card chrome (documentation shell, not product) ---- */
+  h1{font-size:19px;font-weight:700;letter-spacing:-.01em}
+  .lede{color:var(--ink2);font-size:12.5px;margin-top:5px;max-width:660px}
+  .src{font-family:var(--mono);font-size:10.5px;color:var(--ink3);margin-top:8px;line-height:1.7}
+  h2{font-size:10.5px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);
+     margin:30px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--hair)}
+  .cap{font-size:10.5px;color:var(--ink3);letter-spacing:.04em;margin-bottom:8px}
+  .tok{font-family:var(--mono);font-size:10px;color:var(--ink3);line-height:1.75;margin-top:8px;
+       white-space:pre-wrap}
+  .tok b{color:var(--ink2);font-weight:400}
+  .note{font-size:11.5px;color:var(--warn);line-height:1.6;margin-top:10px}
+
+  /* ---- product CSS from dashboard.html.
+     L128–143 (the /* positions */ block) and L85 (.up/.down/.dim) are source-exact.
+     L108–112 (.card, .card>.hd …) are source-exact EXCEPT two edits made so the
+     specimen renders standalone — both flagged in "Deviations from source" below:
+       .card         — source ends ";margin-top:16px", dropped (no card stack here)
+       .card>.hd h3  — source selector is ".card>.hd h2"; retargeted to h3 because
+                       h2 is the documentation section heading in this file. ---- */
+  table{width:100%;border-collapse:collapse}
+  thead th{font-size:10.5px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);
+    text-align:right;padding:0 8px 10px;border-bottom:1px solid var(--hair);white-space:nowrap}
+  thead th:first-child{text-align:left;padding-left:0}
+  tbody td{padding:11px 8px;border-bottom:1px solid var(--hair);text-align:right;font-size:13.5px;white-space:nowrap}
+  tbody td:first-child{text-align:left;padding-left:0}
+  tbody tr:last-child td{border-bottom:0}
+  tbody tr{transition:background .12s}
+  tbody tr:hover{background:rgba(255,255,255,.02)}
+  .sym{display:flex;align-items:center;gap:11px;font-weight:650}
+  .ava{width:30px;height:30px;border-radius:9px;background:var(--s3);display:inline-flex;
+    align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--ink2);letter-spacing:.02em}
+  .qty{font-size:11px;color:var(--ink3);font-weight:400}
+  .plcell{display:inline-flex;flex-direction:column;align-items:flex-end;gap:4px}
+  .plbar{width:56px;height:3px;border-radius:2px;background:var(--s3);overflow:hidden;position:relative}
+  .plbar i{position:absolute;top:0;bottom:0;width:0;border-radius:2px;transition:width .8s cubic-bezier(.2,.7,.3,1)}
+  .up{color:var(--pos)}.down{color:var(--neg)}.dim{color:var(--ink3)}
+  .card{background:var(--s1);border:1px solid var(--hair);border-radius:16px}
+  .card>.hd{display:flex;align-items:baseline;gap:10px;padding:18px 22px 0}
+  .card>.hd h3{font-size:12px;font-weight:650;letter-spacing:.1em;color:var(--ink2);text-transform:uppercase}
+  .card>.hd .sub{font-size:12px;color:var(--ink3);margin-left:auto}
+  .card>.bd{padding:14px 22px 18px}
+
+  /* ---- documentation layout ---- */
+  .insitu{width:694px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px}
+  .spec{background:var(--s1);border:1px solid var(--hair);border-radius:12px;padding:12px 14px}
+  .spec table{table-layout:auto}
+  .swatchrow{display:flex;gap:22px;flex-wrap:wrap}
+
+  /* bar geometry diagram */
+  .geo{display:grid;grid-template-columns:76px 56px 1fr;gap:12px;align-items:center;
+       font-size:11px;color:var(--ink2);padding:7px 0}
+  .geo .gl{font-family:var(--mono);font-size:10px;color:var(--ink3);text-align:right}
+  .geo .gv{font-family:var(--mono);font-size:10px;color:var(--ink3)}
+  .rulewrap{position:relative;width:56px}
+  .rule{position:absolute;top:-13px;left:0;width:56px;height:8px;
+        border-left:1px solid var(--hair2);border-right:1px solid var(--hair2);border-top:1px solid var(--hair2)}
+  .rulelab{position:absolute;top:-27px;left:0;width:56px;text-align:center;
+           font-family:var(--mono);font-size:9px;color:var(--ink3)}
+
+  /* mobile frame */
+  .phone{width:390px;background:var(--m-bg);border:1px solid var(--hair);border-radius:14px;
+         padding:14px 0 20px;overflow:hidden}
+  .m-section{color:var(--m-ink);font-size:18px;font-weight:600;padding:0 24px;margin-top:16px}
+  .m-card{margin:12px 24px 0;padding:16px;background:var(--m-surface);border-radius:12px}
+  .m-row{display:flex;flex-direction:row;justify-content:space-between;align-items:center}
+  .m-ticker{color:var(--m-ink);font-size:18px;font-weight:600}
+  .m-pnl{font-size:14px;font-weight:600;white-space:pre}
+  .m-muted{color:var(--m-ink3);font-size:14px;margin-top:4px;white-space:pre}
+  .m-hint{color:var(--m-accent);font-size:12px;font-weight:600;margin-top:4px}
+  .m-empty{margin:24px;padding:24px;background:var(--m-surface);border-radius:12px;text-align:center}
+  .m-empty .t{color:var(--m-ink2);font-size:15px;font-weight:600}
+  .m-empty .h{color:var(--m-ink3);font-size:13px;margin-top:8px}
+</style>
+</head>
+<body>
+
+<h1>Position row</h1>
+<p class="lede">One open position in the book. On the web dashboard it is a <code class="mono">&lt;tr&gt;</code> in the
+Positions card; on mobile it is a pressable card. The two are not the same component — they share only the data.</p>
+<div class="src">agent/api/static/dashboard.html — tokens L11–20, CSS L127–143 (+ L85, L108–112), render() L493–509
+mobile/app/app/(tabs)/portfolio.tsx — L492–522 (markup), L543/559/591–595 (styles)
+mobile/app/src/theme/colors.ts · mobile/app/src/components/EmptyState.tsx · mobile/app/src/utils/format.ts</div>
+
+<!-- ============================ WEB, IN SITU ============================ -->
+<h2>Web — the row in its card (694px column, the real width in the 1fr / 330px grid)</h2>
+<div class="cap">Rows are sorted by <span class="mono">unrealized_pnl</span> descending, so winners sit above losers. Book of 4 shown.</div>
+
+<div class="card insitu">
+  <div class="hd"><h3>Pozisyonlar</h3><span class="sub">4 açık</span></div>
+  <div class="bd" style="overflow-x:auto">
+    <table>
+      <thead><tr>
+        <th>Sembol</th><th class="hide-sm">Ort.</th><th>Son</th><th>K/Z</th><th>K/Z %</th>
+      </tr></thead>
+      <tbody>
+        <tr>
+          <td><span class="sym"><span class="ava">MSFT</span><span>MSFT<br><span class="qty mono">27 adet</span></span></span></td>
+          <td class="hide-sm mono dim">$361.49</td>
+          <td class="mono">$492.82</td>
+          <td class="mono up"><span class="plcell">+3546<span class="plbar"><i style="background:var(--pos);left:0;width:56px"></i></span></span></td>
+          <td class="mono up">+36.3%</td>
+        </tr>
+        <tr>
+          <td><span class="sym"><span class="ava">NVDA</span><span>NVDA<br><span class="qty mono">55 adet</span></span></span></td>
+          <td class="hide-sm mono dim">$198.93</td>
+          <td class="mono">$226.93</td>
+          <td class="mono up"><span class="plcell">+1540<span class="plbar"><i style="background:var(--pos);left:0;width:24.32px"></i></span></span></td>
+          <td class="mono up">+14.1%</td>
+        </tr>
+        <tr>
+          <td><span class="sym"><span class="ava">GOOG</span><span>GOOGL<br><span class="qty mono">31 adet</span></span></span></td>
+          <td class="hide-sm mono dim">$342.46</td>
+          <td class="mono">$338.25</td>
+          <td class="mono down"><span class="plcell">−130<span class="plbar"><i style="background:var(--neg);right:0;width:8px"></i></span></span></td>
+          <td class="mono down">−1.2%</td>
+        </tr>
+        <tr>
+          <td><span class="sym"><span class="ava">UNH</span><span>UNH<br><span class="qty mono">15 adet</span></span></span></td>
+          <td class="hide-sm mono dim">$415.95</td>
+          <td class="mono">$394.26</td>
+          <td class="mono down"><span class="plcell">−325<span class="plbar"><i style="background:var(--neg);right:0;width:8px"></i></span></span></td>
+          <td class="mono down">−5.2%</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="tok"><b>tbody td</b>       padding 11px 8px · border-bottom 1px solid rgba(255,255,255,.06) · text-align right · font-size 13.5px · white-space nowrap
+<b>td:first-child</b>  text-align left · padding-left 0        <b>tr:last-child td</b>  border-bottom 0
+<b>thead th</b>       10.5px / 650 · letter-spacing .08em · uppercase · var(--ink3) #828b9a · padding 0 8px 10px · border-bottom var(--hair)
+<b>numerics</b>       every column except Symbol is right-aligned; all number cells carry .mono → font-variant-numeric: tabular-nums
+<b>avg price</b>      class "mono dim" → --ink3 #828b9a (the only demoted column; Last stays --ink #eef0f3)
+<b>sort</b>           [...snap.positions].sort((a,b) =&gt; b.unrealized_pnl - a.unrealized_pnl)</div>
+
+<p class="note">.hide-sm is set on the Avg &lt;th&gt; and &lt;td&gt; but no rule for it exists anywhere in dashboard.html — the column
+never actually hides. The only responsive rule that touches this card is
+<span class="mono">@media(max-width:900px){.cols{grid-template-columns:1fr}}</span>, which widens the card rather than the table;
+below that, the narrow-screen fallback is the card's own <span class="mono">overflow-x:auto</span>.</p>
+
+<!-- ============================ WEB, STATES ============================ -->
+<h2>Web — every state the row actually has</h2>
+
+<div class="grid3">
+  <div class="spec">
+    <div class="cap">Gain · row default</div>
+    <table><tbody><tr>
+      <td><span class="sym"><span class="ava">MSFT</span><span>MSFT<br><span class="qty mono">27 adet</span></span></span></td>
+      <td class="mono up"><span class="plcell">+3546<span class="plbar"><i style="background:var(--pos);left:0;width:56px"></i></span></span></td>
+    </tr></tbody></table>
+    <div class="tok"><b>--pos</b> #00d17a
+bar anchored <b>left:0</b>
+width 56px (= max |P&amp;L|)</div>
+  </div>
+
+  <div class="spec">
+    <div class="cap">Loss · row default</div>
+    <table><tbody><tr>
+      <td><span class="sym"><span class="ava">UNH</span><span>UNH<br><span class="qty mono">15 adet</span></span></span></td>
+      <td class="mono down"><span class="plcell">−325<span class="plbar"><i style="background:var(--neg);right:0;width:8px"></i></span></span></td>
+    </tr></tbody></table>
+    <div class="tok"><b>--neg</b> #ff5d6c
+bar anchored <b>right:0</b>
+width 8px (floor, see below)</div>
+  </div>
+
+  <div class="spec" style="background:#101216">
+    <div class="cap">Hover (tbody tr:hover)</div>
+    <table><tbody><tr style="background:rgba(255,255,255,.02)">
+      <td><span class="sym"><span class="ava">NVDA</span><span>NVDA<br><span class="qty mono">55 adet</span></span></span></td>
+      <td class="mono up"><span class="plcell">+1540<span class="plbar"><i style="background:var(--pos);left:0;width:24.32px"></i></span></span></td>
+    </tr></tbody></table>
+    <div class="tok"><b>background</b> rgba(255,255,255,.02)
+<b>transition</b> background .12s
+whole-row only; no cursor change,
+no focus or selected state exists
+(the row carries no tabindex, so the
+global :focus-visible never applies)</div>
+  </div>
+</div>
+
+<div class="grid3" style="margin-top:18px">
+  <div class="spec">
+    <div class="cap">Mount frame — bar at width:0</div>
+    <table><tbody><tr>
+      <td><span class="sym"><span class="ava">MSFT</span><span>MSFT<br><span class="qty mono">27 adet</span></span></span></td>
+      <td class="mono up"><span class="plcell">+3546<span class="plbar"><i style="background:var(--pos);left:0;width:0"></i></span></span></td>
+    </tr></tbody></table>
+    <div class="tok">innerHTML writes <b>width:0</b>, target
+px is parked in <b>data-w</b>; one
+requestAnimationFrame later the
+width is assigned and it grows.
+<b>transition</b> width .8s cubic-bezier(.2,.7,.3,1)</div>
+  </div>
+
+  <div class="spec">
+    <div class="cap">Reduced motion — bar snaps, no grow</div>
+    <table><tbody><tr>
+      <td><span class="sym"><span class="ava">MSFT</span><span>MSFT<br><span class="qty mono">27 adet</span></span></span></td>
+      <td class="mono up"><span class="plcell">+3546<span class="plbar"><i style="background:var(--pos);left:0;width:56px;transition:none"></i></span></span></td>
+    </tr></tbody></table>
+    <div class="tok"><b>@media(prefers-reduced-motion:reduce)</b>
+sets <b>*{transition:none!important}</b>,
+which kills BOTH the .8s bar grow
+and the .12s hover fade. The rAF
+still runs — final width is identical,
+it just arrives in one frame.</div>
+  </div>
+
+  <div class="spec">
+    <div class="cap">Zero / flat P&amp;L — not special-cased</div>
+    <table><tbody><tr>
+      <td><span class="sym"><span class="ava">V</span><span>V<br><span class="qty mono">30 adet</span></span></span></td>
+      <td class="mono up"><span class="plcell">0<span class="plbar"><i style="background:var(--pos);left:0;width:8px"></i></span></span></td>
+    </tr></tbody></table>
+    <div class="tok">P&amp;L 0 takes the <b>&gt;= 0</b> branch:
+green, left-anchored, 8px floor.
+<b>sgn()</b> emits no sign at exactly 0,
+so it reads "0" not "+0".</div>
+  </div>
+</div>
+
+<h2>Web — empty book, a card-level state the row code never reaches</h2>
+<div class="grid3">
+  <div class="spec">
+    <div class="cap">0 positions — MISSING in the web code</div>
+    <table><thead><tr><th>Sembol</th><th>K/Z</th></tr></thead><tbody></tbody></table>
+    <div style="height:26px"></div>
+    <div class="tok">render() has no empty branch:
+<b>ps.map(…).join('')</b> yields "", so
+0 positions renders the header
+row over an empty tbody, and
+<b>#pcount</b> reads "0 açık".
+Mobile has an EmptyState here;
+web does not.</div>
+  </div>
+</div>
+
+<!-- ============================ BAR GEOMETRY ============================ -->
+<h2>The P&amp;L bar — width is relative to the largest absolute P&amp;L in the book</h2>
+<div class="cap">w = Math.max(8, Math.abs(p.unrealized_pnl) / mx * 56) &nbsp;·&nbsp; mx = Math.max(...ps.map(p =&gt; Math.abs(p.unrealized_pnl)), 1)
+&nbsp;·&nbsp; ordered here by |P&amp;L|, not by the row sort</div>
+
+<div class="spec" style="width:520px;padding:34px 18px 14px">
+  <div class="geo">
+    <span class="gl">MSFT +3546</span>
+    <span class="rulewrap"><span class="rule"></span><span class="rulelab">56px track</span>
+      <span class="plbar"><i style="background:var(--pos);left:0;width:56px"></i></span></span>
+    <span class="gv">3546/3546 × 56 = 56.00px · left:0</span>
+  </div>
+  <div class="geo">
+    <span class="gl">NVDA +1540</span>
+    <span class="rulewrap"><span class="plbar"><i style="background:var(--pos);left:0;width:24.32px"></i></span></span>
+    <span class="gv">1540/3546 × 56 = 24.32px · left:0</span>
+  </div>
+  <div class="geo">
+    <span class="gl">UNH −325</span>
+    <span class="rulewrap"><span class="plbar"><i style="background:var(--neg);right:0;width:8px"></i></span></span>
+    <span class="gv">325/3546 × 56 = 5.13 → <b style="color:var(--warn);font-weight:400">8px floor</b> · right:0</span>
+  </div>
+  <div class="geo">
+    <span class="gl">GOOGL −130</span>
+    <span class="rulewrap"><span class="plbar"><i style="background:var(--neg);right:0;width:8px"></i></span></span>
+    <span class="gv">130/3546 × 56 = 2.05 → <b style="color:var(--warn);font-weight:400">8px floor</b> · right:0</span>
+  </div>
+</div>
+
+<div class="tok"><b>.plbar</b>    56 × 3px · border-radius 2px · background var(--s3) #1c2027 · overflow hidden · position relative
+<b>.plbar i</b>  position absolute · top 0 · bottom 0 · border-radius 2px · width animated from 0
+<b>.plcell</b>   inline-flex · flex-direction column · align-items flex-end · gap 4px  (number above bar, both flush right)
+<b>direction</b> unrealized_pnl &gt;= 0 → left:0 (grows rightward, --pos) · &lt; 0 → right:0 (grows leftward, --neg)</div>
+
+<p class="note">The 8px floor means every small position renders the same length, so two rows with a −130 and a −325 look identical.
+Below ~507 (= 8/56 × 3546) the bar stops carrying magnitude and only carries sign.</p>
+
+<!-- ============================ SYMBOL CELL ============================ -->
+<h2>Symbol cell — avatar, ticker, quantity</h2>
+<div class="swatchrow">
+  <div class="spec">
+    <div class="cap">4-char ticker</div>
+    <span class="sym"><span class="ava">MSFT</span><span>MSFT<br><span class="qty mono">27 adet</span></span></span>
+    <div class="tok"><b>.ava</b> ticker.slice(0,4)</div>
+  </div>
+  <div class="spec">
+    <div class="cap">5-char ticker — avatar truncates</div>
+    <span class="sym"><span class="ava">GOOG</span><span>GOOGL<br><span class="qty mono">31 adet</span></span></span>
+    <div class="tok">avatar "GOOG" ≠ label "GOOGL"</div>
+  </div>
+  <div class="spec">
+    <div class="cap">1-char ticker</div>
+    <span class="sym"><span class="ava">V</span><span>V<br><span class="qty mono">30 adet</span></span></span>
+    <div class="tok">no min-width on the glyph</div>
+  </div>
+</div>
+
+<div class="tok"><b>.sym</b>  display flex · align-items center · gap 11px · font-weight 650 (sans, not mono)
+<b>.ava</b>  30 × 30px · border-radius 9px · background var(--s3) #1c2027 · 10px / 700 · color var(--ink2) #9aa3b2 · letter-spacing .02em
+<b>.qty</b>  11px / 400 · color var(--ink3) #828b9a · .mono · text = `${quantity} ${t('qty_word')}` → "27 adet" (tr) / "27 shares" (en)
+<b>numbers</b> sgn(v,0) → "+3546" / "−325" (U+2212 minus) · pct(v,1) → "+36.3%" · usd2() → "$361.49"
+<b>escaping</b> ticker goes through esc() in both the avatar and the label; quantity does not</div>
+
+<!-- ============================ MOBILE ============================ -->
+<h2>Mobile — app/(tabs)/portfolio.tsx, the same position as a pressable card</h2>
+<div class="cap">Different surface (#0a0a0a), different palette, different type scale, no table, no P&amp;L bar. Rendered at 390pt.</div>
+
+<div class="grid2" style="grid-template-columns:390px 1fr;align-items:start">
+  <div class="phone">
+    <div class="m-section">Pozisyonlar</div>
+
+    <div class="m-card">
+      <div class="m-row">
+        <span class="m-ticker">MSFT</span>
+        <span class="m-pnl" style="color:var(--m-up)">+$3,546.00  (+36.30%)</span>
+      </div>
+      <div class="m-row">
+        <span class="m-muted">27 @ $361.49  •  now $492.82</span>
+        <span class="m-hint">Analiz →</span>
+      </div>
+    </div>
+
+    <div class="m-card">
+      <div class="m-row">
+        <span class="m-ticker">UNH</span>
+        <span class="m-pnl" style="color:var(--m-down)">-$325.00  (-5.20%)</span>
+      </div>
+      <div class="m-row">
+        <span class="m-muted">15 @ $415.95  •  now $394.26</span>
+        <span class="m-hint">Analiz →</span>
+      </div>
+    </div>
+
+    <div class="m-empty">
+      <div class="t">Açık pozisyon yok</div>
+      <div class="h">Günlük çalışma yeni pozisyon açtığında burada görünür.</div>
+    </div>
+  </div>
+
+  <div>
+    <div class="cap">States present</div>
+    <div class="tok"><b>gain</b>   colors.up   #22c55e
+<b>loss</b>   colors.down #ef4444
+<b>empty</b>  &lt;EmptyState title="Açık pozisyon yok" hint="…" /&gt;
+<b>pressed</b> none — style is a plain object, Pressable
+        gets no pressed feedback
+<b>hover/focus</b> n/a
+<b>colorblind</b> none — colors.upCB #3b82f6 /
+        downCB #f97316 exist but nothing reads them</div>
+
+    <div class="cap" style="margin-top:18px">Tokens</div>
+    <div class="tok"><b>section</b>       colors.textPrimary #ffffff · 18px / '600'
+               paddingHorizontal 24 · marginTop 16
+<b>positionCard</b>  marginHorizontal 24 · marginTop 12 · padding 16
+               backgroundColor colors.surface #171717
+               borderRadius 12 · no border
+<b>row</b>           flexDirection row · justifyContent space-between
+               alignItems center
+<b>posTicker</b>     colors.textPrimary #ffffff · 18px / '600'
+<b>posPnl</b>        14px / '600' · color = up|down (inline)
+<b>muted</b>         colors.textMuted #949494 · marginTop 4
+               (no fontSize → RN default 14px)
+<b>analyzeHint</b>   colors.accent #a855f7 · 12px / '600' · marginTop 4
+<b>EmptyState</b>    margin 24 · padding 24 · #171717 · radius 12
+               alignItems center
+               title  colors.textSecondary #a3a3a3 · 15px / '600'
+               hint   colors.textMuted #949494 · 13px · marginTop 8
+<b>a11y</b>          role button · label "MSFT pozisyonunu analiz et"
+               hint "27 lot, kâr/zarar +$3,546.00"
+<b>onPress</b>       router.push(`/(tabs)/ask?ticker=MSFT`)</div>
+  </div>
+</div>
+
+<h2>Web ↔ mobile divergence (real, not stylistic)</h2>
+<div class="tok"><b>gain colour</b>    web --pos #00d17a          mobile colors.up   #22c55e
+<b>loss colour</b>    web --neg #ff5d6c          mobile colors.down #ef4444
+<b>minus sign</b>     web "−325" U+2212          mobile "-$325.00" ASCII hyphen (formatUsd)
+<b>P&amp;L precision</b>  web pct(v,1) → −5.2%       mobile formatPct → -5.20%  ·  web sgn(v,0) → −325, mobile → -$325.00
+<b>numerals</b>       web .mono tabular-nums     mobile no fontFamily / fontVariant on this card → proportional figures
+<b>P&amp;L bar</b>        web .plbar, book-relative  mobile none — magnitude is text only
+<b>avatar</b>         web .ava 30px tile         mobile none
+<b>row surface</b>    web --s1 #101216 + hairline mobile #171717 card, no border, 12px gap between rows
+<b>sort</b>           web sorts by P&amp;L desc      mobile renders data.positions in server order
+<b>empty</b>          web none                   mobile EmptyState
+<b>language</b>       web fully i18n'd (tr/en)   mobile mixes: section title is t('portfolio.positions'),
+                                              but "Analiz →", "Açık pozisyon yok" and "now" are hard-coded</div>
+
+<h2>Deviations from source in this card</h2>
+<div class="tok">Everything above is source-exact except these two, changed only so the specimen renders standalone:
+<b>.card</b>          source is `…border-radius:16px;margin-top:16px`. The margin is dropped — this card
+               shows one card, not a stack, and the 16px would read as a spec of the row.
+<b>.card&gt;.hd h3</b>   source selector is `.card&gt;.hd h2`, and the product markup is
+               `&lt;h2 data-i18n="pos_h"&gt;Pozisyonlar&lt;/h2&gt;`. Retargeted to h3 (both selector and
+               specimen markup) because h2 is this documentation file's section heading.
+               Every declared value is unchanged: 12px / 650 · letter-spacing .1em · --ink2 · uppercase.
+The `body` rule keeps the product's typography but swaps the product's `overflow-x:hidden`
+for the documentation frame's fixed `width:900px;padding:28px 24px 40px`.</div>
+
+<div class="tok" style="margin-top:14px;color:var(--ink3)">This component has no icons in either implementation — the web avatar is text (ticker.slice(0,4)), the mobile
+affordance is the literal string "Analiz →". Nothing here was drawn that the source does not draw.</div>
+
+</body>
+</html>

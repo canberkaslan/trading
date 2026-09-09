@@ -1,0 +1,294 @@
+<!-- @dsCard group="Components" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Decision / Rating Chip</title>
+<style>
+  /* ---- tokens copied verbatim from agent/api/static/dashboard.html :root ---- */
+  :root{
+    color-scheme:dark;
+    --bg:#0a0b0d; --s1:#101216; --s2:#15181d; --s3:#1c2027;
+    --hair:rgba(255,255,255,.06); --hair2:rgba(255,255,255,.12);
+    --ink:#eef0f3; --ink2:#9aa3b2; --ink3:#828b9a;
+    --pos:#00d17a; --neg:#ff5d6c; --warn:#e2b93b; --bench:#767f8c;
+    --pos-dim:rgba(0,209,122,.12); --neg-dim:rgba(255,93,108,.12);
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,Inter,sans-serif;
+  }
+  /* ---- mirror of mobile/app/src/theme/colors.ts — NOT part of dashboard.html.
+         Restated here as CSS vars so the mobile specimens below can use them. ---- */
+  :root{
+    --m-bg:#0a0a0a; --m-surface:#171717; --m-elev:#262626;
+    --m-ink:#ffffff; --m-ink2:#a3a3a3; --m-ink3:#949494;
+    --m-up:#22c55e; --m-down:#ef4444;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{background:var(--bg)}
+  body{font-family:var(--sans);background:var(--bg);color:var(--ink);
+    font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
+  .page{width:780px;padding:26px 24px 30px}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  h1{font-size:15px;font-weight:700;letter-spacing:.02em}
+  .sub{font-size:12px;color:var(--ink3);margin-top:4px}
+  .val{font-family:var(--mono);font-size:10.5px;color:var(--ink3);line-height:1.5;
+    font-variant-numeric:tabular-nums}
+  .val b{color:var(--ink2);font-weight:400}
+
+  hr{border:0;border-top:1px solid var(--hair);margin:22px 0}
+
+  /* ══ THE COMPONENT — verbatim, dashboard.html lines 157-166, source order ══ */
+  .dec{display:grid;grid-template-columns:100px 1fr auto auto;gap:12px;align-items:center;
+    padding:10px 0;border-bottom:1px solid var(--hair);font-size:13.5px;transition:transform .12s}
+  .dec:hover{transform:translateX(3px)}
+  .dec:last-child{border-bottom:0}
+  .rchip{display:inline-flex;justify-content:center;font-size:11px;font-weight:650;padding:4px 0;border-radius:7px;width:100px}
+  .rchip.b{color:var(--pos);background:var(--pos-dim)}
+  .rchip.h{color:var(--ink2);background:var(--s3)}
+  .rchip.s{color:var(--neg);background:var(--neg-dim)}
+  .dec .pt{color:var(--ink3);font-size:12px;min-width:92px;text-align:right}
+  .dec .when{color:var(--ink3);font-size:12px;min-width:50px;text-align:right}
+  /* ══ end verbatim block — nothing above this line was altered ══════════════ */
+
+  /* ── layout scaffolding (not product code) ─────────────────────────────── */
+  .grid{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-top:14px}
+  .spec{display:flex;flex-direction:column;gap:7px}
+  .lbl{font-size:10px;color:var(--ink3);letter-spacing:.04em}
+  .panel{background:var(--s1);border:1px solid var(--hair);border-radius:12px;padding:16px 18px}
+  .panel-h{display:flex;align-items:baseline;gap:10px;margin-bottom:2px}
+  .panel-h h2{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+  .panel-h .note{font-size:11px;color:var(--ink3)}
+  .code{font-family:var(--mono);font-size:10.5px;line-height:1.7;color:var(--ink2);
+    background:var(--s2);border:1px solid var(--hair);border-radius:9px;
+    padding:11px 13px;margin-top:12px;overflow-x:auto;white-space:pre}
+  .code i{color:var(--ink3);font-style:normal}
+
+  /* mobile mirror — RN has NO chip: it is bare coloured text on a card */
+  .mpanel{background:var(--m-bg);border:1px solid var(--hair);border-radius:12px;padding:16px 18px}
+  .mcard{background:var(--m-surface);border-radius:12px;padding:16px}
+  .mcard.wide{padding:18px}
+  .mrow{display:flex;justify-content:space-between;align-items:center}
+  .mticker{color:var(--m-ink);font-size:18px;font-weight:600}
+  .mticker.lg{font-size:22px;font-weight:700}
+  .mrating{font-weight:700}
+  .mmuted{color:var(--m-ink3);font-size:12px}
+  .mlabel{color:var(--m-ink3);font-size:12px}
+  .mheadline{color:var(--m-ink);font-size:24px;font-weight:700}
+  /* two-up so each card is ~340px — close to a real 375pt phone; the RN
+     space-between row needs that width to read honestly */
+  .mgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:14px}
+  .mswatches{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-top:14px}
+
+  .bucketmap{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-top:12px}
+  .bm{border:1px dashed var(--hair2);border-radius:8px;padding:8px 9px}
+  .bm .k{font-size:10.5px;color:var(--ink2);font-weight:600}
+  .bm .v{font-family:var(--mono);font-size:10px;color:var(--ink3);margin-top:3px}
+  .warnbox{display:flex;gap:10px;align-items:flex-start;border:1px solid rgba(226,185,59,.28);
+    background:rgba(226,185,59,.07);border-radius:10px;padding:11px 13px;margin-top:16px}
+  .warnbox svg{width:14px;height:14px;flex:none;margin-top:1px}
+  .warnbox p{font-size:11.5px;color:var(--ink2);line-height:1.55}
+  .warnbox b{color:var(--warn);font-weight:650}
+  .swatch{display:inline-block;width:8px;height:8px;border-radius:2px;vertical-align:-1px;margin-right:5px}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <h1>Decision / Rating chip</h1>
+  <p class="sub">Web <span class="mono">.rchip</span> in <span class="mono">dashboard.html</span> &middot; mobile <span class="mono">RATING_COLOR</span>, duplicated in <span class="mono">(tabs)/agents.tsx</span> and <span class="mono">(tabs)/ask.tsx</span> &middot; uncoloured in <span class="mono">trade/[ticker].tsx</span></p>
+
+  <hr>
+
+  <!-- ══ WEB ══════════════════════════════════════════════════════════════ -->
+  <div class="panel">
+    <div class="panel-h">
+      <h2>Web &mdash; .rchip</h2>
+      <span class="note">3 buckets for 5 ratings &middot; sits on <span class="mono">.card</span> = <span class="mono">--s1 #101216</span></span>
+    </div>
+
+    <div class="grid">
+      <div class="spec">
+        <span class="rchip b">Buy</span>
+        <span class="lbl">Buy</span>
+        <span class="val">.rchip.b<br><b>fg</b> --pos #00d17a<br><b>bg</b> --pos-dim<br>rgba(0,209,122,.12)</span>
+      </div>
+      <div class="spec">
+        <span class="rchip b">Overweight</span>
+        <span class="lbl">Overweight</span>
+        <span class="val">.rchip.b<br><b>fg</b> --pos #00d17a<br><b>bg</b> --pos-dim<br>rgba(0,209,122,.12)</span>
+      </div>
+      <div class="spec">
+        <span class="rchip h">Hold</span>
+        <span class="lbl">Hold</span>
+        <span class="val">.rchip.h<br><b>fg</b> --ink2 #9aa3b2<br><b>bg</b> --s3 #1c2027<br>(opaque, not dim)</span>
+      </div>
+      <div class="spec">
+        <span class="rchip s">Underweight</span>
+        <span class="lbl">Underweight</span>
+        <span class="val">.rchip.s<br><b>fg</b> --neg #ff5d6c<br><b>bg</b> --neg-dim<br>rgba(255,93,108,.12)</span>
+      </div>
+      <div class="spec">
+        <span class="rchip s">Sell</span>
+        <span class="lbl">Sell</span>
+        <span class="val">.rchip.s<br><b>fg</b> --neg #ff5d6c<br><b>bg</b> --neg-dim<br>rgba(255,93,108,.12)</span>
+      </div>
+    </div>
+
+    <p class="val" style="margin-top:16px">
+      <b>box</b> width 100px (fixed) &middot; padding 4px 0 &middot; border-radius 7px &middot; display inline-flex &middot; justify-content center &middot; no border, no transition of its own<br>
+      <b>type</b> 11px / 650 / --sans &middot; inherits body line-height 1.45 &middot; no text-transform &mdash; the label is the raw API string
+    </p>
+
+    <div class="bucketmap">
+      <div class="bm"><div class="k">Buy</div><div class="v">&rarr; 'b'</div></div>
+      <div class="bm"><div class="k">Overweight</div><div class="v">&rarr; 'b'</div></div>
+      <div class="bm"><div class="k">Hold</div><div class="v">&rarr; 'h'</div></div>
+      <div class="bm"><div class="k">Underweight</div><div class="v">&rarr; 's' (else)</div></div>
+      <div class="bm"><div class="k">Sell</div><div class="v">&rarr; 's' (else)</div></div>
+    </div>
+
+    <div class="code"><i>// dashboard.html, verbatim — the whole of the decisions renderer</i>
+$('#decisions').innerHTML=decs.map(d=&gt;{
+  const k=(d.rating==='Buy'||d.rating==='Overweight')?'b':(d.rating==='Hold')?'h':'s';
+  const dt=new Date(d.timestamp_utc);
+  return `&lt;div class="dec"&gt;&lt;span class="rchip ${k}"&gt;${esc(d.rating)}&lt;/span&gt;&lt;b&gt;${esc(d.ticker)}&lt;/b&gt;
+    &lt;span class="pt mono"&gt;${d.price_target?('PT '+usd(d.price_target)):''}&lt;/span&gt;
+    &lt;span class="when"&gt;${dt.toLocaleDateString(LOCALE(),{day:'numeric',month:'short'})}&lt;/span&gt;&lt;/div&gt;`;
+}).join('');</div>
+  </div>
+
+  <!-- ══ IN CONTEXT ═══════════════════════════════════════════════════════ -->
+  <div class="panel" style="margin-top:16px">
+    <div class="panel-h">
+      <h2>In context &mdash; .dec row</h2>
+      <span class="note">grid 100px 1fr auto auto &middot; gap 12px &middot; 13.5px &middot; hover it</span>
+    </div>
+    <div style="margin-top:10px">
+      <div class="dec"><span class="rchip b">Buy</span><b>NVDA</b><span class="pt mono">PT $184</span><span class="when">7 Sep</span></div>
+      <div class="dec"><span class="rchip h">Hold</span><b>AAPL</b><span class="pt mono">PT $233</span><span class="when">7 Sep</span></div>
+      <div class="dec"><span class="rchip s">Underweight</span><b>INTC</b><span class="pt mono"></span><span class="when">6 Sep</span></div>
+    </div>
+    <p class="val" style="margin-top:12px">
+      <b>row</b> padding 10px 0 &middot; border-bottom 1px solid var(--hair) rgba(255,255,255,.06) &middot; :last-child border-bottom 0<br>
+      <b>hover</b> .dec:hover transform translateX(3px), transition transform .12s on .dec &mdash; the whole row moves; the chip has no hover of its own, and the row carries no click handler<br>
+      <b>pt/when</b> --ink3 #828b9a &middot; 12px &middot; min-width 92px / 50px, right-aligned &middot; .pt also carries .mono<br>
+      <b>pt value</b> usd() = '$' + Math.round(v).toLocaleString('en-US') &mdash; whole dollars, no cents (232.50 renders <span style="color:var(--ink2)">$233</span>) &middot; cell renders empty when price_target is falsy<br>
+      <b>when value</b> toLocaleDateString(LOCALE(), {day:'numeric', month:'short'}) &mdash; LOCALE() is 'tr-TR' when LANG==='tr', else 'en-US', so the third column reads "7 Sep" or "7 Eyl"
+    </p>
+  </div>
+
+  <!-- ══ MOBILE ═══════════════════════════════════════════════════════════ -->
+  <div class="mpanel" style="margin-top:16px">
+    <div class="panel-h">
+      <h2>Mobile &mdash; RATING_COLOR</h2>
+      <span class="note">5 distinct colours &middot; no chip: bare text on <span class="mono">colors.surface #171717</span></span>
+    </div>
+
+    <div class="mswatches">
+      <div class="spec">
+        <span class="mrating" style="font-size:15px;color:var(--m-up)">Buy</span>
+        <span class="val"><span class="swatch" style="background:#22c55e"></span>colors.up<br>#22c55e</span>
+      </div>
+      <div class="spec">
+        <span class="mrating" style="font-size:15px;color:#86efac">Overweight</span>
+        <span class="val"><span class="swatch" style="background:#86efac"></span>inline literal<br>#86efac</span>
+      </div>
+      <div class="spec">
+        <span class="mrating" style="font-size:15px;color:var(--m-ink2)">Hold</span>
+        <span class="val"><span class="swatch" style="background:#a3a3a3"></span>colors.textSecondary<br>#a3a3a3</span>
+      </div>
+      <div class="spec">
+        <span class="mrating" style="font-size:15px;color:#fda4af">Underweight</span>
+        <span class="val"><span class="swatch" style="background:#fda4af"></span>inline literal<br>#fda4af</span>
+      </div>
+      <div class="spec">
+        <span class="mrating" style="font-size:15px;color:var(--m-down)">Sell</span>
+        <span class="val"><span class="swatch" style="background:#ef4444"></span>colors.down<br>#ef4444</span>
+      </div>
+    </div>
+
+    <div class="code"><i>// (tabs)/agents.tsx lines 15-21, verbatim — byte-identical copy also in (tabs)/ask.tsx lines 21-27</i>
+const RATING_COLOR: Record&lt;Rating, string&gt; = {
+  Buy: colors.up,
+  Overweight: '#86efac',
+  Hold: colors.textSecondary,
+  Underweight: '#fda4af',
+  Sell: colors.down,
+};</div>
+
+    <div class="mgrid">
+      <div class="spec">
+        <div class="mcard">
+          <div class="mrow"><span class="mticker">NVDA</span><span class="mrating" style="font-size:15px;color:var(--m-up)">Buy</span></div>
+          <div class="mrow" style="margin-top:8px">
+            <span class="mmuted">Entry $178</span><span class="mmuted">Stop $164</span><span class="mmuted">PT $232.5</span>
+          </div>
+        </div>
+        <span class="val"><b>agents.tsx</b> card padding 16, gap none<br>ticker 18/'600' &middot; rating 15/'700'</span>
+      </div>
+      <div class="spec">
+        <div class="mcard wide">
+          <div class="mrow"><span class="mticker lg">AAPL</span><span class="mrating" style="font-size:16px;color:var(--m-ink2)">Hold</span></div>
+          <div class="mrow" style="margin-top:10px">
+            <span class="mmuted">Entry &mdash;</span><span class="mmuted">Stop &mdash;</span><span class="mmuted">Hedef &mdash;</span>
+          </div>
+        </div>
+        <span class="val"><b>ask.tsx</b> card padding 18, gap 4<br>ticker 22/'700' &middot; rating 16/'700'</span>
+      </div>
+      <div class="spec">
+        <div class="mcard">
+          <div class="mlabel">Son karar</div>
+          <div class="mheadline" style="margin-top:12px">Underweight</div>
+        </div>
+        <span class="val"><b>trade/[ticker].tsx</b> headlineValue<br>#ffffff / 24 / '700' &mdash; <span style="color:var(--warn)">no RATING_COLOR at all</span></span>
+      </div>
+    </div>
+
+    <p class="val" style="margin-top:16px">
+      <b>rating</b> colour only &mdash; no background, no radius, no padding, no border: there is no chip on mobile<br>
+      <b>ticker</b> colors.textPrimary #ffffff &middot; <b>card</b> colors.surface #171717, borderRadius 12 &middot; row flexDirection row, justifyContent space-between, alignItems center<br>
+      <b>muted metrics</b> colors.textMuted #949494 / 12 &mdash; raw numbers, not currency-formatted: price_target 232.5 prints as "PT $232.5"<br>
+      <b>font</b> RN default (SF Pro / Roboto) &mdash; none of the three screens sets a fontFamily
+    </p>
+  </div>
+
+  <!-- ══ THE INCONSISTENCY ════════════════════════════════════════════════ -->
+  <div class="warnbox">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#e2b93b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+      <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+    </svg>
+    <p>
+      <b>Three screens, three answers, for the same five ratings.</b>
+      The API type is <span class="mono">Rating = 'Buy' | 'Overweight' | 'Hold' | 'Underweight' | 'Sell'</span>.
+      Web collapses it into three buckets, so <b>Buy and Overweight are pixel-identical</b> and
+      <b>Underweight and Sell are pixel-identical</b> &mdash; two of the five ratings are unreadable from colour alone.
+      Mobile keeps all five distinct but abandons the chip entirely, and defines the map twice
+      (<span class="mono">agents.tsx</span> and <span class="mono">ask.tsx</span> hold byte-identical copies)
+      with no shared token for two of them (<span class="mono">#86efac</span>, <span class="mono">#fda4af</span>
+      are inline literals, absent from <span class="mono">theme/colors.ts</span>).
+      <span class="mono">trade/[ticker].tsx</span> then drops the colour coding altogether and renders the rating
+      as plain white 24px text. The greens and reds also differ per platform: web
+      <span class="mono">#00d17a / #ff5d6c</span> vs mobile <span class="mono">#22c55e / #ef4444</span>.
+      Nothing in either codebase reconciles them.
+    </p>
+  </div>
+
+  <p class="val" style="margin-top:14px">
+    <b>States that do not exist in the source:</b> no hover, focus, pressed, disabled, loading or
+    selected variant is defined for <span class="mono">.rchip</span> &mdash; the only motion is the parent
+    <span class="mono">.dec</span> row's translateX, and neither element is focusable or clickable, so the global
+    <span class="mono">:focus-visible</span> outline never reaches them. On mobile the rating text sits inside a
+    <span class="mono">Pressable</span> in both <span class="mono">agents.tsx</span> and <span class="mono">ask.tsx</span>,
+    but each passes a static <span class="mono">style</span> object rather than a
+    <span class="mono">({pressed}) =&gt; …</span> callback, so there is no pressed state either.
+    There is no fallback branch for an unknown rating string: web's ternary falls through to
+    <span class="mono">'s'</span> and renders it as Sell red, while mobile's <span class="mono">Record</span> lookup
+    yields <span class="mono">undefined</span> and the text falls back to the RN default colour on a
+    <span class="mono">#171717</span> card.
+  </p>
+
+</div>
+</body>
+</html>

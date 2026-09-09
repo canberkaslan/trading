@@ -1,0 +1,713 @@
+<!-- @dsCard group="Foundations" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRADER — Typography</title>
+<style>
+  :root{
+    color-scheme:dark;
+    /* copied verbatim from agent/api/static/dashboard.html :root, lines 12–19 */
+    --bg:#0a0b0d; --s1:#101216; --s2:#15181d; --s3:#1c2027;
+    --hair:rgba(255,255,255,.06); --hair2:rgba(255,255,255,.12);
+    --ink:#eef0f3; --ink2:#9aa3b2; --ink3:#828b9a;
+    --pos:#00d17a; --neg:#ff5d6c; --warn:#e2b93b; --bench:#767f8c;
+    --pos-dim:rgba(0,209,122,.12); --neg-dim:rgba(255,93,108,.12);
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,Inter,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{background:var(--bg)}
+  body{font-family:var(--sans);color:var(--ink);font-size:14px;line-height:1.45;
+    -webkit-font-smoothing:antialiased;background:var(--bg)}
+  .page{width:900px;margin:0 auto;padding:28px 28px 44px}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  /* ---- card chrome, same values as .card in the dashboard ---- */
+  .card{background:var(--s1);border:1px solid var(--hair);border-radius:16px;margin-top:16px}
+  .card>.hd{display:flex;align-items:baseline;gap:10px;padding:18px 22px 0}
+  .card>.hd h2{font-size:12px;font-weight:650;letter-spacing:.1em;color:var(--ink2);text-transform:uppercase}
+  .card>.hd .sub{font-size:12px;color:var(--ink3);margin-left:auto}
+  .card>.bd{padding:14px 22px 18px}
+
+  /* ---- doc header ---- */
+  .head{display:flex;align-items:flex-end;gap:12px;padding-bottom:6px;border-bottom:1px solid var(--hair)}
+  .head .mark{display:flex;align-items:center;gap:9px}
+  .head .mark b{font-size:13px;font-weight:700;letter-spacing:.16em}
+  .head .t{font-size:26px;font-weight:700;letter-spacing:-.015em;margin-left:6px}
+  .head .n{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink3)}
+  .lede{font-size:13px;color:var(--ink2);line-height:1.6;margin-top:10px}
+
+  /* ---- specimen ladder ---- */
+  .row{display:grid;grid-template-columns:150px 1fr 214px;gap:16px;align-items:center;
+    padding:13px 0;border-bottom:1px solid var(--hair)}
+  .row:last-child{border-bottom:0}
+  .sel{font-family:var(--mono);font-size:11px;color:var(--ink3);line-height:1.4;word-break:break-word}
+  .sel em{font-style:normal;display:block;color:#6b7480;font-size:10px;margin-top:2px}
+  .val{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:10.5px;color:var(--ink2);
+    text-align:right;line-height:1.65;white-space:pre-line}
+  .spec{min-width:0;overflow:hidden}
+  .cap{font-size:10.5px;color:var(--ink3);font-family:var(--mono);margin-bottom:6px}
+  .stateline{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+
+  /* ---- specimen classes ----------------------------------------------------
+     Each .s-* below carries the TYPE declarations of the rule it is named after,
+     copied from dashboard.html. Layout that only matters in place — padding,
+     borders, text-align, margins, transitions — is dropped so the specimen can
+     sit inline, so treat none of these blocks as byte-for-byte copies. The four
+     rules that were changed further than that are marked CHANGED.            */
+  .s-mark-b{font-size:13px;font-weight:700;letter-spacing:.16em}
+  .s-tag{font-size:10px;font-weight:700;letter-spacing:.1em;color:var(--ink3);
+    border:1px solid var(--hair2);border-radius:5px;padding:2px 7px}
+  .s-stamp{font-size:12px;color:var(--ink3)}
+  .s-langbtn{font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--ink2)}
+  /* .live + its three verdict classes; the pulsing .d::after halo is left out */
+  .s-live{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:600;
+    border-radius:999px;padding:5px 12px}
+  .s-live .d{width:7px;height:7px;border-radius:50%}
+  .s-live.go{color:var(--pos);background:var(--pos-dim)}
+  .s-live.go .d{background:var(--pos)}
+  .s-live.nogo{color:var(--neg);background:var(--neg-dim)}
+  .s-live.nogo .d{background:var(--neg)}
+  .s-live.wait{color:var(--warn);background:rgba(226,185,59,.12)}
+  .s-live.wait .d{background:var(--warn)}
+  .s-tk{display:inline-flex;align-items:baseline;gap:8px;font-size:12.5px;white-space:nowrap} /* CHANGED: flex → inline-flex */
+  .s-tk b{font-weight:650}
+  .s-tk .p{color:var(--ink2)}
+  .s-hero-lbl{font-size:12px;font-weight:600;letter-spacing:.1em;color:var(--ink3);text-transform:uppercase}
+  .s-hero-big{font-size:44px;font-weight:700;letter-spacing:-.02em;line-height:1.05}
+  .s-hero-sub{font-size:14.5px}
+  .s-hero-date{color:var(--ink3);font-size:12.5px}
+  .s-ptab{font-size:12px;font-weight:650;color:var(--ink3);padding:6px 14px;border-radius:999px;display:inline-block}
+  .s-ptab.sel{background:var(--s3);color:var(--ink)}
+  .s-spybtn{font-size:11.5px;color:var(--ink3);display:inline-flex;align-items:center;gap:7px} /* CHANGED: flex → inline-flex */
+  .s-spybtn i{width:14px;height:3px;border-radius:2px;background:var(--bench);display:inline-block}
+  .s-spybtn.off{opacity:.4}
+  .s-chip-k{font-size:10.5px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+  .s-chip-v{font-size:16.5px;font-weight:650}
+  .s-chip-s{font-size:11px;color:var(--ink3)}
+  .s-h2{font-size:12px;font-weight:650;letter-spacing:.1em;color:var(--ink2);text-transform:uppercase}
+  .s-hdsub{font-size:12px;color:var(--ink3)}
+  .s-gate-t{font-size:12px;font-weight:600}
+  .s-gate-d{font-size:11px;color:var(--ink3)}
+  .s-th{font-size:10.5px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+  .s-td{font-size:13.5px}
+  .s-sym{display:inline-flex;align-items:center;gap:11px;font-weight:650;font-size:13.5px} /* CHANGED: flex → inline-flex */
+  .s-ava{width:30px;height:30px;border-radius:9px;background:var(--s3);display:inline-flex;
+    align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--ink2);letter-spacing:.02em}
+  .s-qty{font-size:11px;color:var(--ink3);font-weight:400}
+  .s-kv{font-size:13px}
+  .s-kv b{font-weight:650}
+  .s-lg{font-size:11.5px;color:var(--ink2)}
+  .s-lg i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px}
+  .s-flags{font-size:12px;color:var(--warn);line-height:1.6}
+  .s-dec{font-size:13.5px}
+  .s-pt{color:var(--ink3);font-size:12px}
+  .s-when{color:var(--ink3);font-size:12px}
+  .s-rchip{display:inline-flex;justify-content:center;font-size:11px;font-weight:650;
+    padding:4px 0;border-radius:7px;width:100px}
+  .s-rchip.b{color:var(--pos);background:var(--pos-dim)}
+  .s-rchip.h{color:var(--ink2);background:var(--s3)}
+  .s-rchip.s{color:var(--neg);background:var(--neg-dim)}
+  .s-tip{font-size:12px}
+  .s-tip .r{display:flex;align-items:center;gap:8px;line-height:1.9}
+  .s-lt{font-size:14px;font-weight:650}
+  .s-ls{font-size:12.5px;color:var(--ink3);line-height:1.5}
+  .s-lx{color:var(--ink3);font-size:18px;line-height:1}
+  .s-lbody-p{font-size:13.5px;color:var(--ink2);line-height:1.65}
+  .s-ltake-b{font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+  .s-ltake-span{font-size:13.5px;line-height:1.55}
+  .s-lq{font-size:13.5px;font-weight:600;line-height:1.55}
+  .s-lopt{font-size:13.5px;line-height:1.5;border:1px solid var(--hair2);border-radius:10px;
+    padding:10px 14px;display:block;margin-bottom:8px}
+  .s-lopt.right{border-color:var(--pos);background:var(--pos-dim)}
+  .s-lopt.wrong{border-color:var(--neg);background:var(--neg-dim)}
+  .s-lexp{font-size:13px;color:var(--ink2);line-height:1.6}
+  .s-lexp b{display:block;font-size:12px;margin-bottom:3px}
+  .s-err{font-size:13px;color:var(--neg)}
+  .s-nodata{color:var(--ink3)}
+  .s-footer{font-size:11.5px;color:var(--ink3);line-height:1.8}
+  .s-authh1{font-size:14px;font-weight:700;letter-spacing:.16em}
+  .s-authp{font-size:13px;color:var(--ink2);line-height:1.6}
+  .s-authinput{background:var(--s2);border:1px solid var(--hair2);color:var(--ink);
+    padding:11px 14px;border-radius:10px;font-size:14px;font-family:var(--mono);width:100%;display:block}
+  .s-authgo{background:var(--pos);color:#052;font-weight:700;font-size:13.5px;
+    padding:11px;border-radius:10px;display:inline-block;text-align:center;min-width:150px} /* CHANGED: width:100% → min-width, to sit in the specimen column */
+  .s-autherr{font-size:12.5px;color:var(--neg)}
+  .s-body{font-size:14px;line-height:1.45}
+
+  /* ---- stack specimens ---- */
+  .stacks{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .stackbox{background:var(--s2);border:1px solid var(--hair);border-radius:12px;padding:16px 18px}
+  .stackbox .nm{font-family:var(--mono);font-size:11px;color:var(--pos);letter-spacing:.04em}
+  .stackbox .glyphs{font-size:29px;font-weight:650;letter-spacing:-.01em;margin:10px 0 2px;line-height:1.15}
+  .stackbox .glyphs2{font-size:20px;font-weight:400;color:var(--ink2);line-height:1.3}
+  .stackbox .stk{font-family:var(--mono);font-size:10.5px;color:var(--ink3);line-height:1.7;
+    margin-top:12px;padding-top:10px;border-top:1px solid var(--hair);word-break:break-word}
+  .stackbox .use{font-size:11.5px;color:var(--ink2);line-height:1.6;margin-top:8px}
+  .m-face{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .s-face{font-family:var(--sans)}
+
+  /* ---- tabular demo ---- */
+  .tab3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+  .tcol{background:var(--s2);border:1px solid var(--hair);border-radius:12px;padding:14px 16px}
+  .tcol.bad{border-color:rgba(255,93,108,.35)}
+  .tcol.good{border-color:rgba(0,209,122,.30)}
+  .tcol h4{font-size:10.5px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--ink3);margin-bottom:9px}
+  .tcol h4.b{color:var(--neg)}
+  .tcol h4.g{color:var(--pos)}
+  .nums{display:block}
+  .nums div{font-size:13.5px;text-align:right;padding:3px 0;border-bottom:1px solid var(--hair)}
+  .nums div:last-child{border-bottom:0}
+  .n-prop{font-family:var(--sans);font-variant-numeric:proportional-nums}
+  .n-tab{font-family:var(--sans);font-variant-numeric:tabular-nums}
+  .n-mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .tcol .note{font-family:var(--mono);font-size:10px;color:var(--ink3);line-height:1.6;
+    margin-top:10px;padding-top:9px;border-top:1px solid var(--hair)}
+
+  /* ---- split table ---- */
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .split h4{font-family:var(--mono);font-size:11px;color:var(--pos);margin-bottom:8px}
+  .split h4.alt{color:var(--ink2)}
+  .split ul{list-style:none}
+  .split li{font-size:12.5px;color:var(--ink2);line-height:1.5;padding:6px 0;
+    border-bottom:1px solid var(--hair);display:flex;gap:10px}
+  .split li:last-child{border-bottom:0}
+  .split li b{font-family:var(--mono);font-size:11px;font-weight:400;color:var(--ink3);
+    flex:0 0 116px}
+  .split li span{flex:1}
+
+  /* ---- notes ---- */
+  .note-row{display:flex;gap:12px;padding:11px 0;border-bottom:1px solid var(--hair);
+    font-size:12.5px;color:var(--ink2);line-height:1.6}
+  .note-row:last-child{border-bottom:0}
+  .note-row .k{font-family:var(--mono);font-size:11px;color:var(--warn);flex:0 0 152px;line-height:1.7}
+  .note-row.info .k{color:var(--bench)}
+  .wt{display:flex;gap:22px;align-items:baseline;flex-wrap:wrap;margin-bottom:4px}
+  .wt div{text-align:center}
+  .wt .g{font-size:24px;line-height:1.2}
+  .wt .l{font-family:var(--mono);font-size:10px;color:var(--ink3);margin-top:3px}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="head">
+    <span class="mark">
+      <svg width="22" height="22" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#1c2027"/><path d="M7 21l6-7 4 4 8-10" stroke="#00d17a" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <b>TRADER</b>
+    </span>
+    <span class="t">Typography</span>
+    <span class="n">agent/api/static/dashboard.html</span>
+  </div>
+  <p class="lede">Two stacks, no webfonts, no network. Nearly every figure is <span class="mono" style="color:var(--ink)">--mono</span> with tabular
+    figures; every word is <span class="s-face" style="color:var(--ink)">--sans</span>. Six of the thirteen sizes are half-pixel
+    (10.5, 11.5, 12.5, 13.5, 14.5, 16.5) and weight 650 carries ten declarations against 700's eight — nothing here is snapped to a grid.</p>
+
+  <!-- ============ the two stacks ============ -->
+  <section class="card">
+    <div class="hd"><h2>The two stacks</h2><span class="sub">:root, lines 18–19</span></div>
+    <div class="bd">
+      <div class="stacks">
+        <div class="stackbox">
+          <div class="nm">--mono</div>
+          <div class="glyphs m-face">$101,138 +2.41%</div>
+          <div class="glyphs2 m-face">0123456789 −+.,%$</div>
+          <div class="stk">ui-monospace,<br>"SF Mono", SFMono-Regular,<br>Menlo, Consolas, monospace</div>
+          <div class="use">Reached three ways: the <span class="mono" style="color:var(--ink2)">.mono</span> class (which also sets
+            <span class="mono" style="color:var(--ink2)">font-variant-numeric:tabular-nums</span>), the
+            <span class="mono" style="color:var(--ink2)">#auth input</span> rule, and the two chart end-labels' presentation
+            attribute. Only the auth field is prose.</div>
+        </div>
+        <div class="stackbox">
+          <div class="nm">--sans</div>
+          <div class="glyphs s-face">Go-live gates</div>
+          <div class="glyphs2 s-face">Portföy değeri · Öğren</div>
+          <div class="stk">-apple-system, BlinkMacSystemFont,<br>"SF Pro Display", "Segoe UI",<br>Roboto, Inter, sans-serif</div>
+          <div class="use">Set once on <span class="mono" style="color:var(--ink2)">body</span> at 14px / line-height 1.45.
+            Everything inherits it; the page never re-declares a family for prose.</div>
+        </div>
+      </div>
+      <div class="wt" style="margin-top:14px;padding-top:13px;border-top:1px solid var(--hair)">
+        <div><div class="g s-face" style="font-weight:400">Trading days</div><div class="l">400 · body, .qty</div></div>
+        <div><div class="g s-face" style="font-weight:600">Trading days</div><div class="l">600 · .live, .lq, .gate .t</div></div>
+        <div><div class="g s-face" style="font-weight:650">Trading days</div><div class="l">650 · .chip .v, h2, th</div></div>
+        <div><div class="g s-face" style="font-weight:700">Trading days</div><div class="l">700 · hero, .tag, .ava</div></div>
+      </div>
+      <div class="cap" style="margin:8px 0 0">no static face in either stack ships a 650 cut — CSS font matching then takes the
+        next weight up, 700; the intermediate weight only appears where the platform serves a variable face (SF Pro on macOS)</div>
+    </div>
+  </section>
+
+  <!-- ============ display + figures ============ -->
+  <section class="card">
+    <div class="hd"><h2>Display &amp; figures</h2><span class="sub">mono — all of these carry .mono in the markup</span></div>
+    <div class="bd">
+
+      <div class="row">
+        <div class="sel">.hero .big<em>+ .mono in markup</em></div>
+        <div class="spec"><div class="s-hero-big m-face">$101,138</div></div>
+        <div class="val">44px / 700
+ls −.02em · lh 1.05
+--mono, tabular-nums</div>
+      </div>
+
+      <div class="row">
+        <div class="sel">.hero .sub<em>.hero .sub .date</em></div>
+        <div class="spec"><span class="s-hero-sub m-face" style="color:var(--pos)">+$1,138 (+1.14%)</span>
+          <span class="s-hero-date s-face" style="margin-left:12px">since inception · $100k</span></div>
+        <div class="val">14.5px mono (.up)
+12.5px sans (--ink3)</div>
+      </div>
+
+      <div class="row">
+        <div class="sel">.chip .v<em>.chip .k / .chip .s</em></div>
+        <div class="spec">
+          <div class="s-chip-k">Max drawdown</div>
+          <div class="s-chip-v m-face" style="margin:3px 0">-4.2%</div>
+          <div class="s-chip-s m-face">gate 15%</div>
+        </div>
+        <div class="val">16.5px / 650 mono
+10.5px / 650 ls .08em UC
+11px mono --ink3
+no up/down class → --ink</div>
+      </div>
+
+      <div class="row">
+        <div class="sel">tbody td<em>.sym / .ava / .qty</em></div>
+        <div class="spec">
+          <span class="s-sym"><span class="s-ava">AAPL</span><span>AAPL<br><span class="s-qty m-face">42 shares</span></span></span>
+          <span class="s-td m-face" style="margin-left:26px;color:var(--ink3)">$182.40</span>
+          <span class="s-td m-face" style="margin-left:22px;color:var(--pos)">+318</span>
+          <span class="s-td m-face" style="margin-left:22px;color:var(--pos)">+4.7%</span>
+        </div>
+        <div class="val">13.5px cells
+30px avatar, 10px / 700
+.qty 11px / 400 mono
+avg cell also .dim</div>
+      </div>
+
+      <div class="row">
+        <div class="sel">thead th</div>
+        <div class="spec"><span class="s-th" style="margin-right:26px">Symbol</span><span class="s-th" style="margin-right:26px">Avg</span><span class="s-th" style="margin-right:26px">Last</span><span class="s-th" style="margin-right:26px">P&amp;L</span><span class="s-th">P&amp;L %</span></div>
+        <div class="val">10.5px / 650
+ls .08em · uppercase
+--ink3</div>
+      </div>
+
+      <div class="row">
+        <div class="sel">.kv / .kv b</div>
+        <div class="spec"><span class="s-kv" style="color:var(--ink2)">Effective N</span>
+          <b class="s-kv m-face" style="margin-left:14px">3.4</b>
+          <span class="s-kv" style="color:var(--ink2);margin-left:26px">HHI</span>
+          <b class="s-kv m-face" style="margin-left:14px">0.294</b></div>
+        <div class="val">13px sans label
+13px / 650 mono value</div>
+      </div>
+
+      <div class="row">
+        <div class="sel">.alloc .lg</div>
+        <div class="spec"><span class="s-lg"><i style="background:#3987e5"></i>NVDA <span class="m-face">31.4%</span></span>
+          <span class="s-lg" style="margin-left:14px"><i style="background:#6ea4ec"></i>MSFT <span class="m-face">18.2%</span></span>
+          <span class="s-lg" style="margin-left:14px"><i style="background:#3a414c"></i>Other <span class="m-face">30.1%</span></span></div>
+        <div class="val">11.5px --ink3
+name sans, % mono
+swatch 8px, gap 14px</div>
+      </div>
+
+      <div class="row">
+        <div class="sel">.gate .t / .gate .d</div>
+        <div class="spec" style="display:flex;align-items:center;gap:10px">
+          <svg viewBox="0 0 20 20" fill="none" width="20" height="20" style="flex:0 0 20px"><circle cx="10" cy="10" r="8.6" stroke="#00d17a" stroke-width="1.5" opacity=".4"/><path d="M6.2 10.4l2.6 2.6L14 7.6" stroke="#00d17a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <div><div class="s-gate-t">Sharpe</div><div class="s-gate-d m-face">1.42 (need &gt; 1.0)</div></div>
+        </div>
+        <div class="val">.t 12px / 600 sans
+.d 11px mono --ink3
+icon 20px, stroke 1.5/1.8</div>
+      </div>
+
+      <div class="row">
+        <div class="sel">.dec<em>.dec .pt / .dec .when</em></div>
+        <div class="spec" style="display:flex;align-items:center;gap:12px">
+          <span class="s-rchip b">Buy</span>
+          <b class="s-dec">NVDA</b>
+          <span class="s-pt m-face">PT $240</span>
+          <span class="s-when s-face">Sep 6</span>
+        </div>
+        <div class="val">.dec 13.5px, b = 700
+.pt 12px mono --ink3
+.when 12px sans --ink3</div>
+      </div>
+
+      <div class="row">
+        <div class="sel">.tk<em>ticker tape</em></div>
+        <div class="spec"><span class="s-tk"><b>NVDA</b><span class="p m-face">$118.42</span><span class="m-face" style="color:var(--pos)">+2.1%</span></span>
+          <span class="s-tk" style="margin-left:34px"><b>MSFT</b><span class="p m-face">$412.06</span><span class="m-face" style="color:var(--neg)">−0.8%</span></span></div>
+        <div class="val">12.5px, b = 650
+price .p --ink2
+% is .mono, not .p
+gap 34px between items</div>
+      </div>
+
+      <div class="row">
+        <div class="sel">svg text<em>chart end labels</em></div>
+        <div class="spec">
+          <svg width="240" height="34" viewBox="0 0 240 34">
+            <path d="M2,26 L44,20 L86,23 L128,12 L170,15 L212,6" fill="none" stroke="#00d17a" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>
+            <path d="M2,29 L44,27 L86,28 L128,24 L170,25 L212,22" fill="none" stroke="#767f8c" stroke-width="1.5" opacity=".8"/>
+            <text x="220" y="10" font-size="11.5" font-weight="600" fill="#00d17a" font-family="ui-monospace,'SF Mono',Menlo,monospace">+8.4%</text>
+            <text x="220" y="26" font-size="11" fill="#767f8c" font-family="ui-monospace,'SF Mono',Menlo,monospace">SPY +3.1%</text>
+          </svg>
+        </div>
+        <div class="val">portfolio 11.5px / 600
+SPY 11px / 400 --bench
+family via presentation attr</div>
+      </div>
+
+      <div class="row">
+        <div class="sel">#tip .r</div>
+        <div class="spec"><span class="s-tip" style="display:inline-block;background:var(--s3);border:1px solid var(--hair2);border-radius:10px;padding:8px 12px">
+          <span class="r"><i style="width:8px;height:8px;border-radius:2px;background:var(--pos);display:inline-block"></i>Portfolio<b class="m-face" style="margin-left:14px">+1.14%</b></span>
+          <span class="r"><i style="width:8px;height:8px;border-radius:2px;background:var(--bench);display:inline-block"></i>SPY<b class="m-face" style="margin-left:14px">+0.62%</b></span>
+        </span></div>
+        <div class="val">12px · lh 1.9
+value in mono, swatch 8px</div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ labels and eyebrows ============ -->
+  <section class="card">
+    <div class="hd"><h2>Eyebrows &amp; labels</h2><span class="sub">uppercase + positive tracking — sans, never mono</span></div>
+    <div class="bd">
+
+      <div class="row">
+        <div class="sel">.mark b<em>#auth h1 = same, 14px</em></div>
+        <div class="spec"><b class="s-mark-b">TRADER</b><b class="s-authh1" style="margin-left:26px">TRADER</b></div>
+        <div class="val">13px / 700 ls .16em
+14px / 700 ls .16em</div>
+      </div>
+
+      <div class="row">
+        <div class="sel">.tag<em>#langbtn / .stamp</em></div>
+        <div class="spec"><span class="s-tag">PAPER</span>
+          <span class="s-stamp" style="margin-left:16px">09:41 AM</span>
+          <span class="s-langbtn" style="margin-left:16px;border:1px solid var(--hair2);border-radius:9px;padding:6px 10px">EN</span></div>
+        <div class="val">10px / 700 ls .1em
+.stamp 12px --ink3
+11px / 700 ls .06em</div>
+      </div>
+
+      <div class="row">
+        <div class="sel">.hero .lbl</div>
+        <div class="spec"><div class="s-hero-lbl">Portfolio value</div></div>
+        <div class="val">12px / 600
+ls .1em · uppercase</div>
+      </div>
+
+      <div class="row">
+        <div class="sel">.card &gt; .hd h2<em>.card &gt; .hd .sub</em></div>
+        <div class="spec" style="display:flex;align-items:baseline;gap:10px">
+          <h3 class="s-h2">Recent decisions</h3><span class="s-hdsub">portfolio manager + council</span></div>
+        <div class="val">12px / 650 ls .1em UC
+--ink2 (not --ink3)
+sub 12px --ink3
+gates sub adds .mono</div>
+      </div>
+
+      <div class="row">
+        <div class="sel">.ptabs button<em>.ptabs .spybtn</em></div>
+        <div class="spec" style="display:flex;align-items:center;gap:4px">
+          <span class="s-ptab">1M</span><span class="s-ptab sel">3M</span><span class="s-ptab">6M</span>
+          <span class="s-spybtn" style="margin-left:18px"><i></i>Compare SPY</span>
+          <span class="s-spybtn off" style="margin-left:16px"><i></i>Compare SPY</span>
+        </div>
+        <div class="val">12px / 650 · --ink3
+selected: --ink on --s3
+.spybtn 11.5px --ink3
+aria-pressed=false → .4</div>
+      </div>
+
+      <div class="row">
+        <div class="sel">.ltake b</div>
+        <div class="spec"><div style="background:var(--s2);border-radius:10px;padding:12px 14px;display:inline-block">
+          <b class="s-ltake-b" style="display:block;margin-bottom:4px">Takeaway</b>
+          <span class="s-ltake-span">A return figure is uninterpretable until you know what volatility was spent to get it.</span></div></div>
+        <div class="val">10.5px / 700
+ls .1em · uppercase
+body 13.5px · lh 1.55</div>
+      </div>
+
+      <div class="row">
+        <div class="sel">.live<em>.go / .nogo / .wait</em></div>
+        <div class="spec stateline"><span class="s-live go"><span class="d"></span>GO · 12 days</span>
+          <span class="s-live nogo"><span class="d"></span>NO-GO · 12 days</span>
+          <span class="s-live wait"><span class="d"></span>EVAL 6/10 · NO-GO</span></div>
+        <div class="val">12px / 600 all three
+--pos / --neg / --warn
+on their .12 dims</div>
+      </div>
+
+      <div class="row">
+        <div class="sel">.rchip<em>.b / .h / .s</em></div>
+        <div class="spec stateline"><span class="s-rchip b">Buy</span>
+          <span class="s-rchip h">Hold</span>
+          <span class="s-rchip s">Sell</span></div>
+        <div class="val">11px / 650, w 100px
+--pos / --ink2 / --neg
+--pos-dim, --s3, --neg-dim</div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ prose ============ -->
+  <section class="card">
+    <div class="hd"><h2>Prose</h2><span class="sub">sans — copy below is the shipped English string</span></div>
+    <div class="bd">
+
+      <div class="row">
+        <div class="sel">body<em>the inherited default</em></div>
+        <div class="spec"><div class="s-body">Paper trading. The council votes, the portfolio manager sizes.</div></div>
+        <div class="val">14px / 400 · lh 1.45
+--ink #eef0f3</div>
+      </div>
+
+      <div class="row">
+        <div class="sel">.lesson .lt<em>.lesson .ls / .lx</em></div>
+        <div class="spec" style="display:flex;align-items:flex-start;gap:12px">
+          <div><div class="s-lt">Return Per Unit Risk</div>
+            <div class="s-ls" style="margin-top:3px">Why a return number means nothing until you divide it by the risk that bought it.</div></div>
+          <span class="s-lx" style="margin-left:auto">+</span></div>
+        <div class="val">14px / 650
+12.5px --ink3 · lh 1.5
+.lx 18px --ink3, lh 1
+rotates 45° when open</div>
+      </div>
+
+      <div class="row">
+        <div class="sel">.lbody p<em>lessons.json sharpe.en.body[0], first sentence</em></div>
+        <div class="spec"><p class="s-lbody-p">Two accounts can both finish a window up 4% and be nothing alike: one drifted there,
+          the other swung six percent in a week and happened to land on the same figure.</p></div>
+        <div class="val">13.5px --ink2
+lh 1.65</div>
+      </div>
+
+      <div class="row">
+        <div class="sel">.lq / .lopt<em>.right / .wrong</em></div>
+        <div class="spec"><div class="s-lq">Two strategies both returned +6% over the same window, but A's Sharpe is 1.4 and B's is 0.3. What does that gap actually tell you?</div>
+          <span class="s-lopt right" style="margin-top:8px">B reached the same result along a much rougher path — the same money was bought with more volatility</span>
+          <span class="s-lopt wrong">B closed more days at a loss than A did</span></div>
+        <div class="val">.lq 13.5px / 600 lh 1.55
+.lopt 13.5px / 400 lh 1.5
+border+bg --pos / --neg
+disabled once revealed</div>
+      </div>
+
+      <div class="row">
+        <div class="sel">.lexp / .lexp b</div>
+        <div class="spec"><div class="s-lexp"><b style="color:var(--pos)">Correct</b>Sharpe divides excess return by its own standard deviation, so with returns equal the lower one simply describes a noisier path…</div>
+          <div class="s-lexp" style="margin-top:8px"><b style="color:var(--neg)">Not quite</b>…how many days closed green is a different metric entirely.</div></div>
+        <div class="val">13px --ink2 · lh 1.6
+b 12px, block
+--pos / --neg inline
+labels: Correct / Not quite</div>
+      </div>
+
+      <div class="row">
+        <div class="sel">.flags</div>
+        <div class="spec"><div class="s-flags">Above single-name cap (&gt;10%): NVDA 31.4%<br>Effective N 2.6 &lt; 3 — book behaves like fewer than 3 equal bets</div></div>
+        <div class="val">12px --warn #e2b93b
+lh 1.6</div>
+      </div>
+
+      <div class="row">
+        <div class="sel">#err<em>chart empty state</em></div>
+        <div class="spec"><div class="s-err" style="border:1px solid rgba(255,93,108,.35);background:var(--neg-dim);border-radius:12px;padding:12px 16px">Could not reach data (HTTP 502) — will retry.</div>
+          <div class="s-nodata" style="margin-top:8px;text-align:center">Not enough data yet</div></div>
+        <div class="val">13px --neg #ff5d6c
+lh 1.45 (inherited)
+empty state: 14px --ink3
+inherited, no rule</div>
+      </div>
+
+      <div class="row">
+        <div class="sel">footer</div>
+        <div class="spec"><div class="s-footer" style="text-align:center">Paper trading — not real money · refreshes every 60s · Not investment advice</div></div>
+        <div class="val">11.5px --ink3
+lh 1.8 · centred</div>
+      </div>
+
+      <div class="row">
+        <div class="sel">#auth p<em>#auth input / .go / #autherr</em></div>
+        <div class="spec" style="max-width:300px">
+          <p class="s-authp">This panel is private. Enter your access key — it is stored on this device only.</p>
+          <input class="s-authinput" type="password" value="trader-key" readonly aria-label="access key" style="margin:10px 0">
+          <span class="s-authgo">Continue</span>
+          <div class="s-autherr" style="margin-top:8px">Key could not be verified. Try again.</div>
+        </div>
+        <div class="val">p 13px --ink2 lh 1.6
+input 14px --mono
+.go 13.5px / 700 on #00d17a
+err 12.5px --neg</div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ tabular figures ============ -->
+  <section class="card">
+    <div class="hd"><h2>Why tabular-nums</h2><span class="sub">.mono sets family AND font-variant-numeric together</span></div>
+    <div class="bd">
+      <div class="tab3">
+        <div class="tcol bad">
+          <h4 class="b">1 — sans, proportional</h4>
+          <div class="nums n-prop">
+            <div>$101,138</div><div>$1,111,914</div><div>$98,412</div><div>$11,101</div><div>−$1,181</div>
+          </div>
+          <div class="note">--sans
+proportional-nums
+the 1s are narrow — digit
+columns wobble row to row</div>
+        </div>
+        <div class="tcol">
+          <h4>2 — sans, tabular</h4>
+          <div class="nums n-tab">
+            <div>$101,138</div><div>$1,111,914</div><div>$98,412</div><div>$11,101</div><div>−$1,181</div>
+          </div>
+          <div class="note">--sans
+tabular-nums
+columns line up; this is
+the mobile app's only
+numeric guard (learn.tsx)</div>
+        </div>
+        <div class="tcol good">
+          <h4 class="g">3 — .mono (shipped)</h4>
+          <div class="nums n-mono">
+            <div>$101,138</div><div>$1,111,914</div><div>$98,412</div><div>$11,101</div><div>−$1,181</div>
+          </div>
+          <div class="note">--mono + tabular-nums
+every glyph fixed-width,
+so $ , . − align too</div>
+        </div>
+      </div>
+      <div class="note-row info" style="margin-top:14px;border-top:1px solid var(--hair);padding-top:12px">
+        <span class="k">tween() · line 435</span>
+        <span>The hero rewrites its digits every animation frame for 750&nbsp;ms on each render (the whole tween is skipped under
+          <span class="mono" style="color:var(--ink2)">prefers-reduced-motion</span>). With proportional figures the 44px number
+          would visibly breathe sideways while counting; column 3 is what stops it. The same rule keeps the right-aligned
+          P&amp;L column and the <span class="mono" style="color:var(--ink2)">.kv b</span> values in the risk card on a common
+          decimal axis.</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ the split ============ -->
+  <section class="card">
+    <div class="hd"><h2>The split</h2><span class="sub">what gets --mono, what stays --sans</span></div>
+    <div class="bd">
+      <div class="split">
+        <div>
+          <h4>--mono &nbsp;(figures only)</h4>
+          <ul>
+            <li><b>#heroEq</b><span>portfolio value, 44px</span></li>
+            <li><b>#heroChg</b><span>net change + return %</span></li>
+            <li><b>.chip .v / .s</b><span>every stat chip value and its sub-line</span></li>
+            <li><b>td.mono</b><span>avg, last, P&amp;L, P&amp;L % cells</span></li>
+            <li><b>.qty</b><span>share count under the ticker</span></li>
+            <li><b>.gate .d</b><span>"1.42 (need &gt; 1.0)"</span></li>
+            <li><b>.kv b</b><span>Effective N, top weight, HHI, gross</span></li>
+            <li><b>.alloc .lg span</b><span>the % inside each legend entry, not the name</span></li>
+            <li><b>.dec .pt</b><span>price target</span></li>
+            <li><b>.tk .p</b><span>tape price; the % beside it is a separate .mono span</span></li>
+            <li><b>#gdays</b><span>"12 / 10 days" — the gates card's .sub</span></li>
+            <li><b>#tip b</b><span>scrub tooltip values</span></li>
+            <li><b>#auth input</b><span>the only mono prose field — it is a key, not a sentence</span></li>
+          </ul>
+        </div>
+        <div>
+          <h4 class="alt">--sans &nbsp;(everything else)</h4>
+          <ul>
+            <li><b>h2 / .lbl / th</b><span>all headings and eyebrows</span></li>
+            <li><b>.gate .t</b><span>gate names</span></li>
+            <li><b>.sym</b><span>the ticker itself — a name, not a number</span></li>
+            <li><b>.rchip</b><span>Buy / Hold / Sell rating</span></li>
+            <li><b>.kv span</b><span>the risk labels</span></li>
+            <li><b>.lesson, .lbody, .lq, .lopt</b><span>the whole Learn card</span></li>
+            <li><b>.flags</b><span>risk warnings, even the ones containing %</span></li>
+            <li><b>.stamp / .when</b><span>clock and dates — locale-formatted prose</span></li>
+            <li><b>#pcount / #learnSub</b><span>"5 open", "3/8" — counts, not measurements</span></li>
+            <li><b>footer / #err</b><span>disclaimers and error copy</span></li>
+          </ul>
+          <div class="cap" style="margin-top:10px;line-height:1.6">Rule of thumb from the source: if the string was produced by
+            usd(), usd2(), pct() or toFixed(), it is mono. The one string that breaks it is .flags — it prints pctNum() and
+            toFixed() output in sans because the sentence around it dominates. Dates, the clock and the two counts come from
+            toLocaleDateString / toLocaleTimeString / .length, so the rule never reaches them.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ notes ============ -->
+  <section class="card">
+    <div class="hd"><h2>Notes from the source</h2><span class="sub">things the specimens above cannot show</span></div>
+    <div class="bd">
+      <div class="note-row">
+        <span class="k">mobile has no mono</span>
+        <span>mobile/app/src/theme/colors.ts defines no font tokens at all and no screen or component sets a
+          <span class="mono" style="color:var(--ink2)">fontFamily</span> — every figure in the RN app renders in the system sans.
+          The single numeric guard in the whole app is
+          <span class="mono" style="color:var(--ink2)">learn.tsx:169 progressText fontVariant:['tabular-nums']</span>; the 36px
+          hero value, the P&amp;L column and EquityChart's equity endpoints have none.</span>
+      </div>
+      <div class="note-row">
+        <span class="k">two hero sizes</span>
+        <span>Web <span class="mono" style="color:var(--ink2)">.hero .big</span> is 44px / 700 / ls −.02em / lh 1.05; mobile
+          <span class="mono" style="color:var(--ink2)">portfolio.tsx:541 heroValue</span> is 36px / '700' with no tracking or
+          line-height. Neither derives from a shared token — they were set independently.</span>
+      </div>
+      <div class="note-row">
+        <span class="k">weight 650 web-only</span>
+        <span>The web declares 650 exactly ten times — h2, thead th, .chip .k, .chip .v, .ptabs button, .sym, .kv b,
+          .rchip, .tk b, .lesson .lt — against eight uses of 700 (seven rules plus the inline #langbtn style). React Native
+          <span class="mono" style="color:var(--ink2)">fontWeight</span> accepts only the hundreds, so mobile has 600 and 700
+          and nothing between — the two platforms cannot match here even in principle.</span>
+      </div>
+      <div class="note-row">
+        <span class="k">svg misses the rule</span>
+        <span>The two chart end-labels (lines 668–669) set
+          <span class="mono" style="color:var(--ink2)">font-family="var(--mono)"</span> as a presentation attribute but never get the
+          <span class="mono" style="color:var(--ink2)">.mono</span> class, so they carry no
+          <span class="mono" style="color:var(--ink2)">font-variant-numeric</span>. Harmless while the monospace stack resolves;
+          it is one of the two numeric strings on the page not covered by the rule.</span>
+      </div>
+      <div class="note-row">
+        <span class="k">one ASCII minus</span>
+        <span>Every other signed figure goes through <span class="mono" style="color:var(--ink2)">sgn()</span>, which emits
+          U+2212. The drawdown chip is <span class="mono" style="color:var(--ink2)">ev.max_dd_pct.toFixed(1)+'%'</span> and
+          max_dd is negative, so it prints a hyphen-minus at 16.5px next to chips whose minus is the real one. Same shape,
+          different glyph width.</span>
+      </div>
+      <div class="note-row info">
+        <span class="k">no italic on web</span>
+        <span>The web dashboard ships zero <span class="mono" style="color:var(--ink2)">font-style:italic</span> and zero
+          <span class="mono" style="color:var(--ink2)">font-variant:small-caps</span>. Emphasis is weight and colour only.
+          (Mobile does use italic: the shared disclaimer is 11px italic on
+          <span class="mono" style="color:var(--ink2)">colors.textMuted</span> #949494 on portfolio, learn, agents and ask —
+          plus trade, approve and login — and settings.tsx evalReason is 11px italic on colors.warning.)</span>
+      </div>
+      <div class="note-row info">
+        <span class="k">no responsive type</span>
+        <span>There is no <span class="mono" style="color:var(--ink2)">clamp()</span>, no
+          <span class="mono" style="color:var(--ink2)">rem</span>, and neither media query
+          (max-width 900px / 760px) touches a font-size. The 44px hero is 44px on a phone.</span>
+      </div>
+    </div>
+  </section>
+
+</div>
+</body>
+</html>

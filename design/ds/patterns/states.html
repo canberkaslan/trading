@@ -1,0 +1,852 @@
+<!-- @dsCard group="Patterns" -->
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=880">
+<title>Loading, error &amp; empty states</title>
+<style>
+  :root{
+    color-scheme:dark;
+    /* ---- WEB palette — verbatim from agent/api/static/dashboard.html :root (L12–19) ---- */
+    --bg:#0a0b0d; --s1:#101216; --s2:#15181d; --s3:#1c2027;
+    --hair:rgba(255,255,255,.06); --hair2:rgba(255,255,255,.12);
+    --ink:#eef0f3; --ink2:#9aa3b2; --ink3:#828b9a;
+    --pos:#00d17a; --neg:#ff5d6c; --warn:#e2b93b; --bench:#767f8c;
+    --pos-dim:rgba(0,209,122,.12); --neg-dim:rgba(255,93,108,.12);
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,Inter,sans-serif;
+
+    /* ---- MOBILE palette — values from mobile/app/src/theme/colors.ts, re-keyed
+           with an --m- prefix so they don't collide with the web tokens above.
+           colors.upCB / downCB are omitted: no state on this card uses them. ---- */
+    --m-bg:#0a0a0a; --m-surface:#171717; --m-elev:#262626;
+    --m-text:#ffffff; --m-text2:#a3a3a3; --m-muted:#949494;
+    --m-up:#22c55e; --m-down:#ef4444;
+    --m-accent:#a855f7; --m-warning:#f59e0b; --m-danger:#ef4444;
+    /* RN on iOS resolves the default font to San Francisco */
+    --m-sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{background:var(--bg)}
+  body{font-family:var(--sans);color:var(--ink);font-size:14px;line-height:1.45;
+    -webkit-font-smoothing:antialiased;width:880px;background:var(--bg)}
+  .page{padding:26px 20px 40px}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  /* ---- card-sheet chrome (documentation only, not product) ---- */
+  .sheet-hd{border-bottom:1px solid var(--hair);padding-bottom:14px;margin-bottom:22px}
+  .sheet-hd h1{font-size:17px;font-weight:650;letter-spacing:-.01em}
+  .sheet-hd .src{font-family:var(--mono);font-size:10.5px;color:var(--ink3);margin-top:7px;line-height:1.7}
+  .sec{margin-top:30px}
+  .sec>h2{font-size:10.5px;font-weight:650;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--ink2);margin-bottom:12px}
+  .sec>h2 .plat{color:var(--ink3);font-weight:600;letter-spacing:.06em}
+  .note{font-size:11.5px;color:var(--ink3);line-height:1.6;margin-top:11px;max-width:840px}
+  .note b{color:var(--ink2);font-weight:600}
+  .cap{font-size:10.5px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);
+    display:block;margin-bottom:7px}
+  .tok{font-family:var(--mono);font-size:10.5px;color:var(--ink3);line-height:1.65;
+    font-variant-numeric:tabular-nums;margin-top:7px}
+  .tok em{color:var(--ink2);font-style:normal}
+  .g2{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
+  .g2u{display:grid;grid-template-columns:400px 1fr;gap:22px;align-items:start}
+  .stack{display:flex;flex-direction:column;gap:18px}
+
+  /* ============ PRODUCT CSS — from dashboard.html. Verbatim except where a
+       comment says otherwise; the two changes are (a) #err / #autherr are
+       re-selected as classes, because each appears more than once on this page
+       and an id may not, and (b) their `display:none` is dropped so the
+       specimens render at all. Nothing else is touched. ============ */
+  /* L208–209 + L210 — verbatim */
+  .sk{border-radius:10px;background:linear-gradient(90deg,var(--s2) 25%,var(--s3) 50%,var(--s2) 75%);
+    background-size:200% 100%;animation:sh 1.4s ease infinite}
+  @keyframes sh{to{background-position:-200% 0}}
+
+  /* L205–206 — selector was #err; `display:none` dropped */
+  .err{margin-top:16px;padding:12px 16px;border:1px solid rgba(255,93,108,.35);
+    background:var(--neg-dim);border-radius:12px;font-size:13px;color:var(--neg)}
+
+  /* L223 — selector was #autherr; `display:none` dropped */
+  .autherr{font-size:12.5px;color:var(--neg);margin-top:10px}
+
+  /* L63–64, L66–68 — verbatim (the .icobtn:hover rule at L65 is not reproduced) */
+  .icobtn{width:32px;height:32px;border:1px solid var(--hair2);border-radius:9px;
+    display:inline-flex;align-items:center;justify-content:center;color:var(--ink2);transition:all .15s}
+  .icobtn svg{width:14px;height:14px}
+  .icobtn.spin svg{animation:rot .7s linear infinite}
+  @keyframes rot{to{transform:rotate(360deg)}}
+
+  /* L108 — verbatim */
+  .card{background:var(--s1);border:1px solid var(--hair);border-radius:16px;margin-top:16px}
+  /* ================= end product CSS ================= */
+
+  /* The auth sheet the .autherr line lives in — dashboard.html #auth L213–222.
+     #auth is max-width:350px with padding:0 20px, so its .card measures 310px;
+     that width is hard-coded here because this page has no 350px column. The
+     .go button is a <div>, so it needs the text-align and font-family a real
+     <button> inherits. Declarations otherwise match the source. */
+  .authbox{background:var(--s1);border:1px solid var(--hair);border-radius:16px;padding:30px 28px;width:310px}
+  .authbox h1{font-size:14px;font-weight:700;letter-spacing:.16em;margin:14px 0 6px}
+  .authbox p{font-size:13px;color:var(--ink2);line-height:1.6}
+  .authbox input{width:100%;margin:18px 0 12px;background:var(--s2);border:1px solid var(--hair2);
+    color:var(--ink);padding:11px 14px;border-radius:10px;font-size:14px;font-family:var(--mono)}
+  .authbox .go{width:100%;background:var(--pos);color:#052;font-weight:700;font-size:13.5px;
+    padding:11px;border-radius:10px;text-align:center;font-family:var(--sans)}
+
+  /* chart empty-state host: the box the 310px SVG would have filled.
+     The dashed outline is this card's, not the product's. */
+  .chartslot{background:var(--bg);border:1px dashed var(--hair2);border-radius:10px}
+  .noData{padding:70px 0;text-align:center;color:var(--ink3)}
+
+  /* ================= MOBILE specimen scaffolding (1px = 1pt) =================
+     React Native styles redrawn in CSS. Flex defaults differ (RN is column +
+     flex-shrink 0), so these blocks carry declarations the .tsx does not spell
+     out; single-line truncation is numberOfLines={n} in the source. */
+  .phone{width:390px;background:var(--m-bg);border:1px solid var(--hair);border-radius:14px;
+    overflow:hidden;font-family:var(--m-sans);font-size:14px;line-height:normal;color:var(--m-text)}
+  .phone.tall{min-height:210px;display:flex;flex-direction:column;justify-content:center}
+  .phone.pad{padding:16px 0}
+
+  /* StatusBanner.tsx */
+  .strip{background:var(--m-bg);padding:10px 16px 6px}
+  .strip.live{background:#450a0a}
+  .strip.degraded{background:#451a03}
+  .strip .row{display:flex;align-items:center;gap:10px;min-height:24px}
+  .modeChip{border-radius:6px;padding:3px 8px}
+  .modeChip.paper{background:rgba(245,158,11,0.15)}
+  .modeChip.liveC{background:var(--m-down)}
+  .modeChip.unknown{background:var(--m-elev)}
+  .modeText{font-size:11px;font-weight:800;letter-spacing:.5px;white-space:nowrap}
+  .modeText.paper{color:var(--m-warning)}
+  .modeText.liveC{color:var(--m-text)}
+  .modeText.unknown{color:var(--m-muted)}
+  .statusText{font-size:11px;font-weight:600;flex-shrink:1;min-width:0;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bell{margin-left:auto;width:24px;height:24px;display:flex;align-items:center;justify-content:center;
+    position:relative;flex:0 0 24px}
+  .bell svg{width:15px;height:15px}
+  .bbadge{position:absolute;top:-2px;right:-4px;min-width:15px;height:15px;border-radius:8px;padding:0 3px;
+    background:var(--m-down);display:flex;align-items:center;justify-content:center}
+  .bbadge span{color:var(--m-text);font-size:9px;font-weight:800;line-height:1}
+
+  /* EmptyState.tsx */
+  .empty{margin:24px;padding:24px;background:var(--m-surface);border-radius:12px;
+    display:flex;flex-direction:column;align-items:center}
+  .empty .t{color:var(--m-text2);font-size:15px;font-weight:600;text-align:center}
+  .empty .h{color:var(--m-muted);font-size:13px;margin-top:8px;text-align:center;line-height:1.35}
+
+  /* ErrorState.tsx */
+  .estate{padding:24px;display:flex;flex-direction:column;align-items:center;justify-content:center}
+  .estate .t{color:var(--m-danger);font-size:16px;font-weight:600;margin-bottom:6px}
+  .estate .h{color:var(--m-text2);font-size:13px;text-align:center}
+  .estate .d{color:var(--m-muted);font-size:11px;margin-top:12px;text-align:center;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.35}
+  .estate .retry{margin-top:20px;background:var(--m-elev);padding:10px 20px;border-radius:10px}
+  .estate .retry span{color:var(--m-text);font-size:14px;font-weight:600}
+
+  /* ask.tsx — its own empty block, not EmptyState */
+  .aempty{padding:32px 0;display:flex;flex-direction:column;align-items:center;gap:10px}
+  .aempty .ico{width:40px;height:40px;display:flex;align-items:center;justify-content:center}
+  .aempty .ico svg{width:34px;height:34px}
+  .aempty .t{color:var(--m-text);font-size:17px;font-weight:700}
+  .aempty .x{color:var(--m-text2);font-size:13px;line-height:19px;text-align:center;padding:0 8px}
+  .achips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:8px}
+  .achip{padding:8px 18px;border-radius:18px;background:var(--m-elev);min-height:44px;
+    display:flex;align-items:center;justify-content:center}
+  .achip span{color:var(--m-text);font-size:14px;font-weight:600;letter-spacing:1px}
+
+  /* inline loading / muted text used by the RN screens */
+  .mloading{padding:0 24px}
+  .mloading .m12{color:var(--m-muted);font-size:12px}
+  .mloading .m13{color:var(--m-muted);font-size:13px}
+  .mloading .m14{color:var(--m-muted);font-size:14px}
+  .mchart{border-bottom:1px solid var(--m-elev);display:flex;align-items:center;justify-content:center;
+    height:110px;margin:0 24px}
+  .mchart .errtx{color:var(--m-danger);font-size:14px;text-align:center}
+  .ask-err{color:var(--m-danger);font-size:13px;margin:4px 24px 0}
+  .spinner{width:20px;height:20px;border-radius:50%;border:2px solid rgba(168,85,247,.25);
+    border-top-color:var(--m-accent);animation:rot .8s linear infinite}
+  .scard{background:var(--m-surface);border-radius:12px;margin:0 24px;padding:16px;
+    display:flex;flex-direction:column;gap:12px}
+  .scard .hrow{display:flex;align-items:center;justify-content:space-between}
+  .scard .lab{color:var(--m-text);font-size:16px}
+  .scard .m13{color:var(--m-muted);font-size:13px}
+  .ghost{margin:0 24px;border:1px dashed var(--hair2);border-radius:8px;padding:14px;
+    color:var(--ink3);font-family:var(--mono);font-size:10.5px;text-align:center}
+
+  /* token table */
+  table{width:100%;border-collapse:collapse;margin-top:4px}
+  thead th{font-size:10px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);
+    text-align:left;padding:0 10px 9px 0;border-bottom:1px solid var(--hair);white-space:nowrap}
+  tbody td{padding:8px 10px 8px 0;border-bottom:1px solid var(--hair);font-size:11.5px;vertical-align:top}
+  tbody tr:last-child td{border-bottom:0}
+  td.k{font-family:var(--mono);font-size:10.5px;color:var(--ink2);white-space:nowrap}
+  td.v{font-family:var(--mono);font-size:10.5px;color:var(--ink);white-space:nowrap}
+  td.w{color:var(--ink3);font-size:11px;line-height:1.5}
+  .sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;
+    vertical-align:-1px;border:1px solid rgba(255,255,255,.1)}
+  ul.n{list-style:none;margin-top:10px}
+  ul.n li{font-size:11.5px;color:var(--ink3);line-height:1.6;padding-left:14px;position:relative;margin-top:7px;max-width:840px}
+  ul.n li::before{content:"";position:absolute;left:0;top:8px;width:5px;height:1px;background:var(--ink3)}
+  ul.n li b{color:var(--ink2);font-weight:600}
+  .warnbox{background:var(--s2);border:1px solid var(--hair);border-left:2px solid var(--warn);
+    border-radius:12px;padding:14px 16px;margin-top:14px}
+  .warnbox .h{font-size:11px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--warn)}
+  .warnbox p{font-size:12px;color:var(--ink2);line-height:1.65;margin-top:8px}
+  .lang{font-size:9.5px;font-weight:700;letter-spacing:.08em;color:var(--ink3);
+    border:1px solid var(--hair2);border-radius:4px;padding:1px 5px;margin-right:7px;vertical-align:1px}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="sheet-hd">
+    <h1>Loading, error &amp; empty — <span class="mono" style="font-size:14px;font-weight:400;color:var(--ink2)">the non-happy states</span></h1>
+    <div class="src">
+      agent/api/static/dashboard.html — .sk + @keyframes sh L208–210 · #err L205–206 · #autherr L223 · .icobtn.spin L67–68<br>
+      &nbsp;&nbsp;showErr() L432 · spin add/remove L418/L430 · boot() catch L412–415 · chart empty L625 · learn-card hide L577–581<br>
+      &nbsp;&nbsp;I18N — err_msg + no_data L342 (tr) / L360 (en) · auth_err L331 (tr) / L349 (en)<br>
+      mobile/app/src/components/ — EmptyState.tsx L20–33 · ErrorState.tsx L25–62 · StatusBanner.tsx L27–144 · EquityChart.tsx L41<br>
+      mobile/app/app/(tabs)/ — portfolio L100–114, L494 · agents L58–67 · orders L89–106 · charts L129–135 ·
+      ask L110–128 · settings L142–145, L232, L239–240<br>
+      mobile/app/app/notifications.tsx L78–84 · src/api/hooks.ts L203–209 (useReadiness)
+    </div>
+  </div>
+
+  <!-- ==================== WEB · LOADING ==================== -->
+  <div class="sec">
+    <h2>Web · loading <span class="plat">— one skeleton, one spinner</span></h2>
+
+    <div class="g2u">
+      <div>
+        <span class="cap">.sk — the only skeleton in the product</span>
+        <div class="sk" style="height:300px"></div>
+        <div class="tok">
+          <em>background</em> linear-gradient(90deg, --s2 25%, --s3 50%, --s2 75%)<br>
+          #15181d → #1c2027 → #15181d · background-size 200% 100%<br>
+          <em>animation</em> sh 1.4s ease infinite → background-position -200% 0<br>
+          border-radius 10px · inline height <em>300px</em> (L273)
+        </div>
+      </div>
+
+      <div class="stack">
+        <div>
+          <span class="cap">.icobtn.spin — the loading state users actually see</span>
+          <span class="icobtn spin">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
+          </span>
+          <div class="tok">
+            32×32 · 1px solid --hair2 rgba(255,255,255,.12) · radius 9px<br>
+            icon 14×14 · stroke currentColor --ink2 <em>#9aa3b2</em> · width 2.2<br>
+            <em>animation</em> rot .7s linear infinite (360°)<br>
+            added in refresh() L418, removed in finally L430
+          </div>
+        </div>
+
+        <div class="warnbox">
+          <div class="h">The skeleton never renders</div>
+          <p>
+            <span class="mono">.sk</span> is markup inside <span class="mono">#app</span>, and
+            <span class="mono">#app{display:none}</span> until <span class="mono">boot()</span> has already
+            <span class="mono">await</span>ed <span class="mono">refresh(true)</span> → <span class="mono">render()</span> →
+            <span class="mono">drawChart()</span>, which overwrites <span class="mono">#chart.innerHTML</span>.
+            Period-tab switches don't reinstate it either. So the shimmer above is real CSS on an
+            unreachable node: during the first fetch the user sees a blank page, not a skeleton.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <p class="note">
+      No other block has a loading treatment. <b>#chips</b>, <b>#gates</b>, <b>#positions</b>, <b>#alloc</b>,
+      <b>#risk</b> and <b>#decisions</b> are empty <span class="mono">&lt;div&gt;</span>s until the first
+      <span class="mono">render()</span> fills them. The skeleton is also <b>not</b> exempted by the
+      <span class="mono">prefers-reduced-motion</span> block (L36–40), which silences
+      <span class="mono">.rise</span>, <span class="mono">.tape-in</span> and all transitions but neither
+      <span class="mono">sh</span> nor <span class="mono">rot</span>.
+    </p>
+  </div>
+
+  <!-- ==================== WEB · ERROR ==================== -->
+  <div class="sec">
+    <h2>Web · error banner <span class="plat">— #err, above the hero</span></h2>
+
+    <div class="stack">
+      <div>
+        <span class="cap"><span class="lang">TR</span>default · HTTP failure on a background refresh</span>
+        <div class="err">Veriye ulaşılamadı (HTTP 500) — tekrar denenecek.</div>
+        <div class="tok">t('err_msg') · <em>'Veriye ulaşılamadı ({e}) — tekrar denenecek.'</em></div>
+      </div>
+
+      <div>
+        <span class="cap"><span class="lang">EN</span>same node after toggleLang()</span>
+        <div class="err">Could not reach data (HTTP 500) — will retry.</div>
+        <div class="tok">t('err_msg') · <em>'Could not reach data ({e}) — will retry.'</em></div>
+      </div>
+
+      <div>
+        <span class="cap">network drop — {e} is the raw Error.message, unfiltered</span>
+        <div class="err">Veriye ulaşılamadı (Failed to fetch) — tekrar denenecek.</div>
+        <div class="tok">
+          padding 12px 16px · radius 12px · font-size <em>13px</em> / weight 400<br>
+          border 1px solid <em>rgba(255,93,108,.35)</em> · background --neg-dim <em>rgba(255,93,108,.12)</em><br>
+          color --neg <em>#ff5d6c</em> · margin-top 16px · fills .wrap (max-width 1080px<br>
+          &nbsp;&nbsp;less 20px side padding = <em>1040px</em>)<br>
+          display:none ⇄ block only — no dismiss, no icon, no retry affordance
+        </div>
+      </div>
+    </div>
+
+    <p class="note">
+      Set by <b>showErr(e)</b> and cleared by the next successful <b>refresh()</b>
+      (<span class="mono">$('#err').style.display='none'</span>) — nothing else hides it, so a stale banner
+      persists across the 60s poll until one call succeeds. On the <b>first</b> load the throw goes to
+      <span class="mono">boot()</span>'s catch instead: a 401 swaps to the auth sheet, anything else shows the
+      dashboard <i>with</i> this banner over whatever the last render left.
+    </p>
+  </div>
+
+  <!-- ==================== WEB · AUTH ERROR ==================== -->
+  <div class="sec">
+    <h2>Web · auth failure <span class="plat">— #autherr, inside the key sheet</span></h2>
+
+    <div class="g2">
+      <div>
+        <span class="cap"><span class="lang">TR</span>401 from any endpoint</span>
+        <div class="authbox">
+          <svg width="30" height="30" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="var(--s3)"/><path d="M7 21l6-7 4 4 8-10" stroke="var(--pos)" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <h1>TRADER</h1>
+          <p>Bu panel özeldir. Erişim anahtarını gir — yalnızca bu cihazda saklanır.</p>
+          <input value="••••••••••••" readonly>
+          <div class="go">Devam et</div>
+          <div class="autherr">Anahtar doğrulanamadı. Tekrar dene.</div>
+        </div>
+        <div class="tok">
+          font-size <em>12.5px</em> · color --neg <em>#ff5d6c</em> · margin-top 10px<br>
+          shown only via <em>e.auth</em> (r.status===401) in boot() L413
+        </div>
+      </div>
+
+      <div>
+        <span class="cap"><span class="lang">EN</span>same sheet, LANG='en'</span>
+        <div class="authbox">
+          <svg width="30" height="30" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="var(--s3)"/><path d="M7 21l6-7 4 4 8-10" stroke="var(--pos)" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <h1>TRADER</h1>
+          <p>This panel is private. Enter your access key — it is stored on this device only.</p>
+          <input value="••••••••••••" readonly>
+          <div class="go">Continue</div>
+          <div class="autherr">Key could not be verified. Try again.</div>
+        </div>
+        <div class="tok">
+          t('auth_err') · #auth max-width 350px, margin <em>18vh auto 0</em>, padding 0 20px<br>
+          → the .card inside measures 310px · input colour is --ink, not --ink3<br>
+          the input never clears — a bad key stays in the field
+        </div>
+      </div>
+    </div>
+
+    <p class="note">
+      The language toggle lives in the top bar, which is inside <span class="mono">#app</span> —
+      hidden while the auth sheet is up. So the EN variant above is only reachable if the operator
+      had already switched to EN in a previous session (<span class="mono">localStorage.trader_lang</span>);
+      a first-time visitor cannot get to it.
+    </p>
+  </div>
+
+  <!-- ==================== WEB · EMPTY ==================== -->
+  <div class="sec">
+    <h2>Web · chart empty <span class="plat">— drawChart() early return, points &lt; 2</span></h2>
+
+    <div class="g2">
+      <div>
+        <span class="cap"><span class="lang">TR</span>t('no_data')</span>
+        <div class="chartslot"><div class="noData">Henüz yeterli veri yok</div></div>
+        <div class="tok">padding <em>70px 0</em> · text-align center · color --ink3 <em>#828b9a</em><br>font-size inherited <em>14px</em> / 400 · no border, no background</div>
+      </div>
+      <div>
+        <span class="cap"><span class="lang">EN</span>t('no_data')</span>
+        <div class="chartslot"><div class="noData">Not enough data yet</div></div>
+        <div class="tok">'Not enough data yet' · same node, same box<br>replaces <em>#chart.innerHTML</em> — the #tip sibling survives</div>
+      </div>
+    </div>
+
+    <p class="note">
+      The dashed outline is documentation only. This block is ~160px tall where the drawn chart is
+      <b>H = 310px</b>, so the whole page below it shifts by ~150px the moment a second history point
+      lands. It is also the only empty state on web: an empty <b>positions</b> array renders a table with a
+      head and no rows, an empty <b>decisions</b> array renders an empty card body, and neither says anything.
+      The <b>Öğren</b> card takes the opposite approach — on a failed <span class="mono">/v1/learn</span> it
+      hides its whole <span class="mono">&lt;section&gt;</span> (L577–581) rather than show an empty card.
+    </p>
+  </div>
+
+  <!-- ==================== MOBILE · STATUS BANNER ==================== -->
+  <div class="sec">
+    <h2>Mobile · StatusBanner <span class="plat">— above every tab, never null</span></h2>
+
+    <div class="g2">
+      <div>
+        <span class="cap">status ok · mode paper</span>
+        <div class="phone"><div class="strip"><div class="row">
+          <div class="modeChip paper"><div class="modeText paper">PAPER</div></div>
+          <div class="statusText" style="color:var(--m-up)">● bağlı</div>
+          <div class="bell">
+            <svg viewBox="0 0 24 24" fill="none" stroke="var(--m-text2)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+          </div>
+        </div></div></div>
+        <div class="tok">strip bg --background <em>#0a0a0a</em> · text --up <em>#22c55e</em><br>chip bg <em>rgba(245, 158, 11, 0.15)</em> · label --warning <em>#f59e0b</em></div>
+      </div>
+
+      <div>
+        <span class="cap">no data yet · mode unknown</span>
+        <div class="phone"><div class="strip"><div class="row">
+          <div class="modeChip unknown"><div class="modeText unknown">MOD ?</div></div>
+          <div class="statusText" style="color:var(--m-muted)">● bağlanıyor…</div>
+          <div class="bell">
+            <svg viewBox="0 0 24 24" fill="none" stroke="var(--m-text2)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+          </div>
+        </div></div></div>
+        <div class="tok">chip bg --surfaceElevated <em>#262626</em> · label --textMuted <em>#949494</em><br>never asserts PAPER while offline — header comment L11–13, chip L84</div>
+      </div>
+
+      <div>
+        <span class="cap">isError · failureCount 1 — soft</span>
+        <div class="phone"><div class="strip"><div class="row">
+          <div class="modeChip paper"><div class="modeText paper">PAPER</div></div>
+          <div class="statusText" style="color:var(--m-warning)">● bağlantı yeniden deneniyor…</div>
+          <div class="bell">
+            <svg viewBox="0 0 24 24" fill="none" stroke="var(--m-text2)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+          </div>
+        </div></div></div>
+        <div class="tok">text --warning <em>#f59e0b</em> · strip background <em>unchanged</em><br>one failed poll is not "offline" (L43–45)</div>
+      </div>
+
+      <div>
+        <span class="cap">isError · failureCount ≥ 2 — hard (intended ~60s)</span>
+        <div class="phone"><div class="strip degraded"><div class="row">
+          <div class="modeChip paper"><div class="modeText paper">PAPER</div></div>
+          <div class="statusText" style="color:var(--m-down)">● backend offline — veriler güncel değil</div>
+          <div class="bell">
+            <svg viewBox="0 0 24 24" fill="none" stroke="var(--m-text2)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+            <div class="bbadge"><span>3</span></div>
+          </div>
+        </div></div></div>
+        <div class="tok">strip <em>#451a03</em> (stripDegraded) · text --down <em>#ef4444</em><br>badge bg --down · minW 15 · h 15 · r 8 · 9px/800<br><em style="color:var(--warn)">not currently reachable — see below</em></div>
+      </div>
+
+      <div>
+        <span class="cap">status ≠ ok · broker + db down</span>
+        <div class="phone"><div class="strip degraded"><div class="row">
+          <div class="modeChip paper"><div class="modeText paper">PAPER</div></div>
+          <div class="statusText" style="color:var(--m-warning)">● degraded: broker + db</div>
+          <div class="bell">
+            <svg viewBox="0 0 24 24" fill="none" stroke="var(--m-text2)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+            <div class="bbadge"><span>9+</span></div>
+          </div>
+        </div></div></div>
+        <div class="tok">'broker' / 'db' / 'broker + db', else <em>'bilinmiyor'</em><br>badgeLabel(): &gt;9 → <em>'9+'</em>, ≤0 → null</div>
+      </div>
+
+      <div>
+        <span class="cap">mode live — the go-live flip</span>
+        <div class="phone"><div class="strip live"><div class="row">
+          <div class="modeChip liveC"><div class="modeText liveC">LIVE — GERÇEK PARA</div></div>
+          <div class="statusText" style="color:var(--m-up)">● bağlı</div>
+          <div class="bell">
+            <svg viewBox="0 0 24 24" fill="none" stroke="var(--m-text2)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+          </div>
+        </div></div></div>
+        <div class="tok">strip <em>#450a0a</em> (stripLive) · chip bg --down <em>#ef4444</em><br>label --textPrimary <em>#ffffff</em> · live wins over degraded bg</div>
+      </div>
+    </div>
+
+    <div class="warnbox">
+      <div class="h">The red "backend offline" strip cannot currently fire</div>
+      <p>
+        <span class="mono">hardOffline = isError &amp;&amp; failureCount &gt;= 2</span> (L36), but
+        <span class="mono">useReadiness</span> is declared <span class="mono">retry:false</span> with a 30s
+        <span class="mono">refetchInterval</span> (hooks.ts L203–209). TanStack Query resets
+        <span class="mono">fetchFailureCount</span> to 0 at the start of every fetch, so with retries off the
+        observed <span class="mono">failureCount</span> alternates 0 → 1 → 0 → 1 and never reaches 2. In
+        practice a permanently unreachable backend stays on the amber
+        <span class="mono">'● bağlantı yeniden deneniyor…'</span> line forever. The specimen above documents
+        the intended state, not an observed one.
+      </p>
+    </div>
+
+    <p class="note">
+      Six combinations from five <span class="mono">statusText</span> branches × three mode chips.
+      Geometry is identical in all of them: <b>paddingHorizontal 16 · paddingBottom 6 · paddingTop = insets.top</b>
+      (10px stand-in here), row <b>gap 10 · minHeight 24</b>, chip <b>radius 6 · 8/3 padding</b>, text
+      <b>11px / 800 / +0.5 tracking</b> for the chip and <b>11px / 600</b> for the status. The strip renders from
+      the first frame so the header height never jumps. The bell stays 24×24 inside that strip and buys its
+      44pt target with <b>hitSlop 10</b> rather than padding. It is drawn here as SVG because the source has no
+      vector icon — it renders <span class="mono">&lt;Text&gt;</span> U+1F514 at fontSize 15, a platform-drawn
+      colour glyph, not a themed icon.
+    </p>
+  </div>
+
+  <!-- ==================== MOBILE · EMPTY ==================== -->
+  <div class="sec">
+    <h2>Mobile · EmptyState <span class="plat">— every call site of the shared component, TR only</span></h2>
+
+    <div class="g2">
+      <div>
+        <span class="cap">portfolio.tsx L494</span>
+        <div class="phone"><div class="empty">
+          <div class="t">Açık pozisyon yok</div>
+          <div class="h">Günlük çalışma yeni pozisyon açtığında burada görünür.</div>
+        </div></div>
+        <div class="tok">title --textSecondary <em>#a3a3a3</em> · 15px / 600<br>hint --textMuted <em>#949494</em> · 13px · marginTop 8</div>
+      </div>
+
+      <div>
+        <span class="cap">agents.tsx L67</span>
+        <div class="phone"><div class="empty">
+          <div class="t">Henüz karar yok</div>
+          <div class="h">Ajan kararları günlük çalışmada üretilir ve burada listelenir.</div>
+        </div></div>
+        <div class="tok">container margin 24 · padding 24 · radius 12<br>bg --surface <em>#171717</em> · alignItems center</div>
+      </div>
+
+      <div>
+        <span class="cap">orders.tsx L103 — pending tab</span>
+        <div class="phone"><div class="empty">
+          <div class="t">Onay bekleyen emir yok</div>
+          <div class="h">Günlük çalışma bir emri onaya düşürdüğünde burada görünür.</div>
+        </div></div>
+        <div class="tok">inner width 390 − 48 margin − 48 padding = <em>294px</em></div>
+      </div>
+
+      <div>
+        <span class="cap">orders.tsx L105 — history tab</span>
+        <div class="phone"><div class="empty">
+          <div class="t">Henüz emir geçmişi yok</div>
+          <div class="h">Broker'a bir emir gönderildiğinde burada listelenir.</div>
+        </div></div>
+        <div class="tok">same component, tab-dependent copy</div>
+      </div>
+
+      <div>
+        <span class="cap">notifications.tsx L81</span>
+        <div class="phone"><div class="empty">
+          <div class="t">Henüz bildirim yok</div>
+          <div class="h">Bir emir onaya düştüğünde ya da gerçekleştiğinde buraya düşer.</div>
+        </div></div>
+        <div class="tok">the only call site outside the tab bar</div>
+      </div>
+
+      <div>
+        <span class="cap">hint omitted — prop exists, no call site uses it</span>
+        <div class="phone"><div class="empty">
+          <div class="t">Açık pozisyon yok</div>
+        </div></div>
+        <div class="tok"><em>hint?: string</em> · falsy → renders null (L24)<br>box collapses to 24 + 18 + 24 ≈ <em>66pt</em> tall</div>
+      </div>
+    </div>
+
+    <p class="note">
+      No icon, no illustration, no action — deliberately quiet, per the component's own header comment:
+      these replaced inline blocks that told the user to run <span class="mono">python -m scripts.trade</span>.
+      All five shipped copies follow the same shape: a noun-phrase negation as the title, then one sentence
+      saying what will make it fill.
+    </p>
+  </div>
+
+  <!-- ==================== MOBILE · EMPTY, THE OTHER THREE ==================== -->
+  <div class="sec">
+    <h2>Mobile · the empty states that don't use EmptyState <span class="plat">— three more shapes</span></h2>
+
+    <div class="g2">
+      <div>
+        <span class="cap">ask.tsx L114–128 — its own block, with an icon and actions</span>
+        <div class="phone pad"><div class="aempty">
+          <div class="ico">
+            <svg viewBox="0 0 24 24" fill="none" stroke="var(--m-text2)" stroke-width="1.6" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
+          </div>
+          <div class="t">Henüz analiz yok</div>
+          <div class="x">Yukarıya bir hisse kodu yaz ya da aşağıdan birini seç. 7 ajanlı pipeline ~5-10 dk içinde Buy/Hold/Sell kararı üretir.</div>
+          <div class="achips">
+            <div class="achip"><span>AAPL</span></div>
+            <div class="achip"><span>NVDA</span></div>
+            <div class="achip"><span>MSFT</span></div>
+            <div class="achip"><span>GOOGL</span></div>
+            <div class="achip"><span>AMZN</span></div>
+          </div>
+        </div></div>
+        <div class="tok">
+          icon: <em>&lt;Text&gt;</em> U+1F4CA at fontSize <em>40</em> — a colour emoji glyph,<br>
+          &nbsp;&nbsp;redrawn as SVG here · title --textPrimary <em>#ffffff</em> 17/700<br>
+          body --textSecondary <em>#a3a3a3</em> 13 / lineHeight 19 / centered<br>
+          chips 18/8 · radius 18 · bg --surfaceElevated · minHeight <em>44</em>
+        </div>
+      </div>
+
+      <div>
+        <span class="cap">settings.tsx L145 — a muted sentence, no container</span>
+        <div class="phone pad"><div class="scard">
+          <div class="m13">Yeterli geçmiş yok — eval yeni başladı.</div>
+        </div></div>
+        <div class="tok">
+          styles.muted --textMuted <em>#949494</em> · <em>13px</em><br>
+          sits inside evalCard (bg --surface, radius 12, padding 16, gap 12)<br>
+          same style as this screen's loading line — empty and loading look alike
+        </div>
+      </div>
+
+      <div>
+        <span class="cap">EquityChart.tsx L41 — renders nothing at all</span>
+        <div class="phone pad">
+          <div class="ghost">if (!pts.length) return null;</div>
+        </div>
+        <div class="tok">
+          no message, no box, no height — the portfolio hero simply<br>
+          butts against the period pills on a book with no history<br>
+          the web equivalent (points &lt; 2) at least prints t('no_data')
+        </div>
+      </div>
+    </div>
+
+    <p class="note">
+      So the phone actually has <b>seven</b> written empty states, not five, and they disagree with each other:
+      the shared <b>EmptyState</b> is quiet and actionless; <b>ask</b> is loud, iconed and actionable; <b>settings</b>
+      is one muted line indistinguishable from its own loading line; and <b>EquityChart</b> says nothing and
+      occupies no space.
+    </p>
+  </div>
+
+  <!-- ==================== MOBILE · ERROR ==================== -->
+  <div class="sec">
+    <h2>Mobile · error <span class="plat">— 2 shipped ErrorState variants, 1 unused, 2 inline copies</span></h2>
+
+    <div class="g2">
+      <div>
+        <span class="cap">agents.tsx L65 / orders.tsx L100 — retry, no detail</span>
+        <div class="phone tall"><div class="estate">
+          <div class="t">Sunucuya ulaşılamıyor</div>
+          <div class="h">Bağlantını kontrol edip tekrar dene.</div>
+          <div class="retry"><span>Tekrar dene</span></div>
+        </div></div>
+        <div class="tok">
+          title --danger <em>#ef4444</em> · 16px / 600 · marginBottom 6 · no textAlign<br>
+          hint --textSecondary <em>#a3a3a3</em> · 13px · centered<br>
+          retry bg --surfaceElevated <em>#262626</em> · 20/10 · r10 · 14px/600 <em>#ffffff</em>
+        </div>
+      </div>
+
+      <div>
+        <span class="cap">portfolio.tsx L111 — detail + retry</span>
+        <div class="phone tall"><div class="estate">
+          <div class="t">Sunucuya ulaşılamıyor</div>
+          <div class="h">Bağlantını kontrol edip tekrar dene.</div>
+          <div class="d">TypeError: Network request failed</div>
+          <div class="retry"><span>Tekrar dene</span></div>
+        </div></div>
+        <div class="tok">
+          detail --textMuted <em>#949494</em> · 11px · marginTop 12 · numberOfLines 2<br>
+          String(error) verbatim — no scrub, so a server message reaches the user
+        </div>
+      </div>
+
+      <div>
+        <span class="cap">title override + no onRetry — supported, unused</span>
+        <div class="phone tall"><div class="estate">
+          <div class="t">Sunucuya ulaşılamıyor</div>
+          <div class="h">Bağlantını kontrol edip tekrar dene.</div>
+        </div></div>
+        <div class="tok">
+          <em>title?</em> defaults to 'Sunucuya ulaşılamıyor'; no call site passes it<br>
+          <em>onRetry?</em> omitted → dead end, no way back
+        </div>
+      </div>
+
+      <div>
+        <span class="cap">charts.tsx L133 / L135 — inline, not the component</span>
+        <div class="phone tall" style="justify-content:flex-start;padding-top:20px">
+          <div class="mchart"><div class="errtx">Fiyat alınamadı — ticker geçerli mi?</div></div>
+          <div class="mchart" style="margin-top:16px"><div class="errtx">Veri yok</div></div>
+        </div>
+        <div class="tok">
+          styles.err · --danger <em>#ef4444</em> · 14px · textAlign center<br>
+          inside the 220pt chartBox, borderBottom 1px <em>#262626</em><br>
+          empty and error share one colour — no muted empty here
+        </div>
+      </div>
+
+      <div>
+        <span class="cap">ask.tsx L111 — a third inline error, third size</span>
+        <div class="phone pad">
+          <div class="ask-err">İstek başarısız — backend'e ulaşılamadı.</div>
+        </div>
+        <div class="tok">
+          styles.err · --danger <em>#ef4444</em> · <em>13px</em> · marginTop 4<br>
+          left-aligned, no retry, no container — the screen keeps its form above it
+        </div>
+      </div>
+
+      <div>
+        <span class="cap">settings.tsx L240 — health as a coloured bullet</span>
+        <div class="phone pad"><div class="scard">
+          <div class="hrow"><div class="lab">Backend</div><div style="color:var(--m-down);font-weight:600">● offline</div></div>
+          <div class="hrow"><div class="lab">Son ajan kararı</div><div class="m13">—</div></div>
+        </div></div>
+        <div class="tok">
+          '● offline' --down · '● online' --up · <em>'…'</em> while unresolved<br>
+          fontWeight 600, no fontSize → RN default <em>14px</em> · label 16px --textPrimary
+        </div>
+      </div>
+    </div>
+
+    <p class="note">
+      Four error sizes for one class of failure: <b>16px</b> (ErrorState title), <b>14px</b> (charts, settings
+      health), <b>13px</b> (ask) and <b>11px</b> (the ErrorState detail line). Only ErrorState offers a way back.
+    </p>
+  </div>
+
+  <!-- ==================== MOBILE · LOADING ==================== -->
+  <div class="sec">
+    <h2>Mobile · loading <span class="plat">— text or spinner, three text sizes, two languages</span></h2>
+
+    <div class="g2">
+      <div>
+        <span class="cap">portfolio.tsx L103</span>
+        <div class="phone" style="min-height:96px;display:flex;align-items:center;justify-content:center">
+          <div class="m14">Loading…</div>
+        </div>
+        <div class="tok">styles.muted · <em>#949494</em>, marginTop 4, no fontSize<br>→ RN default <em>14px</em> · in styles.center, padding 24<br><em style="color:var(--warn)">English — the only one</em></div>
+      </div>
+      <div>
+        <span class="cap">agents.tsx L63 · orders.tsx L98</span>
+        <div class="phone" style="min-height:96px;display:flex;align-items:center">
+          <div class="mloading"><div class="m12">Yükleniyor…</div></div>
+        </div>
+        <div class="tok">styles.muted · <em>#949494</em> · <em>12px</em><br>left-aligned in the scroll flow, not centered</div>
+      </div>
+      <div>
+        <span class="cap">notifications.tsx L79 (!hydrated)</span>
+        <div class="phone" style="min-height:96px;display:flex;align-items:center">
+          <div class="mloading"><div class="m13">Yükleniyor…</div></div>
+        </div>
+        <div class="tok">styles.muted · <em>#949494</em> · <em>13px</em><br>same string, second size</div>
+      </div>
+      <div>
+        <span class="cap">settings.tsx L143 · L232 — two more strings</span>
+        <div class="phone pad"><div class="scard">
+          <div class="m13">hesaplanıyor…</div>
+        </div>
+        <div class="mloading" style="margin-top:12px"><div class="m12">durum yükleniyor…</div></div>
+        </div>
+        <div class="tok">L143 styles.muted <em>13px</em> · L232 styles.killDesc <em>12px</em><br>both --textMuted · neither says 'Yükleniyor…'</div>
+      </div>
+      <div>
+        <span class="cap">charts.tsx L131 · approve L46 · ask L140</span>
+        <div class="phone" style="min-height:96px;display:flex;align-items:center;justify-content:center">
+          <div class="spinner"></div>
+        </div>
+        <div class="tok">ActivityIndicator color=--accent <em>#a855f7</em><br>redrawn here as a ring — RN draws the platform spinner</div>
+      </div>
+      <div>
+        <span class="cap">ask.tsx L103 · approve L173 — on a filled button</span>
+        <div class="phone" style="min-height:96px;display:flex;align-items:center;justify-content:center">
+          <div class="spinner" style="border-color:rgba(255,255,255,.25);border-top-color:#fff"></div>
+        </div>
+        <div class="tok">ActivityIndicator color=<em>"#fff"</em> / <em>"#000"</em><br>hardcoded hex, not a token</div>
+      </div>
+      <div>
+        <span class="cap">agents.tsx L59 — background refetch</span>
+        <div class="phone" style="min-height:96px;display:flex;align-items:center">
+          <div class="mloading"><div class="m13" style="color:var(--m-text2)">Refreshing…</div></div>
+        </div>
+        <div class="tok">styles.subheading swaps to <em>'Refreshing…'</em> while isFetching<br>--textSecondary <em>#a3a3a3</em> · <em>13px</em> · English</div>
+      </div>
+      <div>
+        <span class="cap">orders.tsx L91 — the same idea, in Turkish</span>
+        <div class="phone" style="min-height:96px;display:flex;align-items:center">
+          <div class="mloading"><div class="m13" style="color:var(--m-text2)">Yenileniyor…</div></div>
+        </div>
+        <div class="tok">styles.subheading · --textSecondary <em>#a3a3a3</em> · <em>13px</em><br>agents and orders solve one problem in two languages</div>
+      </div>
+    </div>
+
+    <p class="note">
+      There is no skeleton anywhere on mobile — every screen goes blank-then-populated. Pull-to-refresh is the
+      only shared loading affordance, and it is not consistent either: portfolio, agents and orders pass
+      <span class="mono">RefreshControl tintColor="#fff"</span>, a raw hex rather than
+      <span class="mono">colors.textPrimary</span>, while charts (L72) passes
+      <span class="mono">colors.accent</span>. Notifications has no RefreshControl at all.
+    </p>
+  </div>
+
+  <!-- ==================== TOKENS ==================== -->
+  <div class="sec">
+    <h2>Every value on this card</h2>
+    <table>
+      <thead><tr><th style="width:210px">Token / rule</th><th style="width:230px">Value</th><th>Where</th></tr></thead>
+      <tbody>
+        <tr><td class="k">--s2 → --s3 → --s2</td><td class="v"><span class="sw" style="background:#15181d"></span>#15181d → <span class="sw" style="background:#1c2027"></span>#1c2027</td><td class="w">.sk shimmer gradient stops (25% / 50% / 75%)</td></tr>
+        <tr><td class="k">@keyframes sh</td><td class="v">1.4s ease infinite</td><td class="w">background-position → -200% 0; not reduced-motion guarded</td></tr>
+        <tr><td class="k">@keyframes rot</td><td class="v">.7s linear infinite</td><td class="w">.icobtn.spin refresh icon; not reduced-motion guarded</td></tr>
+        <tr><td class="k">#err border</td><td class="v">1px rgba(255,93,108,.35)</td><td class="w">the only place this alpha appears in dashboard.html</td></tr>
+        <tr><td class="k">#err background</td><td class="v"><span class="sw" style="background:#251418"></span>--neg-dim rgba(255,93,108,.12)</td><td class="w">shared with .live.nogo, .rchip.s and .lopt.wrong</td></tr>
+        <tr><td class="k">--neg</td><td class="v"><span class="sw" style="background:#ff5d6c"></span>#ff5d6c</td><td class="w">#err 13px, #autherr 12.5px</td></tr>
+        <tr><td class="k">--ink3</td><td class="v"><span class="sw" style="background:#828b9a"></span>#828b9a</td><td class="w">chart "Henüz yeterli veri yok", 14px inherited</td></tr>
+        <tr><td class="k">.wrap</td><td class="v">max-width 1080px, pad 0 20px</td><td class="w">so #err is at most 1040px wide</td></tr>
+        <tr><td class="k">colors.danger</td><td class="v"><span class="sw" style="background:#ef4444"></span>#ef4444</td><td class="w">ErrorState title 16/600, charts err 14, ask err 13</td></tr>
+        <tr><td class="k">colors.textPrimary</td><td class="v"><span class="sw" style="background:#ffffff"></span>#ffffff</td><td class="w">retry label 14/600, LIVE chip label, ask empty title 17/700</td></tr>
+        <tr><td class="k">colors.textSecondary</td><td class="v"><span class="sw" style="background:#a3a3a3"></span>#a3a3a3</td><td class="w">EmptyState title 15/600, ErrorState hint 13, 'Refreshing…' 13</td></tr>
+        <tr><td class="k">colors.textMuted</td><td class="v"><span class="sw" style="background:#949494"></span>#949494</td><td class="w">EmptyState hint 13, ErrorState detail 11, every "Yükleniyor…"</td></tr>
+        <tr><td class="k">colors.surface</td><td class="v"><span class="sw" style="background:#171717"></span>#171717</td><td class="w">EmptyState + evalCard container — ErrorState has no surface</td></tr>
+        <tr><td class="k">colors.surfaceElevated</td><td class="v"><span class="sw" style="background:#262626"></span>#262626</td><td class="w">retry bg, MOD ? chip bg, ask ticker chips, chart borderBottom</td></tr>
+        <tr><td class="k">stripLive</td><td class="v"><span class="sw" style="background:#450a0a"></span>#450a0a</td><td class="w">literal in StatusBanner.tsx L115 — not in colors.ts</td></tr>
+        <tr><td class="k">stripDegraded</td><td class="v"><span class="sw" style="background:#451a03"></span>#451a03</td><td class="w">literal in StatusBanner.tsx L116 — not in colors.ts</td></tr>
+        <tr><td class="k">modeChipPaper</td><td class="v">rgba(245, 158, 11, 0.15)</td><td class="w">literal alpha of --warning, spelled with spaces (L119)</td></tr>
+        <tr><td class="k">colors.warning</td><td class="v"><span class="sw" style="background:#f59e0b"></span>#f59e0b</td><td class="w">PAPER label, "yeniden deneniyor", "degraded:"</td></tr>
+        <tr><td class="k">colors.up / colors.down</td><td class="v"><span class="sw" style="background:#22c55e"></span>#22c55e / <span class="sw" style="background:#ef4444"></span>#ef4444</td><td class="w">"● bağlı" / "backend offline", badge bg, settings health</td></tr>
+        <tr><td class="k">colors.accent</td><td class="v"><span class="sw" style="background:#a855f7"></span>#a855f7</td><td class="w">ActivityIndicator on charts, approve, ask; charts tintColor</td></tr>
+        <tr><td class="k">MIN_TOUCH_TARGET</td><td class="v">44</td><td class="w">ask ticker chips; the bell reaches it via hitSlop 10</td></tr>
+        <tr><td class="k">failureCount ≥ 2</td><td class="v">intended ~60s at a 30s poll</td><td class="w">the warning → red promotion threshold; unreachable, see warning</td></tr>
+        <tr><td class="k">points.length &lt; 2</td><td class="v">chart empty trigger</td><td class="w">drawChart() L625, before any scale maths</td></tr>
+        <tr><td class="k">pts.length === 0</td><td class="v">chart renders null</td><td class="w">EquityChart.tsx L41 — the mobile counterpart, silent</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ==================== NOTES ==================== -->
+  <div class="sec">
+    <h2>What the states say about each other</h2>
+    <ul class="n">
+      <li><b>Web translates its states; mobile has i18n but does not use it here.</b> Every web string on this
+        card comes from I18N.tr / I18N.en and swaps live. Mobile ships a real bundle
+        (<span class="mono">src/i18n/tr.json + en.json</span>, picked from the device locale with
+        <span class="mono">fallbackLng:'en'</span>) — and not one loading, empty or error string on this card is
+        in it. They are all hardcoded literals, mostly Turkish, with portfolio's
+        <span class="mono">'Loading…'</span> and agents' <span class="mono">'Decisions' / 'Refreshing…'</span>
+        in English directly above Turkish ones.</li>
+      <li><b>Three font sizes for one word.</b> <span class="mono">'Yükleniyor…'</span> renders at 12px (agents,
+        orders), 13px (notifications) and — as <span class="mono">'Loading…'</span> — at RN's default 14px
+        (portfolio, whose <span class="mono">muted</span> style declares no fontSize at all). Settings says the
+        same thing twice more in its own words, at 13px and 12px.</li>
+      <li><b>Red means two things on mobile.</b> <span class="mono">colors.down #ef4444</span> is both "a position
+        is losing money" and "the backend is unreachable", and on the charts tab it is also the empty state
+        (<span class="mono">'Veri yok'</span>), which is not an error.</li>
+      <li><b>Only the banner tries to escalate, and its second stage is dead.</b> StatusBanner is the one place
+        with a two-stage failure model (retrying → offline), but <span class="mono">retry:false</span> keeps
+        <span class="mono">failureCount</span> at 1, so the red stage never arrives. Web's #err is identical on
+        the 1st and 40th consecutive failure, and mobile's ErrorState fires on the first.</li>
+      <li><b>Empty is quiet on mobile, silent on web — and inconsistent on both.</b> Mobile has seven written
+        empty states in four different shapes plus one that renders nothing; web has one, for the chart, and
+        lets an empty positions table and an empty decisions card just render as nothing.</li>
+      <li><b>Two disclosure philosophies for the same failure.</b> Web prints the raw
+        <span class="mono">Error.message</span> inline in the sentence for every user; mobile prints
+        <span class="mono">String(error)</span> only where a caller passes <span class="mono">detail</span>
+        (portfolio), demoted to 11px muted and clamped to two lines.</li>
+      <li><b>Reduced motion is half-wired on web.</b> The media block at L36–40 kills <span class="mono">.rise</span>,
+        the ticker and all transitions, but both infinite animations documented here —
+        <span class="mono">sh</span> and <span class="mono">rot</span> — keep running.</li>
+    </ul>
+  </div>
+
+</div>
+</body>
+</html>

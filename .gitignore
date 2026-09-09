@@ -79,3 +79,6 @@ Thumbs.db
 # Design canvas: the .dc.html artboards are the source, the seeded
 # trader-ui.html is a 2MB generated bundle.
 design/trader-ui.html
+
+# Claude Code worktrees — git metadata, not source
+.claude/worktrees/

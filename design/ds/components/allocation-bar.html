@@ -1,0 +1,480 @@
+<!-- @dsCard group="Components" -->
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Allocation bar &amp; legend</title>
+<style>
+  /* ---- verbatim: agent/api/static/dashboard.html :root, L11-20 ---- */
+  :root{
+    color-scheme:dark;
+    --bg:#0a0b0d; --s1:#101216; --s2:#15181d; --s3:#1c2027;
+    --hair:rgba(255,255,255,.06); --hair2:rgba(255,255,255,.12);
+    --ink:#eef0f3; --ink2:#9aa3b2; --ink3:#828b9a;
+    --pos:#00d17a; --neg:#ff5d6c; --warn:#e2b93b; --bench:#767f8c;
+    --pos-dim:rgba(0,209,122,.12); --neg-dim:rgba(255,93,108,.12);
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,Inter,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{background:var(--bg)}
+  body{width:820px;background:var(--bg);font-family:var(--sans);color:var(--ink);
+    font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased;padding:26px 24px 34px}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  /* ---- card chrome (page furniture, not the component) ---- */
+  h1{font-size:15px;font-weight:700;letter-spacing:.02em}
+  .src{font-family:var(--mono);font-size:10.5px;color:var(--ink3);margin-top:5px;line-height:1.65}
+  .lede{font-size:12.5px;color:var(--ink2);margin-top:10px;max-width:690px;line-height:1.6}
+  .rule{height:1px;background:var(--hair);margin:22px 0 18px}
+  h2.sec{font-size:10.5px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--ink3);margin-bottom:14px}
+  .grid2{display:grid;grid-template-columns:330px 330px;gap:28px;align-items:start}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;align-items:start}
+  .cap{font-size:11px;color:var(--ink3);line-height:1.55;margin-bottom:8px}
+  .cap b{color:var(--ink2);font-weight:650}
+  .val{font-family:var(--mono);font-size:10px;color:var(--ink3);line-height:1.75;
+    margin-top:9px;white-space:pre-wrap}
+  .val em{font-style:normal;color:var(--ink2)}
+
+  /* The host card. Source L108 also carries margin-top:16px — dropped here only so
+     the specimens sit flush in this page's grid; nothing else differs. Padding and
+     radius are the product's, so the 330px card gives the product's 284px track. */
+  .card{background:var(--s1);border:1px solid var(--hair);border-radius:16px}
+  .card>.bd{padding:14px 22px 18px}
+
+  /* ============ COMPONENT — verbatim, dashboard.html L146-154 ============ */
+  .kv{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--hair);font-size:13px}
+  .kv:last-of-type{border-bottom:0}
+  .kv span{color:var(--ink2)}.kv b{font-weight:650}
+  .alloc{margin:4px 0 14px}
+  .alloc .bar{display:flex;height:8px;border-radius:5px;overflow:hidden;gap:2px}
+  .alloc .bar i{transition:width .9s cubic-bezier(.2,.7,.3,1)}
+  .alloc .lg{display:flex;gap:14px;flex-wrap:wrap;margin-top:9px;font-size:11.5px;color:var(--ink2)}
+  .alloc .lg i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px}
+  .flags{margin-top:12px;font-size:12px;color:var(--warn);line-height:1.6}
+  /* ====================================================================== */
+
+  /* Card-local, not in the source: the product's mount transition fires once per
+     render(); this replays it on a loop so the curve is visible in a still page. */
+  @keyframes seg{0%{width:0}16%{width:var(--w)}100%{width:var(--w)}}
+  .anim .bar i{animation:seg 5.5s cubic-bezier(.2,.7,.3,1) infinite}
+  @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+  .ramp{display:flex;gap:2px;height:8px;border-radius:5px;overflow:hidden;width:284px}
+  .swatch{display:flex;align-items:center;gap:9px;font-size:11px;color:var(--ink2);padding:5px 0}
+  .swatch i{width:8px;height:8px;border-radius:2px;flex:0 0 8px}
+  .swatch code{font-family:var(--mono);font-size:10px;color:var(--ink3);margin-left:auto}
+  .note{background:var(--s2);border:1px solid var(--hair);border-radius:12px;padding:13px 15px;
+    font-size:11.5px;color:var(--ink2);line-height:1.65}
+  .note b{color:var(--ink);font-weight:650}
+  .warnbox{border-left:2px solid var(--warn);padding-left:11px}
+  .none{font-size:11px;color:var(--ink3);font-style:italic;padding:10px 0 2px}
+</style>
+</head>
+<body>
+
+<h1>Allocation bar &amp; legend</h1>
+<div class="src">agent/api/static/dashboard.html — CSS L146-154 (.kv / .alloc / .bar / .lg / .flags), render() L511-520,<br>
+flagsHtml() L539-561, pctNum() L374, strings L339-341 (tr) / L357-359 (en)<br>
+server flags: agent/tradingagents_us/risk/concentration.py L80-99<br>
+mounted in the "Dağılım &amp; risk" card, .cols right track (330px, L113), inside .card &gt; .bd</div>
+<p class="lede">render() sorts positions by |quantity × current_price|, takes the top three, paints them with a
+three-step blue ramp, and pushes one grey remainder segment carrying <span class="mono">Math.max(0, 100 − acc)</span>.
+Segment count is <span class="mono">min(n, 3) + 1</span> — four for a full book, one for an empty one. There is no
+icon in this component; the gate ticks (ok/bad/pend) live in the neighbouring gates strip.</p>
+
+<div class="rule"></div>
+<h2 class="sec">Segment states</h2>
+
+<div class="grid2">
+  <div>
+    <div class="cap"><b>Full book</b> — four segments, the ordinary case</div>
+    <div class="card"><div class="bd">
+      <div class="alloc">
+        <div class="bar">
+          <i style="background:#3987e5;width:34.2%"></i>
+          <i style="background:#6ea4ec;width:22.8%"></i>
+          <i style="background:#a7c4f2;width:15.1%"></i>
+          <i style="background:#3a414c;width:27.9%"></i>
+        </div>
+        <div class="lg">
+          <span><i style="background:#3987e5"></i>NVDA <span class="mono">%34.2</span></span>
+          <span><i style="background:#6ea4ec"></i>MSFT <span class="mono">%22.8</span></span>
+          <span><i style="background:#a7c4f2"></i>AAPL <span class="mono">%15.1</span></span>
+          <span><i style="background:#3a414c"></i>Diğer <span class="mono">%27.9</span></span>
+        </div>
+      </div>
+    </div></div>
+    <div class="val">.bar  <em>height 8px · radius 5px · gap 2px · overflow hidden</em>
+.lg   <em>gap 14px · margin-top 9px · 11.5px / var(--ink2) #9aa3b2</em>
+.lg i <em>8×8px · radius 2px · margin-right 5px</em>
+.alloc <em>margin 4px 0 14px</em>
+weights are shares of <em>gross</em> (Σ|qty×price|), not of equity</div>
+  </div>
+
+  <div>
+    <div class="cap"><b>Two positions</b> — the ramp stops at step 2, remainder carries the rest</div>
+    <div class="card"><div class="bd">
+      <div class="alloc">
+        <div class="bar">
+          <i style="background:#3987e5;width:58.4%"></i>
+          <i style="background:#6ea4ec;width:41.6%"></i>
+          <i style="background:#3a414c;width:0%"></i>
+        </div>
+        <div class="lg">
+          <span><i style="background:#3987e5"></i>NVDA <span class="mono">%58.4</span></span>
+          <span><i style="background:#6ea4ec"></i>TSLA <span class="mono">%41.6</span></span>
+          <span><i style="background:#3a414c"></i>Diğer <span class="mono">%0.0</span></span>
+        </div>
+      </div>
+    </div></div>
+    <div class="val">segs.length is <em>min(n,3) + 1</em>
+with ≤3 names the top slice already sums to 100% of
+gross, so the remainder is 0 — a zero-width &lt;i&gt; that
+still opens a 2px flex gap, and still prints in .lg</div>
+  </div>
+</div>
+
+<div class="grid2" style="margin-top:24px">
+  <div>
+    <div class="cap"><b>Empty book</b> — no positions at all</div>
+    <div class="card"><div class="bd">
+      <div class="alloc">
+        <div class="bar">
+          <i style="background:#3a414c;width:100%"></i>
+        </div>
+        <div class="lg">
+          <span><i style="background:#3a414c"></i>Diğer <span class="mono">%100.0</span></span>
+        </div>
+      </div>
+    </div></div>
+    <div class="val">tot = <em>… || 1</em> guards the divide; top = []
+segs = [{n:'Diğer', w:100, c:'#3a414c'}]
+there is <em>no</em> dedicated empty state in the source —
+the component degrades to one full grey bar</div>
+  </div>
+
+  <div>
+    <div class="cap"><b>First paint</b> — the DOM as innerHTML writes it, before rAF</div>
+    <div class="card"><div class="bd">
+      <div class="alloc">
+        <div class="bar">
+          <i style="background:#3987e5;width:0%"></i>
+          <i style="background:#6ea4ec;width:0%"></i>
+          <i style="background:#a7c4f2;width:0%"></i>
+          <i style="background:#3a414c;width:0%"></i>
+        </div>
+        <div class="lg">
+          <span><i style="background:#3987e5"></i>NVDA <span class="mono">%34.2</span></span>
+          <span><i style="background:#6ea4ec"></i>MSFT <span class="mono">%22.8</span></span>
+          <span><i style="background:#a7c4f2"></i>AAPL <span class="mono">%15.1</span></span>
+          <span><i style="background:#3a414c"></i>Diğer <span class="mono">%27.9</span></span>
+        </div>
+      </div>
+    </div></div>
+    <div class="val">&lt;i data-w="${s.w}" style="background:${s.c};width:0%"&gt;
+the track is a bare flex row — <em>no track colour</em>, so an
+un-animated bar shows the card surface <em>--s1 #101216</em>
+legend renders at its final value immediately</div>
+  </div>
+</div>
+
+<div class="grid2" style="margin-top:24px;grid-template-columns:330px 1fr">
+  <div>
+    <div class="cap"><b>Short position</b> — a −140 NVDA short, same blue as a long</div>
+    <div class="card"><div class="bd">
+      <div class="alloc">
+        <div class="bar">
+          <i style="background:#3987e5;width:41.0%"></i>
+          <i style="background:#6ea4ec;width:33.5%"></i>
+          <i style="background:#a7c4f2;width:25.5%"></i>
+          <i style="background:#3a414c;width:0%"></i>
+        </div>
+        <div class="lg">
+          <span><i style="background:#3987e5"></i>NVDA <span class="mono">%41.0</span></span>
+          <span><i style="background:#6ea4ec"></i>MSFT <span class="mono">%33.5</span></span>
+          <span><i style="background:#a7c4f2"></i>AAPL <span class="mono">%25.5</span></span>
+          <span><i style="background:#3a414c"></i>Diğer <span class="mono">%0.0</span></span>
+        </div>
+      </div>
+    </div></div>
+    <div class="val">Math.abs(p.quantity * p.current_price) — <em>three times</em>
+(tot, the sort key, and w), so direction is erased
+before it reaches the bar</div>
+  </div>
+  <div>
+    <div class="note">
+      <b>The bar cannot show a short.</b> Weight is gross market value, absolute on both the numerator and the
+      denominator, so a short leg paints exactly like a long one of the same size and the legend gives it the same
+      positive percentage. On a long-only paper book — what this dashboard runs today — the distinction never
+      surfaces. It is recorded here because the component has no way to express it: there is no second colour,
+      no sign, no hatch, and the four segments are already spoken for by rank. Any future short book needs a
+      decision at this level, not a patch in render().
+    </div>
+  </div>
+</div>
+
+<div class="rule"></div>
+<h2 class="sec">Track width, gaps and shrink</h2>
+
+<div class="grid2" style="grid-template-columns:330px 1fr">
+  <div>
+    <div class="cap"><b>Desktop track</b> — .cols right column, 330px</div>
+    <div class="card"><div class="bd">
+      <div class="alloc" style="margin-bottom:0">
+        <div class="bar">
+          <i style="background:#3987e5;width:34.2%"></i>
+          <i style="background:#6ea4ec;width:22.8%"></i>
+          <i style="background:#a7c4f2;width:15.1%"></i>
+          <i style="background:#3a414c;width:27.9%"></i>
+        </div>
+      </div>
+    </div></div>
+    <div class="val">330 − 2 border − 44 padding = <em>284px</em> track
+4 segments → 3 gaps → <em>6px</em> spent on gaps
+ink available to the segments: 278px = 97.9%</div>
+  </div>
+  <div>
+    <div class="note warnbox">
+      <b>The percentages are never quite the percentages.</b> The children's widths already sum to 100% of the
+      track, and then <span class="mono">gap:2px</span> asks for 6px more. Nothing is clipped:
+      <span class="mono">&lt;i&gt;</span> is empty, so its automatic minimum size is 0 and the default
+      <span class="mono">flex-shrink:1</span> takes the 6px back out of every segment in proportion to its width.
+      Ratios between segments survive exactly — the bar stays honest about relative size — but each segment renders
+      at 97.9% of its stated share of the visible track: 34.2% draws as 33.5%, 27.9% as 27.3%. The error is a
+      property of the track width, not of the data, so it shrinks as the card widens.
+      <span class="mono">overflow:hidden</span> is doing only one job here, rounding the outer corners against
+      <span class="mono">border-radius:5px</span>.
+    </div>
+    <div class="val">284px track → each segment −2.1% relative (34.2 reads <em>33.5</em>)
+726px track → −0.8% relative (34.2 reads <em>33.9</em>)
+1 segment, 0 gaps → the empty book is the <em>only</em> exact case</div>
+  </div>
+</div>
+
+<div style="margin-top:24px">
+  <div class="cap"><b>Below 900px</b> — <span class="mono">@media(max-width:900px){.cols{grid-template-columns:1fr}}</span> drops the
+    right column to full width; the same four segments stretch and the gap error all but disappears</div>
+  <div class="card"><div class="bd">
+    <div class="alloc" style="margin-bottom:0">
+      <div class="bar">
+        <i style="background:#3987e5;width:34.2%"></i>
+        <i style="background:#6ea4ec;width:22.8%"></i>
+        <i style="background:#a7c4f2;width:15.1%"></i>
+        <i style="background:#3a414c;width:27.9%"></i>
+      </div>
+      <div class="lg">
+        <span><i style="background:#3987e5"></i>NVDA <span class="mono">%34.2</span></span>
+        <span><i style="background:#6ea4ec"></i>MSFT <span class="mono">%22.8</span></span>
+        <span><i style="background:#a7c4f2"></i>AAPL <span class="mono">%15.1</span></span>
+        <span><i style="background:#3a414c"></i>Diğer <span class="mono">%27.9</span></span>
+      </div>
+    </div>
+  </div></div>
+  <div class="val">the bar has no max-width and no min-width — it is whatever .bd gives it
+.lg keeps its 14px gap and wraps only when the four entries no longer fit</div>
+</div>
+
+<div class="rule"></div>
+<h2 class="sec">Width transition</h2>
+
+<div class="grid2">
+  <div>
+    <div class="cap"><b>Mount animation</b> — looping in this specimen; in the product it replays on every render()</div>
+    <div class="card"><div class="bd">
+      <div class="alloc anim">
+        <div class="bar">
+          <i style="background:#3987e5;--w:34.2%"></i>
+          <i style="background:#6ea4ec;--w:22.8%"></i>
+          <i style="background:#a7c4f2;--w:15.1%"></i>
+          <i style="background:#3a414c;--w:27.9%"></i>
+        </div>
+        <div class="lg">
+          <span><i style="background:#3987e5"></i>NVDA <span class="mono">%34.2</span></span>
+          <span><i style="background:#6ea4ec"></i>MSFT <span class="mono">%22.8</span></span>
+          <span><i style="background:#a7c4f2"></i>AAPL <span class="mono">%15.1</span></span>
+          <span><i style="background:#3a414c"></i>Diğer <span class="mono">%27.9</span></span>
+        </div>
+      </div>
+    </div></div>
+    <div class="val">transition: <em>width .9s cubic-bezier(.2,.7,.3,1)</em>
+driver: requestAnimationFrame(() =&gt; … el.style.width = el.dataset.w + '%')
+all four segments start together — no per-segment stagger
+same curve as .plbar i (.8s) and .rise (.55s)
+@media(prefers-reduced-motion:reduce) kills it via *{transition:none!important}</div>
+  </div>
+
+  <div>
+    <div class="cap"><b>It is not a mount animation</b></div>
+    <div class="note warnbox">
+      <b>Every refresh replays it.</b> render() rewrites <span class="mono">#alloc.innerHTML</span> with
+      <span class="mono">width:0%</span> on all four segments and lets the next frame set the real widths, so the
+      bar collapses to nothing and grows back once a minute on the 60s poll — and again on every language toggle
+      and period change. The chart guards against exactly this with a <span class="mono">DRAWN</span> flag; the
+      allocation bar has no equivalent. The card animation is right the first time and wrong every time after.
+    </div>
+    <div class="val">boot() → setInterval(refresh, 60000) → render() → innerHTML → rAF
+no DRAWN-style guard on .alloc — the reset is unconditional
+prefers-reduced-motion hides it: the bar simply snaps to width</div>
+  </div>
+</div>
+
+<div class="rule"></div>
+<h2 class="sec">Categorical ramp</h2>
+
+<div class="grid2" style="grid-template-columns:330px 1fr">
+  <div>
+    <div class="ramp">
+      <i style="background:#3987e5;width:34.2%"></i>
+      <i style="background:#6ea4ec;width:22.8%"></i>
+      <i style="background:#a7c4f2;width:15.1%"></i>
+      <i style="background:#3a414c;width:27.9%"></i>
+    </div>
+    <div style="margin-top:10px">
+      <div class="swatch"><i style="background:#3987e5"></i>rank 1 <code>#3987e5</code></div>
+      <div class="swatch"><i style="background:#6ea4ec"></i>rank 2 <code>#6ea4ec</code></div>
+      <div class="swatch"><i style="background:#a7c4f2"></i>rank 3 <code>#a7c4f2</code></div>
+      <div class="swatch"><i style="background:#3a414c"></i>remainder <code>#3a414c</code></div>
+    </div>
+    <div class="val">cols = ['#3987e5','#6ea4ec','#a7c4f2']   <em>literal, not a token</em>
+remainder '#3a414c'                     <em>literal, not a token</em>
+neither is declared in :root — both are inline in render()</div>
+  </div>
+  <div>
+    <div class="note">
+      <b>Why the remainder is grey and not a fourth blue.</b> The three blues are one ordered scale: they encode
+      rank, and reading them left-to-right tells you the book is getting less concentrated. "Diğer" is not
+      rank 4 — it is an aggregate of an unknown number of names, and its width says nothing about any single
+      position. Giving it <span class="mono">#a7c4f2</span>'s successor would invite the eye to read it as the
+      fourth-largest holding and would put the palette's lightest, highest-contrast step on the least
+      informative segment. <span class="mono">#3a414c</span> sits above the <span class="mono">--s3 #1c2027</span>
+      the P&amp;L bar uses for its track and well below <span class="mono">--ink3 #828b9a</span>, so it reads
+      as ground rather than as data.
+    </div>
+    <div class="val">#3a414c is <em>not</em> --s3 (#1c2027) and <em>not</em> --bench (#767f8c) —
+it is a fourth, undeclared neutral used only here</div>
+  </div>
+</div>
+
+<div class="rule"></div>
+<h2 class="sec">.flags — amber cap warning, same card</h2>
+
+<div class="grid3">
+  <div>
+    <div class="cap"><b>Clean book</b></div>
+    <div class="card"><div class="bd">
+      <div class="kv"><span>Effective N</span><b class="mono">7.4</b></div>
+      <div class="kv"><span>En büyük ağırlık</span><b class="mono">8.1%</b></div>
+      <div class="kv"><span>HHI</span><b class="mono">0.135</b></div>
+      <div class="kv"><span>Brüt maruziyet</span><b class="mono">78%</b></div>
+      <div class="none">— flagsHtml() returns '', no element</div>
+    </div></div>
+    <div class="val">no .flags node at all, so
+no 12px top margin either</div>
+  </div>
+
+  <div>
+    <div class="cap"><b>single_name_cap</b> — one line, names joined by " · "</div>
+    <div class="card"><div class="bd">
+      <div class="kv"><span>Effective N</span><b class="mono">5.2</b></div>
+      <div class="kv"><span>En büyük ağırlık</span><b class="mono">14.2%</b></div>
+      <div class="kv"><span>HHI</span><b class="mono">0.192</b></div>
+      <div class="kv"><span>Brüt maruziyet</span><b class="mono">61%</b></div>
+      <div class="flags">Tek-isim cap üstü (&gt;%10): NVDA %14.2 · MSFT %11.8</div>
+    </div></div>
+    <div class="val">.flags <em>12px / #e2b93b / lh 1.6 / mt 12px</em>
+limit is caps[0].limit.toFixed(0) — the first
+single_name_cap item, so "En büyük ağırlık"
+and the first name in the line are the same number</div>
+  </div>
+
+  <div>
+    <div class="cap"><b>low_effective_n</b> — its own line, and it can fire alone</div>
+    <div class="card"><div class="bd">
+      <div class="kv"><span>Effective N</span><b class="mono">2.4</b></div>
+      <div class="kv"><span>En büyük ağırlık</span><b class="mono">9.0%</b></div>
+      <div class="kv"><span>HHI</span><b class="mono">0.415</b></div>
+      <div class="kv"><span>Brüt maruziyet</span><b class="mono">15%</b></div>
+      <div class="flags">Effective N 2.4 &lt; 3 — kitap 3 eşit bahisten az davranıyor</div>
+    </div></div>
+    <div class="val">effective_n is over <em>invested</em> weights, top weight
+over <em>equity</em> — at 15% gross a lopsided book trips
+the N gate with no name near the 10% cap
+threshold hard-coded 3.0 in concentration.py L93</div>
+  </div>
+</div>
+
+<div class="grid3" style="margin-top:22px">
+  <div>
+    <div class="cap"><b>Both codes</b> — joined with &lt;br&gt;, one block, no bullets</div>
+    <div class="card"><div class="bd">
+      <div class="flags" style="margin-top:0">Tek-isim cap üstü (&gt;%10): NVDA %61.0 · MSFT %14.3<br>Effective N 2.4 &lt; 3 — kitap 3 eşit bahisten az davranıyor</div>
+    </div></div>
+    <div class="val">lines.join('&lt;br&gt;') — line-height 1.6
+cap line always sorts first</div>
+  </div>
+
+  <div>
+    <div class="cap"><b>Legacy fallback</b> — server predates flag_items, English sentences pass through</div>
+    <div class="card"><div class="bd">
+      <div class="flags" style="margin-top:0">NVDA is 61.0% of equity (&gt; 10% single-name cap)<br>effective_n 2.4 &lt; 3 — book behaves like fewer than 3 equal bets</div>
+    </div></div>
+    <div class="val">conc.flags[] rendered raw — <em>never translated</em>,
+so a TR operator sees English on an old deploy
+(concentration.py L84 and L95, f-strings)</div>
+  </div>
+
+  <div>
+    <div class="cap"><b>Unknown code</b> — the catch-all branch prints the raw code</div>
+    <div class="card"><div class="bd">
+      <div class="flags" style="margin-top:0">sector_cap</div>
+    </div></div>
+    <div class="val">items.filter(f =&gt; code ∉ {single_name_cap,
+low_effective_n}).forEach(f =&gt; lines.push(esc(f.code)))
+no label, no value — the bare identifier</div>
+  </div>
+</div>
+
+<div class="rule"></div>
+<h2 class="sec">Number formatting in the legend</h2>
+
+<div class="grid2" style="grid-template-columns:330px 1fr">
+  <div>
+    <div class="card"><div class="bd">
+      <div class="alloc" style="margin-bottom:0">
+        <div class="lg" style="margin-top:0">
+          <span><i style="background:#3987e5"></i>NVDA <span class="mono">%34.2</span></span>
+          <span><i style="background:#6ea4ec"></i>MSFT <span class="mono">%22.8</span></span>
+          <span><i style="background:#3a414c"></i>Diğer <span class="mono">%27.9</span></span>
+        </div>
+        <div class="lg" style="margin-top:11px">
+          <span><i style="background:#3987e5"></i>NVDA <span class="mono">34.2%</span></span>
+          <span><i style="background:#6ea4ec"></i>MSFT <span class="mono">22.8%</span></span>
+          <span><i style="background:#3a414c"></i>Other <span class="mono">27.9%</span></span>
+        </div>
+      </div>
+    </div></div>
+    <div class="val">LANG='tr' (default) → <em>'%' + v.toFixed(1)</em>, t('other_word') = 'Diğer'
+LANG='en'          → <em>v.toFixed(1) + '%'</em>, t('other_word') = 'Other'</div>
+  </div>
+  <div>
+    <div class="note">
+      <b>The decimal separator is not localised.</b> <span class="mono">pctNum()</span> moves the percent sign to
+      the Turkish side but keeps <span class="mono">toFixed(1)</span>'s dot, so Turkish renders
+      <span class="mono">%34.2</span> where the locale wants <span class="mono">%34,2</span> — even though the file
+      already carries a <span class="mono">LOCALE()</span> helper that returns <span class="mono">'tr-TR'</span>
+      and is used for the header timestamp and the decision dates. The legend is the only place in the risk card
+      where this shows; the .kv rows use <span class="mono">toFixed()</span> with a bare <span class="mono">'%'</span>
+      suffix in both languages, so "En büyük ağırlık" reads <span class="mono">14.2%</span> in Turkish while the
+      legend beside it reads <span class="mono">%34.2</span>. Two percent conventions, one card.
+    </div>
+    <div class="val">legend: share of <em>gross</em> · kv "En büyük ağırlık": share of <em>equity</em>
+same book, different denominators — 34.2% of gross = 28.0% of equity at 82% gross exposure
+(concentration.py: top_weight_pct is "largest single name as % of equity")</div>
+  </div>
+</div>
+
+</body>
+</html>

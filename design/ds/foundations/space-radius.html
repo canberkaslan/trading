@@ -1,0 +1,530 @@
+<!-- @dsCard group="Foundations" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=820">
+<title>Space, Radius &amp; Borders — TRADER</title>
+<style>
+  :root{
+    color-scheme:dark;
+    /* verbatim from agent/api/static/dashboard.html :root (lines 11–20) */
+    --bg:#0a0b0d; --s1:#101216; --s2:#15181d; --s3:#1c2027;
+    --hair:rgba(255,255,255,.06); --hair2:rgba(255,255,255,.12);
+    --ink:#eef0f3; --ink2:#9aa3b2; --ink3:#828b9a;
+    --pos:#00d17a; --neg:#ff5d6c; --warn:#e2b93b; --bench:#767f8c;
+    --pos-dim:rgba(0,209,122,.12); --neg-dim:rgba(255,93,108,.12);
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,Inter,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{background:var(--bg)}
+  body{font-family:var(--sans);color:var(--ink);font-size:14px;line-height:1.45;
+    -webkit-font-smoothing:antialiased;width:820px;background:var(--bg)}
+  .page{padding:26px 26px 40px}
+
+  /* ---- card chrome (the doc's own furniture, not the product's) ---- */
+  .title{font-size:13px;font-weight:700;letter-spacing:.16em}
+  .lede{font-size:12.5px;color:var(--ink2);line-height:1.6;margin-top:7px;max-width:660px}
+  .sec{margin-top:26px}
+  .sec>h2{font-size:12px;font-weight:650;letter-spacing:.1em;color:var(--ink2);text-transform:uppercase}
+  .sec>.note{font-size:11.5px;color:var(--ink3);margin-top:5px;line-height:1.55;max-width:700px}
+  .rule{height:1px;background:var(--hair);margin:14px 0 16px}
+  .cap{font-size:10.5px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+  .val{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:10.5px;color:var(--ink3);
+    line-height:1.6}
+  .val b{color:var(--ink2);font-weight:400}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .iso{font-size:10.5px;color:var(--warn);font-family:var(--mono);line-height:1.5;margin-top:6px;opacity:.85}
+
+  /* ================= A. surface ladder ================= */
+  .ladder{display:flex;gap:16px;align-items:flex-start}
+  .nest{width:392px}
+  .lay{position:relative;padding:26px 20px 20px;border-radius:16px}
+  .lay>.tagn{position:absolute;top:7px;left:12px;font-family:var(--mono);font-size:10px;color:var(--ink3)}
+  .l0{background:var(--bg);border:1px solid var(--hair)}
+  .l1{background:var(--s1)}
+  .l2{background:var(--s2)}
+  .l3{background:var(--s3);padding:26px 20px 22px}
+  .lightstrip{display:flex;gap:0;margin-top:12px;border-radius:5px;overflow:hidden;height:26px}
+  .lightstrip i{flex:1;display:block}
+  .surftbl{flex:1;display:flex;flex-direction:column;gap:0}
+  .srow{display:grid;grid-template-columns:26px 1fr auto;gap:11px;align-items:center;
+    padding:8px 0;border-bottom:1px solid var(--hair);font-size:12px}
+  .srow:last-child{border-bottom:0}
+  .sw{width:26px;height:26px;border-radius:5px;border:1px solid var(--hair)}
+  .srow .u{color:var(--ink3);font-size:11px}
+
+  /* ================= B. hairlines ================= */
+  .hairgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  .hbox{background:var(--s1);border-radius:12px;padding:14px 16px;height:78px;
+    display:flex;flex-direction:column;justify-content:center;gap:4px}
+  .hbox.h1{border:1px solid var(--hair)}
+  .hbox.h2{border:1px solid var(--hair2)}
+  .hbox.h3{border:1px solid rgba(255,255,255,.22)}
+  .hbox.h4{border:1px solid rgba(255,255,255,.25)}
+  .hbox .n{font-size:12px;font-weight:600}
+  .hbox .m{font-size:10.5px;color:var(--ink3);font-family:var(--mono)}
+  .hairuse{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+  .demo{background:var(--s1);border:1px solid var(--hair);border-radius:16px}
+  .demo .dh{padding:14px 18px 0;font-size:10.5px;font-weight:650;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--ink3)}
+  .demo .db{padding:10px 18px 14px}
+  .kv{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--hair);font-size:13px}
+  .kv:last-of-type{border-bottom:0}
+  .kv span{color:var(--ink2)}.kv b{font-weight:650}
+  .ctlrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:4px 0 2px}
+  .tag{font-size:10px;font-weight:700;letter-spacing:.1em;color:var(--ink3);
+    border:1px solid var(--hair2);border-radius:5px;padding:2px 7px}
+  .icobtn{width:32px;height:32px;border:1px solid var(--hair2);border-radius:9px;
+    display:inline-flex;align-items:center;justify-content:center;color:var(--ink2)}
+  .icobtn svg{width:14px;height:14px}
+  .inp{background:var(--s2);border:1px solid var(--hair2);color:var(--ink);padding:11px 14px;
+    border-radius:10px;font-size:14px;font-family:var(--mono);flex:1;min-width:120px}
+  .lopt{display:block;width:100%;text-align:left;border:1px solid var(--hair2);border-radius:10px;
+    padding:10px 14px;font-size:13.5px;line-height:1.5;color:var(--ink);background:none;margin-top:8px}
+  .chiprest{display:inline-flex;flex-direction:column;gap:3px;background:var(--s1);
+    border:1px solid var(--hair);border-radius:12px;padding:11px 16px;min-width:118px}
+  .chiprest.hov{border-color:var(--hair2);transform:translateY(-1px)}
+  .chiprest .k{font-size:10.5px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+  .chiprest .v{font-size:16.5px;font-weight:650;font-family:var(--mono)}
+  .statepair{display:flex;gap:12px;align-items:flex-start;margin-top:2px}
+
+  /* ================= C. radii ================= */
+  .radgrid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px 12px}
+  .rcell{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+  .stage{width:100%;height:64px;background:var(--s1);border:1px solid var(--hair);border-radius:12px;
+    display:flex;align-items:center;justify-content:center;padding:8px}
+  .spec-card{width:78px;height:44px;background:var(--s2);border:1px solid var(--hair);border-radius:16px}
+  .spec-chip{width:78px;height:44px;background:var(--s1);border:1px solid var(--hair);border-radius:12px}
+  .spec-gate{width:78px;height:44px;background:var(--s2);border:1px solid var(--hair);border-radius:12px;
+    display:flex;align-items:center;justify-content:center}
+  .spec-gate svg{width:20px;height:20px}
+  .spec-take{width:86px;height:40px;background:var(--s2);border-radius:10px}
+  .spec-tip{background:var(--s3);border:1px solid var(--hair2);border-radius:10px;padding:8px 12px;
+    font-size:12px;box-shadow:0 10px 34px rgba(0,0,0,.55);display:flex;align-items:center;gap:8px}
+  .spec-tip i{width:8px;height:8px;border-radius:2px;background:var(--pos);display:block}
+  .ava{width:30px;height:30px;border-radius:9px;background:var(--s3);display:inline-flex;
+    align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--ink2);letter-spacing:.02em}
+  .rchip{display:inline-flex;justify-content:center;font-size:11px;font-weight:650;padding:4px 0;
+    border-radius:7px;width:100px;color:var(--pos);background:var(--pos-dim)}
+  .bar5{display:flex;height:8px;border-radius:5px;overflow:hidden;gap:2px;width:110px}
+  .bar5 i{display:block;height:8px}
+  .focusdemo{font-size:12px;color:var(--ink2);outline:2px solid var(--pos);outline-offset:2px;
+    border-radius:4px;padding:2px 6px;background:var(--s2)}
+  .plbar{width:56px;height:3px;border-radius:2px;background:var(--s3);overflow:hidden;position:relative}
+  .plbar i{position:absolute;top:0;bottom:0;left:0;width:34px;border-radius:2px;background:var(--pos)}
+  .spyi{width:14px;height:3px;border-radius:2px;background:var(--bench);display:inline-block}
+  .swatches{display:flex;gap:10px;align-items:center}
+  .swatches i{display:inline-block;width:8px;height:8px;border-radius:2px}
+  .pill{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:600;
+    border-radius:999px;padding:5px 12px;color:var(--pos);background:var(--pos-dim)}
+  .pill .d{width:7px;height:7px;border-radius:50%;background:var(--pos)}
+  .ptab{font-size:12px;font-weight:650;color:var(--ink);padding:6px 14px;border-radius:999px;background:var(--s3)}
+  .langbtn{height:32px;border:1px solid var(--hair2);border-radius:9px;display:inline-flex;
+    align-items:center;justify-content:center;color:var(--ink2);padding:0 10px;font-size:11px;
+    font-weight:700;letter-spacing:.06em}
+  .dots{display:flex;gap:10px;align-items:center}
+  .ld{width:8px;height:8px;border-radius:50%;background:var(--s3)}
+  .ld.on{background:var(--pos)}
+  .logo rect{fill:var(--s3)}
+
+  /* ================= D. spacing ================= */
+  .spacewrap{display:grid;grid-template-columns:330px minmax(0,1fr);gap:18px;align-items:start}
+  .padcard{position:relative;background:var(--s1);border:1px solid var(--hair);border-radius:16px}
+  .padcard .hd{padding:18px 22px 0;display:flex;align-items:baseline;gap:10px}
+  .padcard .hd h3{font-size:12px;font-weight:650;letter-spacing:.1em;color:var(--ink2);text-transform:uppercase}
+  .padcard .hd .sub{font-size:12px;color:var(--ink3);margin-left:auto;font-family:var(--mono)}
+  .padcard .bd{padding:14px 22px 18px}
+  .ghost{outline:1px dashed rgba(0,209,122,.42);outline-offset:0}
+  .gates{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+  .gate{background:var(--s2);border:1px solid var(--hair);border-radius:12px;padding:12px 14px;
+    display:flex;align-items:center;gap:10px}
+  .gate svg{width:20px;height:20px;flex:0 0 20px}
+  .gate .t{font-size:12px;font-weight:600}
+  .gate .d{font-size:11px;color:var(--ink3);font-family:var(--mono)}
+  .dimrow{display:flex;gap:14px;margin-top:9px;flex-wrap:wrap}
+  .dim{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10.5px;color:var(--ink3)}
+  .dim i{display:block;height:6px;background:rgba(0,209,122,.42);border-radius:1px}
+
+  .scale{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0 18px}
+  .strow{display:grid;grid-template-columns:38px 84px minmax(0,1fr);gap:10px;align-items:center;
+    padding:5px 0;border-bottom:1px solid var(--hair);font-size:11.5px;color:var(--ink3)}
+  .strow .n{font-family:var(--mono);font-size:11.5px;color:var(--ink2);text-align:right}
+  .strow .g{height:9px;background:var(--s3);border-radius:2px}
+  .strow .w{color:var(--ink3);font-size:10.5px;line-height:1.45;white-space:normal;font-family:var(--mono)}
+
+  .twocol{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .threecol{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .miss{border:1px dashed rgba(255,255,255,.12);border-radius:12px;padding:12px 14px;background:rgba(255,255,255,.012)}
+  .miss .h{font-size:11.5px;font-weight:650;color:var(--warn)}
+  .miss p{font-size:11.5px;color:var(--ink3);line-height:1.6;margin-top:4px}
+  .miss code{font-family:var(--mono);color:var(--ink2);font-size:11px}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="title">SPACE · RADIUS · BORDERS</div>
+  <div class="lede">Sections A–D are read out of <span class="mono" style="font-size:11.5px;color:var(--ink2)">agent/api/static/dashboard.html</span>;
+  section E reads the React Native app. The web sheet has no spacing tokens — padding and gaps are written literally per rule, and they do not
+  sit on a 4/8px grid (11, 13, 9, 22, 34 all appear). What <em>is</em> tokenised is the surface ladder and the two hairlines.</div>
+
+  <!-- ============================================================ A -->
+  <div class="sec">
+    <h2>Surface ladder — depth by lightness, not shadow</h2>
+    <div class="note">Four background tokens, each a step lighter. Nesting is how elevation reads: page → card → inset block → track / avatar / tooltip.
+    The only <span class="mono" style="font-size:11px">box-shadow</span> in the whole stylesheet belongs to the chart tooltip.</div>
+    <div class="rule"></div>
+
+    <div class="ladder">
+      <div class="nest">
+        <div class="lay l0">
+          <span class="tagn">--bg  page</span>
+          <div class="lay l1">
+            <span class="tagn">--s1  .card / .chip</span>
+            <div class="lay l2">
+              <span class="tagn">--s2  .gate / .ltake / #auth input</span>
+              <div class="lay l3">
+                <span class="tagn">--s3  .ava / .rchip.h / tracks / #tip</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="lightstrip">
+          <i style="background:var(--bg)"></i><i style="background:var(--s1)"></i>
+          <i style="background:var(--s2)"></i><i style="background:var(--s3)"></i>
+        </div>
+        <div class="val" style="margin-top:6px">#0a0b0d → #101216 → #15181d → #1c2027</div>
+      </div>
+
+      <div class="surftbl">
+        <div class="srow"><span class="sw" style="background:var(--bg)"></span>
+          <span><b class="mono" style="font-size:11.5px">--bg #0a0b0d</b><br><span class="u"><span class="mono">html</span> background · <span class="mono">theme-color</span> meta · chart dot stroke</span></span>
+          <span class="val">L0</span></div>
+        <div class="srow"><span class="sw" style="background:var(--s1)"></span>
+          <span><b class="mono" style="font-size:11.5px">--s1 #101216</b><br><span class="u">.card, .chip — always with a 1px --hair border</span></span>
+          <span class="val">L1</span></div>
+        <div class="srow"><span class="sw" style="background:var(--s2)"></span>
+          <span><b class="mono" style="font-size:11.5px">--s2 #15181d</b><br><span class="u">.gate, .ltake, #auth input, .sk base (s2→s3→s2 sweep)</span></span>
+          <span class="val">L2</span></div>
+        <div class="srow"><span class="sw" style="background:var(--s3)"></span>
+          <span><b class="mono" style="font-size:11.5px">--s3 #1c2027</b><br><span class="u">.ava, .rchip.h, .plbar, .lprog .tr, .lesson .ld, #tip, selected .ptabs button, the mark's rect</span></span>
+          <span class="val">L3</span></div>
+        <div class="srow"><span class="sw" style="background:rgba(10,11,13,.75)"></span>
+          <span><b class="mono" style="font-size:11.5px">rgba(10,11,13,.75)</b><br><span class="u">.top — untokenised; needs backdrop-filter:blur(14px)</span></span>
+          <span class="val">glass</span></div>
+        <div class="srow"><span class="sw" style="background:rgba(255,255,255,.012)"></span>
+          <span><b class="mono" style="font-size:11.5px">rgba(255,255,255,.012)</b><br><span class="u">.tape — a tint so faint it is nearly --bg</span></span>
+          <span class="val">tint</span></div>
+        <div class="srow"><span class="sw" style="background:rgba(255,255,255,.02)"></span>
+          <span><b class="mono" style="font-size:11.5px">rgba(255,255,255,.02)</b><br><span class="u">tbody tr:hover — the one row-level hover fill</span></span>
+          <span class="val">tint</span></div>
+        <div class="srow"><span class="sw" style="background:rgba(226,185,59,.12)"></span>
+          <span><b class="mono" style="font-size:11.5px">rgba(226,185,59,.12)</b><br><span class="u">.live.wait fill — written inline because there is no --warn-dim</span></span>
+          <span class="val">tint</span></div>
+        <div class="srow"><span class="sw" style="background:radial-gradient(70% 90% at 50% 0,rgba(0,209,122,.30),transparent 72%)"></span>
+          <span><b class="mono" style="font-size:11.5px">rgba(0,209,122,.055)</b><br><span class="u">body::before radial wash, 55%×60% at 50% 8% — the page's only gradient ground</span></span>
+          <span class="val">wash</span></div>
+        <div class="srow"><span class="sw" style="background:var(--s3);box-shadow:0 10px 34px rgba(0,0,0,.55)"></span>
+          <span><b class="mono" style="font-size:11.5px">0 10px 34px rgba(0,0,0,.55)</b><br><span class="u">#tip only — the sole shadow in the sheet</span></span>
+          <span class="val">shadow</span></div>
+      </div>
+    </div>
+    <div class="iso">Swatch note: the wash swatch is boosted to .30 in a 26px chip so the .055 gradient is visible at this size; the value in the sheet is rgba(0,209,122,.055).</div>
+  </div>
+
+  <!-- ============================================================ B -->
+  <div class="sec">
+    <h2>Hairlines — a four-step white ladder, two of them tokenised</h2>
+    <div class="note">Same surface, same 1px width; only the alpha changes. <span class="mono" style="font-size:11px">--hair</span> is a divider
+    (it separates things that are already inside something). <span class="mono" style="font-size:11px">--hair2</span> is an edge
+    (it draws a control you can hit). The .22 / .25 steps exist only as hover states and were never given names.</div>
+    <div class="rule"></div>
+
+    <div class="hairgrid">
+      <div class="hbox h1"><span class="n">--hair</span><span class="m">rgba(255,255,255,.06)</span><span class="m" style="color:var(--ink3)">rest · divider</span></div>
+      <div class="hbox h2"><span class="n">--hair2</span><span class="m">rgba(255,255,255,.12)</span><span class="m" style="color:var(--ink3)">rest · control edge</span></div>
+      <div class="hbox h3"><span class="n">.icobtn:hover</span><span class="m">rgba(255,255,255,.22)</span><span class="m" style="color:var(--ink3)">hover · unnamed</span></div>
+      <div class="hbox h4"><span class="n">.lopt:hover:not(:disabled)</span><span class="m">rgba(255,255,255,.25)</span><span class="m" style="color:var(--ink3)">hover · unnamed</span></div>
+    </div>
+
+    <div class="hairuse">
+      <div class="demo">
+        <div class="dh">--hair as divider</div>
+        <div class="db">
+          <div class="kv"><span>Effective N</span><b class="mono">3.4</b></div>
+          <div class="kv"><span>Top weight</span><b class="mono">28.1%</b></div>
+          <div class="kv"><span>HHI</span><b class="mono">0.312</b></div>
+        </div>
+        <div class="db" style="padding-top:0">
+          <div class="val"><b>border-bottom:1px solid var(--hair)</b><br>
+          .kv · tbody td · thead th · .dec · .lesson · .top · .tape<br>
+          plus the 1px box border on .card / .chip / .gate</div>
+        </div>
+      </div>
+      <div class="demo">
+        <div class="dh">--hair2 as control edge</div>
+        <div class="db">
+          <div class="ctlrow">
+            <span class="tag">PAPER</span>
+            <span class="icobtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></span>
+            <span class="inp">access key</span>
+          </div>
+          <button class="lopt">A quiz option at rest</button>
+        </div>
+        <div class="db" style="padding-top:0">
+          <div class="val"><b>border:1px solid var(--hair2)</b><br>
+          .tag · .icobtn · #auth input · .lopt · #tip<br>
+          also the SVG stroke for the chart zero-line and crosshair</div>
+        </div>
+      </div>
+    </div>
+    <div class="iso">Isolation change: #auth input is <span style="color:var(--ink3)">width:100%</span> in the sheet; here it is flex:1 so it can share a row with the tag and the icon button. Padding 11px 14px, radius 10px and font-size 14px are the source values.</div>
+
+    <div class="threecol" style="margin-top:14px">
+      <div class="miss">
+        <div class="h">Off-ladder border, one instance</div>
+        <p><code>#err</code> is the only rule that <em>declares</em> a tinted border:
+        <code>1px solid rgba(255,93,108,.35)</code> over <code>--neg-dim</code>. Everywhere else a border starts white
+        and a state re-colours it.</p>
+      </div>
+      <div class="miss">
+        <div class="h">State colour arrives as border-color</div>
+        <p><code>.lopt.right</code> → <code>border-color:var(--pos)</code> + <code>background:var(--pos-dim)</code>;
+        <code>.lopt.wrong</code> → the --neg pair. <code>#auth input:focus</code> is the one focus border swap in the sheet:
+        <code>outline:none;border-color:var(--pos)</code>. Everywhere else focus is the global
+        <code>:focus-visible</code> ring — <code>outline:2px solid var(--pos)</code>, <code>outline-offset:2px</code>, radius 4px —
+        never a border change. <code>.lopt:disabled</code> only sets <code>cursor:default</code>; it keeps its --hair2 edge.</p>
+      </div>
+      <div class="miss">
+        <div class="h">The one rest → hover move between named steps</div>
+        <p><code>.chip:hover</code> goes <code>--hair</code> → <code>--hair2</code> and lifts
+        <code>translateY(-1px)</code> over <code>border-color .15s, transform .15s</code>. The .22 / .25 hovers on
+        .icobtn / .lopt leave the ladder entirely; .icobtn also takes <code>color:var(--ink)</code> and
+        <code>transform:rotate(30deg)</code>.</p>
+      </div>
+    </div>
+
+    <div class="statepair" style="margin-top:12px">
+      <span class="chiprest"><span class="k">Sharpe</span><span class="v">1.24</span></span>
+      <span class="chiprest hov"><span class="k">Sharpe</span><span class="v">1.24</span></span>
+      <span class="val" style="align-self:center">.chip rest → .chip:hover · min-width 118px · padding 11px 16px · radius 12px</span>
+    </div>
+  </div>
+
+  <!-- ============================================================ C -->
+  <div class="sec">
+    <h2>Radii — ten CSS values, plus rx 8 on the SVG mark</h2>
+    <div class="note">Radius encodes scale of object, not hierarchy: the bigger the box, the rounder. Below every specimen is
+    the rule it comes from. A step can be shared — 12px covers .chip, .gate and #err; 10px covers six rules — but nothing here
+    is snapped to a grid: 9px and 7px are real values.</div>
+    <div class="rule"></div>
+
+    <div class="radgrid">
+      <div class="rcell">
+        <div class="stage"><span class="spec-card"></span></div>
+        <span class="cap">Card</span>
+        <span class="val">16px · <b>.card</b> (also #auth .card)</span>
+      </div>
+      <div class="rcell">
+        <div class="stage"><span class="spec-chip"></span></div>
+        <span class="cap">Stat chip</span>
+        <span class="val">12px · <b>.chip</b> · #err</span>
+      </div>
+      <div class="rcell">
+        <div class="stage"><span class="spec-gate">
+          <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="var(--pos)" stroke-width="1.5" opacity=".4"/><path d="M6.2 10.4l2.6 2.6L14 7.6" stroke="var(--pos)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span></div>
+        <span class="cap">Gate tile</span>
+        <span class="val">12px · <b>.gate</b> on --s2</span>
+      </div>
+      <div class="rcell">
+        <div class="stage"><span class="spec-take"></span></div>
+        <span class="cap">Inset block</span>
+        <span class="val">10px · <b>.ltake</b> · .lopt · .sk<br>#auth input · #auth .go</span>
+      </div>
+      <div class="rcell">
+        <div class="stage"><span class="spec-tip"><i></i><span style="font-size:11px;color:var(--ink2)">Portfolio</span><b class="mono" style="font-size:11px;padding-left:14px">+4.20%</b></span></div>
+        <span class="cap">Tooltip</span>
+        <span class="val">10px · <b>#tip</b> · has the shadow<br>.r gap 8px · b padding-left 14px</span>
+      </div>
+
+      <div class="rcell">
+        <div class="stage" style="gap:8px"><span class="icobtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></span><span class="langbtn">EN</span></div>
+        <span class="cap">Icon button</span>
+        <span class="val">9px · <b>.icobtn</b> 32×32px<br>#langbtn reuses it: width:auto, pad 0 10px</span>
+      </div>
+      <div class="rcell">
+        <div class="stage"><span class="ava">AAPL</span></div>
+        <span class="cap">Ticker avatar</span>
+        <span class="val">9px · <b>.ava</b> 30×30px on --s3</span>
+      </div>
+      <div class="rcell">
+        <div class="stage"><span class="rchip">Buy</span></div>
+        <span class="cap">Rating chip</span>
+        <span class="val">7px · <b>.rchip.b</b> · width 100px</span>
+      </div>
+      <div class="rcell">
+        <div class="stage" style="flex-direction:column;gap:8px"><span class="tag">PAPER</span>
+          <span class="bar5"><i style="background:#3987e5;flex:3"></i><i style="background:#6ea4ec;flex:2"></i><i style="background:#a7c4f2;flex:2"></i><i style="background:#3a414c;flex:3"></i></span></div>
+        <span class="cap">Tag / alloc bar</span>
+        <span class="val">5px · <b>.tag</b> · .alloc .bar (h 8px, gap 2px)</span>
+      </div>
+      <div class="rcell">
+        <div class="stage"><span class="focusdemo">focus ring</span></div>
+        <span class="cap">Focus ring</span>
+        <span class="val">4px · <b>:focus-visible</b><br>outline 2px --pos, offset 2px</span>
+      </div>
+
+      <div class="rcell">
+        <div class="stage" style="flex-direction:column;gap:9px">
+          <span class="plbar"><i></i></span>
+          <span class="swatches"><i style="background:#3987e5"></i><i style="background:#6ea4ec"></i><i style="background:#a7c4f2"></i><i style="background:#3a414c"></i><span class="spyi"></span></span>
+        </div>
+        <span class="cap">Track / swatch</span>
+        <span class="val">2px · <b>.plbar</b> 56×3px · .lprog .tr h4px<br>legend <b>i</b> · #tip .r <b>i</b> 8×8px · .spybtn <b>i</b> 14×3px</span>
+      </div>
+      <div class="rcell">
+        <div class="stage"><span class="pill"><span class="d"></span>GO · 42 days</span></div>
+        <span class="cap">Status pill</span>
+        <span class="val">999px · <b>.live</b> · padding 5px 12px, gap 7px</span>
+      </div>
+      <div class="rcell">
+        <div class="stage"><span class="ptab">3M</span></div>
+        <span class="cap">Period tab (selected)</span>
+        <span class="val">999px · <b>.ptabs button</b> · padding 6px 14px<br>--s3 fill only at aria-selected="true"</span>
+      </div>
+      <div class="rcell">
+        <div class="stage"><span class="dots"><span class="ld"></span><span class="ld on"></span><span class="ld" style="width:7px;height:7px;background:var(--pos)"></span></span></div>
+        <span class="cap">Dots</span>
+        <span class="val">50% · <b>.lesson .ld</b> 8×8px<br><b>.live .d</b> 7×7px (+ ::after ring)</span>
+      </div>
+      <div class="rcell">
+        <div class="stage"><svg class="logo" width="34" height="34" viewBox="0 0 32 32"><rect width="32" height="32" rx="8"/><path d="M7 21l6-7 4 4 8-10" stroke="var(--pos)" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <span class="cap">Mark</span>
+        <span class="val">rx 8 on a 32 viewBox<br>22px in .mark → 5.5 · 30px in #auth → 7.5</span>
+      </div>
+    </div>
+    <div class="iso">Specimen note: the mark is drawn at 34px here so the corner is readable; it ships at 22px (top bar), 30px (#auth) and 32px (favicon).</div>
+  </div>
+
+  <!-- ============================================================ D -->
+  <div class="sec">
+    <h2>Spacing — literal, per-rule, off-grid</h2>
+    <div class="note">The card is the unit of layout. Its header and body have different vertical padding but share a 22px gutter,
+    so the header title and the body content sit on the same left edge. Dashed green marks the padding box.</div>
+    <div class="rule"></div>
+
+    <div class="spacewrap">
+      <div>
+        <div class="padcard">
+          <div class="hd ghost"><h3>Go-live gates</h3><span class="sub">42 / 60 days</span></div>
+          <div class="bd ghost">
+            <div class="gates">
+              <div class="gate">
+                <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="var(--pos)" stroke-width="1.5" opacity=".4"/><path d="M6.2 10.4l2.6 2.6L14 7.6" stroke="var(--pos)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <div><div class="t">Sharpe</div><div class="d">1.24 · need &gt; 0.8</div></div>
+              </div>
+              <div class="gate">
+                <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="var(--ink3)" stroke-width="1.5" opacity=".5"/><path d="M6.5 10h7" stroke="var(--ink3)" stroke-width="1.8" stroke-linecap="round"/></svg>
+                <div><div class="t">Trading days</div><div class="d">42 · need &gt; 60</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="dimrow">
+          <span class="dim"><i style="width:18px"></i>hd 18px top</span>
+          <span class="dim"><i style="width:22px"></i>gutter 22px</span>
+          <span class="dim"><i style="width:14px"></i>bd 14px top</span>
+          <span class="dim"><i style="width:18px"></i>bd 18px bottom</span>
+          <span class="dim"><i style="width:10px"></i>.gates gap 10px</span>
+        </div>
+        <div class="val" style="margin-top:8px;white-space:normal;line-height:1.7">
+          .card &gt; .hd <b>padding:18px 22px 0</b> · gap 10px<br>
+          .card &gt; .bd <b>padding:14px 22px 18px</b><br>
+          .card <b>border-radius:16px</b> · <b>margin-top:16px</b> · border 1px --hair<br>
+          .gate <b>padding:12px 14px</b> · gap 10px · icon 20×20 flex 0 0 20px
+        </div>
+        <div class="iso">Isolation change: .gates is <span style="color:var(--ink3)">repeat(4,1fr)</span> in the sheet (repeat(2,1fr) below 760px); shown 2-up here because the specimen column is 330px wide.</div>
+      </div>
+
+      <div>
+        <div class="cap" style="margin-bottom:8px">Fixed widths used as layout constants</div>
+        <div class="scale" style="grid-template-columns:minmax(0,1fr)">
+          <div class="strow"><span class="n">1080</span><span class="g" style="width:74px"></span><span class="w">.wrap / .top-in max-width</span></div>
+          <div class="strow"><span class="n">330</span><span class="g" style="width:38px"></span><span class="w">.cols right column — 1fr 330px, collapses to 1fr @900px</span></div>
+          <div class="strow"><span class="n">118</span><span class="g" style="width:22px"></span><span class="w">.chip min-width</span></div>
+          <div class="strow"><span class="n">100</span><span class="g" style="width:19px"></span><span class="w">.rchip width = .dec first column</span></div>
+          <div class="strow"><span class="n">92</span><span class="g" style="width:17px"></span><span class="w">.dec .pt min-width (price target, right-aligned)</span></div>
+          <div class="strow"><span class="n">56</span><span class="g" style="width:12px"></span><span class="w">.plbar width; JS fill = clamp 8px … 56px</span></div>
+          <div class="strow"><span class="n">50</span><span class="g" style="width:11px"></span><span class="w">.dec .when min-width</span></div>
+          <div class="strow"><span class="n">350</span><span class="g" style="width:40px"></span><span class="w">#auth max-width, margin 18vh auto 0</span></div>
+          <div class="strow"><span class="n">310</span><span class="g" style="width:36px"></span><span class="w">chart H; W = max(box, 320); inset {l:6 r:66 t:16 b:10}</span></div>
+          <div class="strow"><span class="n">300</span><span class="g" style="width:34px"></span><span class="w">.sk placeholder height inside #chart — 10px shorter than the chart it becomes</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cap" style="margin-top:18px;margin-bottom:8px">Every padding / gap / margin value in the sheet, in order</div>
+    <div class="scale">
+      <div class="strow"><span class="n">2</span><span class="g" style="width:2px"></span><span class="w">.alloc .bar gap · .tag pad-y · outline-offset</span></div>
+      <div class="strow"><span class="n">12</span><span class="g" style="width:12px"></span><span class="w">.top-in gap · .hero .sub gap · .gate pad-y · .dec gap · .lbody gap · #tip pad-x · #err pad-y</span></div>
+      <div class="strow"><span class="n">3</span><span class="g" style="width:3px"></span><span class="w">.chip inner gap · .plbar height · .lesson .ls margin-top · .lexp b margin-bottom</span></div>
+      <div class="strow"><span class="n">13</span><span class="g" style="width:13px"></span><span class="w">.top-in pad-y · .lesson &gt; summary pad-y</span></div>
+      <div class="strow"><span class="n">4</span><span class="g" style="width:4px"></span><span class="w">.ptabs gap · .plcell gap · .rchip pad-y · .lprog .tr height · .ltake b margin-bottom</span></div>
+      <div class="strow"><span class="n">14</span><span class="g" style="width:14px"></span><span class="w">.card .bd pad-top · .gate pad-x · .ltake/.lopt/#auth input pad-x · .alloc .lg gap · #tip .r b pad-left</span></div>
+      <div class="strow"><span class="n">5</span><span class="g" style="width:5px"></span><span class="w">.live pad-y · .alloc .lg i margin-right</span></div>
+      <div class="strow"><span class="n">16</span><span class="g" style="width:16px"></span><span class="w">.card margin-top · .cols gap · .chip pad-x · #err pad-x · .lbody pad-bottom</span></div>
+      <div class="strow"><span class="n">6</span><span class="g" style="width:6px"></span><span class="w">.hero .big margin-top · .ptabs button pad-y · .lesson .ld margin-top · .lprog margin-bottom</span></div>
+      <div class="strow"><span class="n">18</span><span class="g" style="width:18px"></span><span class="w">.card .hd pad-top · .card .bd pad-bottom · #auth input margin-top</span></div>
+      <div class="strow"><span class="n">7</span><span class="g" style="width:7px"></span><span class="w">.tag pad-x · .live gap · .spybtn gap</span></div>
+      <div class="strow"><span class="n">20</span><span class="g" style="width:20px"></span><span class="w">.wrap pad-x · .top-in pad-x · #auth pad-x · .lbody pad-left</span></div>
+      <div class="strow"><span class="n">8</span><span class="g" style="width:8px"></span><span class="w">.tape pad-y · .tk gap · .kv pad-y · td pad-x · #tip pad-y · .lopt margin-bottom</span></div>
+      <div class="strow"><span class="n">22</span><span class="g" style="width:22px"></span><span class="w">.card gutter, both hd and bd · .chips margin-top</span></div>
+      <div class="strow"><span class="n">9</span><span class="g" style="width:9px"></span><span class="w">.mark gap · .alloc .lg margin-top</span></div>
+      <div class="strow"><span class="n">28/30</span><span class="g" style="width:30px"></span><span class="w">#auth .card padding 30px 28px — only card off the gutter</span></div>
+      <div class="strow"><span class="n">10</span><span class="g" style="width:10px"></span><span class="w">.chips/.gates/.gate/.hd gap · .dec pad-y · .lopt pad-y · th pad-bottom · #autherr margin-top</span></div>
+      <div class="strow"><span class="n">34</span><span class="g" style="width:34px"></span><span class="w">.hero pad-top · .tape-in gap between ticker items</span></div>
+      <div class="strow"><span class="n">11</span><span class="g" style="width:11px"></span><span class="w">.chip pad-y · td pad-y · .sym gap · #auth input/.go pad-y</span></div>
+      <div class="strow"><span class="n">44 / 80</span><span class="g" style="width:44px"></span><span class="w">footer margin-top 44 · .wrap pad-bottom 80</span></div>
+    </div>
+    <div class="iso">Read the two columns top-to-bottom: 2…11 on the left, 12…80 on the right. Non-px spacing is excluded: #auth margin-top 18vh and body::before inset -40% -20% auto / height 70%.</div>
+  </div>
+
+  <!-- ============================================================ E -->
+  <div class="sec">
+    <h2>Where mobile disagrees</h2>
+    <div class="note">The React Native app does not share this system — it has a colour module only
+    (<span class="mono" style="font-size:11px">src/theme/colors.ts</span>) and no space or radius module at all.</div>
+    <div class="rule"></div>
+    <div class="twocol">
+      <div class="miss">
+        <div class="h">No hairline on mobile</div>
+        <p>RN has no <code>--hair</code> equivalent. Dividers are drawn with the <em>surface</em> colour, opaque
+        <code>#262626</code>: <code>borderTopWidth:1, borderTopColor: colors.surfaceElevated</code> in learn.tsx, agents.tsx,
+        ask.tsx, settings.tsx and portfolio.tsx, and the same colour as <code>borderBottomWidth:1</code> in charts.tsx
+        (<code>chartBox</code>) and EquityChart.tsx. Cards themselves carry no border — only
+        <code>backgroundColor: colors.surface</code>; the only bordered things are chips and quiz options, and those borders are
+        state colours (<code>colors.up</code> / <code>colors.down</code> / <code>colors.textMuted</code>), never a neutral edge.
+        So web separates with translucent white, mobile with an opaque lighter grey, and the two cannot be reconciled by a shared
+        token today.</p>
+      </div>
+      <div class="miss">
+        <div class="h">Different radius and surface scale</div>
+        <p>Mobile radii, counted across all screens and components: <code>12 ×14</code> (dominant — cards, risk card, position
+        card, EmptyState), <code>999 ×7</code>, <code>10 ×6</code>, <code>2 ×3</code>, then <code>4</code>, <code>6</code> and
+        <code>8</code> twice each and one each of <code>14</code> (learn card), <code>16</code>, <code>18</code>, <code>20</code>,
+        plus a <code>1.5</code> SPY dot (<code>SPY_DOT / 2</code>). The card radius is <b>12px on mobile vs 16px on web</b>.
+        Card padding is <code>16</code> everywhere except ask.tsx's result card (<code>18</code>) and EmptyState
+        (<code>24</code>, with a 24 margin); the screen gutter is <code>24</code> against web's <code>20</code>, and full-screen
+        blocks like ErrorState and the portfolio hero use <code>padding: 24</code> with no surface or radius at all — they are
+        not cards. Mobile surfaces are <code>#0a0a0a / #171717 / #262626</code> — three steps, all neutral grey, versus web's four
+        blue-leaning steps.</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

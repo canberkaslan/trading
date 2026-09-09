@@ -1,0 +1,511 @@
+<!-- @dsCard group="Components" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=960">
+<title>Equity chart — TRADER design system</title>
+<style>
+  /* ---- tokens copied verbatim from agent/api/static/dashboard.html :root (L11–20) ---- */
+  :root{
+    color-scheme:dark;
+    --bg:#0a0b0d; --s1:#101216; --s2:#15181d; --s3:#1c2027;
+    --hair:rgba(255,255,255,.06); --hair2:rgba(255,255,255,.12);
+    --ink:#eef0f3; --ink2:#9aa3b2; --ink3:#828b9a;
+    --pos:#00d17a; --neg:#ff5d6c; --warn:#e2b93b; --bench:#767f8c;
+    --pos-dim:rgba(0,209,122,.12); --neg-dim:rgba(255,93,108,.12);
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,Inter,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{background:var(--bg)}
+  body{font-family:var(--sans);color:var(--ink);font-size:14px;line-height:1.45;
+    -webkit-font-smoothing:antialiased;width:960px;background:var(--bg)}
+  .page{padding:0 24px 56px}          /* → 912px content column */
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  /* ---- card chrome (documentation only, not product) ---- */
+  .head{padding:30px 0 22px;border-bottom:1px solid var(--hair)}
+  .eyebrow{font-size:10.5px;font-weight:650;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
+  .head h1{font-size:26px;font-weight:700;letter-spacing:-.02em;margin-top:7px}
+  .head p{color:var(--ink2);font-size:13px;margin-top:8px;max-width:660px}
+  .src{margin-top:12px;font-family:var(--mono);font-size:11px;color:var(--ink3);line-height:1.75}
+  h2.sec{font-size:11px;font-weight:650;letter-spacing:.12em;text-transform:uppercase;color:var(--ink2);
+    margin:34px 0 4px}
+  h2.sec + .note{font-size:12.5px;color:var(--ink3);margin-bottom:16px;max-width:720px}
+  .cap{font-size:11px;font-weight:650;letter-spacing:.07em;text-transform:uppercase;color:var(--ink3);margin-bottom:9px}
+  .vals{margin-top:10px;font-family:var(--mono);font-size:10.5px;line-height:1.85;color:var(--ink3)}
+  .vals b{color:var(--ink2);font-weight:400}
+  .row2{display:grid;grid-template-columns:444px 444px;gap:24px}
+  .row2b{display:grid;grid-template-columns:444px 444px;gap:24px;align-items:start}
+  .spec{background:var(--bg)}
+  .rule{border-top:1px solid var(--hair);margin:30px 0 0}
+  .states{display:flex;gap:26px;align-items:flex-start;margin-top:2px}
+  .stag{font-family:var(--mono);font-size:10.5px;color:var(--ink3);margin-top:7px;padding-left:3px}
+
+  /* ============ product CSS — from dashboard.html, ADAPTED, not verbatim ============
+     Every declaration below is the source's, but four rules had to be changed so the
+     specimens can render as static HTML outside the dashboard. Each change is marked
+     [ADAPTED] with the reason. Nothing else was touched. */
+  /* hero — verbatim, L80–85 */
+  .hero{padding:34px 0 6px}
+  .hero .lbl{font-size:12px;font-weight:600;letter-spacing:.1em;color:var(--ink3);text-transform:uppercase}
+  .hero .big{font-size:44px;font-weight:700;letter-spacing:-.02em;margin-top:6px;line-height:1.05}
+  .hero .sub{display:flex;align-items:baseline;gap:12px;margin-top:8px;font-size:14.5px}
+  .hero .sub .date{color:var(--ink3);font-size:12.5px}
+  .up{color:var(--pos)}.down{color:var(--neg)}.dim{color:var(--ink3)}
+  /* focus ring — verbatim, L30. Its border-radius:4px loses to .ptabs button's 999px
+     (0,1,1 beats 0,1,0), so a focused period pill keeps its pill shape. */
+  :focus-visible{outline:2px solid var(--pos);outline-offset:2px;border-radius:4px}
+  /* chart */
+  /* [ADAPTED] source is `#chartbox{...}` (L88); a class is added because the card shows
+     the chart box more than once and an id cannot repeat. Declarations unchanged. */
+  #chartbox,.chartbox{position:relative;margin-top:6px}
+  /* [ADAPTED] source is `#chart svg{...}` (L89) — same reason, the JS-owned #chart
+     wrapper does not exist here. Declarations unchanged. */
+  .chartbox svg{display:block;touch-action:pan-y}
+  .ptabs{display:flex;gap:4px;margin-top:4px}            /* verbatim, L90 */
+  /* [ADAPTED] the source rule (L91) is only the last four declarations; `font:inherit;
+     color:inherit;background:none;border:0;cursor:pointer` are folded in from the global
+     `button{}` reset (L29), which this card does not copy wholesale. */
+  .ptabs button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;
+    font-size:12px;font-weight:650;color:var(--ink3);padding:6px 14px;border-radius:999px;transition:all .15s}
+  .ptabs button:hover{color:var(--ink2)}                 /* verbatim, L92 */
+  .ptabs button[aria-selected="true"]{background:var(--s3);color:var(--ink)}
+  .ptabs .spybtn{margin-left:auto;font-size:11.5px;color:var(--ink3);display:flex;align-items:center;gap:7px}
+  .ptabs .spybtn i{width:14px;height:3px;border-radius:2px;background:var(--bench);display:inline-block}
+  .ptabs .spybtn[aria-pressed="false"]{opacity:.4}
+  /* tooltip */
+  /* [ADAPTED] source is `#tip{...}` (L169–174) and carries `display:none` — it is shown
+     by the scrub handler. Renamed to a class and the display:none dropped so the
+     specimen is visible at rest. Every other declaration is unchanged. */
+  .tip{position:absolute;pointer-events:none;z-index:6;background:var(--s3);
+    border:1px solid var(--hair2);border-radius:10px;padding:8px 12px;font-size:12px;
+    box-shadow:0 10px 34px rgba(0,0,0,.55);white-space:nowrap}
+  .tip .r{display:flex;align-items:center;gap:8px;line-height:1.9}
+  .tip .r i{width:8px;height:8px;border-radius:2px}
+  .tip .r b{margin-left:auto;padding-left:14px}
+  /* skeleton — verbatim, L208–210 */
+  .sk{border-radius:10px;background:linear-gradient(90deg,var(--s2) 25%,var(--s3) 50%,var(--s2) 75%);
+    background-size:200% 100%;animation:sh 1.4s ease infinite}
+  @keyframes sh{to{background-position:-200% 0}}
+  /* [ADAPTED] not a rule in the stylesheet: drawChart() L625 writes these three
+     declarations as an inline style string on the no-data div. Lifted into a class
+     verbatim in value: padding:70px 0; text-align:center; color:var(--ink3). */
+  .nodata{padding:70px 0;text-align:center;color:var(--ink3)}
+
+  /* ===== mobile variant — a CSS translation of the RN StyleSheet, not copied CSS =====
+     src/components/EquityChart.tsx has no CSS; the values below are its
+     StyleSheet.create() entries and inline styles rewritten as CSS so the same
+     geometry renders here. .phone is a card-drawn device frame with no counterpart
+     in the component. */
+  .phone{width:375px;background:#0a0a0a;border:1px solid var(--hair);border-radius:14px;
+    padding:16px 0 18px;font-family:var(--sans)}
+  .mwrap{padding:0 24px;margin-top:8px}                 /* paddingHorizontal:24, marginTop:8 */
+  .mhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+  .mlabel{color:#a3a3a3;font-size:13px;font-weight:600}
+  .mright{display:flex;align-items:center;gap:8px}
+  .malpha{border:1px solid #22c55e;border-radius:999px;padding:2px 8px}
+  .malpha span{font-size:12px;font-weight:700;color:#22c55e}
+  .mret{font-size:15px;font-weight:700;color:#22c55e}
+  .mbox{width:327px;height:120px;display:flex;align-items:flex-end;border-bottom:1px solid #262626}
+  .mslot{width:10.21875px;height:120px;display:flex;flex-direction:column;justify-content:flex-end;
+    align-items:center;position:relative}
+  .mbar{width:8.68594px;background:#22c55e;opacity:.45;border-top-left-radius:1px;border-top-right-radius:1px}
+  .mspy{position:absolute;width:3px;height:3px;border-radius:1.5px;background:#a3a3a3}
+  .mlegend{display:flex;align-items:center;margin-top:6px}
+  .mdot{width:8px;height:8px;border-radius:4px;margin-right:4px}
+  .mlegend span{color:#949494;font-size:11px}
+  .mribbon{width:327px;height:8px;display:flex;margin-top:3px;border-radius:2px;overflow:hidden}
+  .mribbon>div{width:10.21875px;height:8px;background:#ef4444}
+  .mfoot{display:flex;justify-content:space-between;margin-top:6px}
+  .mfoot span{color:#949494;font-size:12px}
+</style>
+</head>
+<body>
+<div class="page">
+
+<div class="head">
+  <div class="eyebrow">Components</div>
+  <h1>Equity chart</h1>
+  <p>The performance curve under the portfolio hero. One responsive inline SVG redrawn on every
+  refresh, period change, SPY toggle and resize. Everything below is the real geometry: viewBox
+  height 310, padding <span class="mono">{l:6, r:66, t:16, b:10}</span>, width = the container's
+  <span class="mono">clientWidth</span> floored at 320. Where the source writes a token into an SVG
+  presentation attribute (<span class="mono">stroke="var(--pos)"</span>,
+  <span class="mono">font-family="var(--mono)"</span>) the specimens carry the expanded literal, so
+  a specimen never depends on custom-property substitution inside attributes.</p>
+  <div class="src">
+    web &nbsp; agent/api/static/dashboard.html — drawChart() L620–727, #tip L169–174, .ptabs L90–96<br>
+    mobile &nbsp; mobile/app/src/components/EquityChart.tsx + src/utils/equity.ts + src/utils/format.ts<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;call site mobile/app/app/(tabs)/portfolio.tsx L181
+  </div>
+</div>
+
+<!-- ============================ 1. DIRECTION RULE ============================ -->
+<h2 class="sec">Direction rule — the only colour decision in the chart</h2>
+<p class="note">
+  <span class="mono">upAll = ai[ai.length-1].v &gt;= ai[0].v</span> — last visible point vs first
+  visible point, not profit-vs-cost. <span class="mono">return_pct</span> is rebased by the API to
+  the first point of the window, so <span class="mono">ai[0].v</span> is always 0 and the test is
+  "did this window end above where it started". One boolean drives the stroke, the gradient, the
+  end label and the scrub dot. Everything else in the chart is neutral.
+</p>
+
+<div class="row2">
+  <div>
+    <div class="cap">Up book — C = var(--pos)</div>
+    <div class="spec">
+      <svg viewBox="0 0 444 310" width="444" height="310" role="img" aria-label="Portföy performans grafiği">
+        <defs>
+          <linearGradient id="fillg-up" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="rgba(0,209,122,.22)"/><stop offset="1" stop-color="rgba(0,209,122,0)"/>
+          </linearGradient>
+          <filter id="glow-up" x="-20%" y="-40%" width="140%" height="180%">
+            <feGaussianBlur stdDeviation="5" result="b"/>
+            <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+        </defs>
+        <line x1="6" y1="266.2" x2="378" y2="266.2" stroke="rgba(255,255,255,.12)" stroke-dasharray="2,6"/>
+        <path d="M6.0,234.9L11.9,238.5L17.8,240.7L23.7,236.8L29.6,239.2L35.5,238.8L41.4,238.5L47.3,240.9L53.2,236.4L59.1,239.6L65.0,238.0L71.0,236.8L76.9,228.1L82.8,226.2L88.7,226.4L94.6,226.4L100.5,216.6L106.4,211.0L112.3,210.9L118.2,208.2L124.1,210.7L130.0,203.5L135.9,207.2L141.8,203.3L147.7,207.3L153.6,203.9L159.5,194.1L165.4,190.1L171.3,183.9L177.2,181.9L183.1,176.3L189.0,172.8L195.0,174.4L200.9,173.4L206.8,172.6L212.7,162.6L218.6,154.9L224.5,149.7L230.4,146.4L236.3,141.8L242.2,137.7L248.1,131.4L254.0,124.7L259.9,121.0L265.8,118.8L271.7,116.2L277.6,105.9L283.5,100.2L289.4,98.2L295.3,93.1L301.2,94.8L307.1,89.5L313.0,87.7L319.0,83.4L324.9,78.9L330.8,82.0L336.7,73.4L342.6,67.1L348.5,58.5L354.4,53.1L360.3,54.1L366.2,49.6L372.1,49.1L378.0,47.1L378.0,300L6.0,300Z" fill="url(#fillg-up)"/>
+        <path d="M6.0,266.2L11.9,262.6L17.8,262.1L23.7,262.1L29.6,264.1L35.5,265.8L41.4,265.3L47.3,264.6L53.2,259.7L59.1,262.4L65.0,264.3L71.0,268.9L76.9,263.2L82.8,259.9L88.7,259.8L94.6,258.0L100.5,255.5L106.4,250.4L112.3,252.5L118.2,257.8L124.1,261.8L130.0,261.8L135.9,261.9L141.8,259.9L147.7,261.2L153.6,260.7L159.5,257.9L165.4,255.7L171.3,248.9L177.2,247.6L183.1,245.3L189.0,246.8L195.0,244.8L200.9,245.2L206.8,245.8L212.7,242.3L218.6,237.3L224.5,232.0L230.4,233.0L236.3,236.8L242.2,240.0L248.1,241.8L254.0,242.3L259.9,237.0L265.8,234.9L271.7,227.8L277.6,229.1L283.5,223.6L289.4,222.1L295.3,223.4L301.2,227.3L307.1,225.2L313.0,220.2L319.0,212.9L324.9,215.0L330.8,216.1L336.7,217.0L342.6,212.4L348.5,209.2L354.4,211.3L360.3,212.7L366.2,205.7L372.1,198.9L378.0,185.2" fill="none" stroke="#767f8c" stroke-width="1.5" opacity=".8"/>
+        <path d="M6.0,234.9L11.9,238.5L17.8,240.7L23.7,236.8L29.6,239.2L35.5,238.8L41.4,238.5L47.3,240.9L53.2,236.4L59.1,239.6L65.0,238.0L71.0,236.8L76.9,228.1L82.8,226.2L88.7,226.4L94.6,226.4L100.5,216.6L106.4,211.0L112.3,210.9L118.2,208.2L124.1,210.7L130.0,203.5L135.9,207.2L141.8,203.3L147.7,207.3L153.6,203.9L159.5,194.1L165.4,190.1L171.3,183.9L177.2,181.9L183.1,176.3L189.0,172.8L195.0,174.4L200.9,173.4L206.8,172.6L212.7,162.6L218.6,154.9L224.5,149.7L230.4,146.4L236.3,141.8L242.2,137.7L248.1,131.4L254.0,124.7L259.9,121.0L265.8,118.8L271.7,116.2L277.6,105.9L283.5,100.2L289.4,98.2L295.3,93.1L301.2,94.8L307.1,89.5L313.0,87.7L319.0,83.4L324.9,78.9L330.8,82.0L336.7,73.4L342.6,67.1L348.5,58.5L354.4,53.1L360.3,54.1L366.2,49.6L372.1,49.1L378.0,47.1"
+          fill="none" stroke="#00d17a" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" filter="url(#glow-up)"/>
+        <text x="386" y="189.2" font-size="11" fill="#767f8c" font-family="ui-monospace,'SF Mono',SFMono-Regular,Menlo,Consolas,monospace">SPY +3.1%</text>
+        <text x="386" y="51.1" font-size="11.5" font-weight="600" fill="#00d17a" font-family="ui-monospace,'SF Mono',SFMono-Regular,Menlo,Consolas,monospace">+8.4%</text>
+      </svg>
+    </div>
+    <div class="vals">
+      <b>stroke</b> var(--pos) #00d17a · stroke-width 2.4 · linejoin/linecap round<br>
+      <b>fill</b> linearGradient #fillg 0→1 · rgba(0,209,122,.22) → rgba(0,209,122,0)<br>
+      <b>glow</b> feGaussianBlur stdDeviation 5 → feMerge(blur, SourceGraphic)<br>
+      <b>filter box</b> x -20% y -40% w 140% h 180%<br>
+      <b>zero line</b> var(--hair2) rgba(255,255,255,.12) · stroke-dasharray 2,6<br>
+      <b>bench</b> var(--bench) #767f8c · stroke-width 1.5 · opacity .8<br>
+      <b>end label</b> 11.5px / 600 / var(--mono) · x = W−P.r+8 · y = yv(v)+4<br>
+      <b>bench label</b> 11px / 400 / var(--mono) · same x, "SPY " + pct(v,1)<br>
+      <b>aria-label</b> "Portföy performans grafiği" — hardcoded TR, not run through t()
+    </div>
+  </div>
+
+  <div>
+    <div class="cap">Down book — C = var(--neg)</div>
+    <div class="spec">
+      <svg viewBox="0 0 444 310" width="444" height="310" role="img" aria-label="Portföy performans grafiği">
+        <defs>
+          <linearGradient id="fillg-dn" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="rgba(255,93,108,.22)"/><stop offset="1" stop-color="rgba(255,93,108,0)"/>
+          </linearGradient>
+          <filter id="glow-dn" x="-20%" y="-40%" width="140%" height="180%">
+            <feGaussianBlur stdDeviation="5" result="b"/>
+            <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+        </defs>
+        <line x1="6" y1="85.4" x2="378" y2="85.4" stroke="rgba(255,255,255,.12)" stroke-dasharray="2,6"/>
+        <path d="M6.0,63.7L11.9,47.1L17.8,59.9L23.7,66.1L29.6,73.8L35.5,68.8L41.4,76.5L47.3,81.0L53.2,83.6L59.1,83.7L65.0,81.4L71.0,88.8L76.9,92.2L82.8,90.2L88.7,86.3L94.6,82.0L100.5,83.5L106.4,86.2L112.3,94.4L118.2,95.7L124.1,94.5L130.0,88.1L135.9,92.5L141.8,89.4L147.7,95.8L153.6,96.2L159.5,107.1L165.4,106.6L171.3,110.5L177.2,113.9L183.1,123.4L189.0,128.8L195.0,125.9L200.9,121.7L206.8,125.1L212.7,129.1L218.6,137.9L224.5,144.8L230.4,152.5L236.3,146.9L242.2,150.0L248.1,156.3L254.0,169.8L259.9,175.6L265.8,176.9L271.7,173.9L277.6,166.6L283.5,169.6L289.4,176.2L295.3,187.5L301.2,191.8L307.1,190.0L313.0,190.3L319.0,195.0L324.9,208.4L330.8,209.3L336.7,207.1L342.6,201.2L348.5,213.0L354.4,219.5L360.3,222.6L366.2,221.9L372.1,220.6L378.0,268.9L378.0,300L6.0,300Z" fill="url(#fillg-dn)"/>
+        <path d="M6.0,85.4L11.9,94.5L17.8,88.1L23.7,87.8L29.6,90.3L35.5,94.5L41.4,88.6L47.3,88.2L53.2,83.4L59.1,84.2L65.0,84.2L71.0,86.1L76.9,88.0L82.8,85.4L88.7,81.1L94.6,84.4L100.5,88.1L106.4,88.6L112.3,85.8L118.2,84.2L124.1,89.9L130.0,90.3L135.9,83.4L141.8,84.6L147.7,86.1L153.6,89.8L159.5,86.8L165.4,80.1L171.3,77.9L177.2,80.0L183.1,87.2L189.0,87.5L195.0,81.9L200.9,83.9L206.8,85.2L212.7,86.7L218.6,81.3L224.5,86.6L230.4,87.7L236.3,87.5L242.2,88.2L248.1,90.2L254.0,95.5L259.9,97.5L265.8,101.0L271.7,100.6L277.6,97.9L283.5,95.8L289.4,91.8L295.3,87.3L301.2,85.0L307.1,84.3L313.0,86.8L319.0,93.9L324.9,102.5L330.8,104.9L336.7,103.7L342.6,100.0L348.5,106.0L354.4,110.3L360.3,109.1L366.2,105.4L372.1,101.8L378.0,135.2" fill="none" stroke="#767f8c" stroke-width="1.5" opacity=".8"/>
+        <path d="M6.0,63.7L11.9,47.1L17.8,59.9L23.7,66.1L29.6,73.8L35.5,68.8L41.4,76.5L47.3,81.0L53.2,83.6L59.1,83.7L65.0,81.4L71.0,88.8L76.9,92.2L82.8,90.2L88.7,86.3L94.6,82.0L100.5,83.5L106.4,86.2L112.3,94.4L118.2,95.7L124.1,94.5L130.0,88.1L135.9,92.5L141.8,89.4L147.7,95.8L153.6,96.2L159.5,107.1L165.4,106.6L171.3,110.5L177.2,113.9L183.1,123.4L189.0,128.8L195.0,125.9L200.9,121.7L206.8,125.1L212.7,129.1L218.6,137.9L224.5,144.8L230.4,152.5L236.3,146.9L242.2,150.0L248.1,156.3L254.0,169.8L259.9,175.6L265.8,176.9L271.7,173.9L277.6,166.6L283.5,169.6L289.4,176.2L295.3,187.5L301.2,191.8L307.1,190.0L313.0,190.3L319.0,195.0L324.9,208.4L330.8,209.3L336.7,207.1L342.6,201.2L348.5,213.0L354.4,219.5L360.3,222.6L366.2,221.9L372.1,220.6L378.0,268.9"
+          fill="none" stroke="#ff5d6c" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" filter="url(#glow-dn)"/>
+        <text x="386" y="139.2" font-size="11" fill="#767f8c" font-family="ui-monospace,'SF Mono',SFMono-Regular,Menlo,Consolas,monospace">SPY −1.4%</text>
+        <text x="386" y="272.9" font-size="11.5" font-weight="600" fill="#ff5d6c" font-family="ui-monospace,'SF Mono',SFMono-Regular,Menlo,Consolas,monospace">−5.2%</text>
+      </svg>
+    </div>
+    <div class="vals">
+      <b>stroke</b> var(--neg) #ff5d6c · stroke-width 2.4 (unchanged)<br>
+      <b>fill</b> rgba(255,93,108,.22) → rgba(255,93,108,0) — CH_RGB swaps, stops don't<br>
+      <b>bench</b> stays var(--bench) #767f8c — the benchmark never takes a P&amp;L colour<br>
+      <b>zero line</b> same var(--hair2), now near the top of the frame<br>
+      <b>minus glyph</b> U+2212 (−) from sgn(), not a hyphen<br>
+      <b>y scale</b> lo/hi over portfolio ∪ SPY · pad = max((hi−lo)×.14, .4)<br>
+      <b>yv(v)</b> P.t + (hi+pad−v) / ((hi−lo)+2·pad) × (H−P.t−P.b)<br>
+      <b>xi(i)</b> P.l + i/(n−1) × (W−P.l−P.r)
+    </div>
+  </div>
+</div>
+
+<!-- ============================ 2. SCRUB ============================ -->
+<h2 class="sec">Scrub — crosshair, dots, tooltip, and the hero rewrite</h2>
+<p class="note">
+  A transparent <span class="mono">&lt;rect id="hz"&gt;</span> (x = P.l, width = W−P.l−P.r, full
+  height, <span class="mono">cursor:crosshair</span>) captures
+  <span class="mono">pointermove</span> / <span class="mono">pointerdown</span>. The nearest index
+  is rounded from the pointer x, then the hero figure, the hero delta and the hero date are
+  <em>overwritten</em> with that day's values — Robinhood-style.
+  <span class="mono">pointerleave</span> / <span class="mono">pointerup</span> restore the live
+  snapshot and hide the crosshair. Below: the same up book, scrubbed at index 41 of 64.
+</p>
+
+<div class="hero" style="padding-top:0">
+  <div class="lbl">Portfolio value</div>
+  <div class="big mono" id="heroEq">$105,168</div>
+  <div class="sub">
+    <span class="mono up">+$5,168 (+5.17%)</span>
+    <span class="date">August 12, 2026</span>
+  </div>
+</div>
+
+<div class="chartbox">
+  <svg viewBox="0 0 912 310" width="912" height="310" role="img" aria-label="Portföy performans grafiği">
+    <defs>
+      <linearGradient id="fillg-sc" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="rgba(0,209,122,.22)"/><stop offset="1" stop-color="rgba(0,209,122,0)"/>
+      </linearGradient>
+      <filter id="glow-sc" x="-20%" y="-40%" width="140%" height="180%">
+        <feGaussianBlur stdDeviation="5" result="b"/>
+        <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+    </defs>
+    <line x1="6" y1="266.2" x2="846" y2="266.2" stroke="rgba(255,255,255,.12)" stroke-dasharray="2,6"/>
+    <path d="M6.0,234.9L19.3,238.5L32.7,240.7L46.0,236.8L59.3,239.2L72.7,238.8L86.0,238.5L99.3,240.9L112.7,236.4L126.0,239.6L139.3,238.0L152.7,236.8L166.0,228.1L179.3,226.2L192.7,226.4L206.0,226.4L219.3,216.6L232.7,211.0L246.0,210.9L259.3,208.2L272.7,210.7L286.0,203.5L299.3,207.2L312.7,203.3L326.0,207.3L339.3,203.9L352.7,194.1L366.0,190.1L379.3,183.9L392.7,181.9L406.0,176.3L419.3,172.8L432.7,174.4L446.0,173.4L459.3,172.6L472.7,162.6L486.0,154.9L499.3,149.7L512.7,146.4L526.0,141.8L539.3,137.7L552.7,131.4L566.0,124.7L579.3,121.0L592.7,118.8L606.0,116.2L619.3,105.9L632.7,100.2L646.0,98.2L659.3,93.1L672.7,94.8L686.0,89.5L699.3,87.7L712.7,83.4L726.0,78.9L739.3,82.0L752.7,73.4L766.0,67.1L779.3,58.5L792.7,53.1L806.0,54.1L819.3,49.6L832.7,49.1L846.0,47.1L846.0,300L6.0,300Z" fill="url(#fillg-sc)"/>
+    <path d="M6.0,266.2L19.3,262.6L32.7,262.1L46.0,262.1L59.3,264.1L72.7,265.8L86.0,265.3L99.3,264.6L112.7,259.7L126.0,262.4L139.3,264.3L152.7,268.9L166.0,263.2L179.3,259.9L192.7,259.8L206.0,258.0L219.3,255.5L232.7,250.4L246.0,252.5L259.3,257.8L272.7,261.8L286.0,261.8L299.3,261.9L312.7,259.9L326.0,261.2L339.3,260.7L352.7,257.9L366.0,255.7L379.3,248.9L392.7,247.6L406.0,245.3L419.3,246.8L432.7,244.8L446.0,245.2L459.3,245.8L472.7,242.3L486.0,237.3L499.3,232.0L512.7,233.0L526.0,236.8L539.3,240.0L552.7,241.8L566.0,242.3L579.3,237.0L592.7,234.9L606.0,227.8L619.3,229.1L632.7,223.6L646.0,222.1L659.3,223.4L672.7,227.3L686.0,225.2L699.3,220.2L712.7,212.9L726.0,215.0L739.3,216.1L752.7,217.0L766.0,212.4L779.3,209.2L792.7,211.3L806.0,212.7L819.3,205.7L832.7,198.9L846.0,185.2" fill="none" stroke="#767f8c" stroke-width="1.5" opacity=".8"/>
+    <path d="M6.0,234.9L19.3,238.5L32.7,240.7L46.0,236.8L59.3,239.2L72.7,238.8L86.0,238.5L99.3,240.9L112.7,236.4L126.0,239.6L139.3,238.0L152.7,236.8L166.0,228.1L179.3,226.2L192.7,226.4L206.0,226.4L219.3,216.6L232.7,211.0L246.0,210.9L259.3,208.2L272.7,210.7L286.0,203.5L299.3,207.2L312.7,203.3L326.0,207.3L339.3,203.9L352.7,194.1L366.0,190.1L379.3,183.9L392.7,181.9L406.0,176.3L419.3,172.8L432.7,174.4L446.0,173.4L459.3,172.6L472.7,162.6L486.0,154.9L499.3,149.7L512.7,146.4L526.0,141.8L539.3,137.7L552.7,131.4L566.0,124.7L579.3,121.0L592.7,118.8L606.0,116.2L619.3,105.9L632.7,100.2L646.0,98.2L659.3,93.1L672.7,94.8L686.0,89.5L699.3,87.7L712.7,83.4L726.0,78.9L739.3,82.0L752.7,73.4L766.0,67.1L779.3,58.5L792.7,53.1L806.0,54.1L819.3,49.6L832.7,49.1L846.0,47.1"
+      fill="none" stroke="#00d17a" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" filter="url(#glow-sc)"/>
+    <text x="854" y="189.2" font-size="11" fill="#767f8c" font-family="ui-monospace,'SF Mono',SFMono-Regular,Menlo,Consolas,monospace">SPY +3.1%</text>
+    <text x="854" y="51.1" font-size="11.5" font-weight="600" fill="#00d17a" font-family="ui-monospace,'SF Mono',SFMono-Regular,Menlo,Consolas,monospace">+8.4%</text>
+    <line x1="552.7" x2="552.7" y1="16" y2="300" stroke="rgba(255,255,255,.12)" opacity="1"/>
+    <circle cx="552.7" cy="241.8" r="4" fill="#767f8c" stroke="#0a0b0d" stroke-width="1.6" opacity="1"/>
+    <circle cx="552.7" cy="131.4" r="5" fill="#00d17a" stroke="#0a0b0d" stroke-width="2" opacity="1"/>
+  </svg>
+  <div class="tip" style="left:566.7px;top:8px">
+    <div class="r"><i style="background:#00d17a"></i>Portfolio<b class="mono">+5.17%</b></div>
+    <div class="r"><i style="background:#767f8c"></i>SPY<b class="mono">+0.94%</b></div>
+  </div>
+</div>
+
+<div class="ptabs" role="tablist">
+  <button role="tab" aria-selected="false">1M</button>
+  <button role="tab" aria-selected="true">3M</button>
+  <button role="tab" aria-selected="false">6M</button>
+  <button class="spybtn" aria-pressed="true"><i></i><span>Compare SPY</span></button>
+</div>
+
+<div class="vals" style="margin-top:14px">
+  <b>hit area</b> rect#hz x 6 · width W−72 · height 310 · fill transparent · cursor crosshair<br>
+  <b>index</b> round((mx − P.l) / ((W−P.l−P.r)/(n−1))) clamped to [0, n−1] · mx = (clientX − rect.left) × (W / rect.width)<br>
+  <b>crosshair</b> line#xh y1 16 → y2 300 · stroke var(--hair2) · opacity 0 → 1<br>
+  <b>dot</b> r 5 · fill C · stroke var(--bg) #0a0b0d · stroke-width 2<br>
+  <b>dot2</b> r 4 · fill var(--bench) · stroke var(--bg) · stroke-width 1.6 · hidden when the day has no SPY bar<br>
+  <b>tooltip</b> bg var(--s3) #1c2027 · 1px var(--hair2) · radius 10px · pad 8px 12px · 12px · shadow 0 10px 34px rgba(0,0,0,.55)<br>
+  <b>tooltip rows</b> line-height 1.9 · swatch 8×8 radius 2 · value b{margin-left:auto; padding-left:14px} mono · pct(v,2)<br>
+  <b>tooltip position</b> left = (xi(i)/W)×rect.width + 14, minus 175 when left+150 &gt; chartbox width · top 8px<br>
+  <b>hero rewrite</b> 44px / 700 / −.02em / lh 1.05 mono · delta 14.5px · date 12.5px var(--ink3)<br>
+  <b>hero delta</b> usd(a.eq − 100000) is inception-anchored, pct(a.v) is window-anchored; the two<br>
+  &nbsp;&nbsp;agree only while the window starts at inception, as in this specimen<br>
+  <b>hero date</b> toLocaleDateString(LOCALE(), {day:'numeric', month:'long', year:'numeric'})<br>
+  <b>hero on release</b> back to snapshot.total_equity_usd and the "since inception · $100k" string<br>
+  <b>draw-in</b> first render only · stroke-dashoffset len → 0 · 1.1s cubic-bezier(.3,.6,.3,1) · dasharray cleared at 1300ms · skipped when prefers-reduced-motion
+</div>
+
+<div class="rule"></div>
+
+<!-- ============================ 3. SUB-STATES ============================ -->
+<h2 class="sec">Sub-states</h2>
+<p class="note">
+  Two conditional branches inside <span class="mono">drawChart()</span> (no zero line when 0 falls
+  outside the padded range; no bench path and no bench label when <span class="mono">sp</span> is
+  empty), the &lt;2-point guard, the slot's own loading markup, and the tab strip's four states.
+  There is no hover-highlight on the curve, no legend, no axis labels and no y-gridline in the
+  source — this is the whole remaining surface.
+</p>
+
+<div class="row2b">
+  <div>
+    <div class="cap">SPY off + no zero line</div>
+    <div class="spec">
+      <svg viewBox="0 0 444 310" width="444" height="310" role="img" aria-label="Portföy performans grafiği">
+        <defs>
+          <linearGradient id="fillg-nz" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="rgba(0,209,122,.22)"/><stop offset="1" stop-color="rgba(0,209,122,0)"/>
+          </linearGradient>
+          <filter id="glow-nz" x="-20%" y="-40%" width="140%" height="180%">
+            <feGaussianBlur stdDeviation="5" result="b"/>
+            <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+        </defs>
+        <path d="M6.0,264.9L11.9,268.9L17.8,262.5L23.7,257.5L29.6,251.0L35.5,251.8L41.4,251.2L47.3,248.5L53.2,246.0L59.1,240.2L65.0,238.3L71.0,233.6L76.9,233.8L82.8,235.3L88.7,238.3L94.6,233.1L100.5,230.1L106.4,222.9L112.3,220.7L118.2,218.5L124.1,214.3L130.0,215.9L135.9,205.9L141.8,202.1L147.7,197.1L153.6,194.8L159.5,192.2L165.4,189.4L171.3,186.2L177.2,187.6L183.1,177.3L189.0,173.4L195.0,162.4L200.9,165.8L206.8,165.0L212.7,164.1L218.6,155.5L224.5,152.7L230.4,146.5L236.3,140.5L242.2,135.5L248.1,137.7L254.0,135.2L259.9,130.3L265.8,122.0L271.7,119.4L277.6,115.5L283.5,116.9L289.4,115.9L295.3,111.4L301.2,101.6L307.1,95.2L313.0,89.0L319.0,86.7L324.9,79.0L330.8,76.0L336.7,74.1L342.6,76.5L348.5,77.8L354.4,76.5L360.3,66.8L366.2,56.5L372.1,47.1L378.0,51.8L378.0,300L6.0,300Z" fill="url(#fillg-nz)"/>
+        <path d="M6.0,264.9L11.9,268.9L17.8,262.5L23.7,257.5L29.6,251.0L35.5,251.8L41.4,251.2L47.3,248.5L53.2,246.0L59.1,240.2L65.0,238.3L71.0,233.6L76.9,233.8L82.8,235.3L88.7,238.3L94.6,233.1L100.5,230.1L106.4,222.9L112.3,220.7L118.2,218.5L124.1,214.3L130.0,215.9L135.9,205.9L141.8,202.1L147.7,197.1L153.6,194.8L159.5,192.2L165.4,189.4L171.3,186.2L177.2,187.6L183.1,177.3L189.0,173.4L195.0,162.4L200.9,165.8L206.8,165.0L212.7,164.1L218.6,155.5L224.5,152.7L230.4,146.5L236.3,140.5L242.2,135.5L248.1,137.7L254.0,135.2L259.9,130.3L265.8,122.0L271.7,119.4L277.6,115.5L283.5,116.9L289.4,115.9L295.3,111.4L301.2,101.6L307.1,95.2L313.0,89.0L319.0,86.7L324.9,79.0L330.8,76.0L336.7,74.1L342.6,76.5L348.5,77.8L354.4,76.5L360.3,66.8L366.2,56.5L372.1,47.1L378.0,51.8"
+          fill="none" stroke="#00d17a" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" filter="url(#glow-nz)"/>
+        <text x="386" y="55.8" font-size="11.5" font-weight="600" fill="#00d17a" font-family="ui-monospace,'SF Mono',SFMono-Regular,Menlo,Consolas,monospace">+11.9%</text>
+      </svg>
+    </div>
+    <div class="ptabs">
+      <button role="tab" aria-selected="false">1M</button>
+      <button role="tab" aria-selected="true">3M</button>
+      <button role="tab" aria-selected="false">6M</button>
+      <button class="spybtn" aria-pressed="false"><i></i><span>Compare SPY</span></button>
+    </div>
+    <div class="vals">
+      <b>toggle off</b> .spybtn[aria-pressed="false"] { opacity:.4 } · persisted in localStorage "showspy"<br>
+      <b>bench path + label</b> both omitted — SHOWSPY false means sp = [], so nothing renders<br>
+      <b>same shape, toggle ON</b> the /v1/prices/SPY fetch is wrapped in try/catch(_){} — a failed<br>
+      &nbsp;&nbsp;benchmark drops silently to this rendering with the pill still lit<br>
+      <b>zero line</b> omitted: zY = null when 0 &lt; lo−pad or 0 &gt; hi+pad. Here lo = +3.24%,<br>
+      &nbsp;&nbsp;so the whole window sits above break-even and the dashed line is out of frame<br>
+      <b>tabs</b> 12px / 650 · pad 6px 14px · radius 999px · rest var(--ink3), hover var(--ink2)<br>
+      <b>tab selected</b> background var(--s3) #1c2027 · colour var(--ink) #eef0f3<br>
+      <b>swatch</b> i 14×3px · radius 2px · background var(--bench) #767f8c<br>
+      <b>periods</b> 1M / 3M / 6M only — no YTD, no ALL, no custom range in the source
+    </div>
+
+    <div class="cap" style="margin-top:26px">Period pill — the four states</div>
+    <div class="states">
+      <div><div class="ptabs"><button role="tab" aria-selected="false">1M</button></div><div class="stag">rest</div></div>
+      <div><div class="ptabs"><button role="tab" aria-selected="false" style="color:var(--ink2)">1M</button></div><div class="stag">hover</div></div>
+      <div><div class="ptabs"><button role="tab" aria-selected="true">1M</button></div><div class="stag">selected</div></div>
+      <div><div class="ptabs"><button role="tab" aria-selected="false" style="outline:2px solid var(--pos);outline-offset:2px">1M</button></div><div class="stag">focus-visible</div></div>
+    </div>
+    <div class="vals">
+      <b>hover</b> .ptabs button:hover { color:var(--ink2) } — simulated here with an inline colour<br>
+      <b>focus</b> :focus-visible { outline:2px solid var(--pos); outline-offset:2px } — global, L30;<br>
+      &nbsp;&nbsp;its border-radius:4px loses to .ptabs button's 999px (0,1,1 beats 0,1,0), so the<br>
+      &nbsp;&nbsp;focused pill keeps its shape. Simulated here with an inline outline<br>
+      <b>transition</b> all .15s on every state change · killed by prefers-reduced-motion (L39)
+    </div>
+  </div>
+
+  <div>
+    <div class="cap">Fewer than 2 points</div>
+    <div class="spec">
+      <div class="nodata">Not enough data yet</div>
+    </div>
+    <div class="vals">
+      <b>guard</b> if (ai.length &lt; 2) — replaces the whole SVG, returns before any drawing<br>
+      <b>box</b> padding 70px 0 · text-align center · colour var(--ink3) #828b9a · 14px inherited<br>
+      <b>copy</b> en "Not enough data yet" / tr "Henüz yeterli veri yok"<br>
+      <b>no scrub</b> hero, tabs and SPY toggle all stay mounted and interactive
+    </div>
+
+    <div class="cap" style="margin-top:26px">Loading — chart slot before first fetch</div>
+    <div class="spec">
+      <div class="sk" style="height:300px"></div>
+    </div>
+    <div class="vals">
+      <b>.sk</b> height 300px (not 310 — the skeleton is 10px shorter than the chart it replaces)<br>
+      <b>radius</b> 10px<br>
+      <b>fill</b> linear-gradient(90deg, var(--s2) 25%, var(--s3) 50%, var(--s2) 75%) · size 200% 100%<br>
+      <b>anim</b> sh 1.4s ease infinite → background-position −200% 0<br>
+      <b>hero while loading</b> heroEq renders the literal em-dash "—"
+    </div>
+  </div>
+</div>
+
+<div class="rule"></div>
+
+<!-- ============================ 4. MOBILE ============================ -->
+<h2 class="sec">Mobile variant — a different chart, not a port</h2>
+<p class="note">
+  <span class="mono">src/components/EquityChart.tsx</span> ships no chart library: it draws plain
+  RN <span class="mono">&lt;View&gt;</span>s so it can go out over-the-air on any installed build.
+  Nothing from the web chart survives — no line, no gradient, no glow, no zero line, no scrub, no
+  tooltip. Instead: opacity-.45 equity bars, dotted SPY markers, an α chip, and a drawdown ribbon
+  that the web has no equivalent of. Rendered here at a 375pt viewport (chartW = width − 48 = 327)
+  with a 32-point history.
+</p>
+
+<div class="row2b">
+  <div>
+    <div class="cap">With benchmark — spy passed</div>
+    <div class="phone">
+      <div class="mwrap">
+        <div class="mhead">
+          <div class="mlabel">32 gün</div>
+          <div class="mright">
+            <div class="malpha"><span>α +6.45%</span></div>
+            <div class="mret">+8.34%</div>
+          </div>
+        </div>
+        <div class="mbox"><div class="mslot"><div class="mbar" style="height:26.47px"></div><div class="mspy" style="bottom:9.40px"></div></div><div class="mslot"><div class="mbar" style="height:24.24px"></div><div class="mspy" style="bottom:8.81px"></div></div><div class="mslot"><div class="mbar" style="height:20.73px"></div><div class="mspy" style="bottom:7.43px"></div></div><div class="mslot"><div class="mbar" style="height:18.2px"></div><div class="mspy" style="bottom:11.35px"></div></div><div class="mslot"><div class="mbar" style="height:13.32px"></div><div class="mspy" style="bottom:6.57px"></div></div><div class="mslot"><div class="mbar" style="height:11.81px"></div><div class="mspy" style="bottom:9.27px"></div></div><div class="mslot"><div class="mbar" style="height:2.51px"></div><div class="mspy" style="bottom:11.45px"></div></div><div class="mslot"><div class="mbar" style="height:3.97px"></div><div class="mspy" style="bottom:7.01px"></div></div><div class="mslot"><div class="mbar" style="height:6.34px"></div><div class="mspy" style="bottom:9.70px"></div></div><div class="mslot"><div class="mbar" style="height:3.42px"></div><div class="mspy" style="bottom:10.19px"></div></div><div class="mslot"><div class="mbar" style="height:5.36px"></div><div class="mspy" style="bottom:7.24px"></div></div><div class="mslot"><div class="mbar" style="height:2px"></div><div class="mspy" style="bottom:9.36px"></div></div><div class="mslot"><div class="mbar" style="height:4.14px"></div><div class="mspy" style="bottom:11.48px"></div></div><div class="mslot"><div class="mbar" style="height:4.55px"></div><div class="mspy" style="bottom:10.51px"></div></div><div class="mslot"><div class="mbar" style="height:9.66px"></div><div class="mspy" style="bottom:12.49px"></div></div><div class="mslot"><div class="mbar" style="height:13.42px"></div><div class="mspy" style="bottom:9.94px"></div></div><div class="mslot"><div class="mbar" style="height:13.3px"></div><div class="mspy" style="bottom:11.02px"></div></div><div class="mslot"><div class="mbar" style="height:19.69px"></div><div class="mspy" style="bottom:11.05px"></div></div><div class="mslot"><div class="mbar" style="height:25.6px"></div><div class="mspy" style="bottom:14.03px"></div></div><div class="mslot"><div class="mbar" style="height:36.47px"></div><div class="mspy" style="bottom:17.22px"></div></div><div class="mslot"><div class="mbar" style="height:41.77px"></div><div class="mspy" style="bottom:16.37px"></div></div><div class="mslot"><div class="mbar" style="height:44.01px"></div><div class="mspy" style="bottom:18.44px"></div></div><div class="mslot"><div class="mbar" style="height:56.17px"></div><div class="mspy" style="bottom:17.44px"></div></div><div class="mslot"><div class="mbar" style="height:58.67px"></div><div class="mspy" style="bottom:20.66px"></div></div><div class="mslot"><div class="mbar" style="height:70.12px"></div><div class="mspy" style="bottom:18.43px"></div></div><div class="mslot"><div class="mbar" style="height:74.27px"></div><div class="mspy" style="bottom:20.86px"></div></div><div class="mslot"><div class="mbar" style="height:81.3px"></div><div class="mspy" style="bottom:24.42px"></div></div><div class="mslot"><div class="mbar" style="height:95.97px"></div><div class="mspy" style="bottom:26.23px"></div></div><div class="mslot"><div class="mbar" style="height:98.79px"></div><div class="mspy" style="bottom:26.15px"></div></div><div class="mslot"><div class="mbar" style="height:106.58px"></div><div class="mspy" style="bottom:25.97px"></div></div><div class="mslot"><div class="mbar" style="height:120.0px"></div><div class="mspy" style="bottom:28.66px"></div></div><div class="mslot"><div class="mbar" style="height:102.66px"></div><div class="mspy" style="bottom:30.11px"></div></div></div>
+        <div class="mlegend">
+          <div class="mdot" style="background:#22c55e;opacity:.6"></div><span>Portföy</span>
+          <div class="mdot" style="background:#a3a3a3;margin-left:12px"></div><span>SPY</span>
+        </div>
+        <div class="mribbon"><div style="opacity:0.12"></div><div style="opacity:0.1774"></div><div style="opacity:0.2675"></div><div style="opacity:0.3325"></div><div style="opacity:0.4579"></div><div style="opacity:0.4967"></div><div style="opacity:0.7355"></div><div style="opacity:0.6979"></div><div style="opacity:0.6371"></div><div style="opacity:0.7123"></div><div style="opacity:0.6624"></div><div style="opacity:0.8"></div><div style="opacity:0.6936"></div><div style="opacity:0.6831"></div><div style="opacity:0.5518"></div><div style="opacity:0.4554"></div><div style="opacity:0.4584"></div><div style="opacity:0.2942"></div><div style="opacity:0.1424"></div><div style="opacity:0.12"></div><div style="opacity:0.12"></div><div style="opacity:0.12"></div><div style="opacity:0.12"></div><div style="opacity:0.12"></div><div style="opacity:0.12"></div><div style="opacity:0.12"></div><div style="opacity:0.12"></div><div style="opacity:0.12"></div><div style="opacity:0.12"></div><div style="opacity:0.12"></div><div style="opacity:0.12"></div><div style="opacity:0.5309"></div></div>
+        <div class="mfoot"><span>$101,400.00</span><span>Max DD -2.38%</span><span>$108,340.00</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="cap">No benchmark — spy undefined or rebaseSpy() empty</div>
+    <div class="phone">
+      <div class="mwrap">
+        <div class="mhead">
+          <div class="mlabel">32 gün</div>
+          <div class="mright">
+            <div class="mret">+8.34%</div>
+          </div>
+        </div>
+        <div class="mbox"><div class="mslot"><div class="mbar" style="height:26.47px"></div></div><div class="mslot"><div class="mbar" style="height:24.24px"></div></div><div class="mslot"><div class="mbar" style="height:20.73px"></div></div><div class="mslot"><div class="mbar" style="height:18.2px"></div></div><div class="mslot"><div class="mbar" style="height:13.32px"></div></div><div class="mslot"><div class="mbar" style="height:11.81px"></div></div><div class="mslot"><div class="mbar" style="height:2.51px"></div></div><div class="mslot"><div class="mbar" style="height:3.97px"></div></div><div class="mslot"><div class="mbar" style="height:6.34px"></div></div><div class="mslot"><div class="mbar" style="height:3.42px"></div></div><div class="mslot"><div class="mbar" style="height:5.36px"></div></div><div class="mslot"><div class="mbar" style="height:2px"></div></div><div class="mslot"><div class="mbar" style="height:4.14px"></div></div><div class="mslot"><div class="mbar" style="height:4.55px"></div></div><div class="mslot"><div class="mbar" style="height:9.66px"></div></div><div class="mslot"><div class="mbar" style="height:13.42px"></div></div><div class="mslot"><div class="mbar" style="height:13.3px"></div></div><div class="mslot"><div class="mbar" style="height:19.69px"></div></div><div class="mslot"><div class="mbar" style="height:25.6px"></div></div><div class="mslot"><div class="mbar" style="height:36.47px"></div></div><div class="mslot"><div class="mbar" style="height:41.77px"></div></div><div class="mslot"><div class="mbar" style="height:44.01px"></div></div><div class="mslot"><div class="mbar" style="height:56.17px"></div></div><div class="mslot"><div class="mbar" style="height:58.67px"></div></div><div class="mslot"><div class="mbar" style="height:70.12px"></div></div><div class="mslot"><div class="mbar" style="height:74.27px"></div></div><div class="mslot"><div class="mbar" style="height:81.3px"></div></div><div class="mslot"><div class="mbar" style="height:95.97px"></div></div><div class="mslot"><div class="mbar" style="height:98.79px"></div></div><div class="mslot"><div class="mbar" style="height:106.58px"></div></div><div class="mslot"><div class="mbar" style="height:120.0px"></div></div><div class="mslot"><div class="mbar" style="height:102.66px"></div></div></div>
+        <div class="mribbon"><div style="opacity:0.12"></div><div style="opacity:0.1774"></div><div style="opacity:0.2675"></div><div style="opacity:0.3325"></div><div style="opacity:0.4579"></div><div style="opacity:0.4967"></div><div style="opacity:0.7355"></div><div style="opacity:0.6979"></div><div style="opacity:0.6371"></div><div style="opacity:0.7123"></div><div style="opacity:0.6624"></div><div style="opacity:0.8"></div><div style="opacity:0.6936"></div><div style="opacity:0.6831"></div><div style="opacity:0.5518"></div><div style="opacity:0.4554"></div><div style="opacity:0.4584"></div><div style="opacity:0.2942"></div><div style="opacity:0.1424"></div><div style="opacity:0.12"></div><div style="opacity:0.12"></div><div style="opacity:0.12"></div><div style="opacity:0.12"></div><div style="opacity:0.12"></div><div style="opacity:0.12"></div><div style="opacity:0.12"></div><div style="opacity:0.12"></div><div style="opacity:0.12"></div><div style="opacity:0.12"></div><div style="opacity:0.12"></div><div style="opacity:0.12"></div><div style="opacity:0.5309"></div></div>
+        <div class="mfoot"><span>$101,400.00</span><span>Max DD -2.38%</span><span>$108,340.00</span></div>
+      </div>
+    </div>
+    <div class="vals">
+      <b>three things drop</b> α chip (alphaPct → null), SPY dots (spyByDate empty), legend row<br>
+      &nbsp;&nbsp;(spyPts.length falsy). The ribbon then sits 3px under the chart box, not the legend<br>
+      <b>bars unchanged here</b> combinedScale() falls back to equityScale(); in this book the SPY<br>
+      &nbsp;&nbsp;series lies inside the equity min/max, so both scales agree and no bar moves
+    </div>
+  </div>
+</div>
+
+<div class="vals" style="margin-top:18px">
+  <b>surface</b> the screen behind it is colors.background #0a0a0a — <span style="color:var(--neg)">not</span> the web's --bg #0a0b0d<br>
+  &nbsp;&nbsp;(the component itself paints no background; the device frame here is card chrome)<br>
+  <b>up / down</b> colors.up #22c55e / colors.down #ef4444 — a different green and red from<br>
+  &nbsp;&nbsp;the web's --pos #00d17a / --neg #ff5d6c. No shared P&amp;L token exists.<br>
+  <b>direction rule</b> history.total_return_pct &gt;= 0. The API rebases return_pct to the first
+  point<br>
+  &nbsp;&nbsp;of the window, so this is the same test as the web's upAll — same book, same period,<br>
+  &nbsp;&nbsp;same colour. What differs is the default period: mobile opens on 1M, the web on 3M.<br>
+  <b>CHART_H</b> 120 · <b>RIBBON_H</b> 8 · <b>SPY_DOT</b> 3<br>
+  <b>chartW</b> useWindowDimensions().width − 48 (= wrap paddingHorizontal 24 × 2)<br>
+  <b>slot</b> chartW / pts.length = 10.21875px at 375pt with 32 points<br>
+  <b>bar</b> width max(1, slot × 0.85) = 8.68594px · opacity 0.45 · borderTopLeft/RightRadius 1<br>
+  <b>barHeight</b> max(2, ((equity − scale.min) / scale.span) × 120) — floored at 2px<br>
+  <b>scale</b> combinedScale(points, spy) — min/max across BOTH series, in dollars not %<br>
+  <b>chartBox</b> borderBottomWidth 1 · colors.surfaceElevated #262626<br>
+  <b>SPY marker</b> 3×3 dot, radius 1.5, colors.textSecondary #a3a3a3 — no --bench token on mobile<br>
+  &nbsp;&nbsp;bottom = barHeight(spyVal) − SPY_DOT/2, absolutely positioned inside the slot<br>
+  <b>rebase</b> SPY closes rebased onto the portfolio's <em>start equity</em> (dollar baseline) and<br>
+  &nbsp;&nbsp;trimmed to [firstDate, lastDate]; the web instead rebases to percent from the first<br>
+  &nbsp;&nbsp;in-window close and trims only the near end<br>
+  <b>α chip</b> borderWidth 1 · radius 999 · pad 8×2 · 12px / 700 · border+text = up/down colour<br>
+  &nbsp;&nbsp;(alpha's own sign, not the book's) · hidden entirely when spyReturnPct() is null<br>
+  <b>legend</b> dot 8×8 r4 mr4 · portfolio dot = bar colour at opacity .6 · text 11px colors.textMuted #949494<br>
+  &nbsp;&nbsp;row only rendered when spyPts.length — an unbenchmarked chart has no legend<br>
+  <b>ribbon</b> marginTop 3 · radius 2 · overflow hidden · cell background always colors.down<br>
+  &nbsp;&nbsp;opacity = 0.12 + 0.68 × ddIntensity(p.drawdown_pct, worstDrawdown) → 0.12 … 0.80<br>
+  <b>header</b> label 13px / 600 #a3a3a3 · return 15px / 700 · gap 8 · marginBottom 6<br>
+  <b>label</b> history.days, which the API sets to len(points) — 32 points, "32 gün"<br>
+  <b>foot</b> 12px #949494 · start equity · "Max DD -2.38%" · end equity · marginTop 6<br>
+  <b>number format</b> formatUsd always prints 2 decimals ($101,400.00) with device-locale grouping;<br>
+  &nbsp;&nbsp;formatPct is toFixed(2) so a negative carries an ASCII hyphen, not the web's U+2212<br>
+  <b>empty</b> if (!pts.length) return null — the component renders <em>nothing</em>, with no<br>
+  &nbsp;&nbsp;"not enough data" copy. Its one call site already gates on history.points.length &gt; 1,<br>
+  &nbsp;&nbsp;so in practice the same ≥2 threshold as the web applies, one level up<br>
+  <b>interaction</b> none — no touch handler, no scrub, no tooltip. The period pills live on the<br>
+  &nbsp;&nbsp;portfolio screen (PERIODS 1M/3M/6M), not in this component<br>
+  <b>loading / error</b> also the screen's: "Loading…" centred text, then &lt;ErrorState&gt; — the<br>
+  &nbsp;&nbsp;component has neither branch<br>
+  <b>copy</b> label, legend and "Max DD" are hardcoded strings ("32 gün", "Portföy"); the screen<br>
+  &nbsp;&nbsp;around it uses react-i18next, and the web chart is i18n'd
+</div>
+
+<div class="rule"></div>
+<h2 class="sec">Not in the source</h2>
+<p class="note">
+  For the avoidance of invention: <span class="mono">drawChart()</span> has no y-axis ticks, no
+  x-axis date ruler, no gridlines, no hover state distinct from scrub, no keyboard scrub (the
+  <span class="mono">#hz</span> rect is pointer-only and not focusable), no animated period
+  transition (a tab click sets <span class="mono">DRAWN=true</span>, so the draw-in never repeats),
+  no error state of its own (fetch errors surface in <span class="mono">#err</span> above the hero),
+  and no light theme — <span class="mono">:root</span> declares
+  <span class="mono">color-scheme:dark</span> and there is no
+  <span class="mono">prefers-color-scheme</span> block anywhere in the file. The mobile component
+  has no loading state either; the screen above it swaps the whole subtree.
+</p>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,453 @@
+<!-- @dsCard group="Components" -->
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=900">
+<title>Go-live gate tile</title>
+<style>
+  :root{
+    color-scheme:dark;
+    /* verbatim from agent/api/static/dashboard.html :root (L11–20) */
+    --bg:#0a0b0d; --s1:#101216; --s2:#15181d; --s3:#1c2027;
+    --hair:rgba(255,255,255,.06); --hair2:rgba(255,255,255,.12);
+    --ink:#eef0f3; --ink2:#9aa3b2; --ink3:#828b9a;
+    --pos:#00d17a; --neg:#ff5d6c; --warn:#e2b93b; --bench:#767f8c;
+    --pos-dim:rgba(0,209,122,.12); --neg-dim:rgba(255,93,108,.12);
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,Inter,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{background:var(--bg)}
+  /* Product body is `font-family/color/font-size/line-height/antialiased` + overflow-x:hidden,
+     plus a body::before radial glow. This sheet keeps the four type properties and pins a fixed
+     900px width instead, and drops the glow — a documentation frame, not the product shell. */
+  body{font-family:var(--sans);color:var(--ink);font-size:14px;line-height:1.45;
+    -webkit-font-smoothing:antialiased;width:900px;background:var(--bg)}
+  .page{padding:26px 20px 34px}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  /* ---- card-sheet chrome (documentation only, not product) ---- */
+  .sheet-hd{border-bottom:1px solid var(--hair);padding-bottom:14px;margin-bottom:22px}
+  .sheet-hd h1{font-size:17px;font-weight:650;letter-spacing:-.01em}
+  .sheet-hd .src{font-family:var(--mono);font-size:10.5px;color:var(--ink3);margin-top:7px;line-height:1.7}
+  .sec{margin-top:26px}
+  .sec>h2{font-size:10.5px;font-weight:650;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--ink2);margin-bottom:11px}
+  .note{font-size:11.5px;color:var(--ink3);line-height:1.55;margin-top:9px;max-width:760px}
+  .note b{color:var(--ink2);font-weight:600}
+  .cap{font-size:10.5px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)}
+  .tok{font-family:var(--mono);font-size:10.5px;color:var(--ink3);line-height:1.65;
+    font-variant-numeric:tabular-nums}
+  .tok em{color:var(--ink2);font-style:normal}
+
+  /* ---- PRODUCT CSS — byte-for-byte from dashboard.html: card rules L108–112,
+         gates strip L117–125. Nothing between them (.cols L113–114) is used here. ---- */
+  .card{background:var(--s1);border:1px solid var(--hair);border-radius:16px;margin-top:16px}
+  .card>.hd{display:flex;align-items:baseline;gap:10px;padding:18px 22px 0}
+  .card>.hd h2{font-size:12px;font-weight:650;letter-spacing:.1em;color:var(--ink2);text-transform:uppercase}
+  .card>.hd .sub{font-size:12px;color:var(--ink3);margin-left:auto}
+  .card>.bd{padding:14px 22px 18px}
+
+  .gates{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  @media(max-width:760px){.gates{grid-template-columns:repeat(2,1fr)}}
+  .gate{background:var(--s2);border:1px solid var(--hair);border-radius:12px;padding:12px 14px;
+    display:flex;align-items:center;gap:10px}
+  .gate svg{width:20px;height:20px;flex:0 0 20px}
+  .gate .t{font-size:12px;font-weight:600}
+  .gate .d{font-size:11px;color:var(--ink3)}
+  .ck{stroke-dasharray:30;stroke-dashoffset:30;animation:draw .6s .5s ease forwards}
+  @keyframes draw{to{stroke-dashoffset:0}}
+  /* ---- end product CSS ---- */
+
+  /* Sheet override, NOT product: this page is a fixed 900px document, but the renderer's
+     viewport can be narrower than 760px, which would fire the product's own @media branch
+     above and turn the "four-up strip" specimen into a 2-up one — the specimen would then
+     contradict its own heading. Pinned back to 4 columns here; the 2-up branch is shown
+     deliberately, and labelled, in its own demo below. */
+  .gates{grid-template-columns:repeat(4,1fr)}
+
+  /* annotation grid that lines up column-for-column with .gates */
+  .ann{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:9px;padding:0 22px}
+  .ann>div{min-width:0}
+  .ann .cap{display:block;margin-bottom:4px}
+  .states{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:4px}
+  .states .cap{display:block;margin-bottom:6px}
+  .states .tok{margin-top:6px}
+
+  /* two side-by-side demos (documentation framing, not product markup) */
+  .duo{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
+  .demo{background:var(--s1);border:1px solid var(--hair);border-radius:12px;padding:14px}
+  .demo .cap{display:block;margin-bottom:9px}
+  .demo .tok{margin-top:9px}
+  /* local restatement of the 760px branch so it renders on this 900px sheet */
+  .gates-2up{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+
+  /* icon anatomy */
+  .anat{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  .anat .box{background:var(--s2);border:1px solid var(--hair);border-radius:12px;padding:16px 16px 14px}
+  .anat .row{display:flex;align-items:center;gap:14px}
+  .anat svg{width:56px;height:56px;flex:0 0 56px}
+  .anat .nm{font-size:12.5px;font-weight:650}
+  .anat .sub{font-size:11px;color:var(--ink3);margin-top:2px}
+  .anat pre{font-family:var(--mono);font-size:9.5px;line-height:1.6;color:var(--ink3);
+    margin-top:12px;white-space:pre-wrap;word-break:break-word;
+    border-top:1px solid var(--hair);padding-top:10px}
+  .anat pre b{color:var(--ink2);font-weight:400}
+
+  /* wording rule */
+  .rule{background:var(--s2);border:1px solid var(--hair);border-left:2px solid var(--warn);
+    border-radius:12px;padding:14px 16px}
+  .rule .h{font-size:11px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--warn)}
+  .rule p{font-size:12px;color:var(--ink2);line-height:1.6;margin-top:8px;max-width:800px}
+  .rule .ex{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
+  .rule .ex>div{background:var(--bg);border:1px solid var(--hair);border-radius:9px;padding:9px 12px}
+  .rule .ex .l{font-size:9.5px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;margin-bottom:5px}
+  .rule .ex .bad-l{color:var(--neg)}.rule .ex .good-l{color:var(--pos)}
+  .rule .ex .v{font-family:var(--mono);font-size:11.5px;color:var(--ink)}
+
+  /* token table */
+  table{width:100%;border-collapse:collapse}
+  thead th{font-size:10px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);
+    text-align:left;padding:0 10px 9px 0;border-bottom:1px solid var(--hair);white-space:nowrap}
+  tbody td{padding:8px 10px 8px 0;border-bottom:1px solid var(--hair);font-size:11.5px;vertical-align:top}
+  tbody tr:last-child td{border-bottom:0}
+  td.k{font-family:var(--mono);font-size:10.5px;color:var(--ink2);white-space:nowrap}
+  td.v{font-family:var(--mono);font-size:10.5px;color:var(--ink);white-space:nowrap}
+  td.w{color:var(--ink3);font-size:11px;line-height:1.5}
+  .sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;
+    vertical-align:-1px;border:1px solid rgba(255,255,255,.1)}
+  ul.n{list-style:none;margin-top:10px}
+  ul.n li{font-size:11.5px;color:var(--ink3);line-height:1.6;padding-left:14px;position:relative;margin-top:7px;max-width:800px}
+  ul.n li::before{content:"";position:absolute;left:0;top:8px;width:5px;height:1px;background:var(--ink3)}
+  ul.n li b{color:var(--ink2);font-weight:600}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="sheet-hd">
+    <h1>Go-live gate tile — <span class="mono" style="font-size:14px;font-weight:400;color:var(--ink2)">.gate</span></h1>
+    <div class="src">
+      agent/api/static/dashboard.html — :root L11–20, card CSS L108–112, gates CSS L116–125,<br>
+      &nbsp;&nbsp;markup L284–287, render L482–491, icons L562–564<br>
+      agent/scripts/eval_report.py — build_gates() L303–351, GATE_SHARPE 1.0 / GATE_MAX_DD 0.15 / MIN_TRADING_DAYS 10 (L36–38)<br>
+      mobile/app/app/(tabs)/settings.tsx — GateRow L46–56, styles L337–341 (divergent: glyphs, not SVG)
+    </div>
+  </div>
+
+  <!-- ============ AS SHIPPED ============ -->
+  <div class="sec">
+    <h2>As shipped — the four-up strip</h2>
+    <div class="card" style="margin-top:0">
+      <div class="hd"><h2>Go-live kapıları</h2><span class="sub mono">20 / 10 gün</span></div>
+      <div class="bd">
+        <div class="gates">
+
+          <div class="gate">
+            <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="var(--pos)" stroke-width="1.5" opacity=".4"/><path class="ck" d="M6.2 10.4l2.6 2.6L14 7.6" stroke="var(--pos)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <div><div class="t">İşlem günü</div><div class="d mono">20/10</div></div>
+          </div>
+
+          <div class="gate">
+            <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="var(--neg)" stroke-width="1.5" opacity=".4"/><path d="M7.4 7.4l5.2 5.2M12.6 7.4l-5.2 5.2" stroke="var(--neg)" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <div><div class="t">Sharpe</div><div class="d mono">-0.44 (gereken &gt; 1.0)</div></div>
+          </div>
+
+          <div class="gate">
+            <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="var(--pos)" stroke-width="1.5" opacity=".4"/><path class="ck" d="M6.2 10.4l2.6 2.6L14 7.6" stroke="var(--pos)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <div><div class="t">Maks. düşüş</div><div class="d mono">2.9% (gereken &lt; 15%)</div></div>
+          </div>
+
+          <div class="gate">
+            <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="var(--pos)" stroke-width="1.5" opacity=".4"/><path class="ck" d="M6.2 10.4l2.6 2.6L14 7.6" stroke="var(--pos)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <div><div class="t">SPY’ı geçiyor</div><div class="d mono">+9.1% vs +2.8%</div></div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <div class="ann">
+      <div><span class="cap">gate 1 · pass</span><span class="tok">key <em>trading_days</em><br>passed <em>true</em></span></div>
+      <div><span class="cap">gate 2 · fail</span><span class="tok">key <em>sharpe</em><br>passed <em>false</em></span></div>
+      <div><span class="cap">gate 3 · pass</span><span class="tok">key <em>max_drawdown</em><br>passed <em>true</em></span></div>
+      <div><span class="cap">gate 4 · pass</span><span class="tok">key <em>beats_spy</em><br>passed <em>true</em></span></div>
+    </div>
+
+    <p class="note">
+      One real frame at day 20. Gate order is the array order from <b>build_gates()</b> and never re-sorts —
+      failures do not float to the front. <b>beats_spy</b> is always appended (both branches of the
+      <span class="mono">spy_return is None</span> test push a gate), so the strip is always four wide.
+      Markup is the product's minus its shell attributes: the section drops
+      <span class="mono">rise d3</span> so the entrance animation does not fire here, and the
+      <span class="mono">id</span> / <span class="mono">data-i18n</span> hooks are omitted because nothing
+      scripts this sheet. Columns in this 900px sheet are <b>196px</b>; in the product they are 207px at a
+      944px window and <b>241px</b> once <span class="mono">.wrap</span> hits its 1080px max-width.
+    </p>
+  </div>
+
+  <!-- ============ EVERY STATE ============ -->
+  <div class="sec">
+    <h2>Every state the tile has</h2>
+    <div class="states">
+
+      <div>
+        <span class="cap">passed === true</span>
+        <div class="gate">
+          <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="var(--pos)" stroke-width="1.5" opacity=".4"/><path class="ck" d="M6.2 10.4l2.6 2.6L14 7.6" stroke="var(--pos)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <div><div class="t">İşlem günü</div><div class="d mono">20/10</div></div>
+        </div>
+        <div class="tok">ok() · <em>--pos #00d17a</em><br>ring op .4 · check w1.8<br>.ck draw .6s .5s ease</div>
+      </div>
+
+      <div>
+        <span class="cap">passed === false</span>
+        <div class="gate">
+          <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="var(--neg)" stroke-width="1.5" opacity=".4"/><path d="M7.4 7.4l5.2 5.2M12.6 7.4l-5.2 5.2" stroke="var(--neg)" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <div><div class="t">Sharpe</div><div class="d mono">-0.44 (gereken &gt; 1.0)</div></div>
+        </div>
+        <div class="tok">bad() · <em>--neg #ff5d6c</em><br>ring op .4 · cross w1.8<br>no animation</div>
+      </div>
+
+      <div>
+        <span class="cap">passed === null · pre-day-10</span>
+        <div class="gate">
+          <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="var(--ink3)" stroke-width="1.5" opacity=".5"/><path d="M6.5 10h7" stroke="var(--ink3)" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <div><div class="t">Maks. düşüş</div><div class="d mono">2.9% (gereken &lt; 15%)</div></div>
+        </div>
+        <div class="tok">pend() · <em>--ink3 #828b9a</em><br>ring op <em>.5</em> · dash w1.8<br>no animation</div>
+      </div>
+
+      <div>
+        <span class="cap">passed === null · no bench</span>
+        <div class="gate">
+          <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="var(--ink3)" stroke-width="1.5" opacity=".5"/><path d="M6.5 10h7" stroke="var(--ink3)" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <div><div class="t">SPY’ı geçiyor</div><div class="d mono">benchmark off</div></div>
+        </div>
+        <div class="tok">pend() · same icon<br>detail is a <em>literal</em>,<br>not a measurement</div>
+      </div>
+
+    </div>
+
+    <p class="note">
+      Three icons, four situations — the two <b>null</b> columns are the same <span class="mono">pend()</span>
+      and differ only in what the detail line carries. Not-yet-evaluable is never a hover, press or loading state:
+      it is the server saying <span class="mono">passed: null</span>, which happens when
+      <span class="mono">sc.days &lt; 10</span> (all three metric gates — sharpe, max_drawdown, beats_spy — pend
+      at once, and gate 1 shows <span class="mono">bad()</span> because its own
+      <span class="mono">passed = have_days = false</span>) or when
+      <span class="mono">sc.spy_return is None</span>.
+      <b>There is no hover, focus, pressed, disabled or skeleton state in the source</b> — the strip has no
+      <span class="mono">:hover</span> rule (unlike <span class="mono">.chip</span>), is not focusable, and
+      <span class="mono">render()</span> writes the whole grid in one <span class="mono">innerHTML</span> pass.
+      There is also <b>no empty state</b>: the web does <span class="mono">ev.gates.map(...)</span> unguarded,
+      while mobile gates the same list behind <span class="mono">evalData.gates?.length</span>.
+    </p>
+  </div>
+
+  <!-- ============ TWO MORE RENDERS ============ -->
+  <div class="sec">
+    <h2>Two more renders the same code path produces</h2>
+    <div class="duo">
+
+      <div class="demo">
+        <span class="cap">legacy payload · g.key absent</span>
+        <div class="gate">
+          <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="var(--pos)" stroke-width="1.5" opacity=".4"/><path class="ck" d="M6.2 10.4l2.6 2.6L14 7.6" stroke="var(--pos)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <div><div class="t">Beats SPY</div><div class="d mono">+9.1% vs +2.8%</div></div>
+        </div>
+        <div class="tok">label = <em>(g.key &amp;&amp; I18N[LANG]['g_'+g.key]) || g.name</em><br>
+          no key → the server's English <em>g.name</em><br>
+          in an otherwise Turkish strip</div>
+      </div>
+
+      <div class="demo">
+        <span class="cap">viewport ≤ 760px · 2-up</span>
+        <div class="gates-2up">
+          <div class="gate">
+            <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="var(--pos)" stroke-width="1.5" opacity=".4"/><path class="ck" d="M6.2 10.4l2.6 2.6L14 7.6" stroke="var(--pos)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <div><div class="t">İşlem günü</div><div class="d mono">20/10</div></div>
+          </div>
+          <div class="gate">
+            <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="var(--neg)" stroke-width="1.5" opacity=".4"/><path d="M7.4 7.4l5.2 5.2M12.6 7.4l-5.2 5.2" stroke="var(--neg)" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <div><div class="t">Sharpe</div><div class="d mono">-0.44 (gereken &gt; 1.0)</div></div>
+          </div>
+          <div class="gate">
+            <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="var(--pos)" stroke-width="1.5" opacity=".4"/><path class="ck" d="M6.2 10.4l2.6 2.6L14 7.6" stroke="var(--pos)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <div><div class="t">Maks. düşüş</div><div class="d mono">2.9% (gereken &lt; 15%)</div></div>
+          </div>
+          <div class="gate">
+            <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="var(--pos)" stroke-width="1.5" opacity=".4"/><path class="ck" d="M6.2 10.4l2.6 2.6L14 7.6" stroke="var(--pos)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <div><div class="t">SPY’ı geçiyor</div><div class="d mono">+9.1% vs +2.8%</div></div>
+          </div>
+        </div>
+        <div class="tok">product rule: <em>@media(max-width:760px)</em><br>
+          restated locally as <em>.gates-2up</em> — a viewport<br>
+          query cannot fire inside this 900px sheet</div>
+      </div>
+
+    </div>
+    <p class="note">
+      Neither block is a new component: both are <span class="mono">.gate</span> under different inputs.
+      The 2-up demo shows the <b>column count</b> only — its tiles are ~192px wide here, whereas the product's
+      are 332px at a 760px viewport, so lines wrap earlier in this sheet than they do on a real phone.
+      The label fallback is the one place the strip can print English inside the Turkish UI without it
+      being a bug: it is the deliberate guard for a server that predates the
+      <span class="mono">g_&lt;key&gt;</span> keys.
+    </p>
+  </div>
+
+  <!-- ============ ICON ANATOMY ============ -->
+  <div class="sec">
+    <h2>Icon anatomy — 20 × 20, viewBox 0 0 20 20, r 8.6</h2>
+    <div class="anat">
+
+      <div class="box">
+        <div class="row">
+          <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="var(--pos)" stroke-width="1.5" opacity=".4"/><path class="ck" d="M6.2 10.4l2.6 2.6L14 7.6" stroke="var(--pos)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <div><div class="nm">ok()</div><div class="sub">check draws in on mount</div></div>
+        </div>
+<pre><b>d</b>="M6.2 10.4l2.6 2.6L14 7.6"
+stroke=var(--pos) width 1.8
+linecap round · linejoin round
+circle r 8.6 w 1.5 opacity .4
+class="ck" → dasharray 30
+dashoffset 30 → 0</pre>
+      </div>
+
+      <div class="box">
+        <div class="row">
+          <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="var(--neg)" stroke-width="1.5" opacity=".4"/><path d="M7.4 7.4l5.2 5.2M12.6 7.4l-5.2 5.2" stroke="var(--neg)" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <div><div class="nm">bad()</div><div class="sub">one path, two strokes</div></div>
+        </div>
+<pre><b>d</b>="M7.4 7.4l5.2 5.2
+   M12.6 7.4l-5.2 5.2"
+stroke=var(--neg) width 1.8
+linecap round · <b>no linejoin</b>
+circle r 8.6 w 1.5 opacity .4</pre>
+      </div>
+
+      <div class="box">
+        <div class="row">
+          <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.6" stroke="var(--ink3)" stroke-width="1.5" opacity=".5"/><path d="M6.5 10h7" stroke="var(--ink3)" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <div><div class="nm">pend()</div><div class="sub">7-unit dash, centred</div></div>
+        </div>
+<pre><b>d</b>="M6.5 10h7"
+stroke=var(--ink3) width 1.8
+linecap round · <b>no linejoin</b>
+circle r 8.6 w 1.5 <b>opacity .5</b>
+(the other two use .4)</pre>
+      </div>
+
+    </div>
+    <p class="note">
+      The check is the same mark as the product logo (<span class="mono">M7 21l6-7 4 4 8-10</span>, viewBox
+      <span class="mono">0 0 32 32</span>, drawn at 22px in the top bar and as the favicon) redrawn
+      for a 20-unit box — not a scaled copy, and the stroke widths differ (2.6 vs 1.8).
+      <span class="mono">.ck</span> is the <b>only</b> motion in the tile, and it is <b>not</b> covered by the
+      <span class="mono">prefers-reduced-motion</span> block — that block names
+      <span class="mono">.rise</span>, <span class="mono">.tape-in</span> and <span class="mono">*{transition:none}</span>,
+      and <span class="mono">.ck</span> is an animation, not a transition, so the check still draws for a
+      reduced-motion user.
+    </p>
+  </div>
+
+  <!-- ============ WORDING RULE ============ -->
+  <div class="sec">
+    <h2>Wording rule — the detail line states the requirement, never a claim</h2>
+    <div class="rule">
+      <div class="h">Load-bearing. Comment lives at eval_report.py L322–323.</div>
+      <p>
+        The detail line is the only place a number and its threshold sit together, and it is read at a glance
+        next to a red cross. An earlier version rendered the comparison itself, so a <em>failing</em> Sharpe
+        printed a false proposition on the face of the card. The fix is to print the measurement, then the
+        requirement in parentheses — the sentence stays true no matter which icon is beside it.
+      </p>
+      <div class="ex">
+        <div><div class="l bad-l">was — asserts something false</div><div class="v">-0.44 &gt; 1.0</div></div>
+        <div><div class="l good-l">is — states the requirement</div><div class="v">-0.44 (need &gt; 1.0)</div></div>
+        <div><div class="l good-l">tr — only the phrase is swapped</div><div class="v">-0.44 (gereken &gt; 1.0)</div></div>
+      </div>
+      <p style="margin-top:12px">
+        Localisation is a literal two-token replace in <span class="mono">render()</span>:
+        <span class="mono">String(g.detail).replace('need &gt;',t('need_gt')).replace('need &lt;',t('need_lt'))</span> —
+        the number, the parentheses and the operator are the server's. Gate <em>names</em> go the other way:
+        translated from a stable <span class="mono">g_&lt;key&gt;</span> key, falling back to the server's English
+        <span class="mono">g.name</span> so an older deployment still renders a named gate.
+      </p>
+    </div>
+  </div>
+
+  <!-- ============ TOKENS ============ -->
+  <div class="sec">
+    <h2>Tokens — exact values</h2>
+    <table>
+      <thead><tr><th style="width:150px">Token</th><th style="width:190px">Value</th><th>Where</th></tr></thead>
+      <tbody>
+        <tr><td class="k">.gate bg</td><td class="v"><span class="sw" style="background:#15181d"></span>--s2 #15181d</td><td class="w">tile surface, one step above the card's --s1 #101216</td></tr>
+        <tr><td class="k">.gate border</td><td class="v">1px solid --hair rgba(255,255,255,.06)</td><td class="w">same hairline as the card it sits in</td></tr>
+        <tr><td class="k">.gate radius</td><td class="v">12px</td><td class="w">card is 16px, chip is 12px</td></tr>
+        <tr><td class="k">.gate padding</td><td class="v">12px 14px</td><td class="w">12px block is on the 4px grid; 14px inline is not</td></tr>
+        <tr><td class="k">.gate layout</td><td class="v">flex · align center · gap 10px</td><td class="w">icon and text block are vertically centred, not baseline-aligned</td></tr>
+        <tr><td class="k">.gate svg</td><td class="v">20px · flex 0 0 20px</td><td class="w">never shrinks when the detail line is long</td></tr>
+        <tr><td class="k">.gate .t</td><td class="v">12px / 600</td><td class="w">gate name; the rule sets size and weight only — colour --ink #eef0f3, --sans and line-height 1.45 are inherited from body</td></tr>
+        <tr><td class="k">.gate .d</td><td class="v">11px · --ink3 #828b9a</td><td class="w">detail; weight 400 inherited, always carries .mono + tabular-nums</td></tr>
+        <tr><td class="k">.gates grid</td><td class="v">repeat(4,1fr) · gap 10px</td><td class="w">repeat(2,1fr) at max-width 760px</td></tr>
+        <tr><td class="k">--pos</td><td class="v"><span class="sw" style="background:#00d17a"></span>#00d17a</td><td class="w">ok() ring + check</td></tr>
+        <tr><td class="k">--neg</td><td class="v"><span class="sw" style="background:#ff5d6c"></span>#ff5d6c</td><td class="w">bad() ring + cross</td></tr>
+        <tr><td class="k">--ink3</td><td class="v"><span class="sw" style="background:#828b9a"></span>#828b9a</td><td class="w">pend() ring + dash, every detail line, and the card header's .sub</td></tr>
+        <tr><td class="k">--mono</td><td class="v">ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace</td><td class="w">detail line only</td></tr>
+        <tr><td class="k">--sans</td><td class="v">-apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Inter, sans-serif</td><td class="w">gate name</td></tr>
+        <tr><td class="k">@keyframes draw</td><td class="v">.6s · .5s delay · ease · forwards</td><td class="w">dasharray 30 → dashoffset 30 to 0</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ============ NOTES ============ -->
+  <div class="sec">
+    <h2>What the tile cannot tell you</h2>
+    <ul class="n">
+      <li><b>Web and mobile do not share this component.</b> <span class="mono">settings.tsx</span> GateRow draws
+        the same three states as text glyphs — <span class="mono">○ ✓ ✗</span> at 13px / weight 800 in a 16px
+        column — in a different palette (<span class="mono">up #22c55e</span>,
+        <span class="mono">down #ef4444</span>, <span class="mono">textMuted #949494</span>) in a full-width row,
+        and renders the raw English <span class="mono">g.name</span> with no
+        <span class="mono">g_&lt;key&gt;</span> lookup, inside an otherwise Turkish screen.</li>
+      <li><b>The detail line's minus is ASCII.</b> <span class="mono">build_gates()</span> emits
+        <span class="mono">-0.44</span> (U+002D) and the dashboard passes it through untouched, while every other
+        number on the page goes through <span class="mono">sgn()</span> and gets a typographic
+        <span class="mono">−</span> (U+2212). The Sharpe gate and the Sharpe chip disagree on the same value.</li>
+      <li><b>Turkish percent formatting is bypassed.</b> The page has
+        <span class="mono">pctNum()</span> for the <span class="mono">%2.9</span> / <span class="mono">2.9%</span>
+        split, but gate details are server strings — so the max-drawdown tile reads
+        <span class="mono">2.9% (gereken &lt; 15%)</span> while the chip's threshold beside it reads
+        <span class="mono">eşik %15</span>. The chip's own <em>value</em>
+        (<span class="mono">ev.max_dd_pct.toFixed(1)+'%'</span>) skips
+        <span class="mono">pctNum()</span> too, so the same page shows both orders.</li>
+      <li><b><span class="mono">"benchmark off"</span> has no i18n key.</b> It stays English in the Turkish UI,
+        and it is the only detail string that is prose rather than a measurement.</li>
+      <li><b>Contrast — fixed, but unguarded on web.</b> <span class="mono">--ink3</span> is now
+        <span class="mono">#828b9a</span>: 5.18:1 on <span class="mono">--s2</span>, 5.45:1 on
+        <span class="mono">--s1</span>, 5.73:1 on <span class="mono">--bg</span>, so the 11px detail line clears
+        WCAG AA. The previous <span class="mono">#5d6673</span> was 3.06:1 on <span class="mono">--s2</span> and
+        failed. Mobile made the same move (<span class="mono">#666 → #949494</span>) and pinned it with
+        <span class="mono">utils/contrast.test.ts</span>; the web dashboard still has no equivalent guard, so
+        nothing stops the token drifting back.</li>
+      <li><b>Gate 1 fails rather than pends below day 10.</b> <span class="mono">passed = have_days</span>, so
+        while the other three sit at <span class="mono">null</span> the trading-days tile shows a red cross —
+        a strip that is mostly grey with one red mark is the normal pre-evaluation frame, not an error.</li>
+      <li><b>The strip and the verdict chip can disagree.</b> The Sharpe chip turns green at
+        <span class="mono">ev.sharpe &gt;= ev.gate_sharpe</span>; the gate passes only at
+        <span class="mono">sc.sharpe &gt; GATE_SHARPE</span>. At exactly 1.00 the chip is green and the gate is red.</li>
+      <li><b>The header and the first tile punctuate the same ratio differently.</b>
+        <span class="mono">#gdays</span> is built as
+        <span class="mono">ev.days+' / '+ev.days_required</span> → <span class="mono">20 / 10 gün</span>, while
+        the trading-days detail is <span class="mono">f"{sc.days}/{MIN_TRADING_DAYS}"</span> →
+        <span class="mono">20/10</span>. Two spellings of one number, 200px apart.</li>
+    </ul>
+  </div>
+
+</div>
+</body>
+</html>

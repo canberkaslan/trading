@@ -1,0 +1,954 @@
+<!-- @dsCard group="Foundations" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRADER — Colour</title>
+<style>
+  /* The :root block below is copied byte-for-byte from dashboard.html lines 11–18.
+     Everything after it is this card's own chrome, written in those tokens. */
+  :root{
+    color-scheme:dark;
+    --bg:#0a0b0d; --s1:#101216; --s2:#15181d; --s3:#1c2027;
+    --hair:rgba(255,255,255,.06); --hair2:rgba(255,255,255,.12);
+    --ink:#eef0f3; --ink2:#9aa3b2; --ink3:#828b9a;
+    --pos:#00d17a; --neg:#ff5d6c; --warn:#e2b93b; --bench:#767f8c;
+    --pos-dim:rgba(0,209,122,.12); --neg-dim:rgba(255,93,108,.12);
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,Inter,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{background:var(--bg)}
+  body{font-family:var(--sans);color:var(--ink);font-size:14px;line-height:1.45;
+    -webkit-font-smoothing:antialiased;background:var(--bg)}
+  .page{width:900px;margin:0 auto;padding:34px 28px 56px}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  h1{font-size:26px;font-weight:700;letter-spacing:-.01em;line-height:1.1}
+  .kicker{font-size:10.5px;font-weight:650;letter-spacing:.16em;text-transform:uppercase;color:var(--ink2)}
+  .lede{margin-top:10px;font-size:13.5px;color:var(--ink2);max-width:640px;line-height:1.6}
+  .cap{font-size:11.5px;color:var(--ink2);line-height:1.55}
+  .cap.dim{color:var(--ink3)}
+
+  .sect{margin-top:30px;border-top:1px solid var(--hair);padding-top:18px}
+  .sect > h2{font-size:12px;font-weight:650;letter-spacing:.1em;text-transform:uppercase;color:var(--ink2)}
+  .sect > .job{margin-top:4px;font-size:12px;color:var(--ink3);line-height:1.5}
+
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px;align-items:start}
+  .pane{border:1px solid var(--hair);border-radius:14px;padding:14px 15px 15px}
+  .pane.web{background:#0a0b0d}
+  .pane.mob{background:#0a0a0a}
+  .pane > .ph{display:flex;align-items:baseline;gap:8px;margin-bottom:11px}
+  .pane > .ph b{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase}
+  .pane.web .ph b{color:var(--pos)}
+  .pane.mob .ph b{color:#a855f7}
+  .pane > .ph span{font-size:10.5px;color:var(--ink3);font-family:var(--mono);margin-left:auto}
+
+  /* swatch rows */
+  .row{display:flex;gap:11px;padding:8px 0;border-top:1px solid var(--hair)}
+  .row:first-of-type{border-top:0;padding-top:2px}
+  .sw{flex:0 0 42px;height:42px;border-radius:9px;border:1px solid var(--hair2);position:relative;overflow:hidden}
+  .sw.alpha{background-image:linear-gradient(45deg,#1c2027 25%,transparent 25%),linear-gradient(-45deg,#1c2027 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#1c2027 75%),linear-gradient(-45deg,transparent 75%,#1c2027 75%);
+    background-size:10px 10px;background-position:0 0,0 5px,5px -5px,-5px 0}
+  .sw.alpha i{position:absolute;inset:0;display:block}
+  .meta{min-width:0;flex:1}
+  .tok{font-family:var(--mono);font-size:12.5px;font-weight:600;color:var(--ink)}
+  .val{font-family:var(--mono);font-size:11px;color:var(--ink2);margin-top:1px;font-variant-numeric:tabular-nums}
+  .use{font-size:11.5px;color:var(--ink3);margin-top:3px;line-height:1.45}
+  .cr{font-family:var(--mono);font-size:10.5px;color:var(--ink3);margin-top:2px}
+  .cr b{font-weight:650}
+  .fail{color:var(--neg)}
+  .pass{color:var(--pos)}
+
+  /* specimen strip */
+  .spec{display:flex;flex-wrap:wrap;gap:9px;align-items:center;margin:10px 0 4px}
+
+  /* .live — source rule, minus the .d::after pulse halo (animation omitted here) */
+  .live{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:600;
+    border-radius:999px;padding:5px 12px}
+  .live .d{width:7px;height:7px;border-radius:50%}
+  .live.go{color:var(--pos);background:var(--pos-dim)}.live.go .d{background:var(--pos)}
+  .live.nogo{color:var(--neg);background:var(--neg-dim)}.live.nogo .d{background:var(--neg)}
+  .live.wait{color:var(--warn);background:rgba(226,185,59,.12)}.live.wait .d{background:var(--warn)}
+
+  /* .rchip — source rule verbatim */
+  .rchip{display:inline-flex;justify-content:center;font-size:11px;font-weight:650;padding:4px 0;border-radius:7px;width:100px}
+  .rchip.b{color:var(--pos);background:var(--pos-dim)}
+  .rchip.h{color:var(--ink2);background:var(--s3)}
+  .rchip.s{color:var(--neg);background:var(--neg-dim)}
+
+  /* mobile mode chip — RN styles transcribed to CSS (px for pt, 1:1 at @1x) */
+  .mchip{border-radius:6px;padding:3px 8px;font-size:11px;font-weight:800;letter-spacing:.5px}
+  .mchip.paper{background:rgba(245, 158, 11, 0.15);color:#f59e0b}
+  .mchip.live{background:#ef4444;color:#ffffff}
+  .mchip.unk{background:#262626;color:#949494}
+
+  .strip{padding:6px 16px;font-size:11px;font-weight:600;display:flex;gap:10px;align-items:center;min-height:24px}
+
+  /* note callout */
+  .note{margin-top:12px;border:1px solid var(--hair2);border-radius:12px;background:var(--s1);padding:13px 15px}
+  .note b{font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--warn);display:block;margin-bottom:6px}
+  .note p{font-size:12px;color:var(--ink2);line-height:1.6}
+  .note code,.note .m{font-family:var(--mono);font-size:11.5px;color:var(--ink)}
+  .note.src{border-color:var(--hair);background:var(--s1)}
+  .note.src b{color:var(--ink2)}
+
+  /* comparison table */
+  table{width:100%;border-collapse:collapse;margin-top:12px}
+  th{font-size:10px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);
+    text-align:left;padding:0 10px 7px 0;border-bottom:1px solid var(--hair)}
+  td{padding:9px 10px 9px 0;border-bottom:1px solid var(--hair);vertical-align:top;font-size:12px;color:var(--ink2);line-height:1.5}
+  td.t{font-family:var(--mono);font-size:11.5px;color:var(--ink);white-space:nowrap}
+  td .dot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px;border:1px solid var(--hair2)}
+
+  .ramp{display:flex;gap:0;border-radius:10px;overflow:hidden;border:1px solid var(--hair2)}
+  .ramp div{flex:1;height:52px;display:flex;align-items:flex-end;justify-content:center;padding-bottom:5px;
+    font-family:var(--mono);font-size:9.5px;color:var(--ink3)}
+  .rlabels{display:flex;margin-top:5px}
+  .rlabels span{flex:1;text-align:center;font-family:var(--mono);font-size:10px;color:var(--ink2)}
+
+  .ribbon{display:flex;border-radius:2px;overflow:hidden;width:100%;height:10px}
+  .ribbon i{flex:1;background:#ef4444}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="kicker">Foundations</div>
+  <h1>Colour</h1>
+  <p class="lede">Two palettes ship in TRADER and they are not the same system. The web dashboard defines
+  seventeen CSS custom properties on <span class="mono">:root</span> in
+  <span class="mono">agent/api/static/dashboard.html</span> — fifteen colours plus two font stacks; the mobile
+  app exports thirteen constants from <span class="mono">mobile/app/src/theme/colors.ts</span>. Both are
+  dark-only: the dashboard declares <span class="mono">color-scheme:dark</span> and has no
+  <span class="mono">prefers-color-scheme</span> branch, and the mobile app never calls
+  <span class="mono">useColorScheme</span>. Every value below is copied from those two files.</p>
+
+  <!-- ══════════════ SURFACES ══════════════ -->
+  <div class="sect">
+    <h2>Surfaces</h2>
+    <div class="job">The stack a thing sits on. Web has a four-step ramp with a blue cast; mobile has a
+    three-step ramp of pure neutral grey. The two page grounds are almost — but not — the same colour:
+    <span class="mono">#0a0b0d</span> vs <span class="mono">#0a0a0a</span>, +1 green and +3 blue.</div>
+
+    <div class="two">
+      <div class="pane web">
+        <div class="ph"><b>Web dashboard</b><span>:root</span></div>
+
+        <div class="row">
+          <div class="sw" style="background:#0a0b0d"></div>
+          <div class="meta">
+            <div class="tok">--bg</div>
+            <div class="val">#0a0b0d</div>
+            <div class="use">Page ground (set on <span class="mono">html</span>, not
+            <span class="mono">body</span>). Also <span class="mono">meta theme-color</span>, the favicon plate,
+            the sticky top bar at <span class="mono">rgba(10,11,13,.75)</span> + 14px backdrop blur, and the
+            stroke around both crosshair dots.</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw" style="background:#101216"></div>
+          <div class="meta">
+            <div class="tok">--s1</div>
+            <div class="val">#101216</div>
+            <div class="use">Card and stat-chip fill. <span class="mono">.card</span>, <span class="mono">.chip</span>.</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw" style="background:#15181d"></div>
+          <div class="meta">
+            <div class="tok">--s2</div>
+            <div class="val">#15181d</div>
+            <div class="use">Inset panel inside a card — gate tiles, lesson takeaway box, auth input field.
+            Also the low stop of the skeleton shimmer.</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw" style="background:#1c2027"></div>
+          <div class="meta">
+            <div class="tok">--s3</div>
+            <div class="val">#1c2027</div>
+            <div class="use">Top-most control fill: selected period tab, avatar plate, P&amp;L bar track,
+            tooltip body, HOLD chip, learn progress track, unsolved lesson dot, the logo plate in both inline
+            marks.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pane mob">
+        <div class="ph"><b>Mobile</b><span>colors.ts</span></div>
+
+        <div class="row">
+          <div class="sw" style="background:#0a0a0a"></div>
+          <div class="meta">
+            <div class="tok">background</div>
+            <div class="val">#0a0a0a</div>
+            <div class="use">Screen ground on every tab and on the tab layout itself. Also the resting
+            StatusBanner strip.</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw" style="background:#171717"></div>
+          <div class="meta">
+            <div class="tok">surface</div>
+            <div class="val">#171717</div>
+            <div class="use">Card fill. Roughly the job of <span class="mono">--s1</span>.</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw" style="background:#262626"></div>
+          <div class="meta">
+            <div class="tok">surfaceElevated</div>
+            <div class="val">#262626</div>
+            <div class="use">Does two jobs at once. Raised fill — active segment and period pills, unknown-mode
+            badge, learn progress track and takeaway box, the ErrorState retry button. And every neutral rule in
+            the app: seven <span class="mono">borderTopColor</span> /
+            <span class="mono">borderBottomColor</span> sites. Lightest background in the app; the contrast
+            floor is measured against it.</div>
+          </div>
+        </div>
+        <div class="row" style="opacity:.85">
+          <div class="sw" style="background:#0a0a0a;border-style:dashed"></div>
+          <div class="meta">
+            <div class="tok">— no fourth step —</div>
+            <div class="val">n/a</div>
+            <div class="use">Mobile has no equivalent of <span class="mono">--s3</span>. Where web reaches for a
+            fourth surface, mobile reuses <span class="mono">surfaceElevated</span> — which is why that one
+            token has to be both the raised fill and the line drawn on top of it.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:14px" class="two">
+      <div>
+        <div class="ramp">
+          <div style="background:#0a0b0d"></div><div style="background:#101216"></div>
+          <div style="background:#15181d"></div><div style="background:#1c2027"></div>
+        </div>
+        <div class="rlabels"><span>0a0b0d</span><span>101216</span><span>15181d</span><span>1c2027</span></div>
+        <div class="cap dim" style="margin-top:6px">Web ramp — blue-shifted, four steps.</div>
+      </div>
+      <div>
+        <div class="ramp">
+          <div style="background:#0a0a0a"></div><div style="background:#171717"></div>
+          <div style="background:#262626"></div>
+        </div>
+        <div class="rlabels"><span>0a0a0a</span><span>171717</span><span>262626</span></div>
+        <div class="cap dim" style="margin-top:6px">Mobile ramp — neutral grey, three steps, larger jumps.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ HAIRLINES ══════════════ -->
+  <div class="sect">
+    <h2>Hairlines &amp; separation</h2>
+    <div class="job">Web separates with translucent white so borders stay correct on any surface in the ramp.
+    Mobile has no border token at all — it borrows a surface colour instead.</div>
+
+    <div class="two">
+      <div class="pane web">
+        <div class="ph"><b>Web dashboard</b><span>alpha on white</span></div>
+        <div class="row">
+          <div class="sw alpha"><i style="background:rgba(255,255,255,.06)"></i></div>
+          <div class="meta">
+            <div class="tok">--hair</div>
+            <div class="val">rgba(255,255,255,.06)</div>
+            <div class="use">Default 1px border: cards, chips, gate tiles, table rules, top bar and ticker underline.</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw alpha"><i style="background:rgba(255,255,255,.12)"></i></div>
+          <div class="meta">
+            <div class="tok">--hair2</div>
+            <div class="val">rgba(255,255,255,.12)</div>
+            <div class="use">Emphasised border: icon buttons, the <span class="mono">PAPER</span> mode tag, quiz
+            options, tooltip, chart zero-line and crosshair, and the stat-chip hover state
+            (<span class="mono">.chip:hover</span> — cards themselves have no hover).</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw alpha"><i style="background:rgba(255,255,255,.02)"></i></div>
+          <div class="meta">
+            <div class="tok">(literal) four more alphas</div>
+            <div class="val">.02 · .012 · .22 · .25</div>
+            <div class="use">Not tokenised: table row hover <span class="mono">rgba(255,255,255,.02)</span>,
+            ticker-tape ground <span class="mono">.012</span>, icon-button hover border
+            <span class="mono">.22</span>, quiz-option hover border <span class="mono">.25</span>. Two of the
+            four are hover borders that step past <span class="mono">--hair2</span> without a name.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pane mob">
+        <div class="ph"><b>Mobile</b><span>no border token</span></div>
+        <div class="row">
+          <div class="sw" style="background:#262626"></div>
+          <div class="meta">
+            <div class="tok">surfaceElevated <span style="color:var(--ink3);font-weight:400">as border</span></div>
+            <div class="val">#262626 — opaque</div>
+            <div class="use">The neutral rule everywhere: the EquityChart and Charts-tab chart baselines
+            (<span class="mono">borderBottomColor</span>), the section rules in learn / agents / ask / settings /
+            portfolio (<span class="mono">borderTopColor</span>), and the resting quiz-option border. Because it
+            is opaque, it reads correctly only on <span class="mono">background</span> and
+            <span class="mono">surface</span> — it disappears on itself.</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw" style="background:#22c55e"></div>
+          <div class="meta">
+            <div class="tok">semantic-coloured borders</div>
+            <div class="val">colors.up / colors.down</div>
+            <div class="use">Once answered, a quiz option swaps its neutral border for the P&amp;L colour
+            (<span class="mono">optionRight { borderColor: colors.up }</span>), and the α chip in EquityChart
+            takes its border from the sign of the excess return.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ INK ══════════════ -->
+  <div class="sect">
+    <h2>Ink</h2>
+    <div class="job">Three text weights on each platform, same shape, different greys. Contrast measured
+    against each palette's own page ground, and against the lightest surface it can land on.</div>
+
+    <div class="two">
+      <div class="pane web">
+        <div class="ph"><b>Web dashboard</b><span>on #0a0b0d</span></div>
+        <div class="row">
+          <div class="sw" style="background:#eef0f3"></div>
+          <div class="meta">
+            <div class="tok">--ink</div>
+            <div class="val">#eef0f3</div>
+            <div class="use">Body default and every number that matters — hero equity, chip values, selected tab.</div>
+            <div class="cr"><b class="pass">17.25:1</b> on --bg &nbsp;·&nbsp; 14.31:1 on --s3</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw" style="background:#9aa3b2"></div>
+          <div class="meta">
+            <div class="tok">--ink2</div>
+            <div class="val">#9aa3b2</div>
+            <div class="use">Secondary text: card headings, ticker prices, HOLD chip label, icon-button rest colour.</div>
+            <div class="cr"><b class="pass">7.74:1</b> on --bg &nbsp;·&nbsp; 6.42:1 on --s3</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw" style="background:#828b9a"></div>
+          <div class="meta">
+            <div class="tok">--ink3</div>
+            <div class="val">#828b9a</div>
+            <div class="use">Muted: eyebrow labels, timestamps, table headers, unit sub-labels, footer,
+            unselected period tabs, the PAPER tag, the pending-gate icon stroke.</div>
+            <div class="cr"><b class="pass">5.73:1</b> on --bg &nbsp;·&nbsp; 5.45:1 on --s1
+            &nbsp;·&nbsp; 5.18:1 on --s2 &nbsp;·&nbsp; <b class="pass">4.75:1</b> on --s3</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pane mob">
+        <div class="ph"><b>Mobile</b><span>on #0a0a0a</span></div>
+        <div class="row">
+          <div class="sw" style="background:#ffffff"></div>
+          <div class="meta">
+            <div class="tok">textPrimary</div>
+            <div class="val">#ffffff</div>
+            <div class="use">Pure white, not an off-white. Headline values, the LIVE mode chip label, the
+            notification badge count.</div>
+            <div class="cr"><b class="pass">19.80:1</b> on bg &nbsp;·&nbsp; 15.13:1 on surfaceElevated</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw" style="background:#a3a3a3"></div>
+          <div class="meta">
+            <div class="tok">textSecondary</div>
+            <div class="val">#a3a3a3</div>
+            <div class="use">Labels, EmptyState titles, and the Hold rating. Also doubles as the benchmark
+            colour in EquityChart — see Benchmark below.</div>
+            <div class="cr"><b class="pass">7.85:1</b> on bg &nbsp;·&nbsp; 7.11:1 on surface
+            &nbsp;·&nbsp; 6.00:1 on surfaceElevated</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw" style="background:#949494"></div>
+          <div class="meta">
+            <div class="tok">textMuted</div>
+            <div class="val">#949494</div>
+            <div class="use">Most-used token in the app (69 call sites): captions, legends, empty-state hints,
+            every legal disclaimer, the Haiku model badge, unknown-mode chip text, and the "connecting…" state
+            in StatusBanner.</div>
+            <div class="cr"><b class="pass">6.53:1</b> on bg &nbsp;·&nbsp; 5.91:1 on surface
+            &nbsp;·&nbsp; <b class="pass">4.99:1</b> on surfaceElevated</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="note">
+      <b>Both muted greys were raised — only one of them is guarded</b>
+      <p>The comment in <span class="mono">colors.ts</span> is a record of the mobile fix:</p>
+      <p style="margin-top:6px"><span class="m">// WCAG AA (4.5:1) on all app backgrounds — #666 was 3.4:1 (fail).</span><br>
+      <span class="m">// #949494 → 5.0:1 on the lightest surface (#262626), 6.5:1 on #0a0a0a,</span><br>
+      <span class="m">// still visibly dimmer than textSecondary. Guarded by utils/contrast.test.ts.</span></p>
+      <p style="margin-top:9px">That guard is real. <span class="mono">src/utils/contrast.test.ts</span> asserts
+      every text token against all three mobile backgrounds, keeps a regression case
+      <span class="mono">meetsAA('#666666', colors.background) === false</span>, and walks
+      <span class="mono">app/</span> and <span class="mono">src/components/</span> for screens that hard-code
+      <span class="mono">color: '#555'</span> or <span class="mono">'#666'</span>.</p>
+      <p style="margin-top:9px">The web dashboard has since had the same fix applied by hand:
+      <span class="mono">--ink3</span> moved from <span class="mono">#5d6673</span>
+      (<span class="mono fail">3.39:1</span> on <span class="mono">--bg</span>) to
+      <span class="mono">#828b9a</span>, which clears AA on all four web surfaces — the tightest being
+      <span class="mono pass">4.75:1</span> on <span class="mono">--s3</span>.
+      <strong style="color:var(--ink)">What web still lacks is the guard</strong>: there is no contrast test on
+      the web side, so nothing stops the next tweak from walking the value back down.</p>
+    </div>
+  </div>
+
+  <!-- ══════════════ SEMANTIC ══════════════ -->
+  <div class="sect">
+    <h2>Semantic — P&amp;L and state</h2>
+    <div class="job">Both palettes follow the US/TR convention, green up / red down, but pick different
+    greens and different reds. Web's green is a saturated mint; mobile's is Tailwind green-500.</div>
+
+    <div class="two">
+      <div class="pane web">
+        <div class="ph"><b>Web dashboard</b><span>3 states</span></div>
+        <div class="row">
+          <div class="sw" style="background:#00d17a"></div>
+          <div class="meta">
+            <div class="tok">--pos</div>
+            <div class="val">#00d17a</div>
+            <div class="use">Gain, BUY chip, correct answer, passing gate, focus ring, logo stroke, auth submit
+            button fill, solved-lesson dot.</div>
+            <div class="cr">9.75:1 on --bg &nbsp;·&nbsp; 9.29:1 on --s1</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw" style="background:#ff5d6c"></div>
+          <div class="meta">
+            <div class="tok">--neg</div>
+            <div class="val">#ff5d6c</div>
+            <div class="use">Loss, SELL chip, wrong answer, failing gate, the error banner, the auth error line.</div>
+            <div class="cr">6.60:1 on --bg &nbsp;·&nbsp; 6.28:1 on --s1</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw" style="background:#e2b93b"></div>
+          <div class="meta">
+            <div class="tok">--warn</div>
+            <div class="val">#e2b93b</div>
+            <div class="use">The WAIT verdict pill and the concentration risk flags. There is no separate danger
+            token on web — <span class="mono">--neg</span> carries both "down" and "error".</div>
+            <div class="cr">10.53:1 on --bg</div>
+          </div>
+        </div>
+        <div class="spec">
+          <span class="live go"><i class="d"></i>LIVE</span>
+          <span class="live nogo"><i class="d"></i>NO-GO</span>
+          <span class="live wait"><i class="d"></i>WAIT</span>
+        </div>
+        <div class="cap dim">The <span class="mono">.live</span> verdict pill — 12px / 600, radius 999px,
+        padding 5px 12px, 7px dot; fill is the matching dim token. The source dot also carries a
+        <span class="mono">::after</span> halo that pulses on a 2s loop (suppressed under
+        <span class="mono">prefers-reduced-motion</span>); it is left off this static specimen.</div>
+        <div class="spec" style="margin-top:10px">
+          <span class="rchip b">BUY</span><span class="rchip h">HOLD</span><span class="rchip s">SELL</span>
+        </div>
+        <div class="cap dim">Decision chips, source rule verbatim — 11px / 650, radius 7px, padding 4px 0,
+        fixed 100px width. HOLD is the only one with a neutral fill (<span class="mono">--s3</span>) and
+        <span class="mono">--ink2</span> text. Only three classes exist for the five ratings the API returns:
+        Buy and Overweight both take <span class="mono">.b</span>, Sell and Underweight both take
+        <span class="mono">.s</span>.</div>
+      </div>
+
+      <div class="pane mob">
+        <div class="ph"><b>Mobile</b><span>4 states</span></div>
+        <div class="row">
+          <div class="sw" style="background:#22c55e"></div>
+          <div class="meta">
+            <div class="tok">up</div>
+            <div class="val">#22c55e</div>
+            <div class="use">Gain, Buy rating, positive α chip, correct quiz option, RUN kill-switch state,
+            the "bağlı" status line, order-filled notifications, the approve-order primary button. Also the
+            Android notification LED colour in <span class="mono">src/notifications/index.ts</span>.</div>
+            <div class="cr">8.69:1 on bg &nbsp;·&nbsp; 6.64:1 on surfaceElevated</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw" style="background:#ef4444"></div>
+          <div class="meta">
+            <div class="tok">down</div>
+            <div class="val">#ef4444</div>
+            <div class="use">Loss, Sell rating, wrong quiz option, FLATTEN kill-switch state, the drawdown
+            ribbon, the unread-notification badge, and the solid LIVE-mode chip fill in StatusBanner.</div>
+            <div class="cr">5.26:1 on bg &nbsp;·&nbsp; 4.76:1 on surface &nbsp;·&nbsp;
+            <span class="fail">4.02:1</span> on surfaceElevated</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw" style="background:#f59e0b"></div>
+          <div class="meta">
+            <div class="tok">warning</div>
+            <div class="val">#f59e0b</div>
+            <div class="use">PAPER mode chip, the retrying / degraded status lines, stale-data notice,
+            blocked-allocation bar, PAUSE kill-switch state, TOO EARLY verdict, permission-undetermined text.</div>
+            <div class="cr">9.22:1 on bg &nbsp;·&nbsp; 7.05:1 on surfaceElevated</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw" style="background:#ef4444"></div>
+          <div class="meta">
+            <div class="tok">danger</div>
+            <div class="val">#ef4444 — identical to <span style="color:var(--ink2)">down</span></div>
+            <div class="use">ErrorState title and inline API errors. A distinct name for the same hex, so error
+            styling can diverge from P&amp;L later without a rename. Only 4 call sites.</div>
+          </div>
+        </div>
+        <div class="spec">
+          <span class="mchip paper">PAPER</span>
+          <span class="mchip live">LIVE — GERÇEK PARA</span>
+          <span class="mchip unk">MOD ?</span>
+        </div>
+        <div class="cap dim">The three StatusBanner mode chips, with their real labels — 11px / 800,
+        letterSpacing 0.5, radius 6, padding 3×8. Mode is tri-state on purpose: with no data from the backend
+        the chip says <span class="mono">MOD ?</span> rather than asserting PAPER. PAPER is a 15% tint of
+        <span class="mono">warning</span>; LIVE is solid <span class="mono">down</span> with
+        <span class="mono">textPrimary</span> on top — <span class="mono fail">3.76:1</span>, the one place a
+        shipped label misses AA, and outside what <span class="mono">contrast.test.ts</span> checks because the
+        guard only measures text against the three <em>backgrounds</em>, never against a coloured fill.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ TINTS ══════════════ -->
+  <div class="sect">
+    <h2>Semantic tints</h2>
+    <div class="job">The translucent fill behind a coloured label. Web tokenises two and inlines three; mobile
+    tokenises none.</div>
+
+    <div class="two">
+      <div class="pane web">
+        <div class="ph"><b>Web dashboard</b><span>2 tokens + 3 literals</span></div>
+        <div class="row">
+          <div class="sw alpha"><i style="background:rgba(0,209,122,.12)"></i></div>
+          <div class="meta">
+            <div class="tok">--pos-dim</div>
+            <div class="val">rgba(0,209,122,.12)</div>
+            <div class="use">LIVE pill, BUY chip, correct quiz option fill.</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw alpha"><i style="background:rgba(255,93,108,.12)"></i></div>
+          <div class="meta">
+            <div class="tok">--neg-dim</div>
+            <div class="val">rgba(255,93,108,.12)</div>
+            <div class="use">NO-GO pill, SELL chip, wrong quiz option, error banner ground.</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw alpha"><i style="background:rgba(226,185,59,.12)"></i></div>
+          <div class="meta">
+            <div class="tok">(literal) warn tint</div>
+            <div class="val">rgba(226,185,59,.12)</div>
+            <div class="use">There is no <span class="mono">--warn-dim</span>. The WAIT pill inlines the value,
+            breaking the pattern the other two set.</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw alpha"><i style="background:rgba(255,93,108,.35)"></i></div>
+          <div class="meta">
+            <div class="tok">(literal) error border</div>
+            <div class="val">rgba(255,93,108,.35)</div>
+            <div class="use">Border of <span class="mono">#err</span> only.</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw alpha"><i style="background:rgba(0,209,122,.055)"></i></div>
+          <div class="meta">
+            <div class="tok">(literal) hero glow</div>
+            <div class="val">rgba(0,209,122,.055)</div>
+            <div class="use">Fixed radial gradient on <span class="mono">body::before</span> —
+            <span class="mono">radial-gradient(55% 60% at 50% 8%, …, transparent 70%)</span>.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pane mob">
+        <div class="ph"><b>Mobile</b><span>inline rgba + opaque</span></div>
+        <div class="row">
+          <div class="sw alpha"><i style="background:rgba(245, 158, 11, 0.15)"></i></div>
+          <div class="meta">
+            <div class="tok">modeChipPaper</div>
+            <div class="val">rgba(245, 158, 11, 0.15)</div>
+            <div class="use">PAPER chip ground, written inline in StatusBanner.tsx. 15%, not web's 12%.</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw alpha"><i style="background:rgba(34,197,94,0.10)"></i></div>
+          <div class="meta">
+            <div class="tok">optionRight</div>
+            <div class="val">rgba(34,197,94,0.10)</div>
+            <div class="use">Correct quiz option in learn.tsx. 10%.</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw alpha"><i style="background:rgba(239,68,68,0.10)"></i></div>
+          <div class="meta">
+            <div class="tok">optionWrong</div>
+            <div class="val">rgba(239,68,68,0.10)</div>
+            <div class="use">Wrong quiz option. 10%.</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw alpha"><i style="background:rgba(239,68,68,.45)"></i></div>
+          <div class="meta">
+            <div class="tok">(opacity) drawdown ribbon</div>
+            <div class="val">down @ 0.12 → 0.80</div>
+            <div class="use">EquityChart tints each ribbon cell
+            <span class="mono">0.12 + 0.68 × ddIntensity(…)</span> — a continuous ramp off
+            <span class="mono">colors.down</span>, not a fixed tint. The equity bars above it are the same
+            token at a flat <span class="mono">0.45</span>, and the portfolio legend dot at
+            <span class="mono">0.6</span>.</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw" style="background:#450a0a"></div>
+          <div class="meta">
+            <div class="tok">stripLive</div>
+            <div class="val">#450a0a — opaque</div>
+            <div class="use">StatusBanner ground when the account is in LIVE mode. Solid, not a tint.</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw" style="background:#451a03"></div>
+          <div class="meta">
+            <div class="tok">stripDegraded</div>
+            <div class="val">#451a03 — opaque</div>
+            <div class="use">StatusBanner ground when the backend reports degraded, or after two consecutive
+            failed polls — and only while not in LIVE mode, which outranks it.</div>
+          </div>
+        </div>
+        <div class="spec" style="margin-top:12px">
+          <div class="strip" style="background:#450a0a;width:100%">
+            <span class="mchip live">LIVE — GERÇEK PARA</span>
+            <span style="font-size:11px;font-weight:600;color:#22c55e">● bağlı</span>
+          </div>
+        </div>
+        <div class="cap dim">The LIVE strip: <span class="mono">#450a0a</span> ground, the solid mode chip, and
+        the connection line in <span class="mono">up</span> (<span class="mono">7.08:1</span> there). Square and
+        full-bleed in the app, padded 16 across and 6 below the safe-area inset.</div>
+        <div class="spec" style="margin-top:10px;display:block">
+          <div class="ribbon">
+            <i style="opacity:.12"></i><i style="opacity:.12"></i><i style="opacity:.20"></i><i style="opacity:.34"></i>
+            <i style="opacity:.52"></i><i style="opacity:.80"></i><i style="opacity:.61"></i><i style="opacity:.40"></i>
+            <i style="opacity:.24"></i><i style="opacity:.12"></i><i style="opacity:.12"></i><i style="opacity:.12"></i>
+          </div>
+        </div>
+        <div class="cap dim">The drawdown ribbon at its two ends and the range between.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ BENCHMARK ══════════════ -->
+  <div class="sect">
+    <h2>Benchmark</h2>
+    <div class="job">The SPY comparison line. Deliberately achromatic on web so it never reads as a P&amp;L
+    signal. Mobile has no token for it.</div>
+
+    <div class="two">
+      <div class="pane web">
+        <div class="ph"><b>Web dashboard</b><span>dedicated token</span></div>
+        <div class="row">
+          <div class="sw" style="background:#767f8c"></div>
+          <div class="meta">
+            <div class="tok">--bench</div>
+            <div class="val">#767f8c</div>
+            <div class="use">SPY path stroke (1.5px, opacity .8), the inline "SPY −0.4%" end label in
+            <span class="mono">--mono</span> at 11px, the legend swatch on the SPY toggle, the SPY row swatch
+            inside the tooltip, and the second crosshair dot (r=4, stroked 1.6px in
+            <span class="mono">--bg</span>).</div>
+            <div class="cr"><b class="pass">4.86:1</b> on --bg (the end label — text)
+            &nbsp;·&nbsp; 4.03:1 on --s3 (the tooltip swatch — non-text, 3:1 bar)</div>
+          </div>
+        </div>
+        <div class="spec">
+          <svg width="180" height="40" viewBox="0 0 180 40" aria-hidden="true">
+            <path d="M2 30 L34 24 L66 27 L98 15 L130 18 L166 6" fill="none" stroke="#00d17a" stroke-width="2.4"
+                  stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M2 32 L34 31 L66 28 L98 29 L130 24 L166 22" fill="none" stroke="#767f8c" stroke-width="1.5"
+                  opacity=".8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="cap dim">Equity in <span class="mono">--pos</span> at 2.4 over benchmark in
+          <span class="mono">--bench</span> at 1.5 / opacity .8 — the source stroke widths. The live chart also
+          runs the equity path through a <span class="mono">feGaussianBlur</span> glow filter.</span>
+        </div>
+      </div>
+
+      <div class="pane mob">
+        <div class="ph"><b>Mobile</b><span>borrowed</span></div>
+        <div class="row">
+          <div class="sw" style="background:#a3a3a3"></div>
+          <div class="meta">
+            <div class="tok">textSecondary <span style="color:var(--ink3);font-weight:400">used as benchmark</span></div>
+            <div class="val">#a3a3a3</div>
+            <div class="use">EquityChart draws the SPY overlay as 3pt marker dots and its legend swatch with
+            <span class="mono">backgroundColor: colors.textSecondary</span>. There is no
+            <span class="mono">benchmark</span> export in colors.ts, so the benchmark cannot be re-tuned without
+            moving body text with it.</div>
+          </div>
+        </div>
+        <div class="note src" style="margin-top:10px">
+          <b>Missing token</b>
+          <p>This is the clearest gap between the two palettes: web treats the benchmark as a first-class
+          semantic colour, mobile treats it as text.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ ACCENT ══════════════ -->
+  <div class="sect">
+    <h2>Accent</h2>
+    <div class="job">The interactive / brand colour. This is where the two palettes disagree most visibly:
+    web has no accent token and reuses the positive green; mobile ships a purple that appears nowhere on web.</div>
+
+    <div class="two">
+      <div class="pane web">
+        <div class="ph"><b>Web dashboard</b><span>no accent token</span></div>
+        <div class="row">
+          <div class="sw" style="background:#00d17a"></div>
+          <div class="meta">
+            <div class="tok">--pos <span style="color:var(--ink3);font-weight:400">doing accent duty</span></div>
+            <div class="val">#00d17a</div>
+            <div class="use">Focus ring
+            (<span class="mono">:focus-visible{outline:2px solid var(--pos);outline-offset:2px;border-radius:4px}</span>),
+            logo chart stroke, header glow, the auth input's focused border, the auth submit button. Brand and
+            "gain" are the same colour, so a focus ring on a losing row still reads green.</div>
+          </div>
+        </div>
+        <div class="spec" style="gap:12px">
+          <svg width="34" height="34" viewBox="0 0 32 32" aria-hidden="true">
+            <rect width="32" height="32" rx="8" fill="#1c2027"/>
+            <path d="M7 21l6-7 4 4 8-10" stroke="#00d17a" stroke-width="2.6" fill="none"
+                  stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="cap dim">The product mark — <span class="mono">--s3</span> plate, radius 8,
+          <span class="mono">--pos</span> stroke at 2.6. Drawn here at 34px; the source renders the same
+          geometry at 22px in the top bar and 30px in the auth card, and the favicon swaps the plate to
+          <span class="mono">--bg</span>.</span>
+        </div>
+      </div>
+
+      <div class="pane mob">
+        <div class="ph"><b>Mobile</b><span>purple</span></div>
+        <div class="row">
+          <div class="sw" style="background:#a855f7"></div>
+          <div class="meta">
+            <div class="tok">accent</div>
+            <div class="val">#a855f7</div>
+            <div class="use">Every affordance: link and back text, primary button fill, active range chip,
+            the Charts tab's pull-to-refresh spinner (the other tabs use a white one), learn progress fill,
+            allocation bar fill and the realised-P&amp;L split, the Opus model badge, and two notification
+            categories. 24 call sites.</div>
+            <div class="cr">5.00:1 on bg &nbsp;·&nbsp; 4.53:1 on surface &nbsp;·&nbsp;
+            <span class="fail">3.82:1</span> on surfaceElevated</div>
+          </div>
+        </div>
+        <div class="spec">
+          <span style="background:#a855f7;color:#ffffff;border-radius:12px;padding:8px 20px;font-size:15px;font-weight:700">Analiz et</span>
+          <span style="color:#a855f7;font-size:13px;font-weight:600">Detay →</span>
+          <span style="background:#a855f7;border-radius:6px;padding:3px 8px;font-size:11px;font-weight:800;color:#ffffff">Opus</span>
+        </div>
+        <div class="cap dim">Purple keeps "tappable" separate from "profitable" — the split web does not make.
+        White on the filled button is <span class="mono fail">3.96:1</span>; like the LIVE chip, it is text on a
+        coloured fill, which the contrast suite never looks at.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ COLOURBLIND ══════════════ -->
+  <div class="sect">
+    <h2>Colourblind-safe pair</h2>
+    <div class="job">Blue/orange alternates for the green/red P&amp;L pair. Mobile only.</div>
+
+    <div class="two">
+      <div class="pane mob">
+        <div class="ph"><b>Mobile</b><span>exported, unused</span></div>
+        <div class="row">
+          <div class="sw" style="background:#3b82f6"></div>
+          <div class="meta">
+            <div class="tok">upCB</div>
+            <div class="val">#3b82f6</div>
+            <div class="use">Colourblind-safe substitute for <span class="mono">up</span>.</div>
+            <div class="cr">5.38:1 on bg &nbsp;·&nbsp; <span class="fail">4.11:1</span> on surfaceElevated</div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="sw" style="background:#f97316"></div>
+          <div class="meta">
+            <div class="tok">downCB</div>
+            <div class="val">#f97316</div>
+            <div class="use">Colourblind-safe substitute for <span class="mono">down</span>.</div>
+            <div class="cr">7.06:1 on bg &nbsp;·&nbsp; 5.40:1 on surfaceElevated</div>
+          </div>
+        </div>
+        <div class="spec">
+          <svg width="200" height="46" viewBox="0 0 200 46" aria-hidden="true">
+            <rect x="0" y="26" width="26" height="16" rx="3" fill="#22c55e"/>
+            <rect x="32" y="14" width="26" height="28" rx="3" fill="#22c55e"/>
+            <rect x="64" y="30" width="26" height="12" rx="3" fill="#ef4444"/>
+            <rect x="110" y="26" width="26" height="16" rx="3" fill="#3b82f6"/>
+            <rect x="142" y="14" width="26" height="28" rx="3" fill="#3b82f6"/>
+            <rect x="174" y="30" width="26" height="12" rx="3" fill="#f97316"/>
+          </svg>
+        </div>
+        <div class="cap dim">Left: shipped <span class="mono">up</span>/<span class="mono">down</span>.
+        Right: the <span class="mono">CB</span> pair as it would look in EquityChart.</div>
+      </div>
+
+      <div class="pane" style="background:var(--s1)">
+        <div class="ph"><b style="color:var(--warn)">State not implemented</b><span>grep: 0 hits</span></div>
+        <p class="cap" style="line-height:1.65">There is no third state to show here, because nothing consumes
+        these tokens. <span class="mono">upCB</span> and <span class="mono">downCB</span> appear in
+        <span class="mono">colors.ts</span> and nowhere else in <span class="mono">mobile/app/src</span> or
+        <span class="mono">mobile/app/app</span> — no toggle in <span class="mono">settings.tsx</span>, no
+        preference in storage, no branch in EquityChart. They satisfy
+        <span class="mono">docs/RESEARCH.md</span> §5, decision 5 ("Provide colorblind-safe (blue/orange)
+        variant") as a declaration only.</p>
+        <p class="cap" style="margin-top:10px;line-height:1.65">The web dashboard has no equivalent tokens at all,
+        so this accommodation would not carry across platforms even once mobile wires it up.</p>
+        <p class="cap" style="margin-top:10px;line-height:1.65">Meanwhile the one hex that <em>does</em> ship —
+        <span class="mono">#3b82f6</span> on the Sonnet model badge — is written as a literal in two screens
+        rather than as <span class="mono">upCB</span>. See the off-token table.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ OFF-TOKEN ══════════════ -->
+  <div class="sect">
+    <h2>Colours in the source that are not in either palette</h2>
+    <div class="job">Values hard-coded at the call site. They are shipped, so they belong on the card, but
+    nothing governs them.</div>
+
+    <table>
+      <thead><tr><th style="width:150px">Value</th><th style="width:130px">Where</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="t"><span class="dot" style="background:#3987e5"></span>#3987e5<br>
+              <span class="dot" style="background:#6ea4ec"></span>#6ea4ec<br>
+              <span class="dot" style="background:#a7c4f2"></span>#a7c4f2<br>
+              <span class="dot" style="background:#3a414c"></span>#3a414c</td>
+          <td class="t">dashboard.html<br>allocation bar</td>
+          <td>A three-step blue ramp for the top-3 holdings plus a grey for "Other", declared inline as
+          <span class="mono">const cols=['#3987e5','#6ea4ec','#a7c4f2']</span>. The only categorical scale in the
+          product and the only blues on web.</td>
+        </tr>
+        <tr>
+          <td class="t"><span class="dot" style="background:#86efac"></span>#86efac<br>
+              <span class="dot" style="background:#fda4af"></span>#fda4af</td>
+          <td class="t">agents.tsx<br>ask.tsx</td>
+          <td>Overweight / Underweight ratings — the soft half-steps between Buy and Sell. The
+          <span class="mono">RATING_COLOR</span> map is duplicated verbatim in both files; the other three
+          entries in it are tokens. Web has no equivalent: it folds both ratings into the BUY and SELL chips.</td>
+        </tr>
+        <tr>
+          <td class="t"><span class="dot" style="background:#3b82f6"></span>#3b82f6</td>
+          <td class="t">agents.tsx<br>trade/[ticker].tsx</td>
+          <td>The Sonnet model badge. Same hex as <span class="mono">upCB</span>, written as a literal rather than
+          referencing it — so the one place the blue actually ships is not the token that defines it.</td>
+        </tr>
+        <tr>
+          <td class="t"><span class="dot" style="background:#888888"></span>#888<br>
+              <span class="dot" style="background:#666666"></span>#666<br>
+              <span class="dot" style="background:#0a0a0a"></span>#0a0a0a<br>
+              <span class="dot" style="background:#171717"></span>#171717<br>
+              <span class="dot" style="background:#22c55e"></span>#22c55e</td>
+          <td class="t">(auth)/login.tsx</td>
+          <td>The sign-in screen re-types the whole palette as literals — ground, input fill, button, headings —
+          importing <span class="mono">colors</span> only for the disclaimer line. Two of them are new values:
+          <span class="mono">#888</span> for the subheading (5.58:1, passes) and
+          <span class="mono">#666</span> for both input placeholders, which is
+          <span class="mono fail">3.12:1</span> on the <span class="mono">#171717</span> field. The
+          <span class="mono">contrast.test.ts</span> screen scan does not catch it: it matches the literal string
+          <span class="mono">color: '#666'</span>, and this is <span class="mono">placeholderTextColor</span>.</td>
+        </tr>
+        <tr>
+          <td class="t"><span class="dot" style="background:#ffffff"></span>#fff<br>
+              <span class="dot" style="background:#000000"></span>#000</td>
+          <td class="t">7 mobile screens</td>
+          <td>Pure black and white written directly instead of via <span class="mono">textPrimary</span> —
+          the pull-to-refresh tint on portfolio / orders / agents, button labels on ask and charts, and
+          <span class="mono">#000</span> on the green-filled approve and kill-switch buttons.</td>
+        </tr>
+        <tr>
+          <td class="t"><span class="dot" style="background:#005522"></span>#052</td>
+          <td class="t">dashboard.html<br>auth button</td>
+          <td>The label on the green submit button, a three-digit hex found nowhere else.
+          <span class="mono fail">4.48:1</span> on <span class="mono">--pos</span> — just under AA for its
+          13.5px bold.</td>
+        </tr>
+        <tr>
+          <td class="t"><span class="dot" style="background:rgba(0,0,0,.55)"></span>rgba(0,0,0,.55)</td>
+          <td class="t">dashboard.html</td>
+          <td>Tooltip drop shadow, <span class="mono">0 10px 34px</span>. The only shadow in either codebase —
+          the mobile app declares no <span class="mono">shadowColor</span> and no
+          <span class="mono">elevation</span> anywhere.</td>
+        </tr>
+        <tr>
+          <td class="t">CH_RGB</td>
+          <td class="t">dashboard.html<br>chart fill</td>
+          <td>The equity area gradient swaps its stops at runtime between
+          <span class="mono">'0,209,122'</span> and <span class="mono">'255,93,108'</span> as raw RGB triplets —
+          <span class="mono">--pos</span> and <span class="mono">--neg</span> re-typed by hand because a CSS var
+          cannot be interpolated into an alpha.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="note src">
+      <b>Resolved — the disclaimer grey</b>
+      <p>Seven mobile screens once styled the legal disclaimer <span class="mono">color: '#555'</span>, at
+      <span class="mono">2.66:1</span> on <span class="mono">background</span> — below the bar
+      <span class="mono">textMuted</span> had been raised to clear, on the one line of those screens that most
+      needs to be read. All seven now use <span class="mono">colors.textMuted</span>, and
+      <span class="mono">contrast.test.ts</span> walks the screen files so the literal cannot come back under
+      that property name.</p>
+    </div>
+  </div>
+
+  <!-- ══════════════ SUMMARY ══════════════ -->
+  <div class="sect">
+    <h2>Where the two palettes disagree</h2>
+    <table>
+      <thead><tr><th style="width:150px">Job</th><th style="width:250px">Web</th><th style="width:250px">Mobile</th><th>Same?</th></tr></thead>
+      <tbody>
+        <tr><td class="t">page ground</td><td class="t"><span class="dot" style="background:#0a0b0d"></span>#0a0b0d</td><td class="t"><span class="dot" style="background:#0a0a0a"></span>#0a0a0a</td><td>+1G +3B apart</td></tr>
+        <tr><td class="t">surface steps</td><td class="t">3 above ground, blue-cast</td><td class="t">2 above ground, neutral</td><td>no</td></tr>
+        <tr><td class="t">primary text</td><td class="t"><span class="dot" style="background:#eef0f3"></span>#eef0f3</td><td class="t"><span class="dot" style="background:#ffffff"></span>#ffffff</td><td>no</td></tr>
+        <tr><td class="t">muted text</td><td class="t"><span class="dot" style="background:#828b9a"></span>#828b9a</td><td class="t"><span class="dot" style="background:#949494"></span>#949494</td><td>no — but both clear AA</td></tr>
+        <tr><td class="t">gain</td><td class="t"><span class="dot" style="background:#00d17a"></span>#00d17a</td><td class="t"><span class="dot" style="background:#22c55e"></span>#22c55e</td><td>no</td></tr>
+        <tr><td class="t">loss</td><td class="t"><span class="dot" style="background:#ff5d6c"></span>#ff5d6c</td><td class="t"><span class="dot" style="background:#ef4444"></span>#ef4444</td><td>no</td></tr>
+        <tr><td class="t">warning</td><td class="t"><span class="dot" style="background:#e2b93b"></span>#e2b93b</td><td class="t"><span class="dot" style="background:#f59e0b"></span>#f59e0b</td><td>no</td></tr>
+        <tr><td class="t">error</td><td class="t"><span class="dot" style="background:#ff5d6c"></span>--neg, reused</td><td class="t"><span class="dot" style="background:#ef4444"></span>danger, own name</td><td>same hex as loss on both</td></tr>
+        <tr><td class="t">accent</td><td class="t"><span class="dot" style="background:#00d17a"></span>--pos, reused</td><td class="t"><span class="dot" style="background:#a855f7"></span>#a855f7</td><td><span style="color:var(--neg)">no — green vs purple</span></td></tr>
+        <tr><td class="t">benchmark</td><td class="t"><span class="dot" style="background:#767f8c"></span>--bench #767f8c</td><td class="t"><span class="dot" style="background:#a3a3a3"></span>no token, uses textSecondary</td><td><span style="color:var(--neg)">no</span></td></tr>
+        <tr><td class="t">borders</td><td class="t">2 alpha tokens</td><td class="t">none — borrows surfaceElevated</td><td><span style="color:var(--neg)">no</span></td></tr>
+        <tr><td class="t">colourblind pair</td><td class="t">absent</td><td class="t">upCB / downCB, unused</td><td><span style="color:var(--neg)">no</span></td></tr>
+        <tr><td class="t">contrast guard</td><td class="t">none — the --ink3 fix was applied by hand</td><td class="t">contrast.test.ts: all text tokens pass AA, screens scanned for literals</td><td><span style="color:var(--neg)">no</span></td></tr>
+      </tbody>
+    </table>
+    <p class="cap dim" style="margin-top:12px">Sources: <span class="mono">agent/api/static/dashboard.html</span> lines 12–18 ·
+    <span class="mono">mobile/app/src/theme/colors.ts</span> · <span class="mono">mobile/app/src/utils/contrast.test.ts</span> ·
+    <span class="mono">src/components/{StatusBanner,EquityChart,EmptyState,ErrorState}.tsx</span> ·
+    <span class="mono">app/(tabs)/*.tsx</span> · <span class="mono">app/(auth)/login.tsx</span>.
+    Contrast ratios computed with the WCAG 2.x relative-luminance formula, the same one implemented in
+    <span class="mono">src/utils/contrast.ts</span>.</p>
+  </div>
+
+</div>
+</body>
+</html>

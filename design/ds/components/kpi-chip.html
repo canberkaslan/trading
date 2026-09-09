@@ -1,0 +1,431 @@
+<!-- @dsCard group="Components" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KPI Chip — TRADER Design System</title>
+<style>
+  /* ---- :root copied verbatim from agent/api/static/dashboard.html L11–L20 ---- */
+  :root{
+    color-scheme:dark;
+    --bg:#0a0b0d; --s1:#101216; --s2:#15181d; --s3:#1c2027;
+    --hair:rgba(255,255,255,.06); --hair2:rgba(255,255,255,.12);
+    --ink:#eef0f3; --ink2:#9aa3b2; --ink3:#828b9a;
+    --pos:#00d17a; --neg:#ff5d6c; --warn:#e2b93b; --bench:#767f8c;
+    --pos-dim:rgba(0,209,122,.12); --neg-dim:rgba(255,93,108,.12);
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,Inter,sans-serif;
+  }
+  /* verbatim, source L21–L22 */
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{background:var(--bg)}
+  /* NOT source: this is the card's own page frame. The app's body rule is
+     body{font-family:var(--sans);color:var(--ink);font-size:14px;line-height:1.45;
+     -webkit-font-smoothing:antialiased;overflow-x:hidden} — width/margin/padding
+     below exist only so specimens sit on a fixed-width sheet. */
+  body{font-family:var(--sans);color:var(--ink);font-size:14px;line-height:1.45;
+    -webkit-font-smoothing:antialiased;width:860px;margin:0 auto;padding:26px 28px 40px}
+  /* verbatim, source L28 */
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  /* ========= the component, verbatim — source L99–L105, in source order ========= */
+  .chips{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}
+  .chip{display:flex;flex-direction:column;gap:3px;background:var(--s1);border:1px solid var(--hair);
+    border-radius:12px;padding:11px 16px;min-width:118px;transition:border-color .15s,transform .15s}
+  .chip:hover{border-color:var(--hair2);transform:translateY(-1px)}
+  .chip .k{font-size:10.5px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+  .chip .v{font-size:16.5px;font-weight:650}
+  .chip .s{font-size:11px;color:var(--ink3)}
+
+  /* the tone classes the chip reuses — also verbatim, but from the hero block at
+     source L85, not from the chips block. .dim is never passed to chip(). */
+  .up{color:var(--pos)}.down{color:var(--neg)}.dim{color:var(--ink3)}
+
+  /* ---- NOT IN THE SOURCE: card-only helper ----
+     .chip.is-hover duplicates the declarations of .chip:hover so the hover
+     specimen can be frozen next to the rest specimen. The product has no
+     is-hover class; nothing else about the chip is altered here. */
+  .chip.is-hover{border-color:var(--hair2);transform:translateY(-1px)}
+
+  /* ================= card chrome (documentation only) ================= */
+  h1{font-size:19px;font-weight:700;letter-spacing:-.01em}
+  .lede{color:var(--ink2);font-size:12.5px;margin-top:6px;max-width:600px}
+  .path{font-family:var(--mono);font-size:10.5px;color:var(--ink3);margin-top:8px}
+  h2{font-size:10.5px;font-weight:650;letter-spacing:.1em;text-transform:uppercase;
+     color:var(--ink2);margin:30px 0 2px}
+  .note{font-size:11.5px;color:var(--ink3);max-width:640px;margin-top:5px}
+  hr{border:0;border-top:1px solid var(--hair);margin:26px 0 0}
+
+  /* specimen scaffolding */
+  .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;align-items:flex-start}
+  .spec{display:flex;flex-direction:column;gap:7px}
+  .cap{font-size:10px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+  .tok{font-family:var(--mono);font-size:10px;line-height:1.55;color:var(--ink3);
+    font-variant-numeric:tabular-nums;white-space:pre}
+  .tok b{font-weight:400;color:var(--ink2)}
+  .stage{background:var(--bg);border:1px dashed var(--hair);border-radius:14px;padding:14px 14px 15px;
+    display:inline-flex;gap:10px;align-items:flex-start}
+
+  /* anatomy */
+  .anat{display:flex;gap:26px;align-items:flex-start;margin-top:14px}
+  .anat ul{list-style:none;font-size:11.5px;color:var(--ink2);line-height:1.85}
+  .anat li b{font-family:var(--mono);font-size:10.5px;color:var(--ink);font-weight:400}
+  .anat li span{color:var(--ink3)}
+  .rule{display:flex;align-items:center;gap:8px;font-size:10px;color:var(--ink3);
+    font-family:var(--mono);margin-top:9px}
+  .rule i{display:block;height:1px;background:var(--hair2);flex:1}
+
+  table{border-collapse:collapse;margin-top:12px;width:100%;font-size:11.5px}
+  th,td{text-align:left;padding:6px 10px 6px 0;border-bottom:1px solid var(--hair);vertical-align:top}
+  th{font-size:10px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+  td.p{font-family:var(--mono);font-size:10.5px;color:var(--ink2);white-space:nowrap}
+  td.d{color:var(--ink3)}
+  .flag{border-left:2px solid var(--warn);padding-left:11px;margin-top:12px;
+    font-size:11.5px;color:var(--ink2);max-width:660px}
+  .flag b{color:var(--warn);font-weight:650}
+  .glyph{font-family:var(--mono);font-size:10px;color:var(--ink3);margin-top:9px;line-height:1.6}
+  .glyph b{color:var(--ink2);font-weight:400}
+</style>
+</head>
+<body>
+
+<h1>KPI Chip</h1>
+<p class="lede">The stat chip in the dashboard&rsquo;s <span class="mono">.chips</span> row, sitting directly under the
+equity chart and its period tabs. Label / value / sub, stacked. Emitted only by the
+<span class="mono">chip(k,v,c,s)</span> helper &mdash; there is no other call site and no hand-written
+<span class="mono">.chip</span> in the markup.</p>
+<p class="path">agent/api/static/dashboard.html &nbsp;·&nbsp; CSS L99–L105 &nbsp;·&nbsp; render() L471–L478 &nbsp;·&nbsp; helper L537 &nbsp;·&nbsp; markup L282</p>
+
+<hr>
+
+<!-- ============ ANATOMY ============ -->
+<h2>Anatomy</h2>
+<div class="anat">
+  <div class="spec">
+    <div class="stage">
+      <div class="chip">
+        <span class="k">Bugün</span>
+        <span class="v mono down">&minus;$835</span>
+        <span class="s mono">&minus;0.76%</span>
+      </div>
+    </div>
+    <div class="rule"><span>min-width 118px</span><i></i></div>
+  </div>
+  <ul>
+    <li><b>.chip</b> <span>— flex column, gap 3px, padding 11px 16px, radius 12px</span></li>
+    <li><b>.k</b> <span>— sans (no .mono class), 10.5px / 650, tracking .08em, uppercase, --ink3</span></li>
+    <li><b>.v</b> <span>— mono + tabular-nums, 16.5px / 650, tone class goes here</span></li>
+    <li><b>.s</b> <span>— mono + tabular-nums, 11px, always --ink3</span></li>
+    <li><b>gap</b> <span>— 3px between all three lines (no separate label gap)</span></li>
+  </ul>
+</div>
+<p class="tok" style="margin-top:12px">background <b>var(--s1) #101216</b>   border <b>1px solid var(--hair) rgba(255,255,255,.06)</b>
+border-radius <b>12px</b>   padding <b>11px 16px</b>   min-width <b>118px</b>   gap <b>3px</b>
+row: .chips <b>display:flex · gap:10px · flex-wrap:wrap · margin-top:22px</b></p>
+<p class="tok" style="margin-top:10px">helper L537
+<b>&lt;div class="chip"&gt;&lt;span class="k"&gt;${k}&lt;/span&gt;&lt;span class="v mono ${c}"&gt;${v}&lt;/span&gt;&lt;span class="s mono"&gt;${s}&lt;/span&gt;&lt;/div&gt;</b>
+k, v and s are interpolated raw &mdash; esc() is <b>not</b> applied by chip().</p>
+<p class="note">The chip carries no icon in the source &mdash; no <span class="mono">&lt;svg&gt;</span> is emitted by
+<span class="mono">chip()</span>. Inline SVG in this dashboard is the <span class="mono">.mark</span> wordmark logo
+(L231, L244), the <span class="mono">.icobtn</span> refresh glyph (L253) and the three
+<span class="mono">.gate</span> status icons (<span class="mono">ok()/bad()/pend()</span>, L562&ndash;L564);
+the equity chart is an SVG too, but it is a plot, not an icon.</p>
+
+<hr>
+
+<!-- ============ TONE STATES ============ -->
+<h2>Value tone — the only three</h2>
+<p class="note">The third argument of <span class="mono">chip(k,v,c,s)</span> is a class name placed on
+<span class="mono">.v</span>: <span class="mono">'up'</span>, <span class="mono">'down'</span>, or the empty string.
+Empty is a real, deliberate state &mdash; the value keeps body ink and nothing on the chip is coloured.
+(An empty class leaves <span class="mono">class="v mono "</span> with a trailing space; harmless, but that is
+what ships.)</p>
+
+<div class="row">
+  <div class="spec">
+    <div class="stage">
+      <div class="chip">
+        <span class="k">Alpha</span>
+        <span class="v mono up">+6.3%</span>
+        <span class="s mono">vs SPY</span>
+      </div>
+    </div>
+    <div class="cap">Positive &mdash; c = 'up'</div>
+    <div class="tok">.v .up  <b>--pos #00d17a</b>
+16.5px / 650 mono
+sub stays <b>--ink3 #828b9a</b></div>
+  </div>
+
+  <div class="spec">
+    <div class="stage">
+      <div class="chip">
+        <span class="k">Bugün</span>
+        <span class="v mono down">&minus;$835</span>
+        <span class="s mono">&minus;0.76%</span>
+      </div>
+    </div>
+    <div class="cap">Negative &mdash; c = 'down'</div>
+    <div class="tok">.v .down <b>--neg #ff5d6c</b>
+16.5px / 650 mono
+sub stays <b>--ink3 #828b9a</b></div>
+  </div>
+
+  <div class="spec">
+    <div class="stage">
+      <div class="chip">
+        <span class="k">Maks. düşüş</span>
+        <span class="v mono">-4.2%</span>
+        <span class="s mono">eşik %15</span>
+      </div>
+    </div>
+    <div class="cap">Neutral &mdash; c = ''</div>
+    <div class="tok">.v (no class) <b>--ink #eef0f3</b>
+inherits body colour
+sub stays <b>--ink3 #828b9a</b></div>
+  </div>
+</div>
+
+<div class="flag"><b>Read this before rebuilding.</b> The tone class lands on the <em>value</em>, not on the sub.
+The sub line is <span class="mono">--ink3</span> in every state without exception &mdash; a red
+&ldquo;&minus;0.76%&rdquo; delta under a red value does not exist in this product. Two of the five shipped chips
+pass <span class="mono">''</span> and so print an ink-coloured value: Max drawdown, which <em>is</em> measured
+against a gate and still never tones, and Cash, which carries no gate at all.</div>
+
+<hr>
+
+<!-- ============ THE FIVE REAL CHIPS ============ -->
+<h2>The row as shipped — all five, in order</h2>
+<p class="note">The five <span class="mono">chip()</span> calls at L473&ndash;L478 always emit exactly these five,
+in this order. Tone is computed, never authored. TR locale below, EN underneath &mdash;
+<span class="mono">toggleLang()</span> re-runs <span class="mono">render()</span>, so the row is a
+locale-dependent state, not a translation of static text.</p>
+
+<div class="stage" style="display:block;margin-top:14px">
+  <div class="chips" style="margin-top:0">
+    <div class="chip">
+      <span class="k">Bugün</span>
+      <span class="v mono down">&minus;$835</span>
+      <span class="s mono">&minus;0.76%</span>
+    </div>
+    <div class="chip">
+      <span class="k">Sharpe</span>
+      <span class="v mono down">-0.44</span>
+      <span class="s mono">eşik 1.0</span>
+    </div>
+    <div class="chip">
+      <span class="k">Maks. düşüş</span>
+      <span class="v mono">-4.2%</span>
+      <span class="s mono">eşik %15</span>
+    </div>
+    <div class="chip">
+      <span class="k">Alpha</span>
+      <span class="v mono up">+6.3%</span>
+      <span class="s mono">vs SPY</span>
+    </div>
+    <div class="chip">
+      <span class="k">Nakit</span>
+      <span class="v mono">$32,410</span>
+      <span class="s mono">30% likit</span>
+    </div>
+  </div>
+</div>
+
+<div class="stage" style="display:block;margin-top:10px">
+  <div class="chips" style="margin-top:0">
+    <div class="chip">
+      <span class="k">Today</span>
+      <span class="v mono down">&minus;$835</span>
+      <span class="s mono">&minus;0.76%</span>
+    </div>
+    <div class="chip">
+      <span class="k">Sharpe</span>
+      <span class="v mono down">-0.44</span>
+      <span class="s mono">gate 1.0</span>
+    </div>
+    <div class="chip">
+      <span class="k">Max drawdown</span>
+      <span class="v mono">-4.2%</span>
+      <span class="s mono">gate 15%</span>
+    </div>
+    <div class="chip">
+      <span class="k">Alpha</span>
+      <span class="v mono up">+6.3%</span>
+      <span class="s mono">vs SPY</span>
+    </div>
+    <div class="chip">
+      <span class="k">Cash</span>
+      <span class="v mono">$32,410</span>
+      <span class="s mono">30% liquid</span>
+    </div>
+  </div>
+</div>
+<p class="note">Same numbers, same tones. Only <span class="mono">pctNum()</span> moves the percent sign:
+<span class="mono">LANG==='tr'</span> prefixes it (<span class="mono">%15</span>), EN suffixes it
+(<span class="mono">15%</span>). The two literals that never translate are <span class="mono">'Sharpe'</span>
+and <span class="mono">'vs SPY'</span>.</p>
+
+<table>
+  <thead><tr><th style="width:104px">Chip</th><th style="width:196px">Tone rule</th><th style="width:200px">Value format</th><th>Sub</th></tr></thead>
+  <tbody>
+    <tr><td class="p">Bugün / Today</td><td class="p">dz ? '' : dayPnl&gt;0 ? up : down</td><td class="p">dz ? '$0' : '+'/'&minus;' + usd(abs)</td><td class="d">pct(daily_pnl_pct&times;100), 2dp</td></tr>
+    <tr><td class="p">Sharpe</td><td class="p">sharpe &gt;= gate_sharpe</td><td class="p">toFixed(2) — ASCII '-'</td><td class="d">t('c_thresh') + ' ' + gate.toFixed(1) &rarr; 1.0</td></tr>
+    <tr><td class="p">Maks. düşüş</td><td class="p">hard-coded '' &mdash; never toned</td><td class="p">toFixed(1) + '%' — ASCII '-'</td><td class="d">t('c_thresh') + ' ' + pctNum(gate,0) &rarr; %15 / 15%</td></tr>
+    <tr><td class="p">Alpha</td><td class="p">spy != null &amp;&amp; total_return &gt;= spy_return<br>&mdash; null falls through to 'down'</td><td class="p">pct(total &minus; spy, 1)</td><td class="d">literal 'vs SPY', untranslated</td></tr>
+    <tr><td class="p">Nakit / Cash</td><td class="p">hard-coded '' &mdash; never toned</td><td class="p">usd(cash) &mdash; whole dollars</td><td class="d">round(100&times;cash/eq) + '% ' + t('c_liquid')</td></tr>
+  </tbody>
+</table>
+
+<p class="glyph">Two different minus glyphs ship in this one row, and they are not interchangeable.
+<b>sgn(v,d)</b> = <b>(v&gt;0?'+':v&lt;0?'&minus;':'')+Math.abs(v).toFixed(d)</b> &rarr; U+2212 MINUS SIGN for negatives,
+ASCII <b>+</b> for positives, <b>no sign at all for exact zero</b>; <b>pct()</b> is <b>sgn()+'%'</b>, so the Bugün sub
+and the Alpha value carry U+2212. The Bugün value builds its own sign from the same U+2212 literal (L473).
+<b>Sharpe</b> and <b>Maks. düşüş</b> do not go through sgn() &mdash; a bare <b>toFixed()</b> emits ASCII
+HYPHEN-MINUS. Both specimens above are set with the glyph the code actually produces; keep them apart.
+<b>usd(v)</b> = <b>'$' + Math.round(v).toLocaleString('en-US')</b> &mdash; no cents anywhere in a chip.
+<b>max_dd_pct</b> arrives negative from the API (<span class="mono">sc.max_dd</span> is a negative magnitude),
+so the drawdown chip reads <b>-4.2%</b> against a positive-magnitude gate of <b>15%</b>.</p>
+
+<hr>
+
+<!-- ============ EDGE STATES ============ -->
+<h2>Edge states in the code</h2>
+<div class="row">
+  <div class="spec">
+    <div class="stage">
+      <div class="chip">
+        <span class="k">Bugün</span>
+        <span class="v mono">$0</span>
+        <span class="s mono">piyasa bekliyor</span>
+      </div>
+    </div>
+    <div class="cap">Zero day &mdash; |dayPnl| &lt; 0.005</div>
+    <div class="tok">value <b>'$0'</b> literal, c = <b>''</b>
+sub &rarr; t('c_waiting')
+neutral on purpose: no move,
+so no direction to colour</div>
+  </div>
+
+  <div class="spec">
+    <div class="stage">
+      <div class="chip">
+        <span class="k">Alpha</span>
+        <span class="v mono down">&mdash;</span>
+        <span class="s mono">vs SPY</span>
+      </div>
+    </div>
+    <div class="cap">Alpha, no benchmark</div>
+    <div class="tok">spy_return_pct == null
+value <b>'—' (U+2014)</b>
+c falls through to <b>'down'</b>
+&rarr; em dash renders <b>#ff5d6c</b></div>
+  </div>
+
+  <div class="spec">
+    <div class="stage" style="min-height:64px;align-items:center">
+      <div style="font-size:11.5px;color:var(--ink3);max-width:180px;line-height:1.6">
+        No skeleton, no empty, no error variant.<br>
+        <span class="mono" style="font-size:10px">#chips</span> ships empty and is
+        filled in one <span class="mono" style="font-size:10px">innerHTML</span> write.
+      </div>
+    </div>
+    <div class="cap">Loading &mdash; absent from source</div>
+    <div class="tok">markup L282:
+<b>&lt;div class="chips rise d3" id="chips"&gt;&lt;/div&gt;</b>
+before first render the row is
+zero-height (the .sk shimmer is
+used for the chart, never here)</div>
+  </div>
+
+  <div class="spec">
+    <div class="stage" style="min-height:64px;align-items:center">
+      <div style="font-size:11.5px;color:var(--ink3);max-width:190px;line-height:1.6">
+        Stale, and silent about it. The chips keep the last good numbers with no
+        dimming, no timestamp, no badge.
+      </div>
+    </div>
+    <div class="cap">Stale &mdash; refresh failed</div>
+    <div class="tok">refresh() catch &rarr; showErr()
+paints <b>#err</b> (L261), above
+the hero; render() is skipped,
+so #chips is left untouched
+and the 60s poll keeps trying</div>
+  </div>
+</div>
+
+<hr>
+
+<!-- ============ HOVER ============ -->
+<h2>Hover</h2>
+<p class="note">The only interactive state. The chip is a <span class="mono">div</span> &mdash; not focusable, no
+<span class="mono">:active</span>, no click handler, no cursor change. Hover is decorative feedback on a
+non-interactive element.</p>
+<div class="row">
+  <div class="spec">
+    <div class="stage" style="padding-top:20px;padding-bottom:20px">
+      <div class="chip">
+        <span class="k">Sharpe</span>
+        <span class="v mono down">-0.44</span>
+        <span class="s mono">eşik 1.0</span>
+      </div>
+    </div>
+    <div class="cap">Rest</div>
+    <div class="tok">border-color <b>--hair rgba(255,255,255,.06)</b>
+transform <b>none</b></div>
+  </div>
+
+  <div class="spec">
+    <div class="stage" style="padding-top:20px;padding-bottom:20px">
+      <div class="chip is-hover">
+        <span class="k">Sharpe</span>
+        <span class="v mono down">-0.44</span>
+        <span class="s mono">eşik 1.0</span>
+      </div>
+    </div>
+    <div class="cap">Hover &mdash; frozen, card-only</div>
+    <div class="tok">border-color <b>--hair2 rgba(255,255,255,.12)</b>
+transform <b>translateY(-1px)</b>
+transition <b>border-color .15s, transform .15s</b></div>
+  </div>
+
+  <div class="spec">
+    <div class="stage" style="padding-top:20px;padding-bottom:20px">
+      <div class="chip">
+        <span class="k">Nakit</span>
+        <span class="v mono">$32,410</span>
+        <span class="s mono">30% likit</span>
+      </div>
+    </div>
+    <div class="cap">Live &mdash; point at this one</div>
+    <div class="tok">real <b>:hover</b> rule, unmodified
+background does <b>not</b> change
+only border + 1px lift</div>
+  </div>
+</div>
+
+<hr>
+
+<!-- ============ ENTRANCE ============ -->
+<h2>Entrance</h2>
+<p class="note">Applied to the row, not the chip. <span class="mono">.chips.rise.d3</span> &mdash;
+<span class="mono">opacity 0 &rarr; 1, translateY(14px) &rarr; 0, .55s cubic-bezier(.2,.7,.3,1) forwards, delay .2s</span>,
+suppressed entirely under <span class="mono">prefers-reduced-motion: reduce</span>
+(<span class="mono">.rise{animation:none;opacity:1;transform:none}</span>), which also kills the
+<span class="mono">.15s</span> hover transitions (<span class="mono">*{transition:none!important}</span>) &mdash;
+the 1px lift still happens on hover, it just happens instantly. Individual chips never stagger.</p>
+
+<hr>
+
+<!-- ============ PROVENANCE ============ -->
+<h2>What in this card is not the source</h2>
+<p class="note">Everything under &ldquo;the component, verbatim&rdquo; is byte-identical to
+<span class="mono">dashboard.html</span> L99&ndash;L105, and the <span class="mono">:root</span> block to
+L11&ndash;L20. Two things are not: the <span class="mono">body</span> rule, which drops
+<span class="mono">overflow-x:hidden</span> and adds a fixed 860px sheet so specimens have a page to sit on,
+and <span class="mono">.chip.is-hover</span>, which exists only to freeze the hover specimen &mdash; it repeats
+the declarations of <span class="mono">.chip:hover</span> and adds nothing. Numbers in the specimens are
+illustrative but internally consistent with one book of roughly $109k equity; the formats, gates, glyphs and
+locale strings are the real ones.</p>
+
+</body>
+</html>

@@ -1,0 +1,316 @@
+<!-- @dsCard group="Components" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verdict pill — .live</title>
+<style>
+  /* ---- tokens copied verbatim from agent/api/static/dashboard.html :root (L11–20) ---- */
+  :root{
+    color-scheme:dark;
+    --bg:#0a0b0d; --s1:#101216; --s2:#15181d; --s3:#1c2027;
+    --hair:rgba(255,255,255,.06); --hair2:rgba(255,255,255,.12);
+    --ink:#eef0f3; --ink2:#9aa3b2; --ink3:#828b9a;
+    --pos:#00d17a; --neg:#ff5d6c; --warn:#e2b93b; --bench:#767f8c;
+    --pos-dim:rgba(0,209,122,.12); --neg-dim:rgba(255,93,108,.12);
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,Inter,sans-serif;
+  }
+  /* ---- card chrome below is the card's own, not the product's ---- */
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{background:var(--bg)}
+  body{font-family:var(--sans);color:var(--ink);font-size:14px;line-height:1.45;
+    -webkit-font-smoothing:antialiased;background:var(--bg)}
+  .page{width:760px;margin:0 auto;padding:24px 24px 30px}
+
+  /* card head */
+  .kicker{font-family:var(--mono);font-size:10px;letter-spacing:.14em;color:var(--ink3);text-transform:uppercase}
+  h1{font-size:19px;font-weight:700;letter-spacing:-.01em;margin:6px 0 4px}
+  .lede{font-size:12.5px;color:var(--ink2);max-width:600px}
+  .src{font-family:var(--mono);font-size:10.5px;color:var(--ink3);margin-top:7px}
+
+  hr.rule{border:0;border-top:1px solid var(--hair);margin:20px 0}
+
+  h2.sec{font-family:var(--mono);font-size:10px;letter-spacing:.14em;color:var(--ink3);
+    text-transform:uppercase;margin-bottom:12px}
+  h2.sec em{font-style:normal;color:var(--ink2);letter-spacing:.04em;text-transform:none}
+
+  /* ================= THE COMPONENT — verbatim, dashboard.html L50–60 ================= */
+  .live{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:600;
+    border-radius:999px;padding:5px 12px}
+  .live .d{width:7px;height:7px;border-radius:50%;position:relative}
+  .live .d::after{content:"";position:absolute;inset:-4px;border-radius:50%;opacity:.5;animation:pulse 2s ease-out infinite}
+  @keyframes pulse{0%{transform:scale(.4);opacity:.6}80%{transform:scale(1.6);opacity:0}100%{opacity:0}}
+  .live.go{color:var(--pos);background:var(--pos-dim)}
+  .live.go .d{background:var(--pos)}.live.go .d::after{background:var(--pos)}
+  .live.nogo{color:var(--neg);background:var(--neg-dim)}
+  .live.nogo .d{background:var(--neg)}.live.nogo .d::after{background:var(--neg)}
+  .live.wait{color:var(--warn);background:rgba(226,185,59,.12)}
+  .live.wait .d{background:var(--warn)}.live.wait .d::after{background:var(--warn)}
+  /* =================================================================================== */
+
+  /* In-situ top bar — ADAPTED from dashboard.html L43–66, NOT verbatim.
+     Changes made so the specimen renders as a standalone box:
+       .top      position:sticky;top:0;z-index:30  removed (nothing scrolls under it here)
+                 backdrop-filter:blur(14px) + -webkit- prefix removed (no page behind it to blur)
+                 border-radius:10px 10px 0 0       added (rounds the specimen frame)
+       .top-in   max-width:1080px;margin:0 auto    removed (the card page is 760px wide)
+       .icobtn   transition:all .15s               removed, and the :hover / .spin rules
+                 dropped — they belong to the refresh button, not to this component.
+     The .live rules above are untouched. */
+  .top{background:rgba(10,11,13,.75);border-bottom:1px solid var(--hair);border-radius:10px 10px 0 0}
+  .top-in{padding:13px 20px;display:flex;align-items:center;gap:12px}
+  .mark{display:flex;align-items:center;gap:9px}
+  .mark b{font-size:13px;font-weight:700;letter-spacing:.16em}
+  .tag{font-size:10px;font-weight:700;letter-spacing:.1em;color:var(--ink3);
+    border:1px solid var(--hair2);border-radius:5px;padding:2px 7px}
+  .top .r{margin-left:auto;display:flex;align-items:center;gap:12px}
+  .stamp{font-size:12px;color:var(--ink3)}
+  .icobtn{width:32px;height:32px;border:1px solid var(--hair2);border-radius:9px;
+    display:inline-flex;align-items:center;justify-content:center;color:var(--ink2)}
+  .icobtn svg{width:14px;height:14px}
+  .situ-wrap{border:1px solid var(--hair);border-radius:10px;background:var(--s1);overflow:hidden}
+  .situ-body{height:34px;background:var(--bg)}
+  .situ-cap{font-family:var(--mono);font-size:10px;line-height:1.6;color:var(--ink3);margin-top:8px}
+
+  /* specimen grid */
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .spec{background:var(--s1);border:1px solid var(--hair);border-radius:10px;padding:14px 14px 12px}
+  .spec .cap{font-family:var(--mono);font-size:10px;letter-spacing:.06em;color:var(--ink3);
+    text-transform:uppercase;margin-bottom:11px}
+  .stage{min-height:40px;display:flex;align-items:center}
+  .vals{margin-top:12px;padding-top:10px;border-top:1px solid var(--hair);
+    font-family:var(--mono);font-size:10.5px;line-height:1.65;color:var(--ink2)}
+  .vals span{color:var(--ink3)}
+  .swatch{display:inline-block;width:7px;height:7px;border-radius:2px;vertical-align:middle;
+    margin-right:5px;position:relative;top:-1px}
+
+  /* two-up bottom row */
+  .row2{display:grid;grid-template-columns:236px 1fr;gap:12px;align-items:stretch}
+  pre.code{font-family:var(--mono);font-size:10.5px;line-height:1.7;color:var(--ink2);
+    background:var(--s2);border:1px solid var(--hair);border-radius:10px;padding:12px 14px;
+    overflow-x:auto;white-space:pre}
+  pre.code b{color:var(--ink);font-weight:600}
+  pre.code i{color:var(--ink3);font-style:normal}
+
+  .geo{display:grid;grid-template-columns:1fr 1fr;gap:10px;
+    font-family:var(--mono);font-size:10.5px;line-height:1.7;color:var(--ink2)}
+  .geo span{color:var(--ink3)}
+
+  .out{display:grid;grid-template-columns:88px 1fr;gap:4px 12px;margin-top:12px;
+    font-family:var(--mono);font-size:10.5px;line-height:1.6;color:var(--ink2)}
+  .out b{color:var(--ink3);font-weight:400}
+
+  .note{border:1px solid var(--hair);border-left:2px solid var(--warn);border-radius:0 8px 8px 0;
+    background:var(--s1);padding:11px 13px;font-size:12px;color:var(--ink2);margin-top:12px}
+  .note b{color:var(--warn);font-weight:600}
+  .note code{font-family:var(--mono);font-size:11px;color:var(--ink)}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="kicker">Components</div>
+  <h1>Verdict pill <span style="font-family:var(--mono);font-size:14px;font-weight:400;color:var(--ink3)">.live</span></h1>
+  <p class="lede">Status pill in the web dashboard's sticky top bar. Three colour modifiers driven by
+  the eval verdict, plus a pulsing dot. The label is composed in
+  <span style="font-family:var(--mono);font-size:11.5px;color:var(--ink2)">render()</span> from the
+  <span style="font-family:var(--mono);font-size:11.5px;color:var(--ink2)">/v1/eval</span> payload —
+  it is not stored anywhere, and one word of it goes through i18n.</p>
+  <div class="src">agent/api/static/dashboard.html — css L50–60 · markup L248 · render L451–455 · i18n L336 / L354 / L371</div>
+
+  <hr class="rule">
+
+  <h2 class="sec">In situ — top bar <em>(adapted, see the CSS comment in this file)</em></h2>
+  <div class="situ-wrap">
+    <div class="top"><div class="top-in">
+      <span class="mark">
+        <svg width="22" height="22" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="var(--s3)"/><path d="M7 21l6-7 4 4 8-10" stroke="var(--pos)" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <b>TRADER</b>
+      </span>
+      <span class="tag">PAPER</span>
+      <span class="live go"><span class="d"></span><span>GO · 21 gün</span></span>
+      <span class="r">
+        <span class="stamp">14:32</span>
+        <span class="icobtn" style="width:auto;padding:0 10px;font-size:11px;font-weight:700;letter-spacing:.06em">EN</span>
+        <span class="icobtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></span>
+      </span>
+    </div></div>
+    <div class="situ-body"></div>
+  </div>
+  <div class="situ-cap">.top-in — max-width 1080px · margin 0 auto · padding 13px 20px · gap 12px<br>
+  pill is the 3rd child, after .mark and .tag; .stamp and .r follow<br>
+  #stamp ships empty in the markup — the 14:32 above is specimen filler, set by render() L450</div>
+
+  <hr class="rule">
+
+  <h2 class="sec">States — the three modifiers <em>(go / nogo / wait are the only ones in the source)</em></h2>
+  <div class="grid">
+
+    <div class="spec">
+      <div class="cap">.live.go</div>
+      <div class="stage">
+        <span class="live go"><span class="d"></span><span>GO · 21 gün</span></span>
+      </div>
+      <div class="vals">
+        <span class="swatch" style="background:#00d17a"></span>--pos #00d17a<br>
+        <span>bg</span> --pos-dim rgba(0,209,122,.12)<br>
+        <span>verdict</span> "GO"<br>
+        <span>text</span> v+' · '+ev.days+' '+t('days_word')
+      </div>
+    </div>
+
+    <div class="spec">
+      <div class="cap">.live.nogo</div>
+      <div class="stage">
+        <span class="live nogo"><span class="d"></span><span>NO-GO · 21 gün</span></span>
+      </div>
+      <div class="vals">
+        <span class="swatch" style="background:#ff5d6c"></span>--neg #ff5d6c<br>
+        <span>bg</span> --neg-dim rgba(255,93,108,.12)<br>
+        <span>verdict</span> "NO-GO"<br>
+        <span>text</span> v+' · '+ev.days+' '+t('days_word')
+      </div>
+    </div>
+
+    <div class="spec">
+      <div class="cap">.live.wait — eval counter</div>
+      <div class="stage">
+        <span class="live wait"><span class="d"></span><span>EVAL 4/10 · NO-GO</span></span>
+      </div>
+      <div class="vals">
+        <span class="swatch" style="background:#e2b93b"></span>--warn #e2b93b<br>
+        <span>bg</span> rgba(226,185,59,.12) <i style="color:var(--ink3);font-style:normal">(literal)</i><br>
+        <span>verdict</span> "TOO EARLY"<br>
+        <span>text</span> 'EVAL '+ev.days+'/'+ev.days_required<br>
+        <span></span>&nbsp;&nbsp;+' · '+ev.provisional_verdict
+      </div>
+    </div>
+
+  </div>
+
+  <h2 class="sec" style="margin:16px 0 12px">Same modifier, three payloads</h2>
+  <div class="grid">
+    <div class="spec">
+      <div class="cap">.live.wait — no provisional</div>
+      <div class="stage">
+        <span class="live wait"><span class="d"></span><span>EVAL 1/10</span></span>
+      </div>
+      <div class="vals">
+        <span>when</span> ev.provisional_verdict is null<br>
+        <span></span>&nbsp;&nbsp;— the API returns null below<br>
+        <span></span>&nbsp;&nbsp;day 2, so only days 0 and 1<br>
+        <span></span>&nbsp;&nbsp;reach this state<br>
+        <span>text</span> the ' · X' suffix is conditional,<br>
+        <span></span>&nbsp;&nbsp;so the pill can be counter-only
+      </div>
+    </div>
+    <div class="spec">
+      <div class="cap">.live.wait — pre-data, as shipped</div>
+      <div class="stage">
+        <span class="live wait"><span class="d"></span><span>—</span></span>
+      </div>
+      <div class="vals">
+        <span>markup</span> class="live wait" id="verdict"<br>
+        <span>#vtext</span> "—" (em dash) until render() runs<br>
+        <span>note</span> wait/amber is the shipped default,<br>
+        <span></span>&nbsp;&nbsp;and the dot already pulses amber<br>
+        <span></span>&nbsp;&nbsp;before the first fetch resolves
+      </div>
+    </div>
+    <div class="spec">
+      <div class="cap">.live.go — LANG='en'</div>
+      <div class="stage">
+        <span class="live go"><span class="d"></span><span>GO · 21 days</span></span>
+      </div>
+      <div class="vals">
+        <span>days_word</span> 'gün' (tr) / 'days' (en)<br>
+        <span>default</span> LANG='tr' (L369)<br>
+        <span>toggle</span> the EN/TR button in .top .r<br>
+        <span>note</span> only the unit word translates —<br>
+        <span></span>&nbsp;&nbsp;GO / NO-GO / EVAL stay literal
+      </div>
+    </div>
+  </div>
+
+  <hr class="rule">
+
+  <h2 class="sec">Anatomy &amp; motion</h2>
+  <div class="row2">
+    <div class="spec">
+      <div class="cap">the dot — .live .d</div>
+      <div class="stage" style="gap:26px;padding-left:8px">
+        <span class="live go" style="background:none;padding:0"><span class="d"></span></span>
+        <span class="live nogo" style="background:none;padding:0"><span class="d"></span></span>
+        <span class="live wait" style="background:none;padding:0"><span class="d"></span></span>
+      </div>
+      <div class="vals">
+        <span>dot</span> 7px × 7px · radius 50%<br>
+        <span>::after</span> inset -4px · radius 50% · opacity .5<br>
+        <span>anim</span> pulse 2s ease-out infinite
+      </div>
+    </div>
+    <div>
+<pre class="code"><b>@keyframes pulse</b>{
+  0%   { transform: scale(.4);  opacity: .6 }
+  80%  { transform: scale(1.6); opacity: 0  }
+  100% {                        opacity: 0  }
+}
+<i>/* the ring is a ::after on the dot, tinted by the
+   modifier: .live.go .d::after{background:var(--pos)} */</i></pre>
+      <div class="spec" style="margin-top:12px">
+        <div class="cap">pill box</div>
+        <div class="geo">
+          <div><span>font</span> 12px / 600 / --sans</div>
+          <div><span>radius</span> 999px</div>
+          <div><span>padding</span> 5px 12px</div>
+          <div><span>gap</span> 7px</div>
+          <div><span>display</span> inline-flex</div>
+          <div><span>align</span> center</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <hr class="rule">
+
+  <h2 class="sec">Text — source-exact, dashboard.html L451–455</h2>
+<pre class="code">  const v=ev.verdict, cls=v==='GO'?'go':v==='NO-GO'?'nogo':'wait';
+  $('#verdict').className='live '+cls;
+  $('#vtext').textContent=v==='TOO EARLY'
+    ?('EVAL '+ev.days+'/'+ev.days_required+(ev.provisional_verdict?' · '+ev.provisional_verdict:''))
+    :(v+' · '+ev.days+' '+t('days_word'));</pre>
+  <div class="out">
+    <b>verdict</b><div>"GO" · "NO-GO" · "TOO EARLY" — the API's EvalResult.verdict is one of exactly these three (routes/eval.py via scripts/eval_report.py::_verdict)</div>
+    <b>cls</b><div>wait is the else branch, so any future verdict value would land on amber with the GO-shaped label</div>
+    <b>days_required</b><div>MIN_TRADING_DAYS = 10 (scripts/eval_report.py L38) — that is the /10 in the counter</div>
+    <b>className</b><div>assigned, not toggled: 'live '+cls replaces the element's whole class list on every render</div>
+  </div>
+
+  <div class="note">
+    <b>The pulse is not disabled under reduced motion.</b>
+    The <code>@media(prefers-reduced-motion:reduce)</code> block at L36–40 only kills
+    <code>.rise</code>, <code>.tape-in</code> and <code>*{transition}</code> — <code>.live .d::after</code>
+    keeps animating. The JS flag <code>RM</code> (L325) likewise gates only the number tween (L436)
+    and the chart draw-in (L678). The pulse in this card is therefore live in both settings,
+    exactly as in the product.
+  </div>
+
+  <div class="note" style="border-left-color:var(--ink3)">
+    <b style="color:var(--ink2)">Token gap:</b> <code>go</code> and <code>nogo</code> use the
+    <code>--pos-dim</code> / <code>--neg-dim</code> tokens for their background;
+    <code>wait</code> hardcodes <code>rgba(226,185,59,.12)</code> because no <code>--warn-dim</code>
+    token exists. Same value shape, one is just not tokenised.
+  </div>
+
+  <div class="note" style="border-left-color:var(--ink3)">
+    <b style="color:var(--ink2)">No live region:</b> the shipped markup is a plain
+    <code>&lt;span class="live wait" id="verdict"&gt;</code> with no <code>role</code>,
+    no <code>aria-live</code> and no label on the decorative dot. The verdict changes silently on
+    every refresh, so assistive tech is never told that GO became NO-GO.
+  </div>
+
+</div>
+</body>
+</html>

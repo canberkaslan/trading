@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <link rel="stylesheet" href="_ds/modernist-f8a300e7-4c02-4a3c-8b97-e390f1d7cb9e/styles.css">
+  <script src="_ds/modernist-f8a300e7-4c02-4a3c-8b97-e390f1d7cb9e/_ds_bundle.js"></script>
+  <style>body{margin:0;background:var(--color-neutral-200);color:var(--color-text);font-family:var(--font-body)} a{color:var(--color-accent-700)} a:hover{color:var(--color-accent)}</style>
+</helmet>
+<div style="padding:48px;display:flex;flex-direction:column;gap:48px;width:max-content">
+
+  <section style="max-width:1100px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:32px;padding-bottom:32px;border-bottom:2px solid var(--color-divider)">
+    <div style="grid-column:1/-1;display:flex;align-items:center;gap:12px"><span style="width:14px;height:14px;background:var(--color-accent)"></span><h1 style="margin:0;font-size:32px">AI Investment Agent — arayüz çalışması</h1><span class="tag tag-outline">Modernist</span></div>
+    <div><h6 style="color:var(--color-accent-700)">Varsayımlar</h6><p style="font-size:13px;line-height:1.6;margin:0">Bilgi mimarisi repodaki 7 sekme + onay/bildirim/giriş ekranlarından alındı; yerleşim yeniden kurgulandı. Veri, <code>schemas.py</code> / <code>types.ts</code> şekillerinde; sayılar 8 Eylül anlık durumu ($109,061 · NO-GO · 20 gün). İzleme listesi ve çalışma günlüğü yeni eklendi.</p></div>
+    <div><h6 style="color:var(--color-accent-700)">Tasarım kararları</h6><p style="font-size:13px;line-height:1.6;margin:0">Tek aksan kırmızı: birincil aksiyon, NO-GO, uyarı ve <b>zarar</b> (muhasebe geleneği — kâr mürekkep rengi, işaretli). Kartlar yerine 2px çizgiler; sıfır köşe; her ekranda kalıcı PAPER/LIVE etiketi. Karne "donmuş kitap" uyarısıyla birlikte okunur — koddaki actionability kuralı.</p></div>
+    <div><h6 style="color:var(--color-accent-700)">Çalışan akışlar</h6><p style="font-size:13px;line-height:1.6;margin:0">Emir onayı → cihaz kilidi → broker'a gönderim · Reddet / iptal · Kill switch (FLATTEN onayı) · Sohbet (sahte streaming) · Watchlist ekle/çıkar · Karar kartı → muhakeme · Ayar toggle'ları · Bildirim okundu · Ders quiz'i. Tweaks: ekran, ray/üst bar, PAPER/LIVE, K/Z paleti, Android/iOS.</p></div>
+  </section>
+
+  <section>
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:16px"><h2 style="margin:0;font-size:22px">Web konsolu · sol ray</h2><span style="font-size:13px;color:var(--color-neutral-700)">1440px · 11 ekran · <a href="WebConsole.dc.html">WebConsole.dc.html</a></span></div>
+    <div style="display:flex;gap:40px;align-items:flex-start">
+      <div><div style="font-size:12px;font-weight:600;margin-bottom:8px">Portföy</div><dc-import name="WebConsole" screen="portfolio" hint-size="1440px,1200px" style="width:1440px;display:block;box-shadow:var(--shadow-md)"></dc-import></div>
+      <div><div style="font-size:12px;font-weight:600;margin-bottom:8px">Emirler · onay</div><dc-import name="WebConsole" screen="orders" hint-size="1440px,900px" style="width:1440px;display:block;box-shadow:var(--shadow-md)"></dc-import></div>
+      <div><div style="font-size:12px;font-weight:600;margin-bottom:8px">Ajanlar · çalışma günlüğü</div><dc-import name="WebConsole" screen="agents" hint-size="1440px,900px" style="width:1440px;display:block;box-shadow:var(--shadow-md)"></dc-import></div>
+    </div>
+    <div style="display:flex;gap:40px;align-items:flex-start;margin-top:40px">
+      <div><div style="font-size:12px;font-weight:600;margin-bottom:8px">Sor</div><dc-import name="WebConsole" screen="ask" hint-size="1440px,900px" style="width:1440px;display:block;box-shadow:var(--shadow-md)"></dc-import></div>
+      <div><div style="font-size:12px;font-weight:600;margin-bottom:8px">Grafik</div><dc-import name="WebConsole" screen="charts" hint-size="1440px,900px" style="width:1440px;display:block;box-shadow:var(--shadow-md)"></dc-import></div>
+      <div><div style="font-size:12px;font-weight:600;margin-bottom:8px">İzleme listesi</div><dc-import name="WebConsole" screen="watch" hint-size="1440px,900px" style="width:1440px;display:block;box-shadow:var(--shadow-md)"></dc-import></div>
+    </div>
+    <div style="display:flex;gap:40px;align-items:flex-start;margin-top:40px">
+      <div><div style="font-size:12px;font-weight:600;margin-bottom:8px">Risk &amp; uyarılar</div><dc-import name="WebConsole" screen="risk" hint-size="1440px,900px" style="width:1440px;display:block;box-shadow:var(--shadow-md)"></dc-import></div>
+      <div><div style="font-size:12px;font-weight:600;margin-bottom:8px">Öğren</div><dc-import name="WebConsole" screen="learn" hint-size="1440px,900px" style="width:1440px;display:block;box-shadow:var(--shadow-md)"></dc-import></div>
+      <div><div style="font-size:12px;font-weight:600;margin-bottom:8px">Ayarlar · eval · strateji</div><dc-import name="WebConsole" screen="settings" hint-size="1440px,900px" style="width:1440px;display:block;box-shadow:var(--shadow-md)"></dc-import></div>
+    </div>
+    <div style="display:flex;gap:40px;align-items:flex-start;margin-top:40px">
+      <div><div style="font-size:12px;font-weight:600;margin-bottom:8px">Bildirimler</div><dc-import name="WebConsole" screen="notifs" hint-size="1440px,900px" style="width:1440px;display:block;box-shadow:var(--shadow-md)"></dc-import></div>
+      <div><div style="font-size:12px;font-weight:600;margin-bottom:8px">Giriş</div><dc-import name="WebConsole" screen="login" hint-size="1440px,900px" style="width:1440px;display:block;box-shadow:var(--shadow-md)"></dc-import></div>
+      <div><div style="font-size:12px;font-weight:600;margin-bottom:8px">Üst bar varyantı · LIVE modu</div><dc-import name="WebConsole" screen="portfolio" nav="top" mode="live" hint-size="1440px,1200px" style="width:1440px;display:block;box-shadow:var(--shadow-md)"></dc-import></div>
+    </div>
+  </section>
+
+  <section>
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:16px"><h2 style="margin:0;font-size:22px">Mobil · Android</h2><span style="font-size:13px;color:var(--color-neutral-700)">412×892 · <a href="MobileApp.dc.html">MobileApp.dc.html</a></span></div>
+    <div style="display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap;max-width:2400px">
+      <dc-import name="MobileApp" screen="portfolio" hint-size="460px,940px"></dc-import>
+      <dc-import name="MobileApp" screen="ask" hint-size="460px,940px"></dc-import>
+      <dc-import name="MobileApp" screen="orders" hint-size="460px,940px"></dc-import>
+      <dc-import name="MobileApp" screen="agents" hint-size="460px,940px"></dc-import>
+      <dc-import name="MobileApp" screen="charts" hint-size="460px,940px"></dc-import>
+      <dc-import name="MobileApp" screen="watch" hint-size="460px,940px"></dc-import>
+      <dc-import name="MobileApp" screen="risk" hint-size="460px,940px"></dc-import>
+      <dc-import name="MobileApp" screen="learn" hint-size="460px,940px"></dc-import>
+      <dc-import name="MobileApp" screen="settings" hint-size="460px,940px"></dc-import>
+      <dc-import name="MobileApp" screen="notifs" hint-size="460px,940px"></dc-import>
+      <dc-import name="MobileApp" screen="login" hint-size="460px,940px"></dc-import>
+    </div>
+  </section>
+
+  <section>
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:16px"><h2 style="margin:0;font-size:22px">Mobil · iOS</h2><span style="font-size:13px;color:var(--color-neutral-700)">402×874 · aynı bileşen, frame="ios" · sonuncusu LIVE modu</span></div>
+    <div style="display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap;max-width:2400px">
+      <dc-import name="MobileApp" screen="portfolio" frame="ios" hint-size="450px,922px"></dc-import>
+      <dc-import name="MobileApp" screen="orders" frame="ios" hint-size="450px,922px"></dc-import>
+      <dc-import name="MobileApp" screen="agents" frame="ios" hint-size="450px,922px"></dc-import>
+      <dc-import name="MobileApp" screen="settings" frame="ios" mode="live" hint-size="450px,922px"></dc-import>
+    </div>
+  </section>
+
+  <section style="max-width:1100px;font-size:13px;color:var(--color-neutral-700);line-height:1.6">
+    <h6 style="color:var(--color-accent-700)">Sonraki adımlar</h6>
+    Tam İngilizce sürüm için dil anahtarı · gerçek API'ye bağlama (`/v1/portfolio/snapshot`, `/v1/orders/pending`, `/v1/eval`) · yeşil/kırmızı K/Z paleti Tweaks'te hazır · Grafik ekranına TradingView Lightweight Charts entegrasyonu.
+  </section>
+</div>
+</x-dc>
+</body>
+</html>

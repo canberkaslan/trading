@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/modernist-f8a300e7-4c02-4a3c-8b97-e390f1d7cb9e/styles.css">
+  <script src="_ds/modernist-f8a300e7-4c02-4a3c-8b97-e390f1d7cb9e/_ds_bundle.js"></script>
+  <style>
+    body{margin:0;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);font-feature-settings:"tnum" 1;font-size:14px}
+    a{color:var(--color-accent-700)} a:hover{color:var(--color-accent)}
+    input,button,textarea{font-family:inherit}
+    @keyframes blink{50%{opacity:0}} @keyframes spin{to{transform:rotate(360deg)}}
+  </style>
+</helmet>
+<div data-screen-label="Mobile App" style="display:inline-block;padding:24px">
+<x-import component-from-global-scope="{{ frameComponent }}" from="./android-frame.jsx ./ios-frame.jsx" hint-size="412px,892px">
+<div style="height:100%;display:flex;flex-direction:column;background:var(--color-bg);color:var(--color-text);position:relative;padding-top: {{ topPad }}px;font-family:var(--font-body);font-size:14px">
+
+  <sc-if value="{{ authed }}" hint-placeholder-val="{{ true }}">
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 16px;border-bottom:2px solid var(--color-divider);background: {{ stripBg }};color: {{ stripFg }}">
+      <span style="font-family:var(--font-heading);font-weight:800;font-size:11px;letter-spacing:.08em;padding:3px 8px;border:1px solid currentColor;white-space:nowrap">{{ modeLabel }}</span>
+      <span style="font-size:11px;font-weight:600;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">● bağlı · son koşu {{ lastRun }}</span>
+      <button onClick="{{ goNotifs }}" aria-label="Bildirimler" style="position:relative;width:44px;height:32px;margin:-4px -12px -4px 0;border:0;background:transparent;color:inherit;cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"></path></svg><sc-if value="{{ hasUnread }}" hint-placeholder-val="{{ false }}"><span style="position:absolute;top:0;right:6px;background:var(--color-accent);color:var(--color-bg);font-size:9px;font-weight:800;padding:1px 4px">{{ unread }}</span></sc-if></button>
+    </div>
+  </sc-if>
+
+  <div style="flex:1;min-height:0;overflow:auto">
+
+  <sc-if value="{{ isLogin }}" hint-placeholder-val="{{ false }}">
+    <div data-screen-label="Giriş" style="display:flex;flex-direction:column;min-height:100%">
+      <div style="background:var(--color-accent);color:var(--color-bg);padding:28px 20px 24px"><div style="display:flex;align-items:center;gap:8px;font-family:var(--font-heading);font-weight:800;letter-spacing:.06em;font-size:14px"><span style="width:12px;height:12px;background:var(--color-bg)"></span>TRADER</div><div style="font-family:var(--font-heading);font-weight:800;font-size:34px;line-height:1.02;letter-spacing:-.02em;margin-top:22px">Gerçek para,<br>dört gate'in<br>ardında.</div><div style="font-size:12px;margin-top:14px;line-height:1.5">≥ 10 işlem günü · Sharpe &gt; 1.0 · MaxDD &lt; 15% · SPY'yi geç</div></div>
+      <div style="padding:20px;display:flex;flex-direction:column;gap:14px">
+        <h2 style="margin:0;font-size:24px">Giriş yap</h2>
+        <div class="field"><label>E-posta</label><input class="input" type="email" placeholder="ad@ornek.com" value="{{ email }}" onChange="{{ setEmail }}" style="min-height:44px"></div>
+        <div class="field"><label>Şifre</label><input class="input" type="password" placeholder="••••••••" value="{{ password }}" onChange="{{ setPassword }}" style="min-height:44px"></div>
+        <button onClick="{{ toggleAck }}" style="display:flex;gap:12px;align-items:flex-start;text-align:left;background:transparent;border:0;padding:4px 0;cursor:pointer;color:var(--color-text);font-size:12px;line-height:1.5;min-height:44px"><span style="flex:none;width:18px;height:18px;margin-top:1px;border:2px solid var(--color-text);background: {{ ackBg }}"></span><span>Yatırım tavsiyesi değildir. Geçmiş performans gelecekteki getirileri garanti etmez — okudum.</span></button>
+        <button class="btn btn-primary btn-block" onClick="{{ signIn }}" disabled="{{ cannotSignIn }}" style="min-height:48px;margin:0">Giriş yap</button>
+        <button class="btn btn-secondary btn-block" onClick="{{ biometricSignIn }}" style="min-height:48px;margin:0">Cihaz kilidi ile aç</button>
+        <p style="margin:6px 0 0;font-size:11px;color:var(--color-neutral-700)">{{ account }}</p>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isPortfolio }}" hint-placeholder-val="{{ true }}">
+    <div data-screen-label="Portföy" style="padding:20px 16px 24px;display:flex;flex-direction:column;gap:18px">
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent-700);font-weight:600">Portföy değeri</span><span style="font-family:var(--font-heading);font-weight:800;font-size:14px;color: {{ verdictColor }}">{{ verdict }}</span></div>
+        <div style="font-family:var(--font-heading);font-weight:800;font-size:44px;line-height:1;letter-spacing:-.02em;margin:8px 0 10px">{{ equityF }}</div>
+        <div style="font-weight:800;color: {{ sinceColor }}">{{ sinceF }} <span style="font-weight:400;color:var(--color-neutral-700)">başlangıçtan</span></div>
+        <div style="display:flex;gap:16px;font-size:12px;color:var(--color-neutral-700);margin-top:4px;flex-wrap:wrap"><span>Bugün <b style="color: {{ dailyColor }}">{{ dailyF }}</b></span><span>Nakit <b style="color:var(--color-text)">{{ cashF }}</b></span><span>{{ evalDays }}</span></div>
+        <sc-if value="{{ isInert }}" hint-placeholder-val="{{ false }}"><div style="margin-top:8px"><span class="tag tag-outline" style="white-space:nowrap">⚠ {{ inertQualifier }}</span></div></sc-if>
+      </div>
+      <div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><span style="font-size:12px"><span style="display:inline-block;width:14px;height:2px;background:var(--color-text);vertical-align:middle;margin-right:6px"></span><b style="color: {{ periodRetColor }}">{{ periodRetF }}</b></span><span style="font-size:12px;color:var(--color-neutral-700)"><span style="display:inline-block;width:14px;height:2px;background:var(--color-neutral-500);vertical-align:middle;margin-right:6px"></span>{{ spyRetF }}</span>
+          <div class="seg" style="margin-left:auto"><sc-for list="{{ periods }}" as="p" hint-placeholder-count="3"><label class="seg-opt" style="padding:6px 10px;font-size:12px"><input type="radio" name="{{ uid }}-period" checked="{{ p.active }}" onChange="{{ p.pick }}"><span>{{ p.id }}</span></label></sc-for></div></div>
+        <svg viewBox="0 0 1000 240" preserveAspectRatio="none" style="width:100%;height:150px;display:block;border-bottom:1px solid var(--color-divider)"><path d="{{ spyPath }}" fill="none" stroke="#9b9797" stroke-width="1.5" vector-effect="non-scaling-stroke"></path><path d="{{ eqPath }}" fill="none" stroke="#201e1d" stroke-width="2.2" vector-effect="non-scaling-stroke"></path></svg>
+      </div>
+      <div style="border-top:2px solid var(--color-divider);padding-top:14px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px"><b style="font-family:var(--font-heading);font-size:15px">Emir akışı</b><span style="font-size:11px;color:var(--color-neutral-700)">{{ flowWindow }}</span></div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px"><div><div style="font-size:11px;color:var(--color-neutral-700)">Durum</div><b style="font-size:16px;color: {{ flowColor }}">{{ flowVerdict }}</b></div><div><div style="font-size:11px;color:var(--color-neutral-700)">Broker'a giden</div><b style="font-size:16px">{{ flowRatio }}</b></div><div><div style="font-size:11px;color:var(--color-neutral-700)">Son gönderim</div><b style="font-size:16px">{{ flowLast }}</b></div></div>
+        <div style="display:flex;flex-direction:column;gap:6px;margin-top:12px"><sc-for list="{{ flowReasons }}" as="r" hint-placeholder-count="4"><div><div style="display:flex;justify-content:space-between;font-size:12px"><span>{{ r.label }}</span><b>{{ r.n }}</b></div><div style="height:4px;background:var(--color-neutral-200);margin-top:3px"><div style="height:4px;background:var(--color-accent-500);width: {{ r.bar }}"></div></div></div></sc-for></div>
+        <sc-if value="{{ isInert }}" hint-placeholder-val="{{ false }}"><p style="margin:12px 0 0;font-size:12px;line-height:1.5;color:var(--color-accent-700)">⚠ {{ inertNote }}</p></sc-if>
+      </div>
+      <div style="border-top:2px solid var(--color-divider);padding-top:14px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline"><b style="font-family:var(--font-heading);font-size:15px">Gerçekleşen</b><span style="font-size:11px;color:var(--color-neutral-700)">{{ reconciled }}</span></div>
+        <div style="font-family:var(--font-heading);font-weight:800;font-size:26px;margin-top:6px;color: {{ realizedColor }}">{{ realizedF }}</div>
+        <div style="font-size:11px;color:var(--color-neutral-700)">{{ realizedMeta }}</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:12px"><div><div style="font-size:11px;color:var(--color-neutral-700)">Kazanma</div><b style="font-size:16px">{{ winRateF }}</b></div><div><div style="font-size:11px;color:var(--color-neutral-700)">Beklenti</div><b style="font-size:16px">{{ expectancyF }}</b></div><div><div style="font-size:11px;color:var(--color-neutral-700)">Kâr faktörü</div><b style="font-size:16px">{{ pfF }}</b></div></div>
+        <div style="display:flex;height:6px;margin-top:12px"><div style="background:var(--color-text);width: {{ realizedShare }}"></div><div style="background:var(--color-neutral-300);width: {{ openShare }}"></div></div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--color-neutral-700);margin-top:4px"><span>Gerçekleşen {{ realizedF }}</span><span>Açık {{ openPnlF }}</span></div>
+        <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--color-divider)"><div style="display:flex;justify-content:space-between;font-size:12px;font-weight:600"><span>Stratejinin çıkışları</span><span style="color:var(--color-neutral-700)">{{ stratN }}</span></div>
+          <div style="display:flex;flex-direction:column;gap:4px;margin-top:8px;font-size:12px"><sc-for list="{{ exits }}" as="x" hint-placeholder-count="4"><div style="display:flex;gap:8px"><span style="flex:1">{{ x.label }}</span><span style="color:var(--color-neutral-700)">{{ x.n }}</span><span style="width:76px;text-align:right;font-weight:600;color: {{ x.color }}">{{ x.pnlF }}</span></div></sc-for></div></div>
+      </div>
+      <div style="border-top:2px solid var(--color-divider);padding-top:14px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px"><b style="font-family:var(--font-heading);font-size:15px">Risk &amp; dağılım</b><button class="btn btn-ghost" onClick="{{ goRisk }}" style="font-size:12px;padding:0">Risk →</button></div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px"><div><div style="font-size:11px;color:var(--color-neutral-700)">Çeşitlilik</div><b style="font-size:16px">{{ effN }}</b><div style="font-size:11px;color:var(--color-neutral-700)">etkin isim</div></div><div><div style="font-size:11px;color:var(--color-neutral-700)">En yüksek</div><b style="font-size:16px;color:var(--color-accent)">{{ topW }}</b><div style="font-size:11px;color:var(--color-neutral-700)">tek isim</div></div><div><div style="font-size:11px;color:var(--color-neutral-700)">İlk 3</div><b style="font-size:16px">{{ top3W }}</b><div style="font-size:11px;color:var(--color-neutral-700)">toplam</div></div></div>
+        <div style="display:flex;flex-direction:column;gap:6px;margin-top:12px"><sc-for list="{{ sectorRows }}" as="sct" hint-placeholder-count="6"><div><div style="display:flex;justify-content:space-between;font-size:12px"><span>{{ sct.label }}</span><b>{{ sct.wF }}</b></div><div style="height:4px;background:var(--color-neutral-200);margin-top:3px"><div style="height:4px;background:var(--color-text);width: {{ sct.bar }}"></div></div></div></sc-for></div>
+        <p style="margin:12px 0 0;font-size:12px;line-height:1.5;color:var(--color-accent-700)">⚠ {{ concFlagCount }} isim %10 tek-isim tavanının üstünde</p>
+      </div>
+      <div style="border-top:2px solid var(--color-divider);padding-top:14px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline"><b style="font-family:var(--font-heading);font-size:15px">Pozisyonlar</b><span style="font-size:11px;color:var(--color-neutral-700)">{{ positionCount }} · {{ overCapCount }} cap üstü</span></div>
+        <sc-for list="{{ positions }}" as="q" hint-placeholder-count="10">
+          <button onClick="{{ q.analyze }}" style="display:flex;flex-direction:column;gap:4px;width:100%;text-align:left;padding:12px 0;border:0;border-bottom:1px solid var(--color-divider);background:transparent;cursor:pointer;color:var(--color-text);min-height:44px">
+            <div style="display:flex;justify-content:space-between;width:100%;align-items:center"><span style="font-family:var(--font-heading);font-weight:800;font-size:16px">{{ q.ticker }} <sc-if value="{{ q.overCap }}" hint-placeholder-val="{{ false }}"><span class="tag tag-accent" style="margin-left:6px;vertical-align:middle">cap</span></sc-if></span><span style="font-weight:600;color: {{ q.color }}">{{ q.pnlF }} ({{ q.pnlPctF }})</span></div>
+            <div style="display:flex;justify-content:space-between;width:100%;font-size:12px;color:var(--color-neutral-700)"><span>{{ q.meta }}</span><span style="color:var(--color-accent-700);font-weight:600">Analiz →</span></div>
+          </button>
+        </sc-for>
+      </div>
+      <p style="margin:0;font-size:11px;color:var(--color-neutral-700)">Yatırım tavsiyesi değildir. Geçmiş performans gelecekteki getirileri garanti etmez.</p>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isAsk }}" hint-placeholder-val="{{ false }}">
+    <div data-screen-label="Sor" style="padding:20px 16px 16px;display:flex;flex-direction:column;min-height:100%;gap:14px">
+      <div><h2 style="margin:0;font-size:24px">Sor</h2><div style="font-size:12px;color:var(--color-neutral-700);margin-top:4px">Bir hisse gir — 7 ajanlı pipeline analiz eder. Sadece analiz, emir göndermez.</div></div>
+      <div style="flex:1;display:flex;flex-direction:column;gap:16px">
+        <sc-if value="{{ chatEmpty }}" hint-placeholder-val="{{ true }}"><div style="display:flex;gap:8px;flex-wrap:wrap"><sc-for list="{{ chips }}" as="c" hint-placeholder-count="6"><button class="btn btn-secondary" onClick="{{ c.ask }}" style="min-height:44px">{{ c.t }}</button></sc-for></div></sc-if>
+        <sc-for list="{{ chatMessages }}" as="m" hint-placeholder-count="0">
+          <sc-if value="{{ m.isUser }}" hint-placeholder-val="{{ false }}"><div style="align-self:flex-end;background:var(--color-surface);padding:8px 12px;font-weight:800;font-family:var(--font-heading);letter-spacing:.04em">{{ m.text }}</div></sc-if>
+          <sc-if value="{{ m.isAssistant }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;gap:10px"><div style="font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-700);font-weight:600">Portfolio Manager · Opus 4.8</div>
+              <sc-if value="{{ m.hasDecision }}" hint-placeholder-val="{{ false }}"><div style="border-top:2px solid var(--color-divider);border-bottom:2px solid var(--color-divider);padding:10px 0"><div style="display:flex;align-items:center;gap:10px"><span style="font-family:var(--font-heading);font-weight:800;font-size:18px">{{ m.decision.ticker }}</span><span class="{{ m.decision.tagClass }}" style="{{ m.decision.tagStyle }}">{{ m.decision.rating }}</span></div><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:8px;font-size:12px"><div><div style="color:var(--color-neutral-700);font-size:10px">Giriş</div><b>{{ m.decision.entryF }}</b></div><div><div style="color:var(--color-neutral-700);font-size:10px">Stop</div><b>{{ m.decision.stopF }}</b></div><div><div style="color:var(--color-neutral-700);font-size:10px">Hedef</div><b>{{ m.decision.ptF }}</b></div><div><div style="color:var(--color-neutral-700);font-size:10px">Vade</div><b>{{ m.decision.horizon }}</b></div></div></div></sc-if>
+              <p style="margin:0;line-height:1.55;font-size:13px">{{ m.text }}</p>
+              <sc-if value="{{ m.hasDecision }}" hint-placeholder-val="{{ false }}"><button class="btn btn-ghost" onClick="{{ m.decision.openDetail }}" style="align-self:flex-start;padding-inline:0">Tam detay →</button></sc-if></div>
+          </sc-if>
+        </sc-for>
+        <sc-if value="{{ chatBusy }}" hint-placeholder-val="{{ false }}"><div style="display:flex;align-items:center;gap:10px;font-size:12px;color:var(--color-neutral-700)"><span style="width:10px;height:10px;background:var(--color-accent);animation:blink 1s steps(1) infinite"></span>{{ chatStatus }}</div></sc-if>
+        <sc-if value="{{ isStreaming }}" hint-placeholder-val="{{ false }}"><div><div style="font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-700);font-weight:600;margin-bottom:6px">Portfolio Manager · {{ streamTicker }}</div><p style="margin:0;line-height:1.55;font-size:13px">{{ streamText }}<span style="display:inline-block;width:7px;height:13px;background:var(--color-accent);vertical-align:-2px;margin-left:2px;animation:blink .8s steps(1) infinite"></span></p></div></sc-if>
+      </div>
+      <div style="display:flex;gap:8px;border-top:2px solid var(--color-divider);padding-top:12px"><input class="input" placeholder="AAPL" value="{{ chatInput }}" onChange="{{ setChatInput }}" onKeyDown="{{ chatKey }}" style="flex:1;min-height:48px;font-size:16px;font-weight:800;letter-spacing:.08em;text-transform:uppercase"><button class="btn btn-primary" onClick="{{ sendChat }}" disabled="{{ chatBusy }}" style="min-height:48px">Analiz</button></div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isOrders }}" hint-placeholder-val="{{ false }}">
+    <sc-if value="{{ noneSelected }}" hint-placeholder-val="{{ true }}">
+      <div data-screen-label="Emirler" style="padding:20px 16px 24px;display:flex;flex-direction:column;gap:14px">
+        <h2 style="margin:0;font-size:24px">Emirler</h2>
+        <div class="seg" style="display:flex"><label class="seg-opt" style="flex:1;min-height:44px"><input type="radio" name="{{ uid }}-otab" checked="{{ isPendingTab }}" onChange="{{ showPending }}"><span>Onay bekleyen · {{ pendingCount }}</span></label><label class="seg-opt" style="flex:1;min-height:44px"><input type="radio" name="{{ uid }}-otab" checked="{{ isHistoryTab }}" onChange="{{ showHistory }}"><span>Geçmiş · {{ historyCount }}</span></label></div>
+        <sc-if value="{{ isPendingTab }}" hint-placeholder-val="{{ true }}">
+          <div style="font-size:12px;color:var(--color-neutral-700)">--hold ile tutulan, kararını bekleyen emirler</div>
+          <sc-if value="{{ pendingEmpty }}" hint-placeholder-val="{{ false }}"><div style="color:var(--color-neutral-700);padding:12px 0"><b style="color:var(--color-text)">Onay bekleyen emir yok.</b><br>Günlük koşu bir emri onaya düşürdüğünde burada görünür.</div></sc-if>
+          <sc-for list="{{ pending }}" as="o" hint-placeholder-count="2">
+            <button onClick="{{ o.select }}" style="display:flex;flex-direction:column;gap:6px;width:100%;text-align:left;padding:14px 0;border:0;border-bottom:1px solid var(--color-divider);background:transparent;cursor:pointer;color:var(--color-text)">
+              <div style="display:flex;align-items:center;gap:10px;width:100%"><span style="font-family:var(--font-heading);font-weight:800;font-size:18px">{{ o.ticker }}</span><span class="{{ o.tagClass }}" style="{{ o.tagStyle }}">{{ o.rating }}</span><span style="margin-left:auto;font-weight:800;color: {{ o.sideColor }}">{{ o.side }} {{ o.quantity }}</span></div>
+              <div style="display:flex;justify-content:space-between;width:100%;font-size:12px;color:var(--color-neutral-700)"><span>stop {{ o.stopF }} · {{ o.notionalF }} · {{ o.pctF }}</span><span style="color:var(--color-accent-700);font-weight:600">İncele →</span></div>
+            </button>
+          </sc-for>
+        </sc-if>
+        <sc-if value="{{ isHistoryTab }}" hint-placeholder-val="{{ false }}">
+          <sc-for list="{{ history }}" as="o" hint-placeholder-count="8">
+            <div style="display:flex;flex-direction:column;gap:6px;padding:12px 0;border-bottom:1px solid var(--color-divider)">
+              <div style="display:flex;align-items:center;gap:10px"><span style="font-family:var(--font-heading);font-weight:800;font-size:16px">{{ o.ticker }}</span><span class="{{ o.statusClass }}">{{ o.statusLabel }}</span><span style="margin-left:auto;font-weight:800;color: {{ o.sideColor }}">{{ o.sideQty }}</span></div>
+              <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--color-neutral-700)"><span>{{ o.fill }} · ort. {{ o.avgF }}</span><span>{{ o.dateF }}</span></div>
+              <sc-for list="{{ o.reasons }}" as="r" hint-placeholder-count="0"><div style="font-size:12px;color:var(--color-neutral-700)">• {{ r }}</div></sc-for>
+              <sc-if value="{{ o.cancellable }}" hint-placeholder-val="{{ false }}"><button class="btn btn-secondary" onClick="{{ o.askCancel }}" style="align-self:flex-start;min-height:40px;color:var(--color-accent-700)">Emri iptal et</button></sc-if>
+            </div>
+          </sc-for>
+        </sc-if>
+      </div>
+    </sc-if>
+    <sc-if value="{{ hasSelected }}" hint-placeholder-val="{{ false }}">
+      <div data-screen-label="Emir onayı" style="padding:12px 16px 24px;display:flex;flex-direction:column;gap:14px">
+        <button class="btn btn-ghost" onClick="{{ backToOrders }}" style="align-self:flex-start;padding-inline:0;min-height:44px">← Emirler</button>
+        <div><h2 style="margin:0;font-size:34px">{{ selectedOrder.ticker }}</h2><div style="font-size:14px;margin-top:2px"><b style="color: {{ selectedOrder.sideColor }}">{{ selectedOrder.side }} {{ selectedOrder.quantity }} lot</b> <span style="color:var(--color-neutral-700)">— {{ selectedOrder.order_type }} · bracket</span></div></div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:14px 0;border-top:2px solid var(--color-divider);border-bottom:2px solid var(--color-divider)">
+          <div><div style="font-size:11px;color:var(--color-neutral-700)">Tutar</div><b>{{ selectedOrder.notionalF }}</b></div><div><div style="font-size:11px;color:var(--color-neutral-700)">Portföy</div><b>{{ selectedOrder.pctF }}</b></div><div><div style="font-size:11px;color:var(--color-neutral-700)">Stop</div><b>{{ selectedOrder.stopF }}</b></div>
+          <div><div style="font-size:11px;color:var(--color-neutral-700)">Puan</div><b>{{ selectedOrder.rating }}</b></div><div><div style="font-size:11px;color:var(--color-neutral-700)">Hedef</div><b>{{ selectedOrder.decision.ptF }}</b></div><div><div style="font-size:11px;color:var(--color-neutral-700)">Vade</div><b>{{ selectedOrder.decision.horizon }}</b></div>
+        </div>
+        <div style="display:flex;gap:10px"><button class="btn btn-secondary" onClick="{{ reject }}" style="flex:1;min-height:48px">Reddet</button><button class="btn btn-primary" onClick="{{ approve }}" style="flex:1;min-height:48px">Doğrula ve onayla</button></div>
+        <div style="font-size:11px;color:var(--color-neutral-700)">{{ selectedOrder.expires }} içinde sona erer · cihaz kilidi ile doğrulama ister</div>
+        <div><div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-700);font-weight:600;margin-bottom:6px">Portföy yöneticisi gerekçesi</div><p style="margin:0;line-height:1.6;font-size:13px">{{ selectedOrder.decision.final_decision_text }}</p></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span style="font-size:11px;color:var(--color-neutral-700)">Konsey</span><sc-for list="{{ selectedOrder.decision.votes }}" as="v" hint-placeholder-count="3"><span class="tag tag-neutral">{{ v.model }} · {{ v.vote }}</span></sc-for></div>
+        <button class="btn btn-ghost" onClick="{{ selectedOrder.decision.openDetail }}" style="align-self:flex-start;padding-inline:0">Tüm ajan analizleri →</button>
+        <p style="margin:0;font-size:11px;color:var(--color-neutral-700)">Yatırım tavsiyesi değildir. Reddedilen emir bugün yeniden önerilmez.</p>
+      </div>
+    </sc-if>
+  </sc-if>
+
+  <sc-if value="{{ isAgents }}" hint-placeholder-val="{{ false }}">
+    <div data-screen-label="Ajanlar" style="padding:20px 16px 24px;display:flex;flex-direction:column;gap:6px">
+      <h2 style="margin:0;font-size:24px">Ajan kararları</h2><div style="font-size:12px;color:var(--color-neutral-700);margin-bottom:8px">Portfolio Manager + LLM konseyi · {{ decisionCount }} karar · son koşu {{ lastRun }}</div>
+      <sc-for list="{{ decRows }}" as="d" hint-placeholder-count="7">
+        <div style="border-bottom:1px solid var(--color-divider)">
+          <button onClick="{{ d.toggle }}" style="display:flex;flex-direction:column;gap:6px;width:100%;text-align:left;padding:14px 0;border:0;background:transparent;cursor:pointer;color:var(--color-text)">
+            <div style="display:flex;align-items:center;gap:10px;width:100%"><span style="font-family:var(--font-heading);font-weight:800;font-size:18px">{{ d.ticker }}</span><span class="{{ d.tagClass }}" style="{{ d.tagStyle }}">{{ d.rating }}</span><span style="margin-left:auto;font-size:12px;color:var(--color-accent-700);font-weight:600">{{ d.agentCount }} {{ d.chevron }}</span></div>
+            <div style="display:flex;gap:14px;width:100%;font-size:12px;color:var(--color-neutral-700)"><span>Giriş <b style="color:var(--color-text)">{{ d.entryF }}</b></span><span>Stop <b style="color:var(--color-text)">{{ d.stopF }}</b></span><span>Hedef <b style="color:var(--color-text)">{{ d.ptF }}</b></span></div>
+            <div style="font-size:11px;color:var(--color-neutral-700)">{{ d.dateF }} · {{ d.horizon }} · güven {{ d.confF }}</div>
+          </button>
+          <sc-if value="{{ d.open }}" hint-placeholder-val="{{ false }}">
+            <div style="padding:0 0 16px;display:flex;flex-direction:column;gap:12px">
+              <div style="display:flex;gap:6px;flex-wrap:wrap"><sc-for list="{{ d.votes }}" as="v" hint-placeholder-count="3"><span class="tag tag-neutral">{{ v.model }} · {{ v.vote }}</span></sc-for></div>
+              <sc-for list="{{ d.reasoning }}" as="r" hint-placeholder-count="3"><div style="font-size:13px"><div style="display:flex;gap:8px;align-items:center"><b>{{ r.agent }}</b><span class="tag tag-outline" style="font-size:10px">{{ r.badge }}</span></div><p style="margin:4px 0 0;line-height:1.5">{{ r.summary }}</p><div style="font-size:10px;color:var(--color-neutral-700);margin-top:2px">{{ r.meta }}</div></div></sc-for>
+              <button class="btn btn-ghost" onClick="{{ d.openDetail }}" style="align-self:flex-start;padding-inline:0">Tam detay →</button>
+            </div>
+          </sc-if>
+        </div>
+      </sc-for>
+      <div style="margin-top:20px"><div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px"><b style="font-family:var(--font-heading);font-size:15px">Çalışma günlüğü</b><span style="font-size:11px;color:var(--color-neutral-700)">{{ lastRun }} TRT</span></div>
+        <sc-for list="{{ runlog }}" as="r" hint-placeholder-count="11"><div style="display:grid;grid-template-columns:12px 1fr;gap:10px;padding:8px 0;border-bottom:1px solid var(--color-divider);font-size:12px"><span style="width:10px;height:10px;margin-top:3px;background: {{ r.dot }}"></span><span><span style="color:var(--color-neutral-700)">{{ r.t }}</span> · <b>{{ r.stage }}</b><br><span style="color:var(--color-neutral-700)">{{ r.detail }}</span></span></div></sc-for>
+        <div style="font-size:11px;color:var(--color-neutral-700);margin-top:8px">{{ runCost }} · sonraki koşu {{ nextRun }}</div></div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isDecisionDetail }}" hint-placeholder-val="{{ false }}">
+    <div data-screen-label="Karar detayı" style="padding:12px 16px 24px;display:flex;flex-direction:column;gap:14px">
+      <button class="btn btn-ghost" onClick="{{ closeDetail }}" style="align-self:flex-start;padding-inline:0;min-height:44px">← Ajanlar</button>
+      <div style="display:flex;align-items:center;gap:12px"><h2 style="margin:0;font-size:34px">{{ detailDecision.ticker }}</h2><span class="{{ detailDecision.tagClass }}" style="{{ detailDecision.tagStyle }}">{{ detailDecision.rating }}</span></div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:14px 0;border-top:2px solid var(--color-divider);border-bottom:2px solid var(--color-divider)"><div><div style="font-size:11px;color:var(--color-neutral-700)">Giriş</div><b>{{ detailDecision.entryF }}</b></div><div><div style="font-size:11px;color:var(--color-neutral-700)">Stop</div><b>{{ detailDecision.stopF }}</b></div><div><div style="font-size:11px;color:var(--color-neutral-700)">Kâr al</div><b>{{ detailDecision.tpF }}</b></div><div><div style="font-size:11px;color:var(--color-neutral-700)">Hedef</div><b>{{ detailDecision.ptF }}</b></div><div><div style="font-size:11px;color:var(--color-neutral-700)">Vade</div><b>{{ detailDecision.horizon }}</b></div><div><div style="font-size:11px;color:var(--color-neutral-700)">Boyut</div><b>{{ detailDecision.sizeF }}</b></div></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span style="font-size:11px;color:var(--color-neutral-700)">Konsey · güven {{ detailDecision.confF }}</span><sc-for list="{{ detailDecision.votes }}" as="v" hint-placeholder-count="3"><span class="tag tag-neutral">{{ v.model }} · {{ v.vote }}</span></sc-for></div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:6px"><b style="font-family:var(--font-heading);font-size:15px">Ajan analizleri</b><span style="font-size:11px;color:var(--color-neutral-700)">~{{ detailDecision.tokensF }} token</span></div>
+      <sc-for list="{{ detailDecision.reasoning }}" as="r" hint-placeholder-count="5"><div style="font-size:13px;padding-bottom:12px;border-bottom:1px solid var(--color-divider)"><div style="display:flex;gap:8px;align-items:center"><b>{{ r.agent }}</b><span class="tag tag-outline" style="font-size:10px">{{ r.badge }}</span></div><p style="margin:4px 0 0;line-height:1.55">{{ r.summary }}</p><div style="font-size:10px;color:var(--color-neutral-700);margin-top:2px">{{ r.meta }}</div></div></sc-for>
+      <sc-if value="{{ detailDecision.hasDebate }}" hint-placeholder-val="{{ false }}"><b style="font-family:var(--font-heading);font-size:15px">Tartışma</b><sc-for list="{{ detailDecision.debate }}" as="e" hint-placeholder-count="2"><div style="font-size:13px;padding-bottom:10px;border-bottom:1px solid var(--color-divider)"><b>{{ e.role }}</b><p style="margin:4px 0 0;line-height:1.55">{{ e.text }}</p></div></sc-for></sc-if>
+      <b style="font-family:var(--font-heading);font-size:15px">Portföy yöneticisi çıktısı</b><p style="margin:0;line-height:1.6;font-size:13px">{{ detailDecision.final_decision_text }}</p>
+      <p style="margin:0;font-size:11px;color:var(--color-neutral-700)">Onay/red, emir bekleyen listeye düştüğünde Emirler'den yapılır. Yatırım tavsiyesi değildir.</p>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isCharts }}" hint-placeholder-val="{{ false }}">
+    <div data-screen-label="Grafik" style="padding:20px 16px 24px;display:flex;flex-direction:column;gap:14px">
+      <div style="display:flex;gap:8px"><input class="input" value="{{ chartInput }}" onChange="{{ setChartInput }}" onKeyDown="{{ chartKey }}" style="flex:1;min-height:48px;font-size:16px;font-weight:800;letter-spacing:.08em;text-transform:uppercase"><button class="btn btn-primary" onClick="{{ showChart }}" style="min-height:48px">Göster</button></div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-end"><h2 style="margin:0;font-size:28px">{{ chartTicker }}</h2><div style="text-align:right"><div style="font-family:var(--font-heading);font-weight:800;font-size:20px">{{ chartLastF }}</div><div style="font-weight:800;font-size:13px;color: {{ chartChgColor }}">{{ chartChgF }}</div></div></div>
+      <div style="display:flex;gap:8px;align-items:center"><div class="seg"><sc-for list="{{ chartModes }}" as="m" hint-placeholder-count="2"><label class="seg-opt" style="min-height:40px"><input type="radio" name="{{ uid }}-cmode" checked="{{ m.active }}" onChange="{{ m.pick }}"><span>{{ m.label }}</span></label></sc-for></div><div class="seg" style="margin-left:auto"><sc-for list="{{ chartRanges }}" as="r" hint-placeholder-count="3"><label class="seg-opt" style="min-height:40px"><input type="radio" name="{{ uid }}-crange" checked="{{ r.active }}" onChange="{{ r.pick }}"><span>{{ r.label }}</span></label></sc-for></div></div>
+      <sc-if value="{{ isCandle }}" hint-placeholder-val="{{ true }}"><svg viewBox="0 0 1000 260" preserveAspectRatio="none" style="width:100%;height:220px;display:block;border-bottom:2px solid var(--color-divider)"><sc-for list="{{ candles }}" as="c" hint-placeholder-count="0"><line x1="{{ c.wx }}" x2="{{ c.wx }}" y1="{{ c.y1 }}" y2="{{ c.y2 }}" stroke="{{ c.color }}" vector-effect="non-scaling-stroke"></line><rect x="{{ c.x }}" y="{{ c.y }}" width="{{ c.w }}" height="{{ c.h }}" fill="{{ c.fill }}" stroke="{{ c.color }}" vector-effect="non-scaling-stroke"></rect></sc-for></svg></sc-if>
+      <sc-if value="{{ isArea }}" hint-placeholder-val="{{ false }}"><svg viewBox="0 0 1000 260" preserveAspectRatio="none" style="width:100%;height:220px;display:block;border-bottom:2px solid var(--color-divider)"><path d="{{ areaPath }}" fill="#eae9e9"></path><path d="{{ linePathD }}" fill="none" stroke="{{ lineColor }}" stroke-width="2" vector-effect="non-scaling-stroke"></path></svg></sc-if>
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--color-neutral-700)"><span>Düşük {{ chartLoF }}</span><span>{{ chartBarsF }}</span><span>Yüksek {{ chartHiF }}</span></div>
+      <sc-if value="{{ hasChartDecision }}" hint-placeholder-val="{{ true }}"><div style="border-top:2px solid var(--color-divider);padding-top:12px"><div style="display:flex;align-items:center;gap:10px"><span class="{{ chartDecision.tagClass }}" style="{{ chartDecision.tagStyle }}">{{ chartDecision.rating }}</span><span style="font-size:12px;color:var(--color-neutral-700)">{{ chartDecision.dateF }} · hedef {{ chartDecision.ptF }}</span></div><p style="margin:8px 0 0;font-size:13px;line-height:1.55">{{ chartDecision.final_decision_text }}</p></div></sc-if>
+      <sc-if value="{{ hasChartPos }}" hint-placeholder-val="{{ false }}"><div style="font-size:12px;color:var(--color-neutral-700)">Pozisyon: <b style="color:var(--color-text)">{{ chartPos.qty }} @ {{ chartPos.avgF }}</b> · <b style="color: {{ chartPos.color }}">{{ chartPos.pnlF }}</b> · stop {{ chartPos.stopF }}</div></sc-if>
+      <button class="btn btn-primary btn-block" onClick="{{ analyzeChartTicker }}" style="min-height:48px;margin:0">{{ chartTicker }} analiz et →</button>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isWatch }}" hint-placeholder-val="{{ false }}">
+    <div data-screen-label="İzleme" style="padding:20px 16px 24px;display:flex;flex-direction:column;gap:14px">
+      <div><h2 style="margin:0;font-size:24px">İzleme listesi</h2><div style="font-size:12px;color:var(--color-neutral-700);margin-top:4px">Günlük koşu evrenine eklenir · {{ watchCount }}</div></div>
+      <div style="display:flex;gap:8px"><input class="input" placeholder="Sembol ekle — TSLA" value="{{ watchInput }}" onChange="{{ setWatchInput }}" onKeyDown="{{ watchKey }}" style="flex:1;min-height:48px;text-transform:uppercase"><button class="btn btn-primary" onClick="{{ addWatch }}" style="min-height:48px">Ekle</button></div>
+      <sc-for list="{{ watchRows }}" as="w" hint-placeholder-count="6">
+        <div style="display:flex;flex-direction:column;gap:6px;padding:12px 0;border-bottom:1px solid var(--color-divider)">
+          <div style="display:flex;align-items:center;gap:10px"><span style="font-family:var(--font-heading);font-weight:800;font-size:16px">{{ w.t }}</span><span class="{{ w.tagClass }}" style="{{ w.tagStyle }}">{{ w.rating }}</span><span style="margin-left:auto;font-weight:600">{{ w.lastF }}</span><span style="font-weight:600;width:56px;text-align:right;color: {{ w.color }}">{{ w.chgF }}</span></div>
+          <div style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--color-neutral-700)"><span style="flex:1">{{ w.ratingDate }} · {{ w.status }}</span><button class="btn btn-ghost" onClick="{{ w.chart }}" style="font-size:12px;min-height:36px">Grafik</button><button class="btn btn-ghost" onClick="{{ w.analyze }}" style="font-size:12px;min-height:36px">Analiz</button><button class="btn btn-ghost" onClick="{{ w.remove }}" aria-label="Listeden çıkar" style="min-height:36px;min-width:36px;color:var(--color-neutral-700)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></button></div>
+        </div>
+      </sc-for>
+      <sc-if value="{{ watchEmpty }}" hint-placeholder-val="{{ false }}"><p style="color:var(--color-neutral-700);margin:0">Liste boş. Bir sembol ekle — günlük koşu onu da analiz eder.</p></sc-if>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isRisk }}" hint-placeholder-val="{{ false }}">
+    <div data-screen-label="Risk" style="padding:20px 16px 24px;display:flex;flex-direction:column;gap:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center"><h2 style="margin:0;font-size:24px">Risk &amp; uyarılar</h2><span class="tag tag-accent">{{ openAlerts }} açık</span></div>
+      <div><b style="font-family:var(--font-heading);font-size:15px">Kill switch</b><div class="seg" style="display:flex;margin-top:8px"><sc-for list="{{ kill }}" as="k" hint-placeholder-count="3"><label class="seg-opt" style="flex:1;min-height:48px;font-weight:800"><input type="radio" name="{{ uid }}-kill" checked="{{ k.active }}" onChange="{{ k.pick }}"><span>{{ k.label }}</span></label></sc-for></div><div style="font-size:12px;color:var(--color-neutral-700);margin-top:8px">{{ killDesc }} · timer'ı SSH olmadan durdurur.</div></div>
+      <div style="border-top:2px solid var(--color-divider);padding-top:12px"><b style="font-family:var(--font-heading);font-size:15px">Devre kesiciler</b><sc-for list="{{ breakers }}" as="b" hint-placeholder-count="4"><div style="padding:8px 0"><div style="display:flex;justify-content:space-between;font-size:13px"><span>{{ b.name }}</span><span><b style="color: {{ b.color }}">{{ b.now }}</b><span style="color:var(--color-neutral-700)"> / {{ b.limit }}</span></span></div><div style="height:4px;background:var(--color-neutral-200);margin-top:4px"><div style="height:4px;background: {{ b.color }};width: {{ b.bar }}"></div></div></div></sc-for></div>
+      <div style="border-top:2px solid var(--color-divider);padding-top:12px"><b style="font-family:var(--font-heading);font-size:15px">Portföy limitleri</b><sc-for list="{{ limits }}" as="l" hint-placeholder-count="4"><div style="padding:8px 0"><div style="display:flex;justify-content:space-between;font-size:13px"><span>{{ l.name }}</span><span><b style="color: {{ l.color }}">{{ l.now }}</b><span style="color:var(--color-neutral-700)"> / {{ l.limit }}</span></span></div><div style="height:4px;background:var(--color-neutral-200);margin-top:4px"><div style="height:4px;background: {{ l.color }};width: {{ l.bar }}"></div></div></div></sc-for></div>
+      <div style="border-top:2px solid var(--color-divider);padding-top:12px"><b style="font-family:var(--font-heading);font-size:15px">Uyarılar</b><sc-for list="{{ alerts }}" as="a" hint-placeholder-count="6"><div style="display:flex;flex-direction:column;gap:4px;padding:10px 0;border-bottom:1px solid var(--color-divider);font-size:13px"><div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:11px;color:var(--color-neutral-700)">{{ a.when }}</span><span class="{{ a.statusClass }}">{{ a.statusLabel }}</span></div><span>{{ a.text }}</span></div></sc-for></div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isLearn }}" hint-placeholder-val="{{ false }}">
+    <div data-screen-label="Öğren" style="padding:20px 16px 24px;display:flex;flex-direction:column">
+      <h2 style="margin:0;font-size:24px">Öğren</h2><div style="font-size:12px;color:var(--color-neutral-700);margin-top:4px">Panelindeki sayıların ne anlama geldiği.</div>
+      <div style="display:flex;align-items:center;gap:12px;margin:14px 0 6px"><div style="flex:1;height:4px;background:var(--color-neutral-200)"><div style="height:4px;background:var(--color-text);width: {{ progress }}"></div></div><span style="font-size:12px;font-weight:800">{{ solvedCount }}</span></div>
+      <sc-for list="{{ lessons }}" as="l" hint-placeholder-count="8">
+        <div style="border-bottom:1px solid var(--color-divider)">
+          <button onClick="{{ l.toggle }}" style="display:grid;grid-template-columns:14px 1fr auto;gap:12px;align-items:start;width:100%;text-align:left;padding:14px 0;border:0;background:transparent;cursor:pointer;color:var(--color-text)"><span style="width:10px;height:10px;margin-top:5px;border:2px solid var(--color-text);background: {{ l.dotBg }}"></span><span><span style="display:block;font-family:var(--font-heading);font-weight:800;font-size:15px">{{ l.title }}</span><span style="display:block;font-size:12px;color:var(--color-neutral-700);margin-top:3px">{{ l.summary }}</span></span><span style="font-size:20px;font-weight:800;color:var(--color-neutral-700)">{{ l.chevron }}</span></button>
+          <sc-if value="{{ l.open }}" hint-placeholder-val="{{ false }}">
+            <div style="padding:0 0 18px 26px;display:flex;flex-direction:column;gap:12px">
+              <sc-for list="{{ l.body }}" as="para" hint-placeholder-count="2"><p style="margin:0;line-height:1.6;font-size:13px">{{ para }}</p></sc-for>
+              <div style="background:var(--color-surface);padding:10px 14px"><div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent-700);font-weight:600">Akılda kalsın</div><div style="margin-top:4px;font-weight:600;font-size:13px">{{ l.takeaway }}</div></div>
+              <div style="font-weight:800;font-size:13px">{{ l.quizQ }}</div>
+              <sc-for list="{{ l.options }}" as="o" hint-placeholder-count="3"><button onClick="{{ o.pick }}" style="text-align:left;padding:10px 12px;min-height:44px;border:1px solid {{ o.border }};background: {{ o.bg }};cursor:pointer;font-size:13px;color:var(--color-text)">{{ o.text }}</button></sc-for>
+              <sc-if value="{{ l.reveal }}" hint-placeholder-val="{{ false }}"><div style="font-size:13px"><b style="color: {{ l.verdictColor }}">{{ l.verdict }}</b> — <span style="color:var(--color-neutral-700)">{{ l.explain }}</span></div></sc-if>
+            </div>
+          </sc-if>
+        </div>
+      </sc-for>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isSettings }}" hint-placeholder-val="{{ false }}">
+    <div data-screen-label="Ayarlar" style="padding:20px 16px 24px;display:flex;flex-direction:column;gap:16px">
+      <h2 style="margin:0;font-size:24px">Ayarlar</h2>
+      <div><div style="display:flex;align-items:center;gap:10px"><span class="tag tag-outline" style="font-weight:800">{{ modeLabel }}</span><span style="font-size:12px">{{ account }}</span></div><div style="font-size:11px;color:var(--color-neutral-700);margin-top:6px;line-height:1.5">Live'a geçiş: canlı hesap + KYC + live key + secrets.env. Uygulamadan yapılamaz.</div></div>
+      <div style="border-top:2px solid var(--color-divider);padding-top:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center"><b style="font-family:var(--font-heading);font-size:15px">Eval scorecard</b><span style="font-family:var(--font-heading);font-weight:800;font-size:18px;color: {{ verdictColor }}">{{ verdict }}</span></div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:10px"><div><div style="font-size:11px;color:var(--color-neutral-700)">Sharpe</div><b style="font-size:16px;color:var(--color-accent)">{{ sharpeF }}</b><div style="font-size:10px;color:var(--color-neutral-700)">&gt; 1.0</div></div><div><div style="font-size:11px;color:var(--color-neutral-700)">Sortino</div><b style="font-size:16px">{{ sortinoF }}</b><div style="font-size:10px;color:var(--color-neutral-700)">downside</div></div><div><div style="font-size:11px;color:var(--color-neutral-700)">Max DD</div><b style="font-size:16px">{{ maxDdF }}</b><div style="font-size:10px;color:var(--color-neutral-700)">&lt; 15%</div></div><div><div style="font-size:11px;color:var(--color-neutral-700)">Calmar</div><b style="font-size:16px">{{ calmarF }}</b><div style="font-size:10px;color:var(--color-neutral-700)">getiri/DD</div></div><div><div style="font-size:11px;color:var(--color-neutral-700)">Getiri</div><b style="font-size:16px">{{ retF }}</b><div style="font-size:10px;color:var(--color-neutral-700)">20g</div></div><div><div style="font-size:11px;color:var(--color-neutral-700)">α vs SPY</div><b style="font-size:16px">{{ alphaF }}</b><div style="font-size:10px;color:var(--color-neutral-700)">SPY {{ spyF }}</div></div></div>
+        <div style="font-size:12px;color:var(--color-neutral-700);margin-top:10px">Eval tamamlandı · {{ evalDays }} · karar kesin</div>
+        <div style="display:flex;flex-direction:column;gap:4px;font-size:13px;margin-top:10px;padding-top:10px;border-top:1px solid var(--color-divider)"><sc-for list="{{ gates }}" as="g" hint-placeholder-count="4"><div style="display:flex;gap:10px"><span style="font-weight:800;width:14px;color: {{ g.color }}">{{ g.mark }}</span><span style="flex:1">{{ g.name }}</span><span style="color:var(--color-neutral-700)">{{ g.detail }}</span></div></sc-for></div>
+        <sc-if value="{{ isInert }}" hint-placeholder-val="{{ false }}"><p style="margin:10px 0 0;font-size:12px;color:var(--color-accent-700);line-height:1.5">⚠ {{ inertNote }}</p></sc-if>
+      </div>
+      <div style="border-top:2px solid var(--color-divider);padding-top:12px"><b style="font-family:var(--font-heading);font-size:15px">Kill switch</b><div class="seg" style="display:flex;margin-top:8px"><sc-for list="{{ kill }}" as="k" hint-placeholder-count="3"><label class="seg-opt" style="flex:1;min-height:48px;font-weight:800"><input type="radio" name="{{ uid }}-kill2" checked="{{ k.active }}" onChange="{{ k.pick }}"><span>{{ k.label }}</span></label></sc-for></div><div style="font-size:12px;color:var(--color-neutral-700);margin-top:8px">{{ killDesc }}</div></div>
+      <div style="border-top:2px solid var(--color-divider);padding-top:12px"><b style="font-family:var(--font-heading);font-size:15px">Emir gönderimi</b>
+        <sc-for list="{{ swExec }}" as="t" hint-placeholder-count="3"><div style="display:flex;gap:14px;align-items:center;padding:12px 0;border-bottom:1px solid var(--color-divider);min-height:44px"><div style="flex:1"><div style="font-weight:600;font-size:13px">{{ t.label }}</div><div style="font-size:11px;color:var(--color-neutral-700)">{{ t.desc }}</div></div><button onClick="{{ t.toggle }}" aria-label="{{ t.label }}" style="flex:none;width:44px;height:24px;padding:0;border:0;cursor:pointer;position:relative;background: {{ t.bg }}"><span style="position:absolute;top:3px;left:0;width:18px;height:18px;background:var(--color-bg);transition:transform .15s;transform:translateX({{ t.tx }}px)"></span></button></div></sc-for>
+      </div>
+      <div style="border-top:2px solid var(--color-divider);padding-top:12px"><b style="font-family:var(--font-heading);font-size:15px">Strateji</b>
+        <div style="font-size:11px;color:var(--color-neutral-700);margin:10px 0 6px">Boyutlama yöntemi</div><div class="seg" style="display:flex"><sc-for list="{{ sizing }}" as="z" hint-placeholder-count="2"><label class="seg-opt" style="flex:1;min-height:44px"><input type="radio" name="{{ uid }}-sizing" checked="{{ z.active }}" onChange="{{ z.pick }}"><span>{{ z.label }}</span></label></sc-for></div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px"><span style="flex:1">Tek isim tavanı</span><input class="input" value="{{ maxPos }}" onChange="{{ setMaxPos }}" style="width:64px;min-height:40px"><span>%</span></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;font-size:12px"><div><div style="color:var(--color-neutral-700);font-size:11px">Risk / işlem</div><b>%0.5 equity</b></div><div><div style="color:var(--color-neutral-700);font-size:11px">Stop</div><b>2 × ATR(14)</b></div><div><div style="color:var(--color-neutral-700);font-size:11px">Evren</div><b>SPY + 20 isim</b></div><div><div style="color:var(--color-neutral-700);font-size:11px">Koşu</div><b>Hafta içi 22:30 UTC</b></div></div>
+      </div>
+      <div style="border-top:2px solid var(--color-divider);padding-top:12px"><b style="font-family:var(--font-heading);font-size:15px">Bildirimler</b>
+        <sc-for list="{{ swNotif }}" as="t" hint-placeholder-count="3"><div style="display:flex;gap:14px;align-items:center;padding:12px 0;border-bottom:1px solid var(--color-divider);min-height:44px"><div style="flex:1"><div style="font-weight:600;font-size:13px">{{ t.label }}</div><div style="font-size:11px;color:var(--color-neutral-700)">{{ t.desc }}</div></div><button onClick="{{ t.toggle }}" aria-label="{{ t.label }}" style="flex:none;width:44px;height:24px;padding:0;border:0;cursor:pointer;position:relative;background: {{ t.bg }}"><span style="position:absolute;top:3px;left:0;width:18px;height:18px;background:var(--color-bg);transition:transform .15s;transform:translateX({{ t.tx }}px)"></span></button></div></sc-for>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:12px"><button class="btn btn-secondary btn-block" onClick="{{ testPush }}" style="min-height:44px;margin:0">Test bildirimi gönder</button><button class="btn btn-secondary btn-block" onClick="{{ goNotifs }}" style="min-height:44px;margin:0">Bildirim geçmişi ({{ notifCount }})</button></div>
+      </div>
+      <div style="border-top:2px solid var(--color-divider);padding-top:12px"><b style="font-family:var(--font-heading);font-size:15px">Sistem</b><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;font-size:12px"><div><div style="color:var(--color-neutral-700);font-size:11px">Backend</div><b>● online</b></div><div><div style="color:var(--color-neutral-700);font-size:11px">Broker · DB</div><b>Alpaca ✓ · SQLite ✓</b></div><div><div style="color:var(--color-neutral-700);font-size:11px">Son ajan kararı</div><b>{{ lastRun }}</b></div><div><div style="color:var(--color-neutral-700);font-size:11px">Yedek</div><b>02:15 UTC ✓</b></div></div>
+        <button class="btn btn-ghost" onClick="{{ signOut }}" style="padding-inline:0;margin-top:12px;min-height:44px">Çıkış yap</button></div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isNotifs }}" hint-placeholder-val="{{ false }}">
+    <div data-screen-label="Bildirimler" style="padding:20px 16px 24px;display:flex;flex-direction:column">
+      <div style="display:flex;justify-content:space-between;align-items:center"><h2 style="margin:0;font-size:24px">Bildirimler</h2><div style="display:flex"><button class="btn btn-ghost" onClick="{{ markAllRead }}" style="font-size:12px;min-height:44px">Okundu</button><button class="btn btn-ghost" onClick="{{ clearNotifs }}" style="font-size:12px;min-height:44px">Temizle</button></div></div>
+      <div style="font-size:12px;color:var(--color-neutral-700);margin-bottom:6px">Bu cihaza gelen son {{ notifCount }} bildirim</div>
+      <sc-if value="{{ notifsEmpty }}" hint-placeholder-val="{{ false }}"><p style="color:var(--color-neutral-700);margin:12px 0 0"><b style="color:var(--color-text)">Henüz bildirim yok.</b> Bir emir onaya düştüğünde buraya düşer.</p></sc-if>
+      <sc-for list="{{ notifs }}" as="n" hint-placeholder-count="7">
+        <button onClick="{{ n.open }}" style="display:grid;grid-template-columns:12px 1fr;gap:12px;align-items:start;width:100%;text-align:left;padding:12px 0;border:0;border-bottom:1px solid var(--color-divider);background:transparent;cursor:pointer;color:var(--color-text)">
+          <span style="width:10px;height:10px;margin-top:5px;background: {{ n.dot }}"></span>
+          <span><span style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span class="{{ n.typeClass }}">{{ n.typeLabel }}</span><span style="font-size:11px;color:var(--color-neutral-700)">{{ n.time }}</span></span><span style="display:block;margin-top:6px;font-size:14px;font-weight: {{ n.weight }}">{{ n.title }}</span><span style="display:block;font-size:12px;color:var(--color-neutral-700);margin-top:2px">{{ n.body }}</span><span style="display:block;font-size:11px;color:var(--color-accent-700);font-weight:600;margin-top:6px">Aç →</span></span>
+        </button>
+      </sc-for>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isMore }}" hint-placeholder-val="{{ false }}">
+    <div data-screen-label="Diğer" style="padding:20px 16px 24px;display:flex;flex-direction:column">
+      <h2 style="margin:0 0 8px;font-size:24px">Diğer</h2>
+      <sc-for list="{{ moreItems }}" as="n" hint-placeholder-count="6"><button onClick="{{ n.go }}" style="display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:14px 0;border:0;border-bottom:1px solid var(--color-divider);background:transparent;cursor:pointer;color:var(--color-text);font-size:16px;font-weight:600;min-height:52px"><span style="flex:1">{{ n.label }}</span><sc-if value="{{ n.badge }}" hint-placeholder-val="{{ false }}"><span class="tag tag-accent">{{ n.badge }}</span></sc-if><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg></button></sc-for>
+      <button class="btn btn-ghost" onClick="{{ signOut }}" style="padding-inline:0;margin-top:14px;min-height:44px">Çıkış yap</button>
+    </div>
+  </sc-if>
+
+  </div>
+
+  <sc-if value="{{ authed }}" hint-placeholder-val="{{ true }}">
+    <div style="display:flex;border-top:2px solid var(--color-divider);background:var(--color-bg);padding-bottom: {{ bottomPad }}px">
+      <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="4">
+        <button onClick="{{ t.go }}" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 0 8px;border:0;border-top:3px solid {{ t.marker }};margin-top:-2px;background:transparent;cursor:pointer;color: {{ t.color }};font-size:10px;font-weight:700;letter-spacing:.04em;min-height:56px;position:relative"><span style="width:8px;height:8px;background:currentColor"></span>{{ t.label }}<sc-if value="{{ t.badge }}" hint-placeholder-val="{{ false }}"><span style="position:absolute;top:8px;right:22%;background:var(--color-accent);color:var(--color-bg);font-size:9px;font-weight:800;padding:1px 4px">{{ t.badge }}</span></sc-if></button>
+      </sc-for>
+      <button onClick="{{ toggleMore }}" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 0 8px;border:0;border-top:3px solid {{ moreMarker }};margin-top:-2px;background:transparent;cursor:pointer;color: {{ moreColor }};font-size:10px;font-weight:700;letter-spacing:.04em;min-height:56px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin:-4px 0"><path d="M4 12h16"></path><path d="M4 6h16"></path><path d="M4 18h16"></path></svg>Diğer</button>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ inApprove }}" hint-placeholder-val="{{ false }}">
+    <div style="position:absolute;inset:0;background:color-mix(in srgb, var(--color-neutral-900) 50%, transparent);display:flex;align-items:flex-end;z-index:50">
+      <div style="width:100%;background:var(--color-surface);padding:24px 20px calc(24px + {{ bottomPad }}px);display:flex;flex-direction:column;gap:12px;box-shadow:var(--shadow-lg)">
+        <sc-if value="{{ isAuth }}" hint-placeholder-val="{{ true }}"><svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--color-accent)"><path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path><path d="M8 14s1.5 2 4 2 4-2 4-2"></path><path d="M9 9h.01"></path><path d="M15 9h.01"></path></svg><div class="dialog-title">Cihaz kilidi ile doğrula</div><div class="dialog-body"><b>{{ approveLabel }}</b> — Face ID / parmak izi / şifre olmadan emir onaylanamaz.</div><div style="display:flex;gap:10px;margin-top:6px"><button class="btn btn-secondary" onClick="{{ cancelAuth }}" style="flex:1;min-height:48px">Vazgeç</button><button class="btn btn-primary" onClick="{{ confirmAuth }}" style="flex:1;min-height:48px">Doğrula</button></div></sc-if>
+        <sc-if value="{{ isVerifying }}" hint-placeholder-val="{{ false }}"><div style="display:flex;align-items:center;gap:14px"><span style="width:18px;height:18px;border:3px solid var(--color-neutral-300);border-top-color:var(--color-accent);animation:spin .8s linear infinite"></span><div class="dialog-title">Doğrulanıyor…</div></div><div class="dialog-body">Kimlik doğrulandı, emir broker'a gönderiliyor.</div></sc-if>
+        <sc-if value="{{ isDone }}" hint-placeholder-val="{{ false }}"><svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg><div class="dialog-title">Emir gönderildi</div><div class="dialog-body">Broker emri <b>alp_9d4b…</b> · durum <b>accepted</b> · bracket stop + kâr al eklendi.</div><button class="btn btn-primary btn-block" onClick="{{ finishApprove }}" style="min-height:48px">Tamam</button></sc-if>
+      </div>
+    </div>
+  </sc-if>
+  <sc-if value="{{ showRejectDialog }}" hint-placeholder-val="{{ false }}"><div style="position:absolute;inset:0;background:color-mix(in srgb, var(--color-neutral-900) 50%, transparent);display:flex;align-items:flex-end;z-index:50"><div style="width:100%;background:var(--color-surface);padding:24px 20px calc(24px + {{ bottomPad }}px);display:flex;flex-direction:column;gap:12px"><div class="dialog-title">Emri reddet?</div><div class="dialog-body"><b>{{ approveLabel }}</b> — emir gönderilmeyecek; günlük koşu bugün yeniden önermez.</div><div style="display:flex;gap:10px"><button class="btn btn-secondary" onClick="{{ closeDialogs }}" style="flex:1;min-height:48px">Vazgeç</button><button class="btn btn-primary" onClick="{{ confirmReject }}" style="flex:1;min-height:48px">Reddet</button></div></div></div></sc-if>
+  <sc-if value="{{ showCancelDialog }}" hint-placeholder-val="{{ false }}"><div style="position:absolute;inset:0;background:color-mix(in srgb, var(--color-neutral-900) 50%, transparent);display:flex;align-items:flex-end;z-index:50"><div style="width:100%;background:var(--color-surface);padding:24px 20px calc(24px + {{ bottomPad }}px);display:flex;flex-direction:column;gap:12px"><div class="dialog-title">Emri iptal et</div><div class="dialog-body"><b>{{ cancelTarget.ticker }} {{ cancelTarget.sideQty }}</b> lot emri broker'dan geri çekilsin mi? Emir bu sırada dolarsa iptal edilemez.</div><div style="display:flex;gap:10px"><button class="btn btn-secondary" onClick="{{ closeDialogs }}" style="flex:1;min-height:48px">Vazgeç</button><button class="btn btn-primary" onClick="{{ confirmCancel }}" style="flex:1;min-height:48px">İptal et</button></div></div></div></sc-if>
+  <sc-if value="{{ showFlattenDialog }}" hint-placeholder-val="{{ false }}"><div style="position:absolute;inset:0;background:color-mix(in srgb, var(--color-neutral-900) 50%, transparent);display:flex;align-items:flex-end;z-index:50"><div style="width:100%;background:var(--color-surface);padding:24px 20px calc(24px + {{ bottomPad }}px);display:flex;flex-direction:column;gap:12px"><div class="dialog-title">Tüm pozisyonları kapat?</div><div class="dialog-body">FLATTEN_ALL 10 açık pozisyonu piyasa fiyatından kapatır ve timer'ı durdurur. Geri alınamaz.</div><div style="display:flex;gap:10px"><button class="btn btn-secondary" onClick="{{ closeDialogs }}" style="flex:1;min-height:48px">Vazgeç</button><button class="btn btn-primary" onClick="{{ confirmFlatten }}" style="flex:1;min-height:48px">FLATTEN</button></div></div></div></sc-if>
+  <sc-if value="{{ hasToast }}" hint-placeholder-val="{{ false }}"><div style="position:absolute;left:16px;right:16px;bottom: {{ toastBottom }}px;z-index:60;background:var(--color-text);color:var(--color-bg);padding:12px 14px;font-size:12px;box-shadow:var(--shadow-lg)">{{ toast }}</div></sc-if>
+</div>
+</x-import>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:460,&quot;height&quot;:940},&quot;screen&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;portfolio&quot;,&quot;options&quot;:[&quot;portfolio&quot;,&quot;ask&quot;,&quot;orders&quot;,&quot;agents&quot;,&quot;charts&quot;,&quot;watch&quot;,&quot;risk&quot;,&quot;learn&quot;,&quot;settings&quot;,&quot;notifs&quot;,&quot;login&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Ekran&quot;},&quot;frame&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;android&quot;,&quot;options&quot;:[&quot;android&quot;,&quot;ios&quot;],&quot;tsType&quot;:&quot;'android' | 'ios'&quot;,&quot;section&quot;:&quot;Cihaz&quot;},&quot;mode&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;paper&quot;,&quot;options&quot;:[&quot;paper&quot;,&quot;live&quot;],&quot;tsType&quot;:&quot;'paper' | 'live'&quot;,&quot;section&quot;:&quot;Durum&quot;},&quot;pnlPalette&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;accounting&quot;,&quot;options&quot;:[&quot;accounting&quot;,&quot;greenred&quot;],&quot;tsType&quot;:&quot;'accounting' | 'greenred'&quot;,&quot;section&quot;:&quot;Durum&quot;}}">
+class Component extends DCLogic {
+  state = {};
+  uid = 'm' + Math.random().toString(36).slice(2, 7);
+  componentDidMount() { import('./trader-core.js').then(m => { this.core = m; this.setState(m.initialState(this.props)); }); }
+  componentDidUpdate(prev) {
+    if (this.core && prev.screen !== this.props.screen) this.setState({ screen: this.props.screen || 'portfolio', authed: this.props.screen !== 'login', detailDecisionId: null, selectedOrderId: null, approveStep: null, moreOpen: false });
+  }
+  componentWillUnmount() { if (this.core) this.core.clearTimers(this); }
+  runAnalysis(t) { this.core.runAnalysis(this, t); }
+  renderVals() {
+    const ios = (this.props.frame || 'android') === 'ios';
+    const base = { frameComponent: ios ? 'IOSDevice' : 'AndroidDevice', topPad: ios ? 54 : 0, bottomPad: ios ? 26 : 0, toastBottom: ios ? 110 : 84 };
+    if (!this.core || !this.state.screen) return base;
+    const v = Object.assign(this.core.vals(this), base);
+    v.uid = this.uid;
+    v.cannotSignIn = !v.canSignIn;
+    v.noneSelected = !v.hasSelected;
+    v.stripBg = v.isLive ? 'var(--color-accent)' : 'var(--color-bg)';
+    v.stripFg = v.isLive ? 'var(--color-bg)' : 'var(--color-text)';
+    v.tabs.forEach(t => { t.marker = t.active ? 'var(--color-accent)' : 'transparent'; t.color = t.active ? 'var(--color-accent)' : 'var(--color-neutral-700)'; });
+    v.moreMarker = v.moreActive ? 'var(--color-accent)' : 'transparent'; v.moreColor = v.moreActive ? 'var(--color-accent)' : 'var(--color-neutral-700)';
+    if (v.isMore) { ['isPortfolio','isAsk','isOrders','isAgents','isDecisionDetail','isCharts','isWatch','isRisk','isLearn','isSettings','isNotifs'].forEach(k => { v[k] = false; }); }
+    v.chatMessages.forEach(m => { m.hasDecision = !!m.decision; m.isAssistant = !m.isUser; });
+    v.decRows.forEach(d => { d.hasDebate = d.debate.length > 0; });
+    v.alerts = v.alerts.map(a => ({ ...a, statusLabel: a.open ? 'açık' : 'kapandı', statusClass: a.open ? 'tag tag-accent' : 'tag tag-neutral' }));
+    v.runlog.forEach(r => { r.dot = r.warn ? 'var(--color-accent)' : 'var(--color-text)'; });
+    v.lessons.forEach(l => { l.dotBg = l.solved ? 'var(--color-text)' : 'transparent'; l.verdictColor = l.solved ? 'var(--color-text)' : 'var(--color-accent)'; l.options.forEach(o => { o.border = o.right ? 'var(--color-text)' : o.wrong ? 'var(--color-accent)' : 'var(--color-neutral-300)'; o.bg = o.right ? 'var(--color-neutral-200)' : o.wrong ? 'var(--color-accent-100)' : 'transparent'; }); });
+    v.swExec = [v.sw.autoExecute, v.sw.refuseOutside, v.sw.bracket];
+    v.swNotif = [v.sw.push, v.sw.weekly, v.sw.biometric];
+    v.notifs.forEach(n => { n.dot = n.isUnread ? 'var(--color-accent)' : 'transparent'; n.weight = n.isUnread ? 800 : 500; });
+    v.cancelAuth = () => this.setState({ approveStep: null });
+    return v;
+  }
+}
+</script>
+</body>
+</html>

@@ -20,6 +20,7 @@ import { useTheme } from '@/theme/useTheme';
 import { ratingChip } from '@/theme/rating';
 import { MIN_TOUCH_TARGET } from '@/utils/a11y';
 import { font, TABULAR, TYPE } from '@/theme/type';
+import { positionStop } from '@/utils/positions';
 import { formatUsd, formatPct, parseUtc, relativeAgeTr } from '@/utils/format';
 import { pnlTone, type Tone } from '@/utils/realized';
 import { Seg, type SegOption } from '@/components/Seg';
@@ -312,7 +313,7 @@ export default function ChartsScreen() {
               {formatUsd(position.unrealized_pnl, { signed: true })}
             </Text>
             {' · stop '}
-            {formatUsd(position.stop_loss)}
+            {formatUsd(positionStop(position))}
           </Text>
         ) : null}
 

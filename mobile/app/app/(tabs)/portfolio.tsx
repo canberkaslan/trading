@@ -22,6 +22,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { EquityChart } from '@/components/EquityChart';
 import { Seg, type SegOption } from '@/components/Seg';
 import { Tag } from '@/components/Tag';
+import { positionStop } from '@/utils/positions';
 import { formatUsd, formatPct } from '@/utils/format';
 import { verdictTheme, PERIODS, PERIOD_DAYS, type Period } from '@/utils/equity';
 import { font, TABULAR, TYPE } from '@/theme/type';
@@ -671,7 +672,7 @@ function PositionRow({
     { label: 'K/Z %', value: formatPct(p.unrealized_pnl_pct, { signed: true }), color: pnlColor },
     // The stop leg lives on the broker order, not on the position: a book with
     // no bracket answers 0, which must read as "no stop", never as a $0.00 one.
-    { label: 'Stop', value: formatUsd(p.stop_loss > 0 ? p.stop_loss : null) },
+    { label: 'Stop', value: formatUsd(positionStop(p)) },
   ];
 
   return (

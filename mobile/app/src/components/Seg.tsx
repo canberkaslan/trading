@@ -47,7 +47,7 @@ export function Seg<T extends string>({
   const styles = useMemo(() => makeStyles(t), [t]);
 
   return (
-    <View style={[styles.seg, style]}>
+    <View style={[styles.seg, block && styles.segBlock, style]}>
       {options.map((o) => {
         const active = o.value === value;
         const fill = o.fill ?? t.accent;
@@ -59,6 +59,7 @@ export function Seg<T extends string>({
             style={[
               styles.opt,
               block && styles.optBlock,
+              block && styles.optBlockPadding,
               active && { backgroundColor: fill, borderColor: fill },
               disabled && styles.disabled,
             ]}
@@ -82,6 +83,14 @@ type Palette = ReturnType<typeof useTheme>;
 const makeStyles = (t: Palette) =>
   StyleSheet.create({
     seg: { flexDirection: 'row', alignSelf: 'flex-start' },
+    /*
+     * `block` used to set flex:1 on the options while the container kept
+     * alignSelf:'flex-start', so the row never grew — the options divided an
+     * intrinsic width instead of the screen, and the longer label ("Onay
+     * bekleyen · 0") truncated to "Onay bekley…" while the short one had room
+     * to spare. The container has to stretch for flex:1 to mean anything.
+     */
+    segBlock: { alignSelf: 'stretch' },
     opt: {
       paddingHorizontal: 14,
       paddingVertical: 8,
@@ -94,6 +103,10 @@ const makeStyles = (t: Palette) =>
       justifyContent: 'center',
     },
     optBlock: { flex: 1 },
+    // Half a phone width is not much for "Onay bekleyen · 12"; the fixed
+    // padding is what pushes it over. Blocked options are already as wide as
+    // they will get, so they do not need it.
+    optBlockPadding: { paddingHorizontal: 6 },
     disabled: { opacity: 0.45 },
     label: { color: t.textPrimary, fontSize: 13, ...font(600) },
   });

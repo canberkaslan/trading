@@ -21,7 +21,7 @@ export default function LoginScreen() {
         autoComplete="email"
         keyboardType="email-address"
         placeholder="email"
-        placeholderTextColor="#666"
+        placeholderTextColor={colors.textMuted}
         style={styles.input}
       />
       <TextInput
@@ -29,7 +29,7 @@ export default function LoginScreen() {
         onChangeText={setPassword}
         secureTextEntry
         placeholder="password"
-        placeholderTextColor="#666"
+        placeholderTextColor={colors.textMuted}
         style={styles.input}
       />
       <Pressable

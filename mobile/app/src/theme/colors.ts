@@ -19,6 +19,10 @@ export const colors = {
   downCB: '#f97316',
 
   accent: '#a855f7',
+  // Deeper red for surfaces that carry WHITE text. colors.down is tuned to be
+  // read AS text on a dark ground; inverted it only reaches 3.76:1, so the LIVE
+  // mode chip needs its own fill rather than borrowing the P&L red.
+  dangerDeep: '#dc2626',
   warning: '#f59e0b',
   danger: '#ef4444',
 } as const;

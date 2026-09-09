@@ -11,11 +11,20 @@ function channelToLinear(c: number): number {
   return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
 }
 
-/** Relative luminance (0..1) of a #rrggbb hex color per WCAG 2.1. */
+/**
+ * Relative luminance (0..1) of a hex color per WCAG 2.1.
+ *
+ * Accepts the three-digit shorthand as well as #rrggbb. It used to reject it,
+ * which mattered: the shorthand is the form the codebase actually writes when
+ * it goes off-token (`color: '#555'`, `placeholderTextColor="#666"`), so the
+ * one input this helper most needed to measure was the one it threw on.
+ */
 export function luminance(hex: string): number {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  const raw = hex.trim();
+  const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(raw);
   if (!m?.[1]) throw new Error(`invalid hex color: ${hex}`);
-  const n = parseInt(m[1], 16);
+  const full = m[1].length === 3 ? m[1].replace(/./g, (c) => c + c) : m[1];
+  const n = parseInt(full, 16);
   const r = channelToLinear((n >> 16) & 0xff);
   const g = channelToLinear((n >> 8) & 0xff);
   const b = channelToLinear(n & 0xff);

@@ -117,7 +117,10 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 24 },
   modeChip: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
   modeChipPaper: { backgroundColor: 'rgba(245, 158, 11, 0.15)' },
-  modeChipLive: { backgroundColor: colors.down },
+  // colors.down (#ef4444) puts white at 3.76:1 here, under AA for 11px/800 —
+  // and this is the label that tells the operator real money is at stake.
+  // A darker red keeps the semantic and clears the bar at 4.83:1.
+  modeChipLive: { backgroundColor: colors.dangerDeep },
   modeChipUnknown: { backgroundColor: colors.surfaceElevated },
   modeText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
   modeTextPaper: { color: colors.warning },

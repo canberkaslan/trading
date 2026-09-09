@@ -1,7 +1,24 @@
 import { describe, it, expect } from '@jest/globals';
 
+import { readFileSync, readdirSync, statSync } from 'fs';
+import { join } from 'path';
+
 import { contrastRatio, luminance, meetsAA } from './contrast';
 import { colors } from '../theme/colors';
+
+/** Every .tsx the app actually ships, so the guard sees screens and not just tokens. */
+function tsxFiles(): string[] {
+  const walk = (dir: string): string[] =>
+    readdirSync(dir).flatMap((entry) => {
+      const full = join(dir, entry);
+      return statSync(full).isDirectory()
+        ? walk(full)
+        : full.endsWith('.tsx')
+          ? [full]
+          : [];
+    });
+  return [join(__dirname, '..', '..', 'app'), join(__dirname, '..', 'components')].flatMap(walk);
+}
 
 describe('contrast helpers', () => {
   it('computes known luminance anchors', () => {
@@ -47,48 +64,61 @@ describe('theme text tokens meet WCAG AA on app backgrounds', () => {
   }
 });
 
-describe('screens do not reintroduce off-token text colours', () => {
+describe('screens do not reintroduce off-token colours', () => {
   // The token suite above only sees colors.ts, so a screen that writes a literal
-  // is invisible to it. That is exactly what happened: seven screens styled the
-  // legal disclaimer `color: '#555'` — 2.66:1 on the app background, well under
-  // the bar textMuted was raised to clear, and the one piece of text on those
-  // screens that most needs to be readable.
-  const OFFENDERS = ['#555', '#555555', '#666', '#666666'];
+  // is invisible to it. That is what happened: seven screens styled the legal
+  // disclaimer `color: '#555'` — 2.66:1 — and the login screen wrote
+  // `placeholderTextColor="#666"` at 3.12:1 on its input.
+  //
+  // The first version of this guard matched only `color: '<hex>'`, so it caught
+  // the disclaimers and walked straight past the placeholder. A guard that
+  // covers one spelling of the same mistake reads as coverage it does not have,
+  // so it now matches any prop that ends in `color` (case-insensitive), in both
+  // the `x: '#hex'` and `x="#hex"` forms.
+  const BAD_HEX = /#(?:555|666|555555|666666)\b/i;
+  const COLOUR_PROP = /([A-Za-z]*[Cc]olor)\s*[:=]\s*['"{]?\s*['"]?(#[0-9a-fA-F]{3,6})['"]?/g;
 
-  it('the disclaimer grey that shipped is genuinely a failure, not a near miss', () => {
-    expect(meetsAA('#555555', colors.background)).toBe(false);
-    expect(contrastRatio('#555555', colors.background)).toBeLessThan(3);
+  it('the greys that shipped are genuine failures, not near misses', () => {
+    expect(meetsAA('#555', colors.background)).toBe(false);
+    expect(contrastRatio('#555', colors.background)).toBeLessThan(3);
+    expect(meetsAA('#666', colors.surface)).toBe(false);
   });
 
-  it('textMuted is a legitimate replacement for it', () => {
-    expect(meetsAA(colors.textMuted, colors.background)).toBe(true);
-    expect(meetsAA(colors.textMuted, colors.surface)).toBe(true);
-    expect(meetsAA(colors.textMuted, colors.surfaceElevated)).toBe(true);
+  it('luminance handles the shorthand these literals are written in', () => {
+    // It used to throw on three-digit hex, which is exactly how the offending
+    // values are spelled — the guard could not measure what it was guarding.
+    expect(luminance('#555')).toBeCloseTo(luminance('#555555'), 10);
+    expect(luminance('fff')).toBeCloseTo(1, 5);
   });
 
-  it('no screen hard-codes one of those greys as a text colour', () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { readFileSync, readdirSync, statSync } = require('fs');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { join } = require('path');
+  it('textMuted is a legitimate replacement on every surface', () => {
+    for (const bg of [colors.background, colors.surface, colors.surfaceElevated]) {
+      expect(meetsAA(colors.textMuted, bg)).toBe(true);
+    }
+  });
 
-    const walk = (dir: string): string[] =>
-      readdirSync(dir).flatMap((entry: string) => {
-        const full = join(dir, entry);
-        if (statSync(full).isDirectory()) return walk(full);
-        return full.endsWith('.tsx') ? [full] : [];
-      });
-
-    const roots = [join(__dirname, '..', '..', 'app'), join(__dirname, '..', 'components')];
+  it('no screen hard-codes one of those greys on any colour prop', () => {
     const hits: string[] = [];
-    for (const root of roots) {
-      for (const file of walk(root)) {
-        const src = readFileSync(file, 'utf8');
-        for (const bad of OFFENDERS) {
-          if (src.includes(`color: '${bad}'`)) hits.push(`${file}: color: '${bad}'`);
-        }
+    for (const file of tsxFiles()) {
+      const src = readFileSync(file, 'utf8');
+      for (const m of src.matchAll(COLOUR_PROP)) {
+        const [, prop, hex] = m;
+        if (hex && BAD_HEX.test(hex)) hits.push(`${file}: ${prop} ${hex}`);
       }
     }
     expect(hits).toEqual([]);
+  });
+});
+
+describe('white-on-fill chips meet AA', () => {
+  // colors.down is tuned to be read AS text on a dark ground. Inverted — white
+  // text on a down-coloured fill — it only reaches 3.76:1, and the chip that
+  // uses that inversion is the one announcing real-money mode.
+  it('the LIVE mode chip is legible', () => {
+    expect(meetsAA(colors.textPrimary, colors.dangerDeep)).toBe(true);
+  });
+
+  it('and borrowing the P&L red for it would not be', () => {
+    expect(meetsAA(colors.textPrimary, colors.down)).toBe(false);
   });
 });

@@ -112,8 +112,9 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - **Box canlı, 16 günlük karanlık bitti.** `trader.fusapp.com` cevap veriyor: `/healthz` ok
   (`trading_mode: paper`), `/readyz` `alpaca:true db:true`. Ajan **08-09'da koşmuş** — DB'de
   2026-09-08 tarihli taze UNH kararı var (Overweight, entry 398.5, stop 370.0), yani günlük döngü
-  kendi kendine yeniden başlamış. Portföy: equity ~$109.9k, cash $2,829.16, 10 pozisyon,
-  unrealized **+$10,817**, gross exposure %97.4, 5 isim %10 tek-isim tavanının üstünde.
+  kendi kendine yeniden başlamış. Portföy (06:22 UTC snapshot): equity **$109,273.74**, cash
+  $2,829.16, 10 pozisyon, unrealized **+$10,214.99**, günlük **−$601.80 / −%0.55**, intraday DD
+  −%0.65, gross exposure %97.4, 5 isim %10 tek-isim tavanının üstünde.
   **SSH hâlâ kapalı** — 22/80/443 hepsi filtreli, ICMP %100 kayıp; sadece cloudflared tüneli
   (outbound) ayakta. Yani **deploy bugün mümkün değil**, ve stop backfill / reconcile hâlâ bekliyor.
 - [x] 🔴 **`import vectorbt` aylardır patlıyormuş ve tam da onu yakalayacak test rutin olarak

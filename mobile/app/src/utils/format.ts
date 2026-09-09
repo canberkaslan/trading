@@ -8,6 +8,14 @@
  */
 
 const EM_DASH = '—';
+/**
+ * U+2212 MINUS SIGN, not the ASCII hyphen. The handoff asks for it by
+ * codepoint, and it is not pedantry at this size: in Archivo's tabular figures
+ * the true minus is the width of a digit and sits on the same optical axis as
+ * the plus, so a column of signed money stays aligned. A hyphen is narrower and
+ * rides low, which shifts every negative row a hair left.
+ */
+const MINUS = '\u2212';
 
 type UsdOptions = {
   /** Prefix positive values with '+' (e.g. daily P&L deltas). Default false. */
@@ -24,7 +32,7 @@ export function formatUsd(n: number | null | undefined, opts: UsdOptions = {}): 
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
-  if (n < 0) return `-${body}`;
+  if (n < 0) return `${MINUS}${body}`;
   return opts.signed ? `+${body}` : body;
 }
 
@@ -34,8 +42,11 @@ export function formatUsd(n: number | null | undefined, opts: UsdOptions = {}): 
  */
 export function formatPct(n: number | null | undefined, opts: UsdOptions = {}): string {
   if (n == null || Number.isNaN(n)) return EM_DASH;
-  const pct = (n * 100).toFixed(2);
-  return opts.signed && n > 0 ? `+${pct}%` : `${pct}%`;
+  // The sign has to be prepended rather than left inside toFixed's output:
+  // toFixed emits an ASCII hyphen, and there is no way to ask it for U+2212.
+  const value = n * 100;
+  const sign = value < 0 ? MINUS : opts.signed && value > 0 ? '+' : '';
+  return `${sign}${Math.abs(value).toFixed(2)}%`;
 }
 
 /**

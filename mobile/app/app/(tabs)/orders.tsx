@@ -20,6 +20,7 @@ import {
   type OrderTone,
 } from '@/utils/orders';
 import { MIN_TOUCH_TARGET, orderActionLabel } from '@/utils/a11y';
+import { font, TABULAR } from '@/theme/type';
 
 type Tab = 'pending' | 'history';
 
@@ -252,7 +253,7 @@ const makeStyles = (t: Palette) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: t.background },
     scroll: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 24, gap: 0 },
-    heading: { color: t.textPrimary, fontSize: 24, fontWeight: '800' },
+    heading: { color: t.textPrimary, fontSize: 24, ...font(800) },
     subheading: { color: t.textSecondary, fontSize: 13, marginBottom: 16 },
     // One continuous outlined strip, borders collapsed with a -1 margin.
     segment: { flexDirection: 'row', marginTop: 12, marginBottom: 8 },
@@ -267,16 +268,16 @@ const makeStyles = (t: Palette) =>
       minHeight: MIN_TOUCH_TARGET,
     },
     segBtnActive: { backgroundColor: t.textPrimary },
-    segLabel: { color: t.textPrimary, fontSize: 14, fontWeight: '600' },
+    segLabel: { color: t.textPrimary, fontSize: 14, ...font(600) },
     segLabelActive: { color: t.background },
     // Ruled rows, not stacked cards.
     card: { paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: t.divider },
     row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    ticker: { color: t.textPrimary, fontSize: 18, fontWeight: '800' },
-    side: { fontSize: 15, fontWeight: '800' },
-    status: { fontSize: 14, fontWeight: '800', marginTop: 6 },
-    muted: { color: t.textSecondary, fontSize: 12, marginTop: 6 },
-    tapHint: { color: t.accent700 ?? t.accent, fontSize: 12, marginTop: 8, fontWeight: '600' },
+    ticker: { color: t.textPrimary, fontSize: 18, ...font(800) },
+    side: { fontSize: 15, ...font(800), ...TABULAR },
+    status: { fontSize: 14, ...font(800), marginTop: 6 },
+    muted: { color: t.textSecondary, fontSize: 12, marginTop: 6, ...TABULAR },
+    tapHint: { color: t.accent700 ?? t.accent, fontSize: 12, marginTop: 8, ...font(600) },
     reasons: { marginTop: 8, gap: 2 },
     reason: { color: t.textSecondary, fontSize: 12 },
     cancelBtn: {
@@ -287,5 +288,5 @@ const makeStyles = (t: Palette) =>
       alignItems: 'center',
       justifyContent: 'center',
     },
-    cancelLabel: { color: t.accent700 ?? t.accent, fontSize: 14, fontWeight: '800' },
+    cancelLabel: { color: t.accent700 ?? t.accent, fontSize: 14, ...font(800) },
   });

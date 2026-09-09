@@ -11,6 +11,7 @@ import { authenticate } from '@/auth/biometric';
 import { formatUsd } from '@/utils/format';
 import { MIN_TOUCH_TARGET, hitSlopFor, orderActionLabel } from '@/utils/a11y';
 import type { AgentDecision, OrderListItem } from '@/api/types';
+import { font, TABULAR } from '@/theme/type';
 
 export default function ApproveOrderScreen() {
   const theme = useTheme();
@@ -207,7 +208,7 @@ const makeStatStyles = (t: Palette) =>
   StyleSheet.create({
   stat: { flex: 1 },
   label: { color: t.textSecondary, fontSize: 11 },
-  value: { color: t.textPrimary, fontSize: 16, fontWeight: '800', marginTop: 2 },
+  value: { color: t.textPrimary, fontSize: 16, ...font(800), marginTop: 2, ...TABULAR },
 });
 
 type Palette = ReturnType<typeof useTheme>;
@@ -217,10 +218,10 @@ const makeStyles = (t: Palette) =>
     container: { flex: 1, backgroundColor: t.background },
     center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 16 },
     back: { marginBottom: 12 },
-    backText: { color: t.accent700 ?? t.accent, fontSize: 14, fontWeight: '600' },
+    backText: { color: t.accent700 ?? t.accent, fontSize: 14, ...font(600) },
     // 40px per the handoff: the ticker is the first thing to resolve on a screen
     // that commits real money.
-    title: { color: t.textPrimary, fontSize: 40, fontWeight: '800', letterSpacing: -0.5 },
+    title: { color: t.textPrimary, fontSize: 40, ...font(800), letterSpacing: -0.5 },
     subtitle: { color: t.textSecondary, fontSize: 14, marginTop: 4, marginBottom: 16 },
     // A ruled block, not a filled card — the 2px rules do the separating.
     headlineCard: {
@@ -250,10 +251,10 @@ const makeStyles = (t: Palette) =>
     // Ink fill for the committing action. In Modernist the accent is reserved
     // for loss and for warnings — an approve button in it would read as danger.
     btnPrimary: { backgroundColor: t.textPrimary },
-    btnPrimaryText: { color: t.background, fontWeight: '800' },
+    btnPrimaryText: { color: t.background, ...font(800) },
     btnSecondary: { backgroundColor: 'transparent', borderWidth: 1, borderColor: t.textPrimary },
-    btnSecondaryText: { color: t.textPrimary, fontWeight: '600' },
-    section: { color: t.textPrimary, fontSize: 15, fontWeight: '800', marginTop: 24, marginBottom: 8 },
+    btnSecondaryText: { color: t.textPrimary, ...font(600) },
+    section: { color: t.textPrimary, fontSize: 15, ...font(800), marginTop: 24, marginBottom: 8 },
     body: { color: t.textSecondary, fontSize: 13, lineHeight: 20 },
     disclaimer: { color: t.textSecondary, fontSize: 11, paddingVertical: 20, fontStyle: 'italic', textAlign: 'center' },
   });

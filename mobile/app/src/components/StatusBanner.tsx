@@ -29,6 +29,7 @@ import { useUnreadCount } from '@/stores/notifications';
 import { useTheme } from '@/theme/useTheme';
 import { badgeLabel } from '@/utils/inbox';
 import { lastSubmitLabel } from '@/utils/actionability';
+import { font } from '@/theme/type';
 
 /** Lucide `bell`, traced rather than shipped as a font so it inherits colour. */
 function BellIcon({ color }: { color: string }) {
@@ -129,9 +130,9 @@ const styles = StyleSheet.create({
   // Square, outlined in the strip's own ink — the chip reads as a stamp rather
   // than a pill, and inverts with the strip on LIVE without a second rule.
   modeChip: { borderWidth: 1, paddingHorizontal: 8, paddingVertical: 3 },
-  modeText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.88 },
-  statusText: { fontSize: 11, fontWeight: '600', flex: 1 },
+  modeText: { fontSize: 11, ...font(800), letterSpacing: 0.88 },
+  statusText: { fontSize: 11, ...font(600), flex: 1 },
   bell: { width: 44, height: 32, alignItems: 'center', justifyContent: 'center', marginRight: -12 },
   badge: { position: 'absolute', top: 0, right: 6, paddingHorizontal: 4, paddingVertical: 1 },
-  badgeText: { fontSize: 9, fontWeight: '800' },
+  badgeText: { fontSize: 9, ...font(800) },
 });

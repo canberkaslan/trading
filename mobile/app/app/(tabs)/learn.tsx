@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { LESSONS, type LessonText } from '@/content/lessons';
 import { useTheme } from '@/theme/useTheme';
 import { MIN_TOUCH_TARGET } from '@/utils/a11y';
+import { font } from '@/theme/type';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -178,32 +179,32 @@ const makeStyles = (t: Palette) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: t.background },
     scroll: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 24, gap: 0 },
-    heading: { color: t.textPrimary, fontSize: 24, fontWeight: '800' },
+    heading: { color: t.textPrimary, fontSize: 24, ...font(800) },
     subheading: { color: t.textSecondary, fontSize: 13 },
 
     progressRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 16, marginBottom: 12 },
     // Square track, ink fill — a rule that fills rather than a pill.
     progressTrack: { flex: 1, height: 6, borderWidth: 1, borderColor: t.textPrimary, overflow: 'hidden' },
     progressFill: { height: 4, backgroundColor: t.textPrimary },
-    progressText: { color: t.textSecondary, fontSize: 12, fontVariant: ['tabular-nums'], fontWeight: '700' },
+    progressText: { color: t.textSecondary, fontSize: 12, fontVariant: ['tabular-nums'], ...font(800) },
 
     // Ruled rows: each lesson is separated by a hairline, not floated on a card.
     card: { paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: t.divider },
     cardHead: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, minHeight: MIN_TOUCH_TARGET },
     dot: { width: 8, height: 8, borderWidth: 1, borderColor: t.textPrimary, marginTop: 6 },
     dotDone: { backgroundColor: t.textPrimary },
-    cardTitle: { color: t.textPrimary, fontSize: 16, fontWeight: '800' },
+    cardTitle: { color: t.textPrimary, fontSize: 16, ...font(800) },
     cardSummary: { color: t.textSecondary, fontSize: 12.5, marginTop: 3, lineHeight: 17 },
-    chevron: { color: t.textPrimary, fontSize: 20, fontWeight: '700', width: 20, textAlign: 'center' },
+    chevron: { color: t.textPrimary, fontSize: 20, ...font(800), width: 20, textAlign: 'center' },
 
     body: { marginTop: 14, gap: 12, borderTopWidth: 1, borderTopColor: t.divider, paddingTop: 14 },
     para: { color: t.textSecondary, fontSize: 13.5, lineHeight: 20 },
 
     takeaway: { backgroundColor: t.surface, padding: 12, gap: 4, borderLeftWidth: 3, borderLeftColor: t.textPrimary },
-    takeawayLabel: { color: t.textSecondary, fontSize: 10.5, fontWeight: '800', letterSpacing: 1, textTransform: 'uppercase' },
+    takeawayLabel: { color: t.textSecondary, fontSize: 10.5, ...font(800), letterSpacing: 1, textTransform: 'uppercase' },
     takeawayText: { color: t.textPrimary, fontSize: 13.5, lineHeight: 19 },
 
-    quizQ: { color: t.textPrimary, fontSize: 14, fontWeight: '700', marginTop: 4, lineHeight: 20 },
+    quizQ: { color: t.textPrimary, fontSize: 14, ...font(800), marginTop: 4, lineHeight: 20 },
     option: {
       minHeight: MIN_TOUCH_TARGET,
       justifyContent: 'center',
@@ -221,7 +222,7 @@ const makeStyles = (t: Palette) =>
     optionText: { color: t.textPrimary, fontSize: 13.5, lineHeight: 19 },
 
     explain: { gap: 4, marginTop: 12 },
-    explainHead: { fontSize: 12, fontWeight: '800', letterSpacing: 0.4 },
+    explainHead: { fontSize: 12, ...font(800), letterSpacing: 0.4 },
     explainText: { color: t.textSecondary, fontSize: 13, lineHeight: 19 },
 
     disclaimer: { color: t.textSecondary, fontSize: 11, paddingVertical: 20, textAlign: 'center' },

@@ -11,6 +11,7 @@ import { ratingChip, modelBadge } from '@/theme/rating';
 import { hitSlopFor } from '@/utils/a11y';
 import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
+import { font } from '@/theme/type';
 
 
 function formatTs(iso: string): string {
@@ -128,25 +129,25 @@ const makeStyles = (t: Palette) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: t.background },
     scroll: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 24, gap: 0 },
-    heading: { color: t.textPrimary, fontSize: 24, fontWeight: '800' },
+    heading: { color: t.textPrimary, fontSize: 24, ...font(800) },
     subheading: { color: t.textSecondary, fontSize: 13, marginBottom: 16 },
     card: { paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: t.divider },
     row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
-    ticker: { color: t.textPrimary, fontSize: 18, fontWeight: '800' },
+    ticker: { color: t.textPrimary, fontSize: 18, ...font(800) },
     // A filled chip, not tinted text: on a light ground a coloured word carries
     // far less than a filled block, and buy/hold/sell is the distinction that
     // actually drives a decision.
     ratingChip: { paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: 'transparent' },
-    rating: { fontSize: 12, fontWeight: '800', letterSpacing: 0.3 },
-    expandHint: { color: t.accent700 ?? t.accent, fontSize: 11, fontWeight: '600' },
+    rating: { fontSize: 12, ...font(800), letterSpacing: 0.3 },
+    expandHint: { color: t.accent700 ?? t.accent, fontSize: 11, ...font(600) },
     reasoningBox: { marginTop: 12, gap: 12, borderTopWidth: 1, borderTopColor: t.divider, paddingTop: 12 },
     reasoning: { gap: 4 },
     reasoningHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    agentName: { color: t.textPrimary, fontSize: 13, fontWeight: '800' },
+    agentName: { color: t.textPrimary, fontSize: 13, ...font(800) },
     // Model tag: outlined, so it reads as metadata rather than as a rating.
-    badge: { fontSize: 10, fontWeight: '700', borderWidth: 1, paddingHorizontal: 6, paddingVertical: 1, overflow: 'hidden' },
+    badge: { fontSize: 10, ...font(800), borderWidth: 1, paddingHorizontal: 6, paddingVertical: 1, overflow: 'hidden' },
     reasoningText: { color: t.textSecondary, fontSize: 12, lineHeight: 17 },
-    detailLink: { color: t.accent700 ?? t.accent, fontSize: 13, fontWeight: '600', marginTop: 4 },
+    detailLink: { color: t.accent700 ?? t.accent, fontSize: 13, ...font(600), marginTop: 4 },
     muted: { color: t.textSecondary, fontSize: 12 },
     disclaimer: { color: t.textSecondary, fontSize: 11, paddingVertical: 20, fontStyle: 'italic', textAlign: 'center' },
   });

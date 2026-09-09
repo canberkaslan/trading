@@ -21,6 +21,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { EquityChart } from '@/components/EquityChart';
 import { formatUsd, formatPct } from '@/utils/format';
 import { verdictTheme, PERIODS, PERIOD_DAYS, type Period } from '@/utils/equity';
+import { font, TABULAR } from '@/theme/type';
 import {
   sectorAllocation,
   topWeightTone,
@@ -544,18 +545,18 @@ const makeStyles = (t: Palette) =>
     container: { flex: 1, backgroundColor: t.background },
     center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
 
-    hero: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 16 },
+    hero: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 16, ...TABULAR },
     heroTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
     badgeWrap: { alignItems: 'flex-end' },
     // Square, outlined — the verdict is a stamp, not a pill.
     badge: { borderWidth: 1, paddingHorizontal: 10, paddingVertical: 4 },
-    badgeText: { fontSize: 13, fontWeight: '800', letterSpacing: 0.5 },
+    badgeText: { fontSize: 13, ...font(800), letterSpacing: 0.5 },
     badgeQualifier: { color: t.warning, fontSize: 11, marginTop: 4 },
     // Kicker: the label above the number, in accent-700 so small red type stays
     // legible where the base accent would not be.
-    heroLabel: { color: t.accent700 ?? t.accent, fontSize: 11, fontWeight: '600', letterSpacing: 1.1, textTransform: 'uppercase' },
-    heroValue: { color: t.textPrimary, fontSize: 44, fontWeight: '800', marginTop: 6, letterSpacing: -0.5 },
-    heroChange: { fontSize: 15, marginTop: 8, fontWeight: '600' },
+    heroLabel: { color: t.accent700 ?? t.accent, fontSize: 11, ...font(600), letterSpacing: 1.1, textTransform: 'uppercase' },
+    heroValue: { color: t.textPrimary, fontSize: 44, ...font(800), marginTop: 6, letterSpacing: -0.5 },
+    heroChange: { fontSize: 15, marginTop: 8, ...font(600) },
     muted: { color: t.textSecondary, marginTop: 4 },
     timestamp: { color: t.textSecondary, fontSize: 11, marginTop: 2 },
 
@@ -572,23 +573,23 @@ const makeStyles = (t: Palette) =>
       justifyContent: 'center',
     },
     periodPillActive: { backgroundColor: t.textPrimary },
-    periodText: { color: t.textPrimary, fontSize: 13, fontWeight: '600' },
+    periodText: { color: t.textPrimary, fontSize: 13, ...font(600) },
     periodTextActive: { color: t.background },
 
-    section: { color: t.textPrimary, fontSize: 15, fontWeight: '800', paddingHorizontal: 16, marginTop: 24 },
+    section: { color: t.textPrimary, fontSize: 15, ...font(800), paddingHorizontal: 16, marginTop: 24 },
     // The 2px top rule is what separates one block from the next.
     riskCard: { marginTop: 24, paddingHorizontal: 16, paddingTop: 16, borderTopWidth: 2, borderTopColor: t.divider },
-    cardTitle: { color: t.textPrimary, fontSize: 15, fontWeight: '800', marginBottom: 12 },
+    cardTitle: { color: t.textPrimary, fontSize: 15, ...font(800), marginBottom: 12 },
     statRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4, marginBottom: 12 },
     stat: { flex: 1 },
     statLabel: { color: t.textSecondary, fontSize: 11 },
-    statValue: { color: t.textPrimary, fontSize: 17, fontWeight: '800', marginTop: 2 },
+    statValue: { color: t.textPrimary, fontSize: 17, ...font(800), marginTop: 2, ...TABULAR },
     statSub: { color: t.textSecondary, fontSize: 11, marginTop: 1 },
 
     sectorRow: { marginTop: 10 },
     sectorHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
     sectorLabel: { color: t.textSecondary, fontSize: 13 },
-    sectorWeight: { color: t.textPrimary, fontSize: 13, fontWeight: '600' },
+    sectorWeight: { color: t.textPrimary, fontSize: 13, ...font(600) },
     barTrack: { height: 6, backgroundColor: t.neutral300 ?? t.surfaceElevated, overflow: 'hidden' },
     barFill: { height: 6, backgroundColor: t.textPrimary },
     // Blocked order flow is not an allocation — it gets the accent, so the two
@@ -597,25 +598,25 @@ const makeStyles = (t: Palette) =>
     flagText: { color: t.warning, fontSize: 12, marginTop: 12 },
     freshness: { color: t.textSecondary, fontSize: 11 },
 
-    realizedValue: { fontSize: 26, fontWeight: '800', marginTop: 2 },
+    realizedValue: { fontSize: 26, ...font(800), marginTop: 2 },
     splitTrack: { flexDirection: 'row', height: 6, overflow: 'hidden', marginTop: 14, marginBottom: 6 },
     // The strategy block is fenced off from the blended stats above it: the two
     // answer different questions and must not read as one continuous list.
     exitBlock: { marginTop: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: t.divider },
-    exitTitle: { color: t.textSecondary, fontSize: 13, fontWeight: '600' },
-    sampleBadge: { color: t.textSecondary, fontSize: 11, fontWeight: '600' },
+    exitTitle: { color: t.textSecondary, fontSize: 13, ...font(600) },
+    sampleBadge: { color: t.textSecondary, fontSize: 11, ...font(600) },
     exitRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
     exitLabel: { color: t.textSecondary, fontSize: 12, flex: 1 },
     exitCount: { color: t.textSecondary, fontSize: 12, width: 28, textAlign: 'right' },
-    exitPnl: { fontSize: 12, fontWeight: '600', width: 90, textAlign: 'right' },
+    exitPnl: { fontSize: 12, ...font(600), width: 90, textAlign: 'right' },
     splitRealized: { backgroundColor: t.textPrimary },
     splitOpen: { backgroundColor: t.neutral300 ?? t.surfaceElevated },
 
     // Rows in a ruled table, not stacked cards.
     positionCard: { marginHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: t.divider },
     row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    posTicker: { color: t.textPrimary, fontSize: 17, fontWeight: '800' },
-    posPnl: { fontSize: 14, fontWeight: '600' },
-    analyzeHint: { color: t.accent700 ?? t.accent, fontSize: 12, fontWeight: '600', marginTop: 4 },
+    posTicker: { color: t.textPrimary, fontSize: 17, ...font(800) },
+    posPnl: { fontSize: 14, ...font(600), ...TABULAR },
+    analyzeHint: { color: t.accent700 ?? t.accent, fontSize: 12, ...font(600), marginTop: 4 },
     disclaimer: { color: t.textSecondary, fontSize: 11, paddingHorizontal: 16, paddingVertical: 24, fontStyle: 'italic', textAlign: 'center' },
   });

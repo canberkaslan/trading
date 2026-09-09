@@ -12,6 +12,7 @@ import { View, Text, StyleSheet } from 'react-native';
 import { useMemo } from 'react';
 
 import { useTheme } from '@/theme/useTheme';
+import { font } from '@/theme/type';
 
 type Props = {
   title: string;
@@ -46,6 +47,6 @@ const makeStyles = (t: Palette) =>
       borderColor: t.divider,
       alignItems: 'center',
     },
-    title: { color: t.textPrimary, fontSize: 15, fontWeight: '800', textAlign: 'center' },
+    title: { color: t.textPrimary, fontSize: 15, ...font(800), textAlign: 'center' },
     hint: { color: t.textSecondary, fontSize: 13, marginTop: 8, textAlign: 'center' },
   });

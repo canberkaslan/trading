@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 
 import { useTheme } from '@/theme/useTheme';
 import { MIN_TOUCH_TARGET } from '@/utils/a11y';
+import { font } from '@/theme/type';
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -57,7 +58,7 @@ type Palette = ReturnType<typeof useTheme>;
 const makeStyles = (t: Palette) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: t.background, paddingHorizontal: 24, gap: 12 },
-    heading: { color: t.textPrimary, fontSize: 40, fontWeight: '800', marginTop: 48, letterSpacing: -1 },
+    heading: { color: t.textPrimary, fontSize: 40, ...font(800), marginTop: 48, letterSpacing: -1 },
     subheading: { color: t.textSecondary, fontSize: 14, marginBottom: 32 },
     input: {
       backgroundColor: t.surfaceElevated,
@@ -76,6 +77,6 @@ const makeStyles = (t: Palette) =>
       justifyContent: 'center',
       marginTop: 8,
     },
-    buttonText: { color: t.background, fontWeight: '800', fontSize: 16, letterSpacing: 0.5 },
+    buttonText: { color: t.background, ...font(800), fontSize: 16, letterSpacing: 0.5 },
     disclaimer: { color: t.textSecondary, fontSize: 11, marginTop: 32, lineHeight: 16 },
   });

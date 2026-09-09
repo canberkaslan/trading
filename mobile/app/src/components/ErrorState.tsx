@@ -15,6 +15,7 @@ import { useMemo } from 'react';
 
 import { useTheme } from '@/theme/useTheme';
 import { MIN_TOUCH_TARGET } from '@/utils/a11y';
+import { font } from '@/theme/type';
 
 type Props = {
   /** Short headline; defaults to a generic connection message. */
@@ -68,7 +69,7 @@ const makeStyles = (t: Palette) =>
       borderColor: t.divider,
       alignItems: 'center',
     },
-    title: { color: t.accent700 ?? t.danger, fontSize: 15, fontWeight: '800', marginBottom: 6 },
+    title: { color: t.accent700 ?? t.danger, fontSize: 15, ...font(800), marginBottom: 6 },
     hint: { color: t.textSecondary, fontSize: 13, textAlign: 'center' },
     detail: { color: t.textSecondary, fontSize: 11, marginTop: 12, textAlign: 'center' },
     retry: {
@@ -80,5 +81,5 @@ const makeStyles = (t: Palette) =>
       minHeight: MIN_TOUCH_TARGET,
       justifyContent: 'center',
     },
-    retryText: { color: t.textPrimary, fontSize: 14, fontWeight: '800' },
+    retryText: { color: t.textPrimary, fontSize: 14, ...font(800) },
   });

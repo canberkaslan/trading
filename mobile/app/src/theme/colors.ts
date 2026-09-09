@@ -43,6 +43,8 @@ export const dark = {
   danger: '#ef4444',
 
   divider: '#262626',
+  // Dark has no light to cast; the sheet reads by its border and fill instead.
+  shadowColor: '#000000',
 } as const;
 
 /**
@@ -97,6 +99,11 @@ export const modernist = {
 
   // Ink at 40% alpha. 2px between sections, 1px between rows.
   divider: 'rgba(32,30,29,0.4)',
+
+  // The one elevation the system has, and only dialogs and sheets may use it
+  // (`0 12px 32px rgba(45,43,43,.22)`). Everything else is flat, so a surface
+  // that lifts is unambiguously a thing that took over the screen.
+  shadowColor: '#2d2b2b',
 
   neutral100: '#f8f4f4',
   neutral200: '#eae7e7',

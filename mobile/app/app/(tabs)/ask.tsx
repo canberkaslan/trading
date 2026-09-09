@@ -17,6 +17,7 @@ import { useStartAnalysis, useAnalysisJob } from '@/api/hooks';
 import { useTheme } from '@/theme/useTheme';
 import { ratingChip } from '@/theme/rating';
 import { MIN_TOUCH_TARGET } from '@/utils/a11y';
+import { font, TABULAR } from '@/theme/type';
 
 const STATUS_LABEL: Record<string, string> = {
   queued: 'Sıraya alındı…',
@@ -208,7 +209,7 @@ const makeStyles = (t: Palette) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: t.background },
     scroll: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 24, gap: 0 },
-    heading: { color: t.textPrimary, fontSize: 24, fontWeight: '800' },
+    heading: { color: t.textPrimary, fontSize: 24, ...font(800) },
     subheading: { color: t.textSecondary, fontSize: 13, marginBottom: 16 },
     // Square field + square ink button, sharing one baseline height.
     inputRow: { flexDirection: 'row', marginTop: 4 },
@@ -221,7 +222,7 @@ const makeStyles = (t: Palette) =>
       paddingHorizontal: 14,
       paddingVertical: 13,
       fontSize: 18,
-      fontWeight: '700',
+      ...font(800),
       letterSpacing: 2,
     },
     btn: {
@@ -234,7 +235,7 @@ const makeStyles = (t: Palette) =>
       marginLeft: -1,
     },
     btnDisabled: { opacity: 0.45 },
-    btnText: { color: t.background, fontSize: 15, fontWeight: '800', letterSpacing: 0.5 },
+    btnText: { color: t.background, fontSize: 15, ...font(800), letterSpacing: 0.5 },
     statusCard: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -245,25 +246,25 @@ const makeStyles = (t: Palette) =>
     },
     statusText: { color: t.textSecondary, fontSize: 14, flexShrink: 1 },
     // A ruled block, not a floating card: 2px above, hairline rows within.
-    card: { marginTop: 20, paddingTop: 16, borderTopWidth: 2, borderTopColor: t.textPrimary },
+    card: { marginTop: 20, paddingTop: 16, borderTopWidth: 2, borderTopColor: t.divider },
     row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    ticker: { color: t.textPrimary, fontSize: 22, fontWeight: '800' },
+    ticker: { color: t.textPrimary, fontSize: 22, ...font(800) },
     ratingChip: { paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: 'transparent' },
-    rating: { fontSize: 13, fontWeight: '800', letterSpacing: 0.6 },
+    rating: { fontSize: 13, ...font(800), letterSpacing: 0.6 },
     metric: { alignItems: 'flex-start' },
     metricLabel: { color: t.textSecondary, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8 },
-    metricValue: { color: t.textPrimary, fontSize: 16, fontWeight: '700', marginTop: 3 },
+    metricValue: { color: t.textPrimary, fontSize: 16, ...font(800), marginTop: 3, ...TABULAR },
     horizon: { color: t.textSecondary, fontSize: 12, marginTop: 10 },
     rationale: { color: t.textSecondary, fontSize: 13, lineHeight: 19, marginTop: 12 },
     agentsBox: { marginTop: 14, gap: 6, borderTopWidth: 1, borderTopColor: t.divider, paddingTop: 12 },
-    agentsTitle: { color: t.textSecondary, fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, fontWeight: '700' },
+    agentsTitle: { color: t.textSecondary, fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, ...font(800) },
     agentLine: { color: t.textSecondary, fontSize: 12, lineHeight: 17 },
-    agentName: { color: t.textPrimary, fontWeight: '700' },
-    tapHint: { color: t.accent700 ?? t.accent, fontSize: 12, marginTop: 12, textAlign: 'right', fontWeight: '600' },
+    agentName: { color: t.textPrimary, ...font(800) },
+    tapHint: { color: t.accent700 ?? t.accent, fontSize: 12, marginTop: 12, textAlign: 'right', ...font(600) },
     err: { color: t.accent700 ?? t.danger, fontSize: 13, marginTop: 4 },
     empty: { alignItems: 'center', paddingVertical: 32, gap: 10 },
     emptyIcon: { fontSize: 40 },
-    emptyTitle: { color: t.textPrimary, fontSize: 17, fontWeight: '800' },
+    emptyTitle: { color: t.textPrimary, fontSize: 17, ...font(800) },
     emptyText: { color: t.textSecondary, fontSize: 13, lineHeight: 19, textAlign: 'center', paddingHorizontal: 8 },
     chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center', marginTop: 8 },
     chip: {
@@ -275,6 +276,6 @@ const makeStyles = (t: Palette) =>
       alignItems: 'center',
       justifyContent: 'center',
     },
-    chipText: { color: t.textPrimary, fontSize: 14, fontWeight: '700', letterSpacing: 1 },
+    chipText: { color: t.textPrimary, fontSize: 14, ...font(800), letterSpacing: 1 },
     disclaimer: { color: t.textSecondary, fontSize: 11, paddingVertical: 20, textAlign: 'center' },
   });

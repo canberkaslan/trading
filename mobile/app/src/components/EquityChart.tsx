@@ -5,6 +5,7 @@ import Svg, { Path, Circle } from 'react-native-svg';
 import type { EquityHistory, PriceSeries } from '@/api/types';
 import { useTheme } from '@/theme/useTheme';
 import { formatUsd, formatPct } from '@/utils/format';
+import { font, TABULAR } from '@/theme/type';
 import {
   worstDrawdown,
   ddIntensity,
@@ -149,12 +150,13 @@ const makeStyles = (t: ReturnType<typeof useTheme>) =>
   wrap: { paddingHorizontal: 24, marginTop: 8 },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  label: { color: t.textSecondary, fontSize: 13, fontWeight: '600' },
-  return: { fontSize: 15, fontWeight: '700' },
-  alphaChip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
-  alphaText: { fontSize: 12, fontWeight: '700' },
+  label: { color: t.textSecondary, fontSize: 13, ...font(600) },
+  return: { fontSize: 15, ...font(800), ...TABULAR },
+  // Square, like every other chip in the system — this was the one pill left.
+  alphaChip: { borderWidth: 1, paddingHorizontal: 8, paddingVertical: 2 },
+  alphaText: { fontSize: 12, ...font(800), ...TABULAR },
   legendRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
-  legendDot: { width: 8, height: 8, borderRadius: 4, marginRight: 4 },
+  legendDot: { width: 8, height: 8, marginRight: 4 },
   legendText: { color: t.textSecondary, fontSize: 11 },
   chartBox: {
     flexDirection: 'row',
@@ -163,7 +165,7 @@ const makeStyles = (t: ReturnType<typeof useTheme>) =>
     borderBottomWidth: 1,
     borderBottomColor: t.divider,
   },
-  ribbon: { flexDirection: 'row', marginTop: 3, borderRadius: 2, overflow: 'hidden' },
+  ribbon: { flexDirection: 'row', marginTop: 3, overflow: 'hidden' },
   footRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 },
   muted: { color: t.textSecondary, fontSize: 12 },
 });

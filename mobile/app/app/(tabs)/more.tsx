@@ -8,6 +8,7 @@ import { useUnreadCount } from '@/stores/notifications';
 import { useTheme } from '@/theme/useTheme';
 import { badgeLabel } from '@/utils/inbox';
 import { MIN_TOUCH_TARGET } from '@/utils/a11y';
+import { font } from '@/theme/type';
 
 /**
  * The screens the tab bar no longer carries.
@@ -74,7 +75,7 @@ export default function MoreScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   scroll: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 24 },
-  kicker: { fontSize: 11, fontWeight: '600', letterSpacing: 1.1, marginBottom: 16 },
+  kicker: { fontSize: 11, ...font(600), letterSpacing: 1.1, marginBottom: 16 },
   list: { borderTopWidth: 2 },
   row: {
     minHeight: MIN_TOUCH_TARGET,
@@ -86,8 +87,8 @@ const styles = StyleSheet.create({
   },
   rowText: { flex: 1, gap: 2 },
   rowHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  label: { fontSize: 15, fontWeight: '800' },
+  label: { fontSize: 15, ...font(800) },
   hint: { fontSize: 12 },
   badge: { paddingHorizontal: 4, paddingVertical: 1 },
-  badgeText: { fontSize: 9, fontWeight: '800' },
+  badgeText: { fontSize: 9, ...font(800) },
 });

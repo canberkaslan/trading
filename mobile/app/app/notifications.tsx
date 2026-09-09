@@ -16,6 +16,7 @@ import { clearBadge } from '@/notifications';
 import { useInboxStore } from '@/stores/notifications';
 import { useTheme } from '@/theme/useTheme';
 import { formatInboxDate, typeLabelTr, type InboxItem } from '@/utils/inbox';
+import { font } from '@/theme/type';
 
 // Palette-bound: under Modernist a filled order is ink, not green, and only
 // the two states that need a response carry colour.
@@ -126,19 +127,19 @@ const makeStyles = (t: Palette) =>
     header: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 4 },
     // 44pt minimum touch target.
     headerBtn: { minHeight: 44, minWidth: 44, justifyContent: 'center', paddingHorizontal: 12 },
-    headerBtnText: { color: t.textPrimary, fontSize: 15, fontWeight: '700' },
+    headerBtnText: { color: t.textPrimary, fontSize: 15, ...font(800) },
     headerBtnDisabled: { color: t.textSecondary },
     scroll: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 24 },
-    heading: { color: t.textPrimary, fontSize: 24, fontWeight: '800' },
+    heading: { color: t.textPrimary, fontSize: 24, ...font(800) },
     subheading: { color: t.textSecondary, fontSize: 13, marginBottom: 8 },
     muted: { color: t.textSecondary, fontSize: 13 },
     // Ruled rows: a notification list is a log, and a log reads as one column.
     card: { paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: t.divider },
     cardFlat: { opacity: 0.7 },
     row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    type: { fontSize: 10, fontWeight: '800', letterSpacing: 0.8, textTransform: 'uppercase' },
+    type: { fontSize: 10, ...font(800), letterSpacing: 0.8, textTransform: 'uppercase' },
     time: { color: t.textSecondary, fontSize: 12 },
-    title: { color: t.textPrimary, fontSize: 16, fontWeight: '700', marginTop: 6 },
+    title: { color: t.textPrimary, fontSize: 16, ...font(800), marginTop: 6 },
     body: { color: t.textSecondary, fontSize: 13, marginTop: 4, lineHeight: 18 },
-    tapHint: { color: t.accent700 ?? t.accent, fontSize: 12, marginTop: 8, fontWeight: '600' },
+    tapHint: { color: t.accent700 ?? t.accent, fontSize: 12, marginTop: 8, ...font(600) },
   });

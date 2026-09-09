@@ -17,6 +17,7 @@ import { useRouter } from 'expo-router';
 import { usePrices } from '@/api/hooks';
 import { useTheme } from '@/theme/useTheme';
 import { MIN_TOUCH_TARGET } from '@/utils/a11y';
+import { font, TABULAR } from '@/theme/type';
 
 const RANGES = [
   { label: '1A', days: 30 },
@@ -247,7 +248,7 @@ const makeStyles = (t: Palette) =>
       paddingHorizontal: 14,
       paddingVertical: 11,
       fontSize: 17,
-      fontWeight: '700',
+      ...font(800),
       letterSpacing: 2,
     },
     go: {
@@ -258,11 +259,11 @@ const makeStyles = (t: Palette) =>
       minHeight: MIN_TOUCH_TARGET,
       marginLeft: -1,
     },
-    goText: { color: t.background, fontWeight: '800', fontSize: 15 },
+    goText: { color: t.background, ...font(800), fontSize: 15 },
     header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' },
-    ticker: { color: t.textPrimary, fontSize: 26, fontWeight: '800' },
-    price: { color: t.textPrimary, fontSize: 24, fontWeight: '800' },
-    change: { fontSize: 14, fontWeight: '700', marginTop: 2 },
+    ticker: { color: t.textPrimary, fontSize: 26, ...font(800), ...TABULAR },
+    price: { color: t.textPrimary, fontSize: 24, ...font(800), ...TABULAR },
+    change: { fontSize: 14, ...font(800), marginTop: 2, ...TABULAR },
     // One continuous outlined strip, borders collapsed — same control as Orders.
     modeRow: { flexDirection: 'row', alignSelf: 'flex-start' },
     modeChip: {
@@ -276,13 +277,13 @@ const makeStyles = (t: Palette) =>
       justifyContent: 'center',
     },
     modeChipActive: { backgroundColor: t.textPrimary },
-    modeText: { color: t.textPrimary, fontSize: 13, fontWeight: '700' },
+    modeText: { color: t.textPrimary, fontSize: 13, ...font(800) },
     modeTextActive: { color: t.background },
-    chartBox: { justifyContent: 'center', alignItems: 'center', borderBottomWidth: 2, borderBottomColor: t.textPrimary },
+    chartBox: { justifyContent: 'center', alignItems: 'center', borderBottomWidth: 2, borderBottomColor: t.divider },
     areaWrap: { flexDirection: 'row', alignItems: 'flex-end', height: CHART_H, width: '100%' },
     candleWrap: { flexDirection: 'row', height: CHART_H, width: '100%' },
     minmax: { flexDirection: 'row', justifyContent: 'space-between' },
-    muted: { color: t.textSecondary, fontSize: 12 },
+    muted: { color: t.textSecondary, fontSize: 12, ...TABULAR },
     ranges: { flexDirection: 'row', justifyContent: 'center' },
     rangeChip: {
       paddingHorizontal: 24,
@@ -295,7 +296,7 @@ const makeStyles = (t: Palette) =>
       justifyContent: 'center',
     },
     rangeChipActive: { backgroundColor: t.textPrimary },
-    rangeText: { color: t.textPrimary, fontWeight: '700' },
+    rangeText: { color: t.textPrimary, ...font(800) },
     rangeTextActive: { color: t.background },
     err: { color: t.accent700 ?? t.danger, fontSize: 14, textAlign: 'center' },
     analyzeBtn: {
@@ -306,5 +307,5 @@ const makeStyles = (t: Palette) =>
       alignItems: 'center',
       justifyContent: 'center',
     },
-    analyzeBtnText: { color: t.textPrimary, fontSize: 15, fontWeight: '700' },
+    analyzeBtnText: { color: t.textPrimary, fontSize: 15, ...font(800) },
   });

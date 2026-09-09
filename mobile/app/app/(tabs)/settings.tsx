@@ -22,6 +22,7 @@ import type { ThemeName } from '@/theme/colors';
 import { unreadCount } from '@/utils/inbox';
 import { MIN_TOUCH_TARGET, killSwitchLabel } from '@/utils/a11y';
 import type { KillSwitchState } from '@/api/types';
+import { font, TABULAR } from '@/theme/type';
 
 // These were module constants holding dark-palette colours, which is why they
 // had to become functions: under Modernist an "ok" state is ink, not green.
@@ -294,7 +295,7 @@ export default function SettingsScreen() {
         <View style={styles.healthCard}>
           <View style={styles.healthRow}>
             <Text style={styles.label}>Backend</Text>
-            <Text style={{ color: healthError ? theme.accent : theme.textPrimary, fontWeight: '700' }}>
+            <Text style={{ color: healthError ? theme.accent : theme.textPrimary, ...font(800) }}>
               {healthError ? '● offline' : health?.status === 'ok' ? '● online' : '…'}
             </Text>
           </View>
@@ -319,7 +320,7 @@ export default function SettingsScreen() {
         <View style={styles.healthCard}>
           <View style={styles.healthRow}>
             <Text style={styles.label}>Push izni</Text>
-            <Text style={{ color: PERMISSION_COPY[permission ?? 'undetermined'].color, fontWeight: '600' }}>
+            <Text style={{ color: PERMISSION_COPY[permission ?? 'undetermined'].color, ...font(600) }}>
               {permission ? PERMISSION_COPY[permission].text : '…'}
             </Text>
           </View>
@@ -365,20 +366,20 @@ type Palette = ReturnType<typeof useTheme>;
 const makeStyles = (t: Palette) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: t.background },
-    heading: { color: t.textPrimary, fontSize: 24, fontWeight: '800', marginBottom: 16 },
+    heading: { color: t.textPrimary, fontSize: 24, ...font(800), marginBottom: 16 },
     subheading: {
       color: t.textPrimary,
       fontSize: 11,
-      fontWeight: '800',
+      ...font(800),
       textTransform: 'uppercase',
       letterSpacing: 1,
       marginTop: 24,
       marginBottom: 8,
       borderBottomWidth: 2,
-      borderBottomColor: t.textPrimary,
+      borderBottomColor: t.divider,
       paddingBottom: 6,
     },
-    label: { color: t.textPrimary, fontSize: 15, fontWeight: '600' },
+    label: { color: t.textPrimary, fontSize: 15, ...font(600) },
     muted: { color: t.textSecondary, fontSize: 13, lineHeight: 18 },
     // Collapsed-border strip, the same control shape as Orders and Charts.
     segment: { flexDirection: 'row' },
@@ -393,7 +394,7 @@ const makeStyles = (t: Palette) =>
       minHeight: MIN_TOUCH_TARGET,
     },
     segBtnActive: { backgroundColor: t.textPrimary },
-    segLabel: { color: t.textPrimary, fontSize: 14, fontWeight: '700' },
+    segLabel: { color: t.textPrimary, fontSize: 14, ...font(800) },
     segLabelActive: { color: t.background },
     killRow: { flexDirection: 'row' },
     killChip: {
@@ -406,27 +407,27 @@ const makeStyles = (t: Palette) =>
       justifyContent: 'center',
       minHeight: MIN_TOUCH_TARGET,
     },
-    killLabel: { color: t.textPrimary, fontSize: 14, fontWeight: '800', letterSpacing: 0.5 },
+    killLabel: { color: t.textPrimary, fontSize: 14, ...font(800), letterSpacing: 0.5 },
     killDesc: { color: t.textSecondary, fontSize: 12, marginTop: 8 },
     healthCard: { paddingVertical: 4, gap: 12 },
     healthRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
     evalCard: { paddingVertical: 4, gap: 12 },
-    verdict: { fontSize: 16, fontWeight: '800', letterSpacing: 0.5 },
+    verdict: { fontSize: 16, ...font(800), letterSpacing: 0.5 },
     verdictWrap: { alignItems: 'flex-end' },
-    trend: { fontSize: 11, fontWeight: '700', marginTop: 1 },
+    trend: { fontSize: 11, ...font(800), marginTop: 1 },
     evalGrid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 12, justifyContent: 'space-between' },
     evalStat: { alignItems: 'flex-start' },
     evalStatLabel: { color: t.textSecondary, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8 },
-    evalStatValue: { color: t.textPrimary, fontSize: 18, fontWeight: '800', marginTop: 2 },
+    evalStatValue: { color: t.textPrimary, fontSize: 18, ...font(800), marginTop: 2, ...TABULAR },
     evalStatGate: { color: t.textSecondary, fontSize: 10, marginTop: 1 },
     evalReason: { color: t.warning, fontSize: 11 },
     flowCaveat: { color: t.warning, fontSize: 11, marginTop: 8, lineHeight: 16 },
-    countdown: { color: t.textSecondary, fontSize: 12, fontWeight: '600' },
+    countdown: { color: t.textSecondary, fontSize: 12, ...font(600) },
     gateList: { gap: 6, borderTopWidth: 1, borderTopColor: t.divider, paddingTop: 10 },
     gateRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    gateIcon: { fontSize: 13, fontWeight: '800', width: 16, textAlign: 'center' },
+    gateIcon: { fontSize: 13, ...font(800), width: 16, textAlign: 'center' },
     gateName: { color: t.textPrimary, fontSize: 13, flex: 1 },
-    gateDetail: { color: t.textSecondary, fontSize: 12 },
+    gateDetail: { color: t.textSecondary, fontSize: 12, ...TABULAR },
     button: {
       backgroundColor: t.textPrimary,
       padding: 14,
@@ -435,7 +436,7 @@ const makeStyles = (t: Palette) =>
       minHeight: MIN_TOUCH_TARGET,
       marginTop: 8,
     },
-    buttonText: { color: t.background, fontSize: 14, fontWeight: '800' },
+    buttonText: { color: t.background, fontSize: 14, ...font(800) },
     buttonSecondary: { backgroundColor: 'transparent', borderWidth: 1, borderColor: t.textPrimary },
-    buttonSecondaryText: { color: t.textPrimary, fontSize: 13, fontWeight: '600' },
+    buttonSecondaryText: { color: t.textPrimary, fontSize: 13, ...font(600) },
   });

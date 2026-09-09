@@ -7,6 +7,8 @@ import { StatusBanner } from '@/components/StatusBanner';
 import { usePendingOrders } from '@/api/hooks';
 import { useTheme } from '@/theme/useTheme';
 import { badgeLabel } from '@/utils/inbox';
+import { Toast } from '@/components/Toast';
+import { font } from '@/theme/type';
 
 /**
  * Five tabs, not seven.
@@ -106,6 +108,10 @@ export default function TabLayout() {
         <Tabs.Screen name="learn" options={{ title: tr('tabs.learn'), href: null }} />
         <Tabs.Screen name="settings" options={{ title: tr('tabs.settings'), href: null }} />
       </Tabs>
+      {/* One toast for the whole shell: the outcomes it reports (a rejected
+          order, a cancelled one) usually land as the screen that triggered them
+          is being popped, so it cannot belong to a screen. */}
+      <Toast />
     </View>
   );
 }
@@ -126,7 +132,7 @@ const styles = StyleSheet.create({
     marginTop: -2,
   },
   marker: { width: 8, height: 8 },
-  label: { fontSize: 10, fontWeight: '700', letterSpacing: 0.4 },
+  label: { fontSize: 10, ...font(800), letterSpacing: 0.4 },
   badge: { position: 'absolute', top: 8, right: '22%', paddingHorizontal: 4, paddingVertical: 1 },
-  badgeText: { fontSize: 9, fontWeight: '800' },
+  badgeText: { fontSize: 9, ...font(800) },
 });

@@ -50,12 +50,12 @@ describe('formatUsd', () => {
   });
 
   it('keeps the sign on the outside for negatives', () => {
-    expect(formatUsd(-42.1)).toBe('-$42.10');
+    expect(formatUsd(-42.1)).toBe('\u2212$42.10');
   });
 
   it('adds a + prefix for positive values when signed', () => {
     expect(formatUsd(42.1, { signed: true })).toBe('+$42.10');
-    expect(formatUsd(-42.1, { signed: true })).toBe('-$42.10');
+    expect(formatUsd(-42.1, { signed: true })).toBe('\u2212$42.10');
     expect(formatUsd(0, { signed: true })).toBe('+$0.00');
   });
 });
@@ -72,7 +72,33 @@ describe('formatPct', () => {
 
   it('prefixes + only for positive signed values', () => {
     expect(formatPct(0.05, { signed: true })).toBe('+5.00%');
-    expect(formatPct(-0.05, { signed: true })).toBe('-5.00%');
+    expect(formatPct(-0.05, { signed: true })).toBe('\u22125.00%');
     expect(formatPct(0, { signed: true })).toBe('0.00%');
+  });
+});
+
+describe('the minus sign is U+2212, not a hyphen', () => {
+  // The handoff names the codepoint. Pinned because an ASCII hyphen is the
+  // thing every editor and every `toFixed` produces by default, so this drifts
+  // back the moment someone adds a formatter without noticing.
+  const MINUS = '−';
+
+  it('formatUsd uses it', () => {
+    expect(formatUsd(-1234.5)).toContain(MINUS);
+    expect(formatUsd(-1234.5)).not.toContain('-');
+  });
+
+  it('formatPct uses it, including the unsigned path', () => {
+    // formatPct's sign used to arrive inside toFixed's output rather than being
+    // prepended, so `signed: false` produced a hyphen no swap could reach.
+    expect(formatPct(-0.05)).toBe(`${MINUS}5.00%`);
+    expect(formatPct(-0.05, { signed: true })).toBe(`${MINUS}5.00%`);
+    expect(formatPct(-0.05)).not.toContain('-');
+  });
+
+  it('positive values are unaffected', () => {
+    expect(formatUsd(42, { signed: true })).toBe('+$42.00');
+    expect(formatPct(0.05, { signed: true })).toBe('+5.00%');
+    expect(formatPct(0.05)).toBe('5.00%');
   });
 });

@@ -16,6 +16,7 @@ import {
   debateRoleLabel,
 } from '@/utils/decision';
 import { hitSlopFor } from '@/utils/a11y';
+import { font, TABULAR } from '@/theme/type';
 
 
 export default function TradeApproveScreen() {
@@ -148,21 +149,21 @@ const makeStatStyles = (t: Palette) =>
   StyleSheet.create({
     stat: { flex: 1 },
     label: { color: t.textSecondary, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8 },
-    value: { color: t.textPrimary, fontSize: 15, fontWeight: '700', marginTop: 3 },
+    value: { color: t.textPrimary, fontSize: 15, ...font(800), marginTop: 3, ...TABULAR },
   });
 
 const makeStyles = (t: Palette) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: t.background },
     back: { marginBottom: 12 },
-    backText: { color: t.textPrimary, fontSize: 14, fontWeight: '700' },
-    title: { color: t.textPrimary, fontSize: 32, fontWeight: '800', marginBottom: 16 },
+    backText: { color: t.textPrimary, fontSize: 14, ...font(800) },
+    title: { color: t.textPrimary, fontSize: 32, ...font(800), marginBottom: 16 },
     // Ruled block rather than a filled card: 2px rule above, hairlines within.
-    headlineCard: { borderTopWidth: 2, borderTopColor: t.textPrimary, paddingTop: 14, gap: 10 },
+    headlineCard: { borderTopWidth: 2, borderTopColor: t.divider, paddingTop: 14, gap: 10 },
     headlineLabel: { color: t.textSecondary, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8 },
     headlineRow: { flexDirection: 'row' },
     ratingChip: { paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: 'transparent' },
-    headlineValue: { fontSize: 20, fontWeight: '800', letterSpacing: 0.5 },
+    headlineValue: { fontSize: 20, ...font(800), letterSpacing: 0.5 },
     row: { flexDirection: 'row', gap: 12, marginTop: 8 },
     muted: { color: t.textSecondary, fontSize: 12 },
     note: { color: t.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 16 },
@@ -176,29 +177,29 @@ const makeStyles = (t: Palette) =>
       marginTop: 24,
       marginBottom: 8,
       borderBottomWidth: 2,
-      borderBottomColor: t.textPrimary,
+      borderBottomColor: t.divider,
       paddingBottom: 6,
     },
     section: {
       color: t.textPrimary,
       fontSize: 11,
-      fontWeight: '800',
+      ...font(800),
       textTransform: 'uppercase',
       letterSpacing: 1,
       marginTop: 24,
       marginBottom: 8,
       borderBottomWidth: 2,
-      borderBottomColor: t.textPrimary,
+      borderBottomColor: t.divider,
       paddingBottom: 6,
     },
     sectionInline: { marginTop: 0, marginBottom: 0, borderBottomWidth: 0, paddingBottom: 0 },
     sectionMeta: { color: t.textSecondary, fontSize: 11 },
     agentCard: { paddingVertical: 12, gap: 6, borderBottomWidth: 1, borderBottomColor: t.divider },
     agentHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    agentName: { color: t.textPrimary, fontSize: 13, fontWeight: '800' },
+    agentName: { color: t.textPrimary, fontSize: 13, ...font(800) },
     badge: {
       fontSize: 10,
-      fontWeight: '700',
+      ...font(800),
       borderWidth: 1,
       paddingHorizontal: 6,
       paddingVertical: 1,
@@ -207,7 +208,7 @@ const makeStyles = (t: Palette) =>
     agentBody: { color: t.textSecondary, fontSize: 12, lineHeight: 17 },
     agentMeta: { color: t.textSecondary, fontSize: 10 },
     debateCard: { paddingVertical: 12, gap: 4, borderBottomWidth: 1, borderBottomColor: t.divider },
-    debateRole: { color: t.textPrimary, fontSize: 12, fontWeight: '800' },
+    debateRole: { color: t.textPrimary, fontSize: 12, ...font(800) },
     body: { color: t.textSecondary, fontSize: 13, lineHeight: 20 },
     disclaimer: { color: t.textSecondary, fontSize: 11, paddingVertical: 20, textAlign: 'center' },
   });

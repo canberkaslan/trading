@@ -2,17 +2,19 @@ import { View, Text, StyleSheet, ScrollView, Pressable, Alert, ActivityIndicator
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 
 import { useApproveOrder, usePendingOrders, useRejectOrder } from '@/api/hooks';
 import { api } from '@/api/endpoints';
-import { colors } from '@/theme/colors';
+import { useTheme } from '@/theme/useTheme';
 import { authenticate } from '@/auth/biometric';
 import { formatUsd } from '@/utils/format';
 import { MIN_TOUCH_TARGET, hitSlopFor, orderActionLabel } from '@/utils/a11y';
 import type { AgentDecision, OrderListItem } from '@/api/types';
 
 export default function ApproveOrderScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const { t } = useTranslation();
   const { orderId } = useLocalSearchParams<{ orderId: string }>();
   const router = useRouter();
@@ -43,7 +45,7 @@ export default function ApproveOrderScreen() {
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
         <View style={styles.center}>
-          <ActivityIndicator color={colors.accent} />
+          <ActivityIndicator color={theme.textPrimary} />
           <Text style={styles.muted}>Emir yükleniyor…</Text>
         </View>
       </SafeAreaView>
@@ -170,7 +172,7 @@ export default function ApproveOrderScreen() {
             accessibilityHint="Cihaz kilidi ile doğrulama ister"
             accessibilityState={{ disabled: submitting, busy: submitting }}
           >
-            {submitting ? <ActivityIndicator color="#000" /> : (
+            {submitting ? <ActivityIndicator color={theme.background} /> : (
               <Text style={styles.btnPrimaryText}>Doğrula ve Onayla</Text>
             )}
           </Pressable>
@@ -191,6 +193,8 @@ export default function ApproveOrderScreen() {
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
+  const theme = useTheme();
+  const statStyles = useMemo(() => makeStatStyles(theme), [theme]);
   return (
     <View style={statStyles.stat}>
       <Text style={statStyles.label}>{label}</Text>
@@ -199,44 +203,57 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-const statStyles = StyleSheet.create({
+const makeStatStyles = (t: Palette) =>
+  StyleSheet.create({
   stat: { flex: 1 },
-  label: { color: colors.textMuted, fontSize: 11 },
-  value: { color: colors.textPrimary, fontSize: 16, fontWeight: '600', marginTop: 2 },
+  label: { color: t.textSecondary, fontSize: 11 },
+  value: { color: t.textPrimary, fontSize: 16, fontWeight: '800', marginTop: 2 },
 });
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 16 },
-  back: { marginBottom: 12 },
-  backText: { color: colors.accent, fontSize: 14 },
-  title: { color: colors.textPrimary, fontSize: 32, fontWeight: '700' },
-  subtitle: { color: colors.textSecondary, fontSize: 14, marginTop: 4, marginBottom: 16 },
-  headlineCard: { backgroundColor: colors.surface, borderRadius: 12, padding: 16, gap: 12 },
-  row: { flexDirection: 'row', gap: 16 },
-  muted: { color: colors.textMuted, fontSize: 12, marginTop: 4 },
-  err: { color: colors.danger, fontSize: 13 },
-  actions: { flexDirection: 'row', gap: 12, marginTop: 16 },
-  btn: {
-    flex: 1,
-    padding: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: MIN_TOUCH_TARGET,
-  },
-  btnCompact: {
-    paddingHorizontal: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: 8,
-    minHeight: MIN_TOUCH_TARGET,
-  },
-  btnPrimary: { backgroundColor: colors.up },
-  btnPrimaryText: { color: '#000', fontWeight: '700' },
-  btnSecondary: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.textMuted },
-  btnSecondaryText: { color: colors.textPrimary, fontWeight: '600' },
-  section: { color: colors.textPrimary, fontSize: 16, fontWeight: '600', marginTop: 24, marginBottom: 8 },
-  body: { color: colors.textSecondary, fontSize: 13, lineHeight: 20 },
-  disclaimer: { color: colors.textMuted, fontSize: 11, paddingVertical: 20, fontStyle: 'italic', textAlign: 'center' },
-});
+type Palette = ReturnType<typeof useTheme>;
+
+const makeStyles = (t: Palette) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: t.background },
+    center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 16 },
+    back: { marginBottom: 12 },
+    backText: { color: t.accent700 ?? t.accent, fontSize: 14, fontWeight: '600' },
+    // 40px per the handoff: the ticker is the first thing to resolve on a screen
+    // that commits real money.
+    title: { color: t.textPrimary, fontSize: 40, fontWeight: '800', letterSpacing: -0.5 },
+    subtitle: { color: t.textSecondary, fontSize: 14, marginTop: 4, marginBottom: 16 },
+    // A ruled block, not a filled card — the 2px rules do the separating.
+    headlineCard: {
+      paddingVertical: 16,
+      gap: 12,
+      borderTopWidth: 2,
+      borderBottomWidth: 2,
+      borderColor: t.divider,
+    },
+    row: { flexDirection: 'row', gap: 16 },
+    muted: { color: t.textSecondary, fontSize: 12, marginTop: 4 },
+    err: { color: t.accent700 ?? t.danger, fontSize: 13 },
+    actions: { flexDirection: 'row', gap: 12, marginTop: 16 },
+    btn: {
+      flex: 1,
+      padding: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: MIN_TOUCH_TARGET,
+    },
+    btnCompact: {
+      paddingHorizontal: 24,
+      justifyContent: 'center',
+      alignItems: 'center',
+      minHeight: MIN_TOUCH_TARGET,
+    },
+    // Ink fill for the committing action. In Modernist the accent is reserved
+    // for loss and for warnings — an approve button in it would read as danger.
+    btnPrimary: { backgroundColor: t.textPrimary },
+    btnPrimaryText: { color: t.background, fontWeight: '800' },
+    btnSecondary: { backgroundColor: 'transparent', borderWidth: 1, borderColor: t.textPrimary },
+    btnSecondaryText: { color: t.textPrimary, fontWeight: '600' },
+    section: { color: t.textPrimary, fontSize: 15, fontWeight: '800', marginTop: 24, marginBottom: 8 },
+    body: { color: t.textSecondary, fontSize: 13, lineHeight: 20 },
+    disclaimer: { color: t.textSecondary, fontSize: 11, paddingVertical: 20, fontStyle: 'italic', textAlign: 'center' },
+  });

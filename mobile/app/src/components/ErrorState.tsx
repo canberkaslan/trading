@@ -11,7 +11,10 @@
 
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 
-import { colors } from '@/theme/colors';
+import { useMemo } from 'react';
+
+import { useTheme } from '@/theme/useTheme';
+import { MIN_TOUCH_TARGET } from '@/utils/a11y';
 
 type Props = {
   /** Short headline; defaults to a generic connection message. */
@@ -23,6 +26,8 @@ type Props = {
 };
 
 export function ErrorState({ title, detail, onRetry }: Props) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <View style={styles.container} accessibilityRole="alert">
       <Text style={styles.title}>{title ?? "Sunucuya ulaşılamıyor"}</Text>
@@ -46,17 +51,34 @@ export function ErrorState({ title, detail, onRetry }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
-  title: { color: colors.danger, fontSize: 16, fontWeight: '600', marginBottom: 6 },
-  hint: { color: colors.textSecondary, fontSize: 13, textAlign: 'center' },
-  detail: { color: colors.textMuted, fontSize: 11, marginTop: 12, textAlign: 'center' },
-  retry: {
-    marginTop: 20,
-    backgroundColor: colors.surfaceElevated,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 10,
-  },
-  retryText: { color: colors.textPrimary, fontSize: 14, fontWeight: '600' },
-});
+type Palette = ReturnType<typeof useTheme>;
+
+const makeStyles = (t: Palette) =>
+  StyleSheet.create({
+    // Matches EmptyState's block treatment: the same list in two states should
+    // not change shape, only content. Previously one was a card and the other
+    // was bare, so an error read as a different kind of surface.
+    container: {
+      marginHorizontal: 16,
+      marginVertical: 24,
+      paddingVertical: 24,
+      paddingHorizontal: 16,
+      borderTopWidth: 2,
+      borderBottomWidth: 2,
+      borderColor: t.divider,
+      alignItems: 'center',
+    },
+    title: { color: t.accent700 ?? t.danger, fontSize: 15, fontWeight: '800', marginBottom: 6 },
+    hint: { color: t.textSecondary, fontSize: 13, textAlign: 'center' },
+    detail: { color: t.textSecondary, fontSize: 11, marginTop: 12, textAlign: 'center' },
+    retry: {
+      marginTop: 20,
+      borderWidth: 1,
+      borderColor: t.textPrimary,
+      paddingHorizontal: 20,
+      paddingVertical: 10,
+      minHeight: MIN_TOUCH_TARGET,
+      justifyContent: 'center',
+    },
+    retryText: { color: t.textPrimary, fontSize: 14, fontWeight: '800' },
+  });

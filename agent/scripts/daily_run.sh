@@ -159,6 +159,13 @@ echo "" | tee -a "$RUN_LOG"
 PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.inert_alert 2>&1 | tee -a "$RUN_LOG" || true
 
 echo "" | tee -a "$RUN_LOG"
+# Stop-coverage check. `risk.stop_coverage` could always compute how much of the
+# book is unprotected and nothing ever asked it — the first run of the position
+# pass found 75.5% naked. A daily run that logs clean while the book has no
+# stops behind it is the failure this closes. Always exits 0 (see the script).
+PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.naked_alert 2>&1 | tee -a "$RUN_LOG" || true
+
+echo "" | tee -a "$RUN_LOG"
 echo "Daily run complete. $rc_total ticker(s) errored." | tee -a "$RUN_LOG"
 
 if [[ "$rc_total" -gt 0 ]]; then

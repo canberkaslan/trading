@@ -101,6 +101,25 @@ fi
 SUBMIT_FLAG=""
 [[ "$SUBMIT" == "1" ]] && SUBMIT_FLAG="--submit"
 
+# Manage what is already open BEFORE deciding what to buy.
+#
+# Order matters: capital this pass releases is available to the theses formed
+# minutes later. The book holds ~10 names against an 11-name universe and a 10%
+# per-name cap, so it is at the cap on everything it knows — 167 recorded
+# refusals are "trimmed_to_zero_by_portfolio_caps". With no exit path that
+# freeze is permanent, which is most of what the eval has been measuring.
+#
+# Best-effort: a failure here must not stop the decision loop. A stop that did
+# not ratchet is yesterday's protection, which is what the book had anyway; a
+# decision loop that did not run is a lost trading day.
+echo "" | tee -a "$RUN_LOG"
+echo "--- position management ---" | tee -a "$RUN_LOG"
+if PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.manage_positions $SUBMIT_FLAG 2>&1 | tee -a "$RUN_LOG"; then
+  :
+else
+  echo "  -> position management failed (non-fatal) — continuing to decisions" | tee -a "$RUN_LOG"
+fi
+
 rc_total=0
 failed_tickers=""
 for TICKER in $UNIVERSE; do

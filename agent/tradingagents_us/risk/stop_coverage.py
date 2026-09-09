@@ -209,6 +209,26 @@ def _protects(order: OrderView, position_side: str) -> bool:
     return order.side == wanted
 
 
+def live_protective_orders(
+    symbol: str, position_side: str, orders: list[OrderView]
+) -> list[OrderView]:
+    """The live orders currently protecting `symbol`, by this module's rules.
+
+    Exists so a caller that needs the protective order ITSELF — the trailing-stop
+    ratchet needs its id to amend it — does not have to restate what "protective"
+    and "live" mean. `coverage()` reports quantities; this reports the orders
+    those quantities came from, under exactly the same three tests.
+    """
+    return [
+        o
+        for o in orders
+        if o.symbol == symbol
+        and o.remaining_qty > QTY_EPSILON
+        and o.status in LIVE_STATUSES
+        and _protects(o, position_side)
+    ]
+
+
 def coverage(
     positions: list[PositionView], orders: list[OrderView]
 ) -> CoverageReport:

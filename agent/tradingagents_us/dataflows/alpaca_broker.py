@@ -305,6 +305,38 @@ class AlpacaClient:
             query += "&nested=true"
         return [_order_from_dict(o) for o in self._get(query)]
 
+    def replace_order(
+        self,
+        order_id: str,
+        *,
+        stop_price: float | None = None,
+        limit_price: float | None = None,
+        qty: float | None = None,
+    ) -> Order:
+        """Amend a resting order in place (Alpaca PATCH /v2/orders/{id}).
+
+        Used to ratchet a bracket's protective stop up as a position runs. It is
+        a REPLACE rather than a cancel-and-resubmit on purpose: cancelling first
+        leaves the position naked for as long as the round trip takes, and a gap
+        in that window is exactly the event the stop exists for. Alpaca performs
+        the swap atomically and the new order inherits the old one's OCO
+        relationship with its take-profit sibling.
+
+        Note the returned order has a NEW id — Alpaca cancels the original and
+        issues a replacement — so a caller holding the old id must take the id
+        off the result rather than reusing what it passed in.
+        """
+        body: dict = {}
+        if stop_price is not None:
+            body["stop_price"] = str(round(stop_price, 2))
+        if limit_price is not None:
+            body["limit_price"] = str(round(limit_price, 2))
+        if qty is not None:
+            body["qty"] = str(qty)
+        if not body:
+            raise ValueError("replace_order needs at least one field to change")
+        return _order_from_dict(self._patch(f"/orders/{order_id}", body))
+
     def cancel_order(self, order_id: str) -> dict:
         return self._delete(f"/orders/{order_id}")
 
@@ -363,6 +395,12 @@ class AlpacaClient:
         r = self._http.post(self.base_url + path, json=body)
         if r.status_code >= 400:
             raise RuntimeError(f"alpaca POST {path} failed {r.status_code}: {r.text}")
+        return r.json()
+
+    def _patch(self, path: str, body: dict) -> dict:
+        r = self._http.patch(self.base_url + path, json=body)
+        if r.status_code >= 400:
+            raise RuntimeError(f"alpaca PATCH {path} failed {r.status_code}: {r.text}")
         return r.json()
 
     def _delete(self, path: str) -> dict | list:

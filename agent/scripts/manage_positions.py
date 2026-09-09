@@ -46,6 +46,7 @@ from tradingagents_us.risk.position_manager import (
     Bar,
     ManagedPosition,
     ManagementConfig,
+    PlaceStop,
     RatchetStop,
     TimeExit,
     plan_actions,
@@ -143,7 +144,11 @@ def _entry_dates(client: AlpacaClient) -> dict[str, date]:
     result = reconcile_fills(fills)
     oldest: dict[str, date] = {}
     for lot in result.open_lots:
-        if lot.direction != "long":
+        # `OpenLot.direction` is "LONG"/"SHORT" — upper case. Matching "long"
+        # here silently discarded every lot and reported the whole book as
+        # having no entry date, which is how this was caught: ten positions all
+        # skipping for the same reason is a filter bug, not ten coincidences.
+        if lot.direction.upper() != "LONG":
             continue
         when = lot.opened_at_utc.astimezone(UTC).date()
         if lot.symbol not in oldest or when < oldest[lot.symbol]:
@@ -166,6 +171,16 @@ def main() -> int:
     parser.add_argument("--submit", action="store_true", help="actually amend/close (default: report)")
     parser.add_argument("--max-bars", type=int, default=ManagementConfig().max_bars)
     parser.add_argument("--atr-mult", type=float, default=ManagementConfig().atr_mult)
+    parser.add_argument(
+        "--backfill-stops",
+        action="store_true",
+        help="place protective stops on unambiguously naked shares (default: report them)",
+    )
+    parser.add_argument(
+        "--db-url",
+        default=None,
+        help="override the bar-cache DB (same flag scripts/trade.py takes)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -176,9 +191,20 @@ def main() -> int:
         return 0
     log.info("kill switch %s", ks)
 
-    config = ManagementConfig(max_bars=args.max_bars, atr_mult=args.atr_mult)
+    config = ManagementConfig(
+        max_bars=args.max_bars,
+        atr_mult=args.atr_mult,
+        backfill_missing_stops=args.backfill_stops,
+    )
 
-    from tradingagents_us.storage.db import session_scope  # local: keeps import cost off --help
+    # Local import: keeps the DB engine (and create_all) off the --help path.
+    from sqlalchemy import create_engine
+
+    from tradingagents_us.storage import TradeLogRepository
+
+    repo = TradeLogRepository(
+        engine=create_engine(args.db_url, future=True) if args.db_url else None
+    )
 
     with AlpacaClient() as client:
         positions_raw = client.list_positions()
@@ -197,7 +223,7 @@ def main() -> int:
 
         managed: list[ManagedPosition] = []
         bars_by_ticker: dict[str, list[Bar]] = {}
-        with session_scope() as session:
+        with repo.session() as session:
             for p in positions_raw:
                 cov = by_symbol.get(p.symbol)
                 if cov is None or cov.indeterminate_qty > 0:
@@ -236,6 +262,7 @@ def main() -> int:
                         bars_held=_bars_since(bar_dates, entry),
                         current_stop=stop_price,
                         stop_order_id=stop_id,
+                        naked_quantity=cov.naked_qty if cov.is_actionable else 0.0,
                     )
                 )
 
@@ -255,6 +282,12 @@ def main() -> int:
                     act.ticker, act.old_stop, act.new_stop, act.atr,
                     "" if args.submit else "   [dry run]",
                 )
+            elif isinstance(act, PlaceStop):
+                log.info(
+                    "%-6s PLACE %g naked shares @ %.2f  (atr %.2f)%s",
+                    act.ticker, act.quantity, act.stop_price, act.atr,
+                    "" if args.submit else "   [dry run]",
+                )
             else:
                 log.info(
                     "%-6s EXIT  %g shares, %d bars held, pnl %+.2f%%%s",
@@ -272,6 +305,19 @@ def main() -> int:
                 if isinstance(act, RatchetStop):
                     replaced = client.replace_order(act.stop_order_id, stop_price=act.new_stop)
                     log.info("%-6s ratcheted, new order %s", act.ticker, replaced.id)
+                elif isinstance(act, PlaceStop):
+                    placed = client.submit_order(
+                        symbol=act.ticker,
+                        qty=act.quantity,
+                        side="sell",
+                        order_type="stop",
+                        # GTC: a day stop expires at the close and leaves the
+                        # position naked overnight, which is the window the
+                        # whole backfill exists to close.
+                        time_in_force="gtc",
+                        stop_price=act.stop_price,
+                    )
+                    log.info("%-6s stop placed, order %s", act.ticker, placed.id)
                 else:
                     client.close_position(act.ticker)
                     log.info("%-6s closed on age", act.ticker)

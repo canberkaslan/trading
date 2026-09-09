@@ -16,6 +16,7 @@ from tradingagents_us.risk.position_manager import (
     Bar,
     ManagedPosition,
     ManagementConfig,
+    PlaceStop,
     RatchetStop,
     TimeExit,
     average_true_range,
@@ -218,3 +219,92 @@ class TestSafetyInvariants:
         assert isinstance(actions[0], RatchetStop)
         # close 120 - 2.0 ATR * 1.0 = 118, vs 114 at the default 3.0.
         assert actions[0].new_stop == pytest.approx(118.0)
+
+
+class TestStopBackfill:
+    """Placing protection where there is none.
+
+    Written against a real finding: a coverage run on the live paper book showed
+    75.5% of held shares with no protective stop at all — 8 of 10 names naked,
+    on an account whose go-live checklist assumes every entry ships a bracket.
+    `stop_coverage` could always compute that number and nothing ever ran it,
+    and the backfill it describes did not exist.
+    """
+
+    def test_reports_rather_than_places_by_default(self) -> None:
+        actions, skips = plan_actions(
+            [position(current_stop=None, stop_order_id=None, naked_quantity=10.0)],
+            {"AAPL": flat_bars(30)},
+        )
+        assert actions == []
+        assert [s.reason for s in skips] == ["no_stop_order"]
+
+    def test_places_when_asked(self) -> None:
+        cfg = ManagementConfig(backfill_missing_stops=True)
+        actions, _ = plan_actions(
+            [position(current_stop=None, stop_order_id=None, naked_quantity=10.0)],
+            {"AAPL": flat_bars(30)},
+            cfg,
+        )
+        assert len(actions) == 1
+        act = actions[0]
+        assert isinstance(act, PlaceStop)
+        # close 120 - ATR 2.0 * 3.0 = 114
+        assert act.stop_price == pytest.approx(114.0)
+
+    def test_sizes_off_the_naked_quantity_not_the_holding(self) -> None:
+        # The single most dangerous mistake available here: re-protecting shares
+        # that already have a stop leaves two stops on one lot, and when they
+        # both trigger the account is short.
+        cfg = ManagementConfig(backfill_missing_stops=True)
+        actions, _ = plan_actions(
+            [position(quantity=32.0, current_stop=None, stop_order_id=None, naked_quantity=29.0)],
+            {"AAPL": flat_bars(30)},
+            cfg,
+        )
+        assert isinstance(actions[0], PlaceStop)
+        assert actions[0].quantity == 29.0
+
+    def test_will_not_place_for_a_position_with_nothing_naked(self) -> None:
+        cfg = ManagementConfig(backfill_missing_stops=True)
+        actions, skips = plan_actions(
+            [position(current_stop=None, stop_order_id=None, naked_quantity=0.0)],
+            {"AAPL": flat_bars(30)},
+            cfg,
+        )
+        assert actions == []
+        assert [s.reason for s in skips] == ["no_stop_order"]
+
+    def test_never_places_a_stop_at_or_above_the_live_price(self) -> None:
+        # A stop above the market fires the instant it is accepted — that is a
+        # market sell wearing a stop's clothes, not protection.
+        cfg = ManagementConfig(backfill_missing_stops=True, atr_mult=0.0)
+        actions, skips = plan_actions(
+            [position(current_stop=None, stop_order_id=None, naked_quantity=10.0)],
+            {"AAPL": flat_bars(30)},
+            cfg,
+        )
+        assert actions == []
+        assert [s.reason for s in skips] == ["stop_would_widen"]
+
+    def test_a_wild_atr_cannot_produce_a_negative_stop(self) -> None:
+        cfg = ManagementConfig(backfill_missing_stops=True, atr_mult=1000.0)
+        actions, skips = plan_actions(
+            [position(current_stop=None, stop_order_id=None, naked_quantity=10.0)],
+            {"AAPL": flat_bars(30)},
+            cfg,
+        )
+        # Floored at a cent, and a cent is below the price, so it is placeable.
+        assert isinstance(actions[0], PlaceStop)
+        assert actions[0].stop_price == 0.01
+
+    def test_a_time_exit_still_wins_over_a_backfill(self) -> None:
+        cfg = ManagementConfig(backfill_missing_stops=True)
+        actions, _ = plan_actions(
+            [position(bars_held=25, current_price=101.0, current_stop=None,
+                      stop_order_id=None, naked_quantity=10.0)],
+            {"AAPL": flat_bars(30)},
+            cfg,
+        )
+        assert len(actions) == 1
+        assert isinstance(actions[0], TimeExit)

@@ -76,9 +76,13 @@ class ManagedPosition:
     #: calendar so holidays and halts cannot inflate it.
     bars_held: int
     #: The live broker-side stop, and the order carrying it. Both None means the
-    #: position is UNPROTECTED — reported, never silently fixed here.
+    #: position is UNPROTECTED — reported, and only fixed when explicitly asked.
     current_stop: float | None = None
     stop_order_id: str | None = None
+    #: Shares `stop_coverage` calls UNAMBIGUOUSLY naked. A backfill sizes off
+    #: this and never off `quantity`: sizing off the holding would re-protect
+    #: shares that already have a stop, and two stops on one lot is a short.
+    naked_quantity: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -93,6 +97,25 @@ class RatchetStop:
 
 
 @dataclass(frozen=True)
+class PlaceStop:
+    """Put a protective stop under shares that have none.
+
+    Not a variant of RatchetStop: that one AMENDS an order that is already
+    standing, this one creates protection where there is none, and the two fail
+    in opposite directions. A ratchet that misfires leaves the old stop in place;
+    a placement that misfires puts a SECOND stop on shares that already had one,
+    and two stops on one lot is a short position waiting for a gap down. So this
+    is only ever emitted for a quantity `stop_coverage` calls unambiguously
+    naked, and the runner will not emit it at all unless asked.
+    """
+
+    ticker: str
+    quantity: float
+    stop_price: float
+    atr: float
+
+
+@dataclass(frozen=True)
 class TimeExit:
     """Close a position that has gone nowhere for long enough."""
 
@@ -102,7 +125,7 @@ class TimeExit:
     pnl_pct: float
 
 
-Action = RatchetStop | TimeExit
+Action = RatchetStop | PlaceStop | TimeExit
 
 #: Why a position was left alone. Surfaced rather than swallowed: "no action"
 #: and "could not decide" look identical in a log that only records actions,
@@ -133,6 +156,10 @@ class ManagementConfig:
     #: order replacement. Alpaca rate-limits, and a stop that creeps a cent a
     #: day burns the budget for no protection.
     min_ratchet_pct: float = 0.002
+    #: Emit PlaceStop for unprotected shares instead of only reporting them.
+    #: Off by default: placing a stop is an order, and this module's caller
+    #: decides when it is allowed to submit one.
+    backfill_missing_stops: bool = False
 
 
 def true_range(prev_close: float, high: float, low: float) -> float:
@@ -201,12 +228,29 @@ def plan_actions(
             continue
 
         if pos.current_stop is None or pos.stop_order_id is None:
-            # An unprotected position is the loudest thing this pass can find,
-            # but placing a stop is an ORDER, and this module does not submit
-            # them. The runner decides, and by default it reports.
-            skips.append(
-                Skip(pos.ticker, "no_stop_order", f"unprotected, atr={atr:.2f}, price={pos.current_price:.2f}")
-            )
+            if not config.backfill_missing_stops or pos.naked_quantity <= 0:
+                # Unprotected is the loudest thing this pass can find, but
+                # placing a stop is an ORDER. Reported unless explicitly asked.
+                skips.append(
+                    Skip(
+                        pos.ticker,
+                        "no_stop_order",
+                        f"unprotected, atr={atr:.2f}, price={pos.current_price:.2f}",
+                    )
+                )
+                continue
+
+            # Seeded from the CURRENT price, not from entry: a name that has
+            # doubled since entry would otherwise get a stop far below anything
+            # it has traded at recently, which protects nothing. Floored at zero
+            # so a violently wide ATR cannot produce a negative stop.
+            level = max(0.01, pos.current_price - atr * config.atr_mult)
+            if level >= pos.current_price:
+                skips.append(
+                    Skip(pos.ticker, "stop_would_widen", f"level {level:.2f} >= price {pos.current_price:.2f}")
+                )
+                continue
+            actions.append(PlaceStop(pos.ticker, pos.naked_quantity, level, atr))
             continue
 
         candidate = atr_trailing_stop(

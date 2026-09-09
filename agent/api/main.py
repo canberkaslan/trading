@@ -31,12 +31,12 @@ from .routes import (
     agents,
     analyze,
     diagnostics,
-    risk,
     learn,
     notifications,
     orders,
     portfolio,
     prices,
+    risk,
     trades,
 )
 from .routes import (

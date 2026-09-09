@@ -122,3 +122,75 @@ def count_correlated(
     except Exception:  # noqa: BLE001 — never break the run on a data gap
         log.warning("correlation count failed for %s", candidate, exc_info=True)
         return 0
+
+
+# Enough closes for a mean and a deviation that describe the current regime
+# without being dominated by a quarter-old one.
+_ANOMALY_WINDOW_DAYS = 20
+# Below this many closes a standard deviation is a number, not a distribution.
+_MIN_ANOMALY_BARS = 10
+
+
+def rolling_price_stats(
+    ticker: str,
+    *,
+    repo: TradeLogRepository | None = None,
+    window_days: int = _ANOMALY_WINDOW_DAYS,
+) -> tuple[float, float] | None:
+    """Mean and sample standard deviation of recent closes, or None.
+
+    The circuit breaker's price-anomaly check was fed `rolling_mean=ref_price`
+    and `rolling_std=max(ref_price * 0.02, 1.0)`, which makes its z-score
+    `|price - price| / std` — exactly zero, for every ticker, on every run. The
+    check could not fire. It was not mis-tuned; it was disconnected, and it read
+    as a working control in every log and every report.
+
+    None when there is not enough history. The caller must then SKIP the check
+    rather than substitute a band: a fabricated deviation is how this became
+    inert in the first place, and a too-wide band is indistinguishable from no
+    check at all while looking like one.
+    """
+    repo = repo or TradeLogRepository()
+    rows = _bars(repo, ticker, window_days)
+    closes = [r.close for r in rows[-window_days:] if r.close and r.close > 0]
+    if len(closes) < _MIN_ANOMALY_BARS:
+        log.info(
+            "rolling_price_stats(%s): %d closes, need %d",
+            ticker, len(closes), _MIN_ANOMALY_BARS,
+        )
+        return None
+
+    n = len(closes)
+    mean = sum(closes) / n
+    # Sample (n-1) rather than population: these closes are a window out of a
+    # continuing series, not the whole population of prices.
+    variance = sum((c - mean) ** 2 for c in closes) / (n - 1)
+    return mean, variance**0.5
+
+
+def recent_loss_streak(
+    *,
+    repo: TradeLogRepository | None = None,
+    limit: int = 50,
+) -> int:
+    """How many round trips in a row have closed at a loss.
+
+    The breaker's consecutive-loss check counts what `record_trade_result` was
+    told, and nothing ever called it — the counter sat at zero from process
+    start to process exit, so a five-loss streak halted nothing. The realized
+    ledger already knows the answer: it is the FIFO-matched close list the app's
+    "Gerçekleşen" card reads.
+
+    Counted from the most recent close backwards, stopping at the first winner.
+    A break-even trade (net exactly zero) counts as a winner: it did not lose,
+    and treating "no move" as a loss would halt the book for a flat week.
+    """
+    repo = repo or TradeLogRepository()
+    trades = repo.list_closed_trades(limit=limit)
+    streak = 0
+    # `list_closed_trades` returns newest first; walk until something worked.
+    for t in trades:
+        if (t.realized_pnl or 0.0) >= 0:
+            break
+        streak += 1
+    return streak

@@ -55,6 +55,8 @@ from tradingagents_us.risk.kill_switch import (  # noqa: E402
 from tradingagents_us.risk.market_inputs import (  # noqa: E402
     average_dollar_volume,
     count_correlated,
+    recent_loss_streak,
+    rolling_price_stats,
 )
 from tradingagents_us.risk.portfolio_limits import PortfolioContext, PortfolioLimits  # noqa: E402
 from tradingagents_us.risk.sizer import MarketContext, size_from_decision  # noqa: E402
@@ -282,10 +284,27 @@ def main() -> int:
         log.warning("no reference price for %s — cannot size", args.ticker)
         return 1
 
+    # The circuit breaker's price-anomaly check used to be handed
+    # `rolling_mean = ref_price` and a 2% band, which makes its z-score
+    # |p - p| / std — exactly zero, for every ticker, on every run. It could not
+    # fire, while reading as a working control in every log. Real stats now come
+    # from the same bar cache the rest of the risk layer uses.
+    #
+    # None means "not enough history", and the check is then SKIPPED rather than
+    # given a fabricated band: rolling_std=0.0 makes the breaker's own
+    # `if rolling_std > 0` guard skip it, which is the honest branch. Inventing
+    # a width is what made this inert in the first place.
+    stats = rolling_price_stats(args.ticker, repo=repo)
+    if stats is None:
+        rolling_mean, rolling_std = ref_price, 0.0
+        log.info("price-anomaly check skipped for %s — not enough bars", args.ticker)
+    else:
+        rolling_mean, rolling_std = stats
+
     market_ctx = MarketContext(
         current_price=ref_price,
-        rolling_mean=ref_price,
-        rolling_std=max(ref_price * 0.02, 1.0),  # 2% as conservative band
+        rolling_mean=rolling_mean,
+        rolling_std=rolling_std,
         # No synthesized ATR: the sizer now measures the real entry-to-stop
         # distance itself, and a proxy here is what made positions 2.5x.
         atr=None,
@@ -318,6 +337,16 @@ def main() -> int:
     # KILL_SWITCH_PATH; PAUSE_NEW / FLATTEN_ALL blocks this trade at the
     # circuit breaker. daily_run.sh additionally pre-checks + flattens.
     cb = CircuitBreaker(kill_switch=CachedKillSwitchReader(FileKillSwitchReader()))
+    # The consecutive-loss halt counts what `record_trade_result` was told, and
+    # nothing ever called it — the counter sat at zero from process start to
+    # exit, so a five-loss run halted nothing. Each ticker runs in its own
+    # process, so the streak cannot be accumulated in memory either; it is
+    # replayed from the realized ledger, which already knows the answer.
+    streak = recent_loss_streak(repo=repo)
+    for _ in range(streak):
+        cb.record_trade_result(profitable=False)
+    if streak:
+        log.info("replayed %d consecutive realized losses into the breaker", streak)
 
     # 3. Risk sizing -> TradeOrder
     order = size_from_decision(

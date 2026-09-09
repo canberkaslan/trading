@@ -14,7 +14,8 @@ from tradingagents_us.notifications.naked_alert import (
 
 
 def facts(naked: float, total: float = 100.0, **kw) -> CoverageFacts:
-    return CoverageFacts(total_qty=total, naked_qty=naked, indeterminate_qty=kw.pop("indet", 0.0), **kw)
+    indet = kw.pop("indet", 0.0)
+    return CoverageFacts(total_qty=total, naked_qty=naked, indeterminate_qty=indet, **kw)
 
 
 class TestSilence:

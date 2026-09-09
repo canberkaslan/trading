@@ -25,7 +25,9 @@ from tradingagents_us.risk.position_manager import (
 )
 
 
-def flat_bars(n: int = 30, high: float = 101.0, low: float = 99.0, close: float = 100.0) -> list[Bar]:
+def flat_bars(
+    n: int = 30, high: float = 101.0, low: float = 99.0, close: float = 100.0
+) -> list[Bar]:
     return [Bar(high, low, close) for _ in range(n)]
 
 
@@ -165,7 +167,7 @@ class TestTimeExit:
         assert len(actions) == 1
         assert isinstance(actions[0], TimeExit)
 
-    def test_closes_a_flat_LOSER_too_not_only_a_flat_winner(self) -> None:
+    def test_closes_a_flat_loser_too_not_only_a_flat_winner(self) -> None:
         actions, _ = plan_actions(
             [position(bars_held=25, current_price=98.0)], {"AAPL": flat_bars(30)}
         )

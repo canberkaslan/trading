@@ -127,7 +127,10 @@ def main() -> int:
             return 0
 
         subprocess.run(
-            [sys.executable, "-m", "scripts.notify_ops", "--title", alert.title, "--body", alert.body],
+            [
+                sys.executable, "-m", "scripts.notify_ops",
+                "--title", alert.title, "--body", alert.body,
+            ],
             cwd=str(_AGENT_ROOT),
             check=False,
         )

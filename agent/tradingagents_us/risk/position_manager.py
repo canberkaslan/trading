@@ -31,8 +31,9 @@ Two safety properties are structural rather than conventional:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal, Sequence
+from typing import Literal
 
 from tradingagents_us.risk.stop_loss import atr_trailing_stop, time_exit
 
@@ -187,10 +188,15 @@ def average_true_range(bars: Sequence[Bar], period: int = ATR_PERIOD) -> float |
     return atr
 
 
+#: The defaults, as a singleton. A dataclass call in a parameter default is
+#: evaluated once at import anyway — naming it says so instead of hiding it.
+DEFAULT_CONFIG = ManagementConfig()
+
+
 def plan_actions(
     positions: Sequence[ManagedPosition],
     bars_by_ticker: dict[str, Sequence[Bar]],
-    config: ManagementConfig = ManagementConfig(),
+    config: ManagementConfig = DEFAULT_CONFIG,
 ) -> tuple[list[Action], list[Skip]]:
     """Decide what to do with every open position.
 
@@ -222,9 +228,8 @@ def plan_actions(
         bars = bars_by_ticker.get(pos.ticker) or []
         atr = average_true_range(bars, config.atr_period)
         if atr is None:
-            skips.append(
-                Skip(pos.ticker, "insufficient_bars", f"have={len(bars)} need={config.atr_period + 1}")
-            )
+            need = config.atr_period + 1
+            skips.append(Skip(pos.ticker, "insufficient_bars", f"have={len(bars)} need={need}"))
             continue
 
         if pos.current_stop is None or pos.stop_order_id is None:
@@ -246,9 +251,8 @@ def plan_actions(
             # so a violently wide ATR cannot produce a negative stop.
             level = max(0.01, pos.current_price - atr * config.atr_mult)
             if level >= pos.current_price:
-                skips.append(
-                    Skip(pos.ticker, "stop_would_widen", f"level {level:.2f} >= price {pos.current_price:.2f}")
-                )
+                detail = f"level {level:.2f} >= price {pos.current_price:.2f}"
+                skips.append(Skip(pos.ticker, "stop_would_widen", detail))
                 continue
             actions.append(PlaceStop(pos.ticker, pos.naked_quantity, level, atr))
             continue
@@ -266,16 +270,14 @@ def plan_actions(
             # asserted anyway because the day someone adds a SHORT branch or a
             # different stop source, a widened stop must fail loudly here
             # rather than quietly become an order.
-            skips.append(
-                Skip(pos.ticker, "stop_would_widen", f"{pos.current_stop:.2f} -> {candidate:.2f}")
-            )
+            detail = f"{pos.current_stop:.2f} -> {candidate:.2f}"
+            skips.append(Skip(pos.ticker, "stop_would_widen", detail))
             continue
 
         gain = (candidate - pos.current_stop) / pos.current_stop
         if gain < config.min_ratchet_pct:
-            skips.append(
-                Skip(pos.ticker, "stop_unchanged", f"+{gain:.3%} below {config.min_ratchet_pct:.1%}")
-            )
+            detail = f"+{gain:.3%} below {config.min_ratchet_pct:.1%}"
+            skips.append(Skip(pos.ticker, "stop_unchanged", detail))
             continue
 
         actions.append(

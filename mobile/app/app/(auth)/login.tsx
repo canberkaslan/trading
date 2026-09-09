@@ -1,12 +1,17 @@
 import { Text, StyleSheet, TextInput, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
+import { useTranslation } from 'react-i18next';
 
-import { colors } from '@/theme/colors';
+import { useTheme } from '@/theme/useTheme';
+import { MIN_TOUCH_TARGET } from '@/utils/a11y';
 
 export default function LoginScreen() {
   const router = useRouter();
+  const { t } = useTranslation();
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
@@ -21,7 +26,7 @@ export default function LoginScreen() {
         autoComplete="email"
         keyboardType="email-address"
         placeholder="email"
-        placeholderTextColor={colors.textMuted}
+        placeholderTextColor={theme.textSecondary}
         style={styles.input}
       />
       <TextInput
@@ -29,46 +34,48 @@ export default function LoginScreen() {
         onChangeText={setPassword}
         secureTextEntry
         placeholder="password"
-        placeholderTextColor={colors.textMuted}
+        placeholderTextColor={theme.textSecondary}
         style={styles.input}
       />
       <Pressable
         onPress={() => router.replace('/(tabs)/portfolio')}
         style={styles.button}
+        accessibilityRole="button"
+        accessibilityLabel="Sign in"
       >
         <Text style={styles.buttonText}>Sign in</Text>
       </Pressable>
-      <Text style={styles.disclaimer}>
-        This app is not investment advice. Past performance does not guarantee future
-        results.
-      </Text>
+      {/* Was an English string hard-coded into this one screen while every
+          other surface reads it from the bundle. */}
+      <Text style={styles.disclaimer}>{t('disclaimer.short')}</Text>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0a0a0a', padding: 24, gap: 16 },
-  heading: { color: '#fff', fontSize: 36, fontWeight: '700', marginTop: 32 },
-  subheading: { color: '#888', fontSize: 14, marginBottom: 32 },
-  input: {
-    backgroundColor: '#171717',
-    color: '#fff',
-    padding: 16,
-    borderRadius: 8,
-    fontSize: 16,
-  },
-  button: {
-    backgroundColor: '#22c55e',
-    padding: 16,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  buttonText: { color: '#000', fontWeight: '700', fontSize: 16 },
-  disclaimer: {
-    color: colors.textMuted,
-    fontSize: 11,
-    fontStyle: 'italic',
-    marginTop: 32,
-  },
-});
+type Palette = ReturnType<typeof useTheme>;
+
+const makeStyles = (t: Palette) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: t.background, paddingHorizontal: 24, gap: 12 },
+    heading: { color: t.textPrimary, fontSize: 40, fontWeight: '800', marginTop: 48, letterSpacing: -1 },
+    subheading: { color: t.textSecondary, fontSize: 14, marginBottom: 32 },
+    input: {
+      backgroundColor: t.surfaceElevated,
+      color: t.textPrimary,
+      borderWidth: 1,
+      borderColor: t.textPrimary,
+      paddingHorizontal: 14,
+      paddingVertical: 14,
+      fontSize: 16,
+    },
+    button: {
+      backgroundColor: t.textPrimary,
+      paddingVertical: 15,
+      minHeight: MIN_TOUCH_TARGET,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: 8,
+    },
+    buttonText: { color: t.background, fontWeight: '800', fontSize: 16, letterSpacing: 0.5 },
+    disclaimer: { color: t.textSecondary, fontSize: 11, marginTop: 32, lineHeight: 16 },
+  });

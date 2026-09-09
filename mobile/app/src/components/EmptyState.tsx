@@ -9,7 +9,9 @@
 
 import { View, Text, StyleSheet } from 'react-native';
 
-import { colors } from '@/theme/colors';
+import { useMemo } from 'react';
+
+import { useTheme } from '@/theme/useTheme';
 
 type Props = {
   title: string;
@@ -18,6 +20,8 @@ type Props = {
 };
 
 export function EmptyState({ title, hint }: Props) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <View style={styles.container}>
       <Text style={styles.title}>{title}</Text>
@@ -26,8 +30,22 @@ export function EmptyState({ title, hint }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { margin: 24, padding: 24, backgroundColor: colors.surface, borderRadius: 12, alignItems: 'center' },
-  title: { color: colors.textSecondary, fontSize: 15, fontWeight: '600', textAlign: 'center' },
-  hint: { color: colors.textMuted, fontSize: 13, marginTop: 8, textAlign: 'center' },
-});
+type Palette = ReturnType<typeof useTheme>;
+
+const makeStyles = (t: Palette) =>
+  StyleSheet.create({
+    // A ruled block on the page ground, not a filled card: an empty list should
+    // recede, and a dark slab on a light page reads as an error.
+    container: {
+      marginHorizontal: 16,
+      marginVertical: 24,
+      paddingVertical: 24,
+      paddingHorizontal: 16,
+      borderTopWidth: 2,
+      borderBottomWidth: 2,
+      borderColor: t.divider,
+      alignItems: 'center',
+    },
+    title: { color: t.textPrimary, fontSize: 15, fontWeight: '800', textAlign: 'center' },
+    hint: { color: t.textSecondary, fontSize: 13, marginTop: 8, textAlign: 'center' },
+  });

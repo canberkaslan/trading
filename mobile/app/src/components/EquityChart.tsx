@@ -1,10 +1,11 @@
+import { useMemo } from 'react';
 import { View, Text, StyleSheet, useWindowDimensions } from 'react-native';
+import Svg, { Path, Circle } from 'react-native-svg';
 
 import type { EquityHistory, PriceSeries } from '@/api/types';
-import { colors } from '@/theme/colors';
+import { useTheme } from '@/theme/useTheme';
 import { formatUsd, formatPct } from '@/utils/format';
 import {
-  barHeight,
   worstDrawdown,
   ddIntensity,
   rebaseSpy,
@@ -13,9 +14,10 @@ import {
   combinedScale,
 } from '@/utils/equity';
 
-const CHART_H = 120;
+const CHART_H = 220;
 const RIBBON_H = 8;
-const SPY_DOT = 3;
+/** Room for the curve's own stroke so a peak or trough is not clipped. */
+const PAD = 3;
 
 /**
  * Home equity curve — drawn with plain RN Views (no native chart lib) so it
@@ -26,17 +28,48 @@ const SPY_DOT = 3;
  * header. Read-only, off the trading path.
  */
 export function EquityChart({ history, spy }: { history: EquityHistory; spy?: PriceSeries }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const { width } = useWindowDimensions();
   const chartW = width - 48;
   const pts = history.points;
-  const spyPts = spy ? rebaseSpy(spy.bars, pts) : [];
+  // Memoized for the same reason as the paths below: a fresh array each render
+  // would defeat every memo downstream of it.
+  const spyPts = useMemo(() => (spy ? rebaseSpy(spy.bars, pts) : []), [spy, pts]);
   const scale = combinedScale(pts, spyPts);
   const slot = pts.length ? chartW / pts.length : chartW;
   const up = history.total_return_pct >= 0;
-  const barColor = up ? colors.up : colors.down;
+  // The equity line is drawn in body ink (see the Path below), so the only
+  // thing the direction still colours is the % figure beside it — which is
+  // 15px text and therefore takes the legible loss colour, not the fill.
+  const returnColor = up ? theme.up : theme.downText ?? theme.down;
   const maxDd = worstDrawdown(pts);
-  const spyByDate = new Map(spyPts.map((p) => [p.date, p.value]));
   const alpha = alphaPct(history.total_return_pct, spyReturnPct(spyPts));
+
+  // Paths are derived from the same `combinedScale` the bars used, so the
+  // curve and the drawdown ribbon below it stay on one vertical scale.
+  const { equityPath, spyPath, endPoint } = useMemo(() => {
+    const usable = CHART_H - PAD * 2;
+    const x = (i: number) => (pts.length > 1 ? (i / (pts.length - 1)) * chartW : chartW / 2);
+    const y = (v: number) => PAD + (1 - (v - scale.min) / scale.span) * usable;
+    const line = (vals: { v: number; i: number }[]) =>
+      vals.map((p, n) => `${n ? 'L' : 'M'}${x(p.i).toFixed(1)},${y(p.v).toFixed(1)}`).join('');
+
+    // Built inside the memo: as a component-body `new Map(...)` its identity
+    // changed every render, so the memo never actually memoized.
+    const spyByDate = new Map(spyPts.map((sp) => [sp.date, sp.value]));
+    const eq = pts.map((p, i) => ({ v: p.equity, i }));
+    const spyByIndex = pts
+      .map((p, i) => ({ v: spyByDate.get(p.date), i }))
+      .filter((p): p is { v: number; i: number } => p.v != null);
+
+    const last = eq[eq.length - 1];
+    return {
+      equityPath: eq.length ? line(eq) : '',
+      spyPath: spyByIndex.length > 1 ? line(spyByIndex) : '',
+      endPoint: last ? { x: x(last.i), y: y(last.v) } : null,
+    };
+  }, [pts, spyPts, scale, chartW]);
 
   if (!pts.length) return null;
 
@@ -46,55 +79,40 @@ export function EquityChart({ history, spy }: { history: EquityHistory; spy?: Pr
         <Text style={styles.label}>{history.days} gün</Text>
         <View style={styles.headerRight}>
           {alpha != null ? (
-            <View style={[styles.alphaChip, { borderColor: alpha >= 0 ? colors.up : colors.down }]}>
-              <Text style={[styles.alphaText, { color: alpha >= 0 ? colors.up : colors.down }]}>
+            <View style={[styles.alphaChip, { borderColor: alpha >= 0 ? theme.up : theme.down }]}>
+              <Text style={[styles.alphaText, { color: alpha >= 0 ? theme.up : theme.downText ?? theme.down }]}>
                 α {formatPct(alpha / 100, { signed: true })}
               </Text>
             </View>
           ) : null}
-          <Text style={[styles.return, { color: barColor }]}>
+          <Text style={[styles.return, { color: returnColor }]}>
             {formatPct(history.total_return_pct / 100, { signed: true })}
           </Text>
         </View>
       </View>
 
       <View style={[styles.chartBox, { width: chartW, height: CHART_H }]}>
-        {pts.map((p) => {
-          const spyVal = spyByDate.get(p.date);
-          return (
-            <View key={p.date} style={{ width: slot, height: CHART_H, justifyContent: 'flex-end', alignItems: 'center' }}>
-              <View
-                style={{
-                  width: Math.max(1, slot * 0.85),
-                  height: barHeight(p.equity, scale, CHART_H),
-                  backgroundColor: barColor,
-                  opacity: 0.45,
-                  borderTopLeftRadius: 1,
-                  borderTopRightRadius: 1,
-                }}
-              />
-              {spyVal != null ? (
-                <View
-                  style={{
-                    position: 'absolute',
-                    bottom: barHeight(spyVal, scale, CHART_H) - SPY_DOT / 2,
-                    width: SPY_DOT,
-                    height: SPY_DOT,
-                    borderRadius: SPY_DOT / 2,
-                    backgroundColor: colors.textSecondary,
-                  }}
-                />
-              ) : null}
-            </View>
-          );
-        })}
+        <Svg width={chartW} height={CHART_H}>
+          {/* SPY first so the portfolio curve reads on top of it. */}
+          {spyPath ? <Path d={spyPath} fill="none" stroke={theme.neutral500 ?? theme.textSecondary} strokeWidth={1.5} /> : null}
+          <Path
+            d={equityPath}
+            fill="none"
+            stroke={theme.textPrimary}
+            strokeWidth={2.2}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+          {/* The end of the curve, so the latest value has a fixed anchor. */}
+          {endPoint ? <Circle cx={endPoint.x} cy={endPoint.y} r={3} fill={theme.textPrimary} /> : null}
+        </Svg>
       </View>
 
       {spyPts.length ? (
         <View style={styles.legendRow}>
-          <View style={[styles.legendDot, { backgroundColor: barColor, opacity: 0.6 }]} />
+          <View style={[styles.legendDot, { backgroundColor: theme.textPrimary }]} />
           <Text style={styles.legendText}>Portföy</Text>
-          <View style={[styles.legendDot, { backgroundColor: colors.textSecondary, marginLeft: 12 }]} />
+          <View style={[styles.legendDot, { backgroundColor: theme.neutral500 ?? theme.textSecondary, marginLeft: 12 }]} />
           <Text style={styles.legendText}>SPY</Text>
         </View>
       ) : null}
@@ -108,7 +126,7 @@ export function EquityChart({ history, spy }: { history: EquityHistory; spy?: Pr
             style={{
               width: slot,
               height: RIBBON_H,
-              backgroundColor: colors.down,
+              backgroundColor: theme.down,
               opacity: 0.12 + 0.68 * ddIntensity(p.drawdown_pct, maxDd),
             }}
           />
@@ -126,25 +144,26 @@ export function EquityChart({ history, spy }: { history: EquityHistory; spy?: Pr
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t: ReturnType<typeof useTheme>) =>
+  StyleSheet.create({
   wrap: { paddingHorizontal: 24, marginTop: 8 },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  label: { color: colors.textSecondary, fontSize: 13, fontWeight: '600' },
+  label: { color: t.textSecondary, fontSize: 13, fontWeight: '600' },
   return: { fontSize: 15, fontWeight: '700' },
   alphaChip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
   alphaText: { fontSize: 12, fontWeight: '700' },
   legendRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
   legendDot: { width: 8, height: 8, borderRadius: 4, marginRight: 4 },
-  legendText: { color: colors.textMuted, fontSize: 11 },
+  legendText: { color: t.textSecondary, fontSize: 11 },
   chartBox: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     height: CHART_H,
     borderBottomWidth: 1,
-    borderBottomColor: colors.surfaceElevated,
+    borderBottomColor: t.divider,
   },
   ribbon: { flexDirection: 'row', marginTop: 3, borderRadius: 2, overflow: 'hidden' },
   footRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 },
-  muted: { color: colors.textMuted, fontSize: 12 },
+  muted: { color: t.textSecondary, fontSize: 12 },
 });

@@ -1,7 +1,7 @@
 import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 
@@ -14,7 +14,7 @@ import {
   useTrades,
   useActionability,
 } from '@/api/hooks';
-import { colors } from '@/theme/colors';
+import { useTheme } from '@/theme/useTheme';
 import { MIN_TOUCH_TARGET } from '@/utils/a11y';
 import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
@@ -54,26 +54,32 @@ import {
   type ActionabilityTone,
 } from '@/utils/actionability';
 
-const TONE_COLORS: Record<Tone, string> = {
-  up: colors.up,
-  warning: colors.warning,
-  down: colors.down,
-};
-
-const PNL_TONE_COLORS: Record<PnlToneName, string> = {
-  up: colors.up,
-  down: colors.down,
-  neutral: colors.textPrimary,
-};
-
-const FLOW_TONE_COLORS: Record<ActionabilityTone, string> = {
-  up: colors.up,
-  warning: colors.warning,
-  muted: colors.textMuted,
-};
+// Tone -> colour is now palette-dependent: in Modernist a gain is the ink
+// colour, so these cannot be module constants any more.
+type Palette = ReturnType<typeof useTheme>;
+const toneColors = (t: Palette): Record<Tone, string> => ({
+  up: t.up,
+  warning: t.warning,
+  down: t.downText ?? t.down,
+});
+const pnlToneColors = (t: Palette): Record<PnlToneName, string> => ({
+  up: t.up,
+  down: t.downText ?? t.down,
+  neutral: t.textPrimary,
+});
+const flowToneColors = (t: Palette): Record<ActionabilityTone, string> => ({
+  up: t.up,
+  warning: t.warning,
+  muted: t.textSecondary,
+});
 
 export default function PortfolioScreen() {
   const { t } = useTranslation();
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
+  const TONE_COLORS = useMemo(() => toneColors(theme), [theme]);
+  const PNL_TONE_COLORS = useMemo(() => pnlToneColors(theme), [theme]);
+  const FLOW_TONE_COLORS = useMemo(() => flowToneColors(theme), [theme]);
   const router = useRouter();
   const { data, isLoading, isError, error, isFetching, refetch } = usePortfolio();
   const [period, setPeriod] = useState<Period>('1M');
@@ -113,8 +119,8 @@ export default function PortfolioScreen() {
     );
   }
 
-  const pnlColor = data.daily_pnl_usd >= 0 ? colors.up : colors.down;
-  const badge = evalData ? verdictTheme(evalData.verdict, colors) : null;
+  const pnlColor = data.daily_pnl_usd >= 0 ? theme.up : theme.downText ?? theme.down;
+  const badge = evalData ? verdictTheme(evalData.verdict, theme) : null;
   // A GO badge over a book that has submitted nothing for days is the single
   // most misleading thing on this screen — qualify it where it is read.
   const badgeQualifier = verdictQualifier(flow);
@@ -122,7 +128,7 @@ export default function PortfolioScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <ScrollView
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.textPrimary} />}
       >
         <View style={styles.hero}>
           <View style={styles.heroTop}>
@@ -216,7 +222,7 @@ export default function PortfolioScreen() {
                   <Text
                     style={[
                       styles.statValue,
-                      flow.verdict === 'inert' ? { color: colors.warning } : null,
+                      flow.verdict === 'inert' ? { color: theme.warning } : null,
                     ]}
                   >
                     {lastSubmitLabel(flow.last_submitted_at_utc, new Date())}
@@ -264,7 +270,7 @@ export default function PortfolioScreen() {
             <View style={styles.riskCard}>
               <View style={styles.row}>
                 <Text style={styles.cardTitle}>Gerçekleşen</Text>
-                <Text style={[styles.freshness, fresh.stale && { color: colors.warning }]}>
+                <Text style={[styles.freshness, fresh.stale && { color: theme.warning }]}>
                   {fresh.stale ? '⚠︎ ' : ''}{fresh.label}
                 </Text>
               </View>
@@ -494,7 +500,7 @@ export default function PortfolioScreen() {
           <EmptyState title="Açık pozisyon yok" hint="Günlük çalışma yeni pozisyon açtığında burada görünür." />
         ) : (
           data.positions.map((p) => {
-            const c = p.unrealized_pnl >= 0 ? colors.up : colors.down;
+            const c = p.unrealized_pnl >= 0 ? theme.up : theme.downText ?? theme.down;
             return (
               <Pressable
                 key={p.ticker}
@@ -528,70 +534,88 @@ export default function PortfolioScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
-  hero: { padding: 24 },
-  heroTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  badgeWrap: { alignItems: 'flex-end' },
-  badge: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 4 },
-  badgeText: { fontSize: 13, fontWeight: '700', letterSpacing: 0.5 },
-  badgeQualifier: { color: colors.warning, fontSize: 11, marginTop: 4 },
-  heroLabel: { color: colors.textSecondary, fontSize: 14 },
-  heroValue: { color: colors.textPrimary, fontSize: 36, fontWeight: '700', marginTop: 4 },
-  heroChange: { fontSize: 16, marginTop: 8, fontWeight: '600' },
-  muted: { color: colors.textMuted, marginTop: 4 },
-  timestamp: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
-  periodRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 24, marginTop: 8 },
-  periodPill: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: colors.surface,
-    minHeight: MIN_TOUCH_TARGET,
-    minWidth: MIN_TOUCH_TARGET,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  periodPillActive: { backgroundColor: colors.surfaceElevated },
-  periodText: { color: colors.textMuted, fontSize: 13, fontWeight: '600' },
-  periodTextActive: { color: colors.textPrimary },
-  section: { color: colors.textPrimary, fontSize: 18, fontWeight: '600', paddingHorizontal: 24, marginTop: 16 },
-  riskCard: { marginHorizontal: 24, marginTop: 16, padding: 16, backgroundColor: colors.surface, borderRadius: 12 },
-  cardTitle: { color: colors.textPrimary, fontSize: 16, fontWeight: '600', marginBottom: 8 },
-  statRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4, marginBottom: 12 },
-  stat: { flex: 1 },
-  statLabel: { color: colors.textMuted, fontSize: 12 },
-  statValue: { color: colors.textPrimary, fontSize: 17, fontWeight: '700', marginTop: 2 },
-  statSub: { color: colors.textMuted, fontSize: 11, marginTop: 1 },
-  sectorRow: { marginTop: 10 },
-  sectorHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
-  sectorLabel: { color: colors.textSecondary, fontSize: 13 },
-  sectorWeight: { color: colors.textPrimary, fontSize: 13, fontWeight: '600' },
-  barTrack: { height: 6, backgroundColor: colors.surfaceElevated, borderRadius: 999, overflow: 'hidden' },
-  barFill: { height: 6, backgroundColor: colors.accent, borderRadius: 999 },
-  // Blocked order flow is not an allocation — it gets the warning tone, not
-  // the accent one, so the two bar lists on this screen don't read alike.
-  barBlocked: { height: 6, backgroundColor: colors.warning, borderRadius: 999 },
-  flagText: { color: colors.warning, fontSize: 12, marginTop: 12 },
-  freshness: { color: colors.textMuted, fontSize: 11 },
-  realizedValue: { fontSize: 26, fontWeight: '700', marginTop: 2 },
-  splitTrack: { flexDirection: 'row', height: 6, borderRadius: 999, overflow: 'hidden', marginTop: 14, marginBottom: 6 },
-  // The strategy block is fenced off from the blended stats above it: the two
-  // answer different questions and must not read as one continuous list.
-  exitBlock: { marginTop: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: colors.surfaceElevated },
-  exitTitle: { color: colors.textSecondary, fontSize: 13, fontWeight: '600' },
-  sampleBadge: { color: colors.textMuted, fontSize: 11, fontWeight: '600' },
-  exitRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
-  exitLabel: { color: colors.textSecondary, fontSize: 12, flex: 1 },
-  exitCount: { color: colors.textMuted, fontSize: 12, width: 28, textAlign: 'right' },
-  exitPnl: { fontSize: 12, fontWeight: '600', width: 90, textAlign: 'right' },
-  splitRealized: { backgroundColor: colors.accent },
-  splitOpen: { backgroundColor: colors.surfaceElevated },
-  positionCard: { marginHorizontal: 24, marginTop: 12, padding: 16, backgroundColor: colors.surface, borderRadius: 12 },
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  posTicker: { color: colors.textPrimary, fontSize: 18, fontWeight: '600' },
-  posPnl: { fontSize: 14, fontWeight: '600' },
-  analyzeHint: { color: colors.accent, fontSize: 12, fontWeight: '600', marginTop: 4 },
-  disclaimer: { color: colors.textMuted, fontSize: 11, padding: 24, fontStyle: 'italic', textAlign: 'center' },
-});
+/**
+ * Modernist geometry: no radii anywhere, 2px rules between sections and 1px
+ * between rows, and a 44px hero. Cards become ruled blocks rather than filled
+ * rounded ones — the divider does the separating, so nothing needs a shadow.
+ */
+const makeStyles = (t: Palette) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: t.background },
+    center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+
+    hero: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 16 },
+    heroTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+    badgeWrap: { alignItems: 'flex-end' },
+    // Square, outlined — the verdict is a stamp, not a pill.
+    badge: { borderWidth: 1, paddingHorizontal: 10, paddingVertical: 4 },
+    badgeText: { fontSize: 13, fontWeight: '800', letterSpacing: 0.5 },
+    badgeQualifier: { color: t.warning, fontSize: 11, marginTop: 4 },
+    // Kicker: the label above the number, in accent-700 so small red type stays
+    // legible where the base accent would not be.
+    heroLabel: { color: t.accent700 ?? t.accent, fontSize: 11, fontWeight: '600', letterSpacing: 1.1, textTransform: 'uppercase' },
+    heroValue: { color: t.textPrimary, fontSize: 44, fontWeight: '800', marginTop: 6, letterSpacing: -0.5 },
+    heroChange: { fontSize: 15, marginTop: 8, fontWeight: '600' },
+    muted: { color: t.textSecondary, marginTop: 4 },
+    timestamp: { color: t.textSecondary, fontSize: 11, marginTop: 2 },
+
+    periodRow: { flexDirection: 'row', gap: 0, paddingHorizontal: 16, marginTop: 4 },
+    // A segmented control, not pills: one continuous outlined strip.
+    periodPill: {
+      paddingHorizontal: 16,
+      borderWidth: 1,
+      borderColor: t.textPrimary,
+      marginRight: -1,
+      minHeight: MIN_TOUCH_TARGET,
+      minWidth: MIN_TOUCH_TARGET,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    periodPillActive: { backgroundColor: t.textPrimary },
+    periodText: { color: t.textPrimary, fontSize: 13, fontWeight: '600' },
+    periodTextActive: { color: t.background },
+
+    section: { color: t.textPrimary, fontSize: 15, fontWeight: '800', paddingHorizontal: 16, marginTop: 24 },
+    // The 2px top rule is what separates one block from the next.
+    riskCard: { marginTop: 24, paddingHorizontal: 16, paddingTop: 16, borderTopWidth: 2, borderTopColor: t.divider },
+    cardTitle: { color: t.textPrimary, fontSize: 15, fontWeight: '800', marginBottom: 12 },
+    statRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4, marginBottom: 12 },
+    stat: { flex: 1 },
+    statLabel: { color: t.textSecondary, fontSize: 11 },
+    statValue: { color: t.textPrimary, fontSize: 17, fontWeight: '800', marginTop: 2 },
+    statSub: { color: t.textSecondary, fontSize: 11, marginTop: 1 },
+
+    sectorRow: { marginTop: 10 },
+    sectorHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
+    sectorLabel: { color: t.textSecondary, fontSize: 13 },
+    sectorWeight: { color: t.textPrimary, fontSize: 13, fontWeight: '600' },
+    barTrack: { height: 6, backgroundColor: t.neutral300 ?? t.surfaceElevated, overflow: 'hidden' },
+    barFill: { height: 6, backgroundColor: t.textPrimary },
+    // Blocked order flow is not an allocation — it gets the accent, so the two
+    // bar lists on this screen do not read alike.
+    barBlocked: { height: 6, backgroundColor: t.accent500 ?? t.warning },
+    flagText: { color: t.warning, fontSize: 12, marginTop: 12 },
+    freshness: { color: t.textSecondary, fontSize: 11 },
+
+    realizedValue: { fontSize: 26, fontWeight: '800', marginTop: 2 },
+    splitTrack: { flexDirection: 'row', height: 6, overflow: 'hidden', marginTop: 14, marginBottom: 6 },
+    // The strategy block is fenced off from the blended stats above it: the two
+    // answer different questions and must not read as one continuous list.
+    exitBlock: { marginTop: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: t.divider },
+    exitTitle: { color: t.textSecondary, fontSize: 13, fontWeight: '600' },
+    sampleBadge: { color: t.textSecondary, fontSize: 11, fontWeight: '600' },
+    exitRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
+    exitLabel: { color: t.textSecondary, fontSize: 12, flex: 1 },
+    exitCount: { color: t.textSecondary, fontSize: 12, width: 28, textAlign: 'right' },
+    exitPnl: { fontSize: 12, fontWeight: '600', width: 90, textAlign: 'right' },
+    splitRealized: { backgroundColor: t.textPrimary },
+    splitOpen: { backgroundColor: t.neutral300 ?? t.surfaceElevated },
+
+    // Rows in a ruled table, not stacked cards.
+    positionCard: { marginHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: t.divider },
+    row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    posTicker: { color: t.textPrimary, fontSize: 17, fontWeight: '800' },
+    posPnl: { fontSize: 14, fontWeight: '600' },
+    analyzeHint: { color: t.accent700 ?? t.accent, fontSize: 12, fontWeight: '600', marginTop: 4 },
+    disclaimer: { color: t.textSecondary, fontSize: 11, paddingHorizontal: 16, paddingVertical: 24, fontStyle: 'italic', textAlign: 'center' },
+  });

@@ -24,11 +24,13 @@
   "tabs": {
     "portfolio": "Portföy",
     "ask": "Sor",
-    "orders": "Bekleyen",
+    "orders": "Emirler",
     "agents": "Ajanlar",
     "charts": "Grafik",
     "learn": "Öğren",
-    "settings": "Ayarlar"
+    "settings": "Ayarlar",
+    "more": "Diğer",
+    "notifications": "Bildirimler"
   },
   "learn": {
     "title": "Öğren",

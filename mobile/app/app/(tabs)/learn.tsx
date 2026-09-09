@@ -1,10 +1,10 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, LayoutAnimation, Platform, UIManager } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 
 import { LESSONS, type LessonText } from '@/content/lessons';
-import { colors } from '@/theme/colors';
+import { useTheme } from '@/theme/useTheme';
 import { MIN_TOUCH_TARGET } from '@/utils/a11y';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -20,6 +20,8 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
  */
 export default function LearnScreen() {
   const { t, i18n } = useTranslation();
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const lang: 'tr' | 'en' = i18n.language?.startsWith('tr') ? 'tr' : 'en';
   const [openId, setOpenId] = useState<string | null>(null);
   const [answered, setAnswered] = useState<Record<string, number>>({});
@@ -88,24 +90,34 @@ function LessonCard({
   wrongLabel: string;
   takeawayLabel: string;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const solved = picked === text.quizAnswer;
 
   return (
-    <Pressable
-      style={styles.card}
-      onPress={onToggle}
-      accessibilityRole="button"
-      accessibilityState={{ expanded: open }}
-      accessibilityLabel={text.title}
-    >
-      <View style={styles.cardHead}>
+    /*
+     * Only the HEAD toggles. The whole card used to be the Pressable, with the
+     * quiz options nested inside it — which works on native (the responder
+     * system gives the touch to the innermost handler) and silently misbehaves
+     * on web, where the DOM event bubbles and answering a question collapses
+     * the lesson you were reading. A header-only target is also simply right:
+     * selecting body text should not close the section.
+     */
+    <View style={styles.card}>
+      <Pressable
+        style={styles.cardHead}
+        onPress={onToggle}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        accessibilityLabel={text.title}
+      >
         <View style={[styles.dot, solved && styles.dotDone]} />
         <View style={{ flex: 1 }}>
           <Text style={styles.cardTitle}>{text.title}</Text>
           <Text style={styles.cardSummary}>{text.summary}</Text>
         </View>
         <Text style={styles.chevron}>{open ? '−' : '+'}</Text>
-      </View>
+      </Pressable>
 
       {open ? (
         <View style={styles.body}>
@@ -145,7 +157,10 @@ function LessonCard({
 
           {picked !== undefined ? (
             <View style={styles.explain}>
-              <Text style={[styles.explainHead, { color: solved ? colors.up : colors.down }]}>
+              {/* Not the accounting scheme: a right answer is not a gain, so it
+                  keeps the conventional green (`upAlt`) rather than rendering as
+                  plain ink, which here would be indistinguishable from body copy. */}
+              <Text style={[styles.explainHead, { color: solved ? theme.upAltText ?? theme.up : theme.downText ?? theme.down }]}>
                 {solved ? correctLabel : wrongLabel}
               </Text>
               <Text style={styles.explainText}>{text.quizExplain}</Text>
@@ -153,53 +168,61 @@ function LessonCard({
           ) : null}
         </View>
       ) : null}
-    </Pressable>
+    </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  scroll: { padding: 24, gap: 12 },
-  heading: { color: colors.textPrimary, fontSize: 28, fontWeight: '700' },
-  subheading: { color: colors.textSecondary, fontSize: 13 },
+type Palette = ReturnType<typeof useTheme>;
 
-  progressRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 4 },
-  progressTrack: { flex: 1, height: 4, borderRadius: 2, backgroundColor: colors.surfaceElevated, overflow: 'hidden' },
-  progressFill: { height: 4, borderRadius: 2, backgroundColor: colors.accent },
-  progressText: { color: colors.textMuted, fontSize: 12, fontVariant: ['tabular-nums'] },
+const makeStyles = (t: Palette) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: t.background },
+    scroll: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 24, gap: 0 },
+    heading: { color: t.textPrimary, fontSize: 24, fontWeight: '800' },
+    subheading: { color: t.textSecondary, fontSize: 13 },
 
-  card: { backgroundColor: colors.surface, borderRadius: 14, padding: 16 },
-  cardHead: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.surfaceElevated, marginTop: 6 },
-  dotDone: { backgroundColor: colors.up },
-  cardTitle: { color: colors.textPrimary, fontSize: 16, fontWeight: '700' },
-  cardSummary: { color: colors.textSecondary, fontSize: 12.5, marginTop: 3, lineHeight: 17 },
-  chevron: { color: colors.textMuted, fontSize: 20, fontWeight: '600', width: 20, textAlign: 'center' },
+    progressRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 16, marginBottom: 12 },
+    // Square track, ink fill — a rule that fills rather than a pill.
+    progressTrack: { flex: 1, height: 6, borderWidth: 1, borderColor: t.textPrimary, overflow: 'hidden' },
+    progressFill: { height: 4, backgroundColor: t.textPrimary },
+    progressText: { color: t.textSecondary, fontSize: 12, fontVariant: ['tabular-nums'], fontWeight: '700' },
 
-  body: { marginTop: 14, gap: 12, borderTopWidth: 1, borderTopColor: colors.surfaceElevated, paddingTop: 14 },
-  para: { color: colors.textSecondary, fontSize: 13.5, lineHeight: 20 },
+    // Ruled rows: each lesson is separated by a hairline, not floated on a card.
+    card: { paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: t.divider },
+    cardHead: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, minHeight: MIN_TOUCH_TARGET },
+    dot: { width: 8, height: 8, borderWidth: 1, borderColor: t.textPrimary, marginTop: 6 },
+    dotDone: { backgroundColor: t.textPrimary },
+    cardTitle: { color: t.textPrimary, fontSize: 16, fontWeight: '800' },
+    cardSummary: { color: t.textSecondary, fontSize: 12.5, marginTop: 3, lineHeight: 17 },
+    chevron: { color: t.textPrimary, fontSize: 20, fontWeight: '700', width: 20, textAlign: 'center' },
 
-  takeaway: { backgroundColor: colors.surfaceElevated, borderRadius: 10, padding: 12, gap: 4 },
-  takeawayLabel: { color: colors.textMuted, fontSize: 10.5, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase' },
-  takeawayText: { color: colors.textPrimary, fontSize: 13.5, lineHeight: 19 },
+    body: { marginTop: 14, gap: 12, borderTopWidth: 1, borderTopColor: t.divider, paddingTop: 14 },
+    para: { color: t.textSecondary, fontSize: 13.5, lineHeight: 20 },
 
-  quizQ: { color: colors.textPrimary, fontSize: 14, fontWeight: '600', marginTop: 4, lineHeight: 20 },
-  option: {
-    minHeight: MIN_TOUCH_TARGET,
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.surfaceElevated,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  optionRight: { borderColor: colors.up, backgroundColor: 'rgba(34,197,94,0.10)' },
-  optionWrong: { borderColor: colors.down, backgroundColor: 'rgba(239,68,68,0.10)' },
-  optionText: { color: colors.textPrimary, fontSize: 13.5, lineHeight: 19 },
+    takeaway: { backgroundColor: t.surface, padding: 12, gap: 4, borderLeftWidth: 3, borderLeftColor: t.textPrimary },
+    takeawayLabel: { color: t.textSecondary, fontSize: 10.5, fontWeight: '800', letterSpacing: 1, textTransform: 'uppercase' },
+    takeawayText: { color: t.textPrimary, fontSize: 13.5, lineHeight: 19 },
 
-  explain: { gap: 4, marginTop: 4 },
-  explainHead: { fontSize: 12, fontWeight: '700' },
-  explainText: { color: colors.textSecondary, fontSize: 13, lineHeight: 19 },
+    quizQ: { color: t.textPrimary, fontSize: 14, fontWeight: '700', marginTop: 4, lineHeight: 20 },
+    option: {
+      minHeight: MIN_TOUCH_TARGET,
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: t.neutral400 ?? t.textSecondary,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      marginBottom: -1,
+    },
+    // Marked by a heavier rule rather than a wash: the two tints this replaced
+    // were rgba literals of the DARK palette's green and red, which on the light
+    // ground rendered as two barely-distinguishable greys.
+    optionRight: { borderWidth: 2, borderColor: t.upAlt ?? t.up, zIndex: 1 },
+    optionWrong: { borderWidth: 2, borderColor: t.accent, backgroundColor: t.accent100 ?? 'transparent', zIndex: 1 },
+    optionText: { color: t.textPrimary, fontSize: 13.5, lineHeight: 19 },
 
-  disclaimer: { color: colors.textMuted, fontSize: 11, paddingVertical: 20, fontStyle: 'italic', textAlign: 'center' },
-});
+    explain: { gap: 4, marginTop: 12 },
+    explainHead: { fontSize: 12, fontWeight: '800', letterSpacing: 0.4 },
+    explainText: { color: t.textSecondary, fontSize: 13, lineHeight: 19 },
+
+    disclaimer: { color: t.textSecondary, fontSize: 11, paddingVertical: 20, textAlign: 'center' },
+  });

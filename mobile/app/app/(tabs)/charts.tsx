@@ -15,7 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
 import { usePrices } from '@/api/hooks';
-import { colors } from '@/theme/colors';
+import { useTheme } from '@/theme/useTheme';
 import { MIN_TOUCH_TARGET } from '@/utils/a11y';
 
 const RANGES = [
@@ -29,6 +29,8 @@ const CHART_H = 220;
 // Chart is rendered with plain RN Views (no native chart lib) so it ships via
 // OTA on any installed build — no APK rebuild needed.
 export default function ChartsScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const { width } = useWindowDimensions();
   const router = useRouter();
   const chartW = width - 48;
@@ -42,7 +44,11 @@ export default function ChartsScreen() {
   // the min/max useMemo below on every render.
   const bars = useMemo(() => data?.bars ?? [], [data?.bars]);
   const up = (data?.change_pct ?? 0) >= 0;
-  const lineColor = up ? colors.up : colors.down;
+  // In Modernist this reads as ink for a rising series, accent for a falling
+  // one — the same accounting scheme the P&L figures use.
+  const lineColor = up ? theme.up : theme.down;
+  // The line is a graphic and may use the 3.6:1 fill; the % is 14px text.
+  const changeColor = up ? theme.up : theme.downText ?? theme.down;
 
   const { min, max } = useMemo(() => {
     if (!bars.length) return { min: 0, max: 0 };
@@ -69,8 +75,8 @@ export default function ChartsScreen() {
           <RefreshControl
             refreshing={isRefetching}
             onRefresh={refetch}
-            tintColor={colors.accent}
-            colors={[colors.accent]}
+            tintColor={theme.textPrimary}
+            colors={[theme.textPrimary]}
           />
         }
       >
@@ -80,7 +86,7 @@ export default function ChartsScreen() {
             value={input}
             onChangeText={setInput}
             placeholder="AAPL"
-            placeholderTextColor={colors.textMuted}
+            placeholderTextColor={theme.textSecondary}
             autoCapitalize="characters"
             autoCorrect={false}
             maxLength={6}
@@ -102,7 +108,7 @@ export default function ChartsScreen() {
           {data?.last != null ? (
             <View style={{ alignItems: 'flex-end' }}>
               <Text style={styles.price}>${data.last.toFixed(2)}</Text>
-              <Text style={[styles.change, { color: lineColor }]}>
+              <Text style={[styles.change, { color: changeColor }]}>
                 {up ? '▲' : '▼'} {Math.abs(data.change_pct ?? 0).toFixed(2)}%
               </Text>
             </View>
@@ -128,7 +134,7 @@ export default function ChartsScreen() {
 
         <View style={[styles.chartBox, { width: chartW, height: CHART_H }]}>
           {isLoading ? (
-            <ActivityIndicator color={colors.accent} />
+            <ActivityIndicator color={theme.textPrimary} />
           ) : isError ? (
             <Text style={styles.err}>Fiyat alınamadı — ticker geçerli mi?</Text>
           ) : !bars.length ? (
@@ -137,7 +143,7 @@ export default function ChartsScreen() {
             <View style={styles.candleWrap}>
               {bars.map((b, i) => {
                 const cUp = b.c >= b.o;
-                const col = cUp ? colors.up : colors.down;
+                const col = cUp ? theme.up : theme.down;
                 const wickTop = yTop(b.h);
                 const bodyTop = yTop(Math.max(b.o, b.c));
                 const bodyBot = yTop(Math.min(b.o, b.c));
@@ -179,9 +185,7 @@ export default function ChartsScreen() {
                         width: Math.max(1, slot * 0.85),
                         height: h,
                         backgroundColor: lineColor,
-                        opacity: 0.5,
-                        borderTopLeftRadius: 1,
-                        borderTopRightRadius: 1,
+                        opacity: 0.55,
                       }}
                     />
                   </View>
@@ -227,66 +231,80 @@ export default function ChartsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  scroll: { padding: 24, gap: 16 },
-  inputRow: { flexDirection: 'row', gap: 10 },
-  input: {
-    flex: 1,
-    backgroundColor: colors.surface,
-    color: colors.textPrimary,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    fontSize: 17,
-    fontWeight: '600',
-    letterSpacing: 2,
-  },
-  go: { backgroundColor: colors.accent, borderRadius: 12, paddingHorizontal: 20, justifyContent: 'center' },
-  goText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' },
-  ticker: { color: colors.textPrimary, fontSize: 26, fontWeight: '700' },
-  price: { color: colors.textPrimary, fontSize: 22, fontWeight: '700' },
-  change: { fontSize: 14, fontWeight: '600', marginTop: 2 },
-  modeRow: { flexDirection: 'row', gap: 8, alignSelf: 'flex-start' },
-  modeChip: {
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: colors.surface,
-    minHeight: MIN_TOUCH_TARGET,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  modeChipActive: { backgroundColor: colors.surfaceElevated },
-  modeText: { color: colors.textMuted, fontSize: 13, fontWeight: '600' },
-  modeTextActive: { color: colors.textPrimary },
-  chartBox: { justifyContent: 'center', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: colors.surfaceElevated },
-  areaWrap: { flexDirection: 'row', alignItems: 'flex-end', height: CHART_H, width: '100%' },
-  candleWrap: { flexDirection: 'row', height: CHART_H, width: '100%' },
-  minmax: { flexDirection: 'row', justifyContent: 'space-between' },
-  muted: { color: colors.textMuted, fontSize: 12 },
-  ranges: { flexDirection: 'row', gap: 10, justifyContent: 'center' },
-  rangeChip: {
-    paddingHorizontal: 22,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: colors.surface,
-    minHeight: MIN_TOUCH_TARGET,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  rangeChipActive: { backgroundColor: colors.accent },
-  rangeText: { color: colors.textSecondary, fontWeight: '600' },
-  rangeTextActive: { color: '#fff' },
-  err: { color: colors.danger, fontSize: 14, textAlign: 'center' },
-  analyzeBtn: {
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: 12,
-    paddingVertical: 14,
-    minHeight: MIN_TOUCH_TARGET,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  analyzeBtnText: { color: colors.textPrimary, fontSize: 15, fontWeight: '600' },
-});
+type Palette = ReturnType<typeof useTheme>;
+
+const makeStyles = (t: Palette) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: t.background },
+    scroll: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 24, gap: 16 },
+    inputRow: { flexDirection: 'row' },
+    input: {
+      flex: 1,
+      backgroundColor: t.surfaceElevated,
+      color: t.textPrimary,
+      borderWidth: 1,
+      borderColor: t.textPrimary,
+      paddingHorizontal: 14,
+      paddingVertical: 11,
+      fontSize: 17,
+      fontWeight: '700',
+      letterSpacing: 2,
+    },
+    go: {
+      backgroundColor: t.textPrimary,
+      paddingHorizontal: 20,
+      justifyContent: 'center',
+      alignItems: 'center',
+      minHeight: MIN_TOUCH_TARGET,
+      marginLeft: -1,
+    },
+    goText: { color: t.background, fontWeight: '800', fontSize: 15 },
+    header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' },
+    ticker: { color: t.textPrimary, fontSize: 26, fontWeight: '800' },
+    price: { color: t.textPrimary, fontSize: 24, fontWeight: '800' },
+    change: { fontSize: 14, fontWeight: '700', marginTop: 2 },
+    // One continuous outlined strip, borders collapsed — same control as Orders.
+    modeRow: { flexDirection: 'row', alignSelf: 'flex-start' },
+    modeChip: {
+      paddingHorizontal: 18,
+      paddingVertical: 6,
+      borderWidth: 1,
+      borderColor: t.textPrimary,
+      marginRight: -1,
+      minHeight: MIN_TOUCH_TARGET,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    modeChipActive: { backgroundColor: t.textPrimary },
+    modeText: { color: t.textPrimary, fontSize: 13, fontWeight: '700' },
+    modeTextActive: { color: t.background },
+    chartBox: { justifyContent: 'center', alignItems: 'center', borderBottomWidth: 2, borderBottomColor: t.textPrimary },
+    areaWrap: { flexDirection: 'row', alignItems: 'flex-end', height: CHART_H, width: '100%' },
+    candleWrap: { flexDirection: 'row', height: CHART_H, width: '100%' },
+    minmax: { flexDirection: 'row', justifyContent: 'space-between' },
+    muted: { color: t.textSecondary, fontSize: 12 },
+    ranges: { flexDirection: 'row', justifyContent: 'center' },
+    rangeChip: {
+      paddingHorizontal: 24,
+      paddingVertical: 8,
+      borderWidth: 1,
+      borderColor: t.textPrimary,
+      marginRight: -1,
+      minHeight: MIN_TOUCH_TARGET,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    rangeChipActive: { backgroundColor: t.textPrimary },
+    rangeText: { color: t.textPrimary, fontWeight: '700' },
+    rangeTextActive: { color: t.background },
+    err: { color: t.accent700 ?? t.danger, fontSize: 14, textAlign: 'center' },
+    analyzeBtn: {
+      borderWidth: 1,
+      borderColor: t.textPrimary,
+      paddingVertical: 14,
+      minHeight: MIN_TOUCH_TARGET,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    analyzeBtnText: { color: t.textPrimary, fontSize: 15, fontWeight: '700' },
+  });

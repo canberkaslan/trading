@@ -1,13 +1,13 @@
 import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 
 import { usePendingOrders, useOrders, useCancelOrder } from '@/api/hooks';
 import type { OrderListItem } from '@/api/types';
 import { getPermissionStatus, requestAndRegisterPush } from '@/notifications';
-import { colors } from '@/theme/colors';
+import { useTheme } from '@/theme/useTheme';
 import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
 import { formatUsd } from '@/utils/format';
@@ -46,14 +46,18 @@ async function maybeAskForPush(): Promise<void> {
   );
 }
 
-const TONE_COLOR: Record<OrderTone, string> = {
-  up: colors.up,
-  down: colors.down,
-  warning: colors.warning,
-  muted: colors.textMuted,
-};
+// Palette-dependent now: in Modernist an "up" tone is the ink colour, so this
+// cannot be a module constant.
+const toneColor = (t: Palette): Record<OrderTone, string> => ({
+  up: t.up,
+  down: t.downText ?? t.down,
+  warning: t.warning,
+  muted: t.textSecondary,
+});
 
 export default function OrdersScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const [tab, setTab] = useState<Tab>('pending');
   const pending = usePendingOrders();
@@ -77,13 +81,24 @@ export default function OrdersScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       <ScrollView
         contentContainerStyle={styles.scroll}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.textPrimary} />}
       >
         <Text style={styles.heading}>Emirler</Text>
 
         <View style={styles.segment}>
-          <SegmentButton label="Onay Bekleyen" active={tab === 'pending'} onPress={() => setTab('pending')} />
-          <SegmentButton label="Geçmiş" active={tab === 'history'} onPress={() => setTab('history')} />
+          {/* Counts in the label: the operator's first question on this screen
+              is how many are waiting, and answering it in the control removes a
+              reason to switch tabs to find out. */}
+          <SegmentButton
+            label={`Onay bekleyen · ${pending.data?.length ?? 0}`}
+            active={tab === 'pending'}
+            onPress={() => setTab('pending')}
+          />
+          <SegmentButton
+            label={`Geçmiş · ${history.data?.length ?? 0}`}
+            active={tab === 'history'}
+            onPress={() => setTab('history')}
+          />
         </View>
 
         <Text style={styles.subheading}>
@@ -106,7 +121,7 @@ export default function OrdersScreen() {
           )
         ) : tab === 'pending' ? (
           active.data.map((o) => {
-            const sideColor = o.side === 'BUY' ? colors.up : colors.down;
+            const sideColor = o.side === 'BUY' ? theme.up : theme.downText ?? theme.down;
             return (
               <Pressable
                 key={o.order_id}
@@ -139,8 +154,11 @@ export default function OrdersScreen() {
  * is confirm-gated — a mis-tap here pulls a live order off the book.
  */
 function HistoryCard({ order: o }: { order: OrderListItem }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
+  const TONE_COLOR = useMemo(() => toneColor(theme), [theme]);
   const cancel = useCancelOrder();
-  const sideColor = o.side === 'BUY' ? colors.up : colors.down;
+  const sideColor = o.side === 'BUY' ? theme.up : theme.downText ?? theme.down;
   const meta = orderStatusMeta(o.broker_status);
   const cancellable = isCancellable(o.broker_status, o.broker_order_id);
   const reasons = o.rejection_reasons ?? [];
@@ -213,6 +231,8 @@ function HistoryCard({ order: o }: { order: OrderListItem }) {
 }
 
 function SegmentButton({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <Pressable
       style={[styles.segBtn, active && styles.segBtnActive]}
@@ -226,41 +246,46 @@ function SegmentButton({ label, active, onPress }: { label: string; active: bool
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  scroll: { padding: 24, gap: 12 },
-  heading: { color: colors.textPrimary, fontSize: 28, fontWeight: '700' },
-  subheading: { color: colors.textSecondary, fontSize: 13, marginBottom: 16 },
-  segment: { flexDirection: 'row', gap: 8, marginTop: 12 },
-  segBtn: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 10,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: MIN_TOUCH_TARGET,
-  },
-  segBtnActive: { backgroundColor: colors.surfaceElevated },
-  segLabel: { color: colors.textMuted, fontSize: 14, fontWeight: '600' },
-  segLabelActive: { color: colors.textPrimary },
-  card: { padding: 16, backgroundColor: colors.surface, borderRadius: 12 },
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  ticker: { color: colors.textPrimary, fontSize: 18, fontWeight: '600' },
-  side: { fontSize: 15, fontWeight: '700' },
-  status: { fontSize: 14, fontWeight: '700', marginTop: 6 },
-  muted: { color: colors.textMuted, fontSize: 12, marginTop: 6 },
-  tapHint: { color: colors.accent, fontSize: 12, marginTop: 8 },
-  reasons: { marginTop: 8, gap: 2 },
-  reason: { color: colors.textSecondary, fontSize: 12 },
-  cancelBtn: {
-    marginTop: 12,
-    minHeight: MIN_TOUCH_TARGET,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.down,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cancelLabel: { color: colors.down, fontSize: 14, fontWeight: '700' },
-});
+type Palette = ReturnType<typeof useTheme>;
+
+const makeStyles = (t: Palette) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: t.background },
+    scroll: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 24, gap: 0 },
+    heading: { color: t.textPrimary, fontSize: 24, fontWeight: '800' },
+    subheading: { color: t.textSecondary, fontSize: 13, marginBottom: 16 },
+    // One continuous outlined strip, borders collapsed with a -1 margin.
+    segment: { flexDirection: 'row', marginTop: 12, marginBottom: 8 },
+    segBtn: {
+      flex: 1,
+      paddingVertical: 10,
+      borderWidth: 1,
+      borderColor: t.textPrimary,
+      marginRight: -1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: MIN_TOUCH_TARGET,
+    },
+    segBtnActive: { backgroundColor: t.textPrimary },
+    segLabel: { color: t.textPrimary, fontSize: 14, fontWeight: '600' },
+    segLabelActive: { color: t.background },
+    // Ruled rows, not stacked cards.
+    card: { paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: t.divider },
+    row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    ticker: { color: t.textPrimary, fontSize: 18, fontWeight: '800' },
+    side: { fontSize: 15, fontWeight: '800' },
+    status: { fontSize: 14, fontWeight: '800', marginTop: 6 },
+    muted: { color: t.textSecondary, fontSize: 12, marginTop: 6 },
+    tapHint: { color: t.accent700 ?? t.accent, fontSize: 12, marginTop: 8, fontWeight: '600' },
+    reasons: { marginTop: 8, gap: 2 },
+    reason: { color: t.textSecondary, fontSize: 12 },
+    cancelBtn: {
+      marginTop: 12,
+      minHeight: MIN_TOUCH_TARGET,
+      borderWidth: 1,
+      borderColor: t.accent,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    cancelLabel: { color: t.accent700 ?? t.accent, fontSize: 14, fontWeight: '800' },
+  });

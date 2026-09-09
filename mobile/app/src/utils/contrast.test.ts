@@ -4,7 +4,7 @@ import { readFileSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 
 import { contrastRatio, luminance, meetsAA } from './contrast';
-import { colors } from '../theme/colors';
+import { colors, modernist } from '../theme/colors';
 
 /** Every .tsx the app actually ships, so the guard sees screens and not just tokens. */
 function tsxFiles(): string[] {
@@ -120,5 +120,83 @@ describe('white-on-fill chips meet AA', () => {
 
   it('and borrowing the P&L red for it would not be', () => {
     expect(meetsAA(colors.textPrimary, colors.down)).toBe(false);
+  });
+});
+
+describe('modernist palette', () => {
+  // The light system inverts the ground, so every ratio has to be re-derived
+  // rather than assumed to carry over. Two of its choices are deliberate and
+  // pinned here so they read as decisions rather than oversights.
+  const grounds = [modernist.background, modernist.surface, modernist.surfaceElevated];
+
+  it('body ink and secondary ink clear AA on every ground', () => {
+    for (const bg of grounds) {
+      expect(meetsAA(modernist.textPrimary, bg)).toBe(true);
+      expect(meetsAA(modernist.textSecondary, bg)).toBe(true);
+    }
+  });
+
+  it('textMuted is BELOW AA — it is a rule colour, not a text colour', () => {
+    // neutral-500 at 3.4:1. Kept in the palette because the design uses it for
+    // hairlines and disabled marks; anything that has to be read uses
+    // textSecondary. Pinned so a future screen cannot adopt it as body copy
+    // believing the palette vouched for it.
+    expect(meetsAA(modernist.textMuted, modernist.background)).toBe(false);
+    expect(meetsAA(modernist.textSecondary, modernist.background)).toBe(true);
+  });
+
+  it('the base accent is a fill, and accent700 is what small red text uses', () => {
+    expect(meetsAA(modernist.accent, modernist.background)).toBe(false);
+    expect(meetsAA(modernist.accent700, modernist.background)).toBe(true);
+  });
+
+  it('the LIVE strip inverts legibly', () => {
+    // The handoff specifies the base accent for this fill, which puts the page
+    // ground at 3.76:1 on top — the same number the dark palette's LIVE chip
+    // failed at. liveStrip is accent-700, 6.41:1, and the deviation is
+    // deliberate: this strip's entire job is to be read.
+    expect(meetsAA(modernist.background, modernist.liveStrip)).toBe(true);
+    expect(meetsAA(modernist.background, modernist.accent)).toBe(false);
+  });
+
+  it('P&L is encoded as ink vs accent, not as two hues', () => {
+    // The accounting convention: a gain is simply body text. If `up` ever stops
+    // equalling the ink, the palette has quietly become conventional again.
+    expect(modernist.up).toBe(modernist.textPrimary);
+    expect(modernist.down).toBe(modernist.accent);
+  });
+
+  it('a loss FIGURE uses downText, because `down` is a fill', () => {
+    // `down` is the base accent: right for a candle body or a drawdown ribbon,
+    // and 3.6:1 — below AA — for the 14px P&L figures that were drawn in it.
+    // Screens now split the two: graphics keep `down`, text takes `downText`.
+    expect(meetsAA(modernist.down, modernist.background)).toBe(false);
+    for (const bg of grounds) {
+      expect(meetsAA(modernist.downText, bg)).toBe(true);
+    }
+  });
+
+  it('the quiz keeps the conventional green, and it is legible', () => {
+    // Learn is the one screen where colour does not mean P&L — a right answer
+    // is not a gain — so it uses `upAlt` rather than rendering "Doğru" in ink,
+    // which would be indistinguishable from the body copy beneath it.
+    expect(modernist.upAltText).not.toBe(modernist.textPrimary);
+    // Same fill-vs-text split as the accent — the handoff's own green is a mark.
+    expect(meetsAA(modernist.upAlt, modernist.background)).toBe(false);
+    for (const bg of grounds) {
+      expect(meetsAA(modernist.upAltText, bg)).toBe(true);
+    }
+  });
+});
+
+describe('dark palette loss figures', () => {
+  it('downText clears AA on every dark ground, and plain `down` does not', () => {
+    // Not a Modernist-only problem: red-500 is 5.4:1 on the page ground but
+    // 4.2:1 on surfaceElevated, which is exactly where position rows are drawn.
+    const grounds = [colors.background, colors.surface, colors.surfaceElevated];
+    for (const bg of grounds) {
+      expect(meetsAA(colors.downText, bg)).toBe(true);
+    }
+    expect(meetsAA(colors.down, colors.surfaceElevated)).toBe(false);
   });
 });

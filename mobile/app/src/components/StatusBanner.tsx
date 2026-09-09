@@ -1,33 +1,52 @@
 /**
- * Global trading-mode + connection banner, rendered above every tab.
+ * Global trading-mode + connection strip, rendered above every tab.
  *
- * Trust signal for go-live: the paper->live flip is a one-line env change
- * on the box with zero visual difference in the app otherwise. This strip
- * makes the active mode — and a degraded broker/DB — impossible to miss.
+ * Trust signal for go-live: the paper->live flip is a one-line env change on
+ * the box with zero visual difference in the app otherwise. This strip makes
+ * the active mode — and a degraded broker/DB — impossible to miss.
  *
- * Rules the design encodes:
- * - The strip renders from the FIRST frame (never null) so the header
- *   height is stable — no layout jump when the readiness query settles.
- * - Mode is tri-state: PAPER / LIVE only when the backend actually said
- *   so; with no data the chip shows "MOD ?" — never assert PAPER while
- *   offline (after go-live that would be a dangerous lie).
- * - One failed poll is "yeniden deneniyor", not "offline": red only after
- *   2+ consecutive failures (~60s at the 30s interval).
+ * Rules the design encodes, unchanged by the Modernist restyle:
+ * - The strip renders from the FIRST frame (never null) so the header height
+ *   is stable — no layout jump when the readiness query settles.
+ * - Mode is tri-state: PAPER / LIVE only when the backend actually said so;
+ *   with no data the chip shows "MOD ?" — never assert PAPER while offline
+ *   (after go-live that would be a dangerous lie).
+ * - One failed poll is "yeniden deneniyor", not "offline": red only after 2+
+ *   consecutive failures (~60s at the 30s interval).
+ *
+ * Modernist adds the last-run stamp beside the connection dot. It is
+ * best-effort: the strip must not depend on it, so an absent or still-loading
+ * actionability query simply renders the dot alone.
  */
 
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import Svg, { Path } from 'react-native-svg';
 
-import { useReadiness } from '@/api/hooks';
+import { useActionability, useReadiness } from '@/api/hooks';
 import { useUnreadCount } from '@/stores/notifications';
-import { colors } from '@/theme/colors';
+import { useTheme } from '@/theme/useTheme';
 import { badgeLabel } from '@/utils/inbox';
+import { lastSubmitLabel } from '@/utils/actionability';
+
+/** Lucide `bell`, traced rather than shipped as a font so it inherits colour. */
+function BellIcon({ color }: { color: string }) {
+  return (
+    <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2}
+      strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+      <Path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+    </Svg>
+  );
+}
 
 export function StatusBanner() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const t = useTheme();
   const { data, isError, failureCount } = useReadiness();
+  const { data: flow } = useActionability();
   const unread = useUnreadCount();
   const badge = badgeLabel(unread);
 
@@ -39,52 +58,50 @@ export function StatusBanner() {
   let statusColor: string;
   if (hardOffline) {
     statusText = '● backend offline — veriler güncel değil';
-    statusColor = colors.down;
+    statusColor = t.danger;
   } else if (isError) {
     statusText = '● bağlantı yeniden deneniyor…';
-    statusColor = colors.warning;
+    statusColor = t.warning;
   } else if (!data) {
     statusText = '● bağlanıyor…';
-    statusColor = colors.textMuted;
+    statusColor = t.textSecondary;
   } else if (data.status !== 'ok') {
     const broken = [!data.alpaca && 'broker', !data.db && 'db'].filter(Boolean).join(' + ');
     statusText = `● degraded: ${broken || 'bilinmiyor'}`;
-    statusColor = colors.warning;
+    statusColor = t.warning;
   } else {
-    statusText = '● bağlı';
-    statusColor = colors.up;
+    // Reuse the actionability label rather than reimplementing relative time —
+    // it already renders "17 sa önce" / "hiç" from the same clock the flow card
+    // uses, so the strip cannot disagree with the screen below it.
+    const run = flow ? lastSubmitLabel(flow.last_submitted_at_utc, new Date()) : null;
+    statusText = run ? `● bağlı · son koşu ${run}` : '● bağlı';
+    // In Modernist `up` IS the ink colour, so tinting the connected dot with it
+    // would just be body text. Healthy is the quiet state in both palettes:
+    // secondary ink, with colour reserved for degraded and offline.
+    statusColor = t.textSecondary;
   }
 
-  const degradedBg = (data && data.status !== 'ok') || hardOffline;
+  const degraded = (data && data.status !== 'ok') || hardOffline;
+  // On LIVE the whole strip inverts: accent fill, page-ground ink.
+  const stripBg = live ? (t.liveStrip ?? t.accent) : degraded ? t.surface : t.background;
+  const stripFg = live ? t.background : t.textPrimary;
 
   return (
     <View
-      style={[
-        styles.strip,
-        { paddingTop: insets.top },
-        live ? styles.stripLive : null,
-        !live && degradedBg ? styles.stripDegraded : null,
-      ]}
+      style={[styles.strip, { paddingTop: insets.top, backgroundColor: stripBg, borderBottomColor: t.divider }]}
       accessibilityRole="header"
       accessibilityLabel={`İşlem modu ${live ? 'live gerçek para' : mode === 'paper' ? 'paper' : 'bilinmiyor'}, ${statusText}`}
     >
       <View style={styles.row}>
-        <View
-          style={[
-            styles.modeChip,
-            live ? styles.modeChipLive : mode === 'paper' ? styles.modeChipPaper : styles.modeChipUnknown,
-          ]}
-        >
-          <Text
-            style={[
-              styles.modeText,
-              live ? styles.modeTextLive : mode === 'paper' ? styles.modeTextPaper : styles.modeTextUnknown,
-            ]}
-          >
+        <View style={[styles.modeChip, { borderColor: stripFg }]}>
+          <Text style={[styles.modeText, { color: stripFg }]}>
             {live ? 'LIVE — GERÇEK PARA' : mode === 'paper' ? 'PAPER' : 'MOD ?'}
           </Text>
         </View>
-        <Text style={[styles.statusText, { color: statusColor }]} numberOfLines={1}>
+        <Text
+          style={[styles.statusText, { color: live ? stripFg : statusColor }]}
+          numberOfLines={1}
+        >
           {statusText}
         </Text>
         <Pressable
@@ -94,10 +111,10 @@ export function StatusBanner() {
           accessibilityRole="button"
           accessibilityLabel={unread > 0 ? `Bildirimler, ${unread} okunmamış` : 'Bildirimler'}
         >
-          <Text style={styles.bellIcon}>🔔</Text>
+          <BellIcon color={stripFg} />
           {badge ? (
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>{badge}</Text>
+            <View style={[styles.badge, { backgroundColor: live ? t.background : t.accent }]}>
+              <Text style={[styles.badgeText, { color: live ? t.accent : t.background }]}>{badge}</Text>
             </View>
           ) : null}
         </Pressable>
@@ -107,41 +124,14 @@ export function StatusBanner() {
 }
 
 const styles = StyleSheet.create({
-  strip: {
-    backgroundColor: colors.background,
-    paddingHorizontal: 16,
-    paddingBottom: 6,
-  },
-  stripLive: { backgroundColor: '#450a0a' },
-  stripDegraded: { backgroundColor: '#451a03' },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 24 },
-  modeChip: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
-  modeChipPaper: { backgroundColor: 'rgba(245, 158, 11, 0.15)' },
-  // colors.down (#ef4444) puts white at 3.76:1 here, under AA for 11px/800 —
-  // and this is the label that tells the operator real money is at stake.
-  // A darker red keeps the semantic and clears the bar at 4.83:1.
-  modeChipLive: { backgroundColor: colors.dangerDeep },
-  modeChipUnknown: { backgroundColor: colors.surfaceElevated },
-  modeText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
-  modeTextPaper: { color: colors.warning },
-  modeTextLive: { color: colors.textPrimary },
-  modeTextUnknown: { color: colors.textMuted },
-  statusText: { fontSize: 11, fontWeight: '600', flexShrink: 1 },
-  // Kept inside the 24pt strip so the header height stays stable; hitSlop
-  // (not padding) buys the 44pt touch target.
-  bell: { marginLeft: 'auto', width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
-  bellIcon: { fontSize: 15 },
-  badge: {
-    position: 'absolute',
-    top: -2,
-    right: -4,
-    minWidth: 15,
-    height: 15,
-    borderRadius: 8,
-    paddingHorizontal: 3,
-    backgroundColor: colors.down,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  badgeText: { color: colors.textPrimary, fontSize: 9, fontWeight: '800' },
+  strip: { paddingHorizontal: 16, paddingBottom: 8, borderBottomWidth: 2 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 32 },
+  // Square, outlined in the strip's own ink — the chip reads as a stamp rather
+  // than a pill, and inverts with the strip on LIVE without a second rule.
+  modeChip: { borderWidth: 1, paddingHorizontal: 8, paddingVertical: 3 },
+  modeText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.88 },
+  statusText: { fontSize: 11, fontWeight: '600', flex: 1 },
+  bell: { width: 44, height: 32, alignItems: 'center', justifyContent: 'center', marginRight: -12 },
+  badge: { position: 'absolute', top: 0, right: 6, paddingHorizontal: 4, paddingVertical: 1 },
+  badgeText: { fontSize: 9, fontWeight: '800' },
 });

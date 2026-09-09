@@ -1,7 +1,8 @@
 import { View, Text, StyleSheet, Pressable, Alert, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import { api } from '@/api/endpoints';
 import {
@@ -15,25 +16,30 @@ import {
 import { inertiaNote } from '@/utils/actionability';
 import { getPermissionStatus, requestAndRegisterPush, type PushPermission } from '@/notifications';
 import { useInboxStore } from '@/stores/notifications';
-import { colors } from '@/theme/colors';
+import { useTheme, useThemeName, useSetTheme } from '@/theme/useTheme';
+import { setLanguage, type Language } from '@/i18n';
+import type { ThemeName } from '@/theme/colors';
 import { unreadCount } from '@/utils/inbox';
 import { MIN_TOUCH_TARGET, killSwitchLabel } from '@/utils/a11y';
 import type { KillSwitchState } from '@/api/types';
 
-const PERMISSION_COPY: Record<PushPermission, { text: string; color: string }> = {
-  granted: { text: '● açık', color: colors.up },
-  denied: { text: '● kapalı (cihaz ayarları)', color: colors.down },
-  undetermined: { text: '● izin verilmedi', color: colors.warning },
-  unsupported: { text: '● bu cihazda çalışmaz', color: colors.textMuted },
-};
+// These were module constants holding dark-palette colours, which is why they
+// had to become functions: under Modernist an "ok" state is ink, not green.
+const permissionCopy = (t: Palette): Record<PushPermission, { text: string; color: string }> => ({
+  granted: { text: '● açık', color: t.textPrimary },
+  denied: { text: '● kapalı (cihaz ayarları)', color: t.accent700 ?? t.down },
+  undetermined: { text: '● izin verilmedi', color: t.warning },
+  unsupported: { text: '● bu cihazda çalışmaz', color: t.textSecondary },
+});
 
-const KILL_STATES: { state: KillSwitchState; label: string; desc: string; color: string }[] = [
-  { state: 'RUN', label: 'RUN', desc: 'Normal işlem', color: colors.up },
-  { state: 'PAUSE_NEW', label: 'PAUSE', desc: 'Yeni giriş yok, mevcut yönetilir', color: colors.warning },
-  { state: 'FLATTEN_ALL', label: 'FLATTEN', desc: 'Tüm pozisyonları kapat', color: colors.down },
+const killStates = (t: Palette): { state: KillSwitchState; label: string; desc: string; color: string }[] => [
+  { state: 'RUN', label: 'RUN', desc: 'Normal işlem', color: t.textPrimary },
+  { state: 'PAUSE_NEW', label: 'PAUSE', desc: 'Yeni giriş yok, mevcut yönetilir', color: t.warning },
+  { state: 'FLATTEN_ALL', label: 'FLATTEN', desc: 'Tüm pozisyonları kapat', color: t.accent },
 ];
 
 function EvalStat({ label, value, gate }: { label: string; value: string; gate: string }) {
+  const styles = makeStyles(useTheme());
   return (
     <View style={styles.evalStat}>
       <Text style={styles.evalStatLabel}>{label}</Text>
@@ -44,8 +50,10 @@ function EvalStat({ label, value, gate }: { label: string; value: string; gate: 
 }
 
 function GateRow({ name, passed, detail }: { name: string; passed: boolean | null; detail: string }) {
+  const t = useTheme();
+  const styles = makeStyles(t);
   const icon = passed === null ? '○' : passed ? '✓' : '✗';
-  const color = passed === null ? colors.textMuted : passed ? colors.up : colors.down;
+  const color = passed === null ? t.textSecondary : passed ? t.textPrimary : t.accent;
   return (
     <View style={styles.gateRow}>
       <Text style={[styles.gateIcon, { color }]}>{icon}</Text>
@@ -57,6 +65,14 @@ function GateRow({ name, passed, detail }: { name: string; passed: boolean | nul
 
 export default function SettingsScreen() {
   const router = useRouter();
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
+  const themeName = useThemeName();
+  const setTheme = useSetTheme();
+  const { i18n } = useTranslation();
+  const lang: Language = i18n.language?.startsWith('tr') ? 'tr' : 'en';
+  const KILL_STATES = useMemo(() => killStates(theme), [theme]);
+  const PERMISSION_COPY = useMemo(() => permissionCopy(theme), [theme]);
   const [pushBusy, setPushBusy] = useState(false);
   const [permission, setPermission] = useState<PushPermission | null>(null);
   const inbox = useInboxStore((s) => s.items);
@@ -68,9 +84,9 @@ export default function SettingsScreen() {
   const { data: flow } = useActionability();
 
   const VERDICT_COLOR: Record<string, string> = {
-    GO: colors.up,
-    'NO-GO': colors.down,
-    'TOO EARLY': colors.warning,
+    GO: theme.textPrimary,
+    'NO-GO': theme.accent,
+    'TOO EARLY': theme.warning,
   };
 
   const applyKill = (state: KillSwitchState) => {
@@ -148,11 +164,11 @@ export default function SettingsScreen() {
               <View style={styles.healthRow}>
                 <Text style={styles.label}>Karar</Text>
                 <View style={styles.verdictWrap}>
-                  <Text style={[styles.verdict, { color: VERDICT_COLOR[evalData.verdict] ?? colors.textMuted }]}>
+                  <Text style={[styles.verdict, { color: VERDICT_COLOR[evalData.verdict] ?? theme.textSecondary }]}>
                     {evalData.verdict}
                   </Text>
                   {evalData.verdict === 'TOO EARLY' && evalData.provisional_verdict ? (
-                    <Text style={[styles.trend, { color: VERDICT_COLOR[evalData.provisional_verdict] ?? colors.textMuted }]}>
+                    <Text style={[styles.trend, { color: VERDICT_COLOR[evalData.provisional_verdict] ?? theme.textSecondary }]}>
                       eğilim: {evalData.provisional_verdict}
                     </Text>
                   ) : null}
@@ -223,7 +239,7 @@ export default function SettingsScreen() {
                 accessibilityHint={k.desc}
                 accessibilityState={{ selected: active, disabled: setKs.isPending }}
               >
-                <Text style={[styles.killLabel, active && { color: '#000' }]}>{k.label}</Text>
+                <Text style={[styles.killLabel, active && { color: theme.background }]}>{k.label}</Text>
               </Pressable>
             );
           })}
@@ -232,11 +248,53 @@ export default function SettingsScreen() {
           {KILL_STATES.find((k) => k.state === ks?.state)?.desc ?? 'durum yükleniyor…'}
         </Text>
 
+        {/* Language and palette were both settable only by the device: the app
+            followed the phone's locale and opened in whichever palette the
+            build defaulted to. Both are reader choices, and both persist. */}
+        <Text style={styles.subheading}>Görünüm</Text>
+        <View style={styles.healthCard}>
+          <Text style={styles.label}>Dil / Language</Text>
+          <View style={styles.segment}>
+            {(['tr', 'en'] as const).map((code) => (
+              <Pressable
+                key={code}
+                style={[styles.segBtn, lang === code && styles.segBtnActive]}
+                onPress={() => void setLanguage(code)}
+                accessibilityRole="button"
+                accessibilityLabel={code === 'tr' ? 'Türkçe' : 'English'}
+                accessibilityState={{ selected: lang === code }}
+              >
+                <Text style={[styles.segLabel, lang === code && styles.segLabelActive]}>
+                  {code === 'tr' ? 'Türkçe' : 'English'}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <Text style={styles.label}>Tema</Text>
+          <View style={styles.segment}>
+            {(['modernist', 'dark'] as const).map((name: ThemeName) => (
+              <Pressable
+                key={name}
+                style={[styles.segBtn, themeName === name && styles.segBtnActive]}
+                onPress={() => setTheme(name)}
+                accessibilityRole="button"
+                accessibilityLabel={name === 'modernist' ? 'Açık tema' : 'Koyu tema'}
+                accessibilityState={{ selected: themeName === name }}
+              >
+                <Text style={[styles.segLabel, themeName === name && styles.segLabelActive]}>
+                  {name === 'modernist' ? 'Açık' : 'Koyu'}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
         <Text style={styles.subheading}>Sistem</Text>
         <View style={styles.healthCard}>
           <View style={styles.healthRow}>
             <Text style={styles.label}>Backend</Text>
-            <Text style={{ color: healthError ? colors.down : colors.up, fontWeight: '600' }}>
+            <Text style={{ color: healthError ? theme.accent : theme.textPrimary, fontWeight: '700' }}>
               {healthError ? '● offline' : health?.status === 'ok' ? '● online' : '…'}
             </Text>
           </View>
@@ -302,53 +360,82 @@ export default function SettingsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  heading: { color: colors.textPrimary, fontSize: 24, fontWeight: '700', marginBottom: 16 },
-  subheading: { color: colors.textPrimary, fontSize: 16, fontWeight: '600', marginTop: 24, marginBottom: 8 },
-  label: { color: colors.textPrimary, fontSize: 16 },
-  muted: { color: colors.textMuted, fontSize: 13 },
-  killRow: { flexDirection: 'row', gap: 8 },
-  killChip: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 10,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: MIN_TOUCH_TARGET,
-  },
-  killLabel: { color: colors.textPrimary, fontSize: 14, fontWeight: '700' },
-  killDesc: { color: colors.textMuted, fontSize: 12, marginTop: 8, paddingHorizontal: 4 },
-  healthCard: { backgroundColor: colors.surface, borderRadius: 12, padding: 16, gap: 12 },
-  healthRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  evalCard: { backgroundColor: colors.surface, borderRadius: 12, padding: 16, gap: 12 },
-  verdict: { fontSize: 16, fontWeight: '800' },
-  verdictWrap: { alignItems: 'flex-end' },
-  trend: { fontSize: 11, fontWeight: '700', marginTop: 1 },
-  evalGrid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 12, justifyContent: 'space-between' },
-  evalStat: { alignItems: 'flex-start' },
-  evalStatLabel: { color: colors.textMuted, fontSize: 11 },
-  evalStatValue: { color: colors.textPrimary, fontSize: 17, fontWeight: '700', marginTop: 2 },
-  evalStatGate: { color: colors.textMuted, fontSize: 10, marginTop: 1 },
-  evalReason: { color: colors.warning, fontSize: 11, fontStyle: 'italic' },
-  flowCaveat: { color: colors.warning, fontSize: 11, marginTop: 8, lineHeight: 16 },
-  countdown: { color: colors.textMuted, fontSize: 12, fontWeight: '600' },
-  gateList: { gap: 6, borderTopWidth: 1, borderTopColor: colors.surfaceElevated, paddingTop: 10 },
-  gateRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  gateIcon: { fontSize: 13, fontWeight: '800', width: 16, textAlign: 'center' },
-  gateName: { color: colors.textPrimary, fontSize: 13, flex: 1 },
-  gateDetail: { color: colors.textMuted, fontSize: 12 },
-  button: {
-    backgroundColor: colors.surface,
-    padding: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: MIN_TOUCH_TARGET,
-    marginTop: 8,
-  },
-  buttonText: { color: colors.textPrimary, fontSize: 14, fontWeight: '600' },
-  buttonSecondary: { backgroundColor: 'transparent', borderWidth: 1, borderColor: colors.textMuted },
-  buttonSecondaryText: { color: colors.textSecondary, fontSize: 13 },
-});
+type Palette = ReturnType<typeof useTheme>;
+
+const makeStyles = (t: Palette) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: t.background },
+    heading: { color: t.textPrimary, fontSize: 24, fontWeight: '800', marginBottom: 16 },
+    subheading: {
+      color: t.textPrimary,
+      fontSize: 11,
+      fontWeight: '800',
+      textTransform: 'uppercase',
+      letterSpacing: 1,
+      marginTop: 24,
+      marginBottom: 8,
+      borderBottomWidth: 2,
+      borderBottomColor: t.textPrimary,
+      paddingBottom: 6,
+    },
+    label: { color: t.textPrimary, fontSize: 15, fontWeight: '600' },
+    muted: { color: t.textSecondary, fontSize: 13, lineHeight: 18 },
+    // Collapsed-border strip, the same control shape as Orders and Charts.
+    segment: { flexDirection: 'row' },
+    segBtn: {
+      flex: 1,
+      paddingVertical: 10,
+      borderWidth: 1,
+      borderColor: t.textPrimary,
+      marginRight: -1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: MIN_TOUCH_TARGET,
+    },
+    segBtnActive: { backgroundColor: t.textPrimary },
+    segLabel: { color: t.textPrimary, fontSize: 14, fontWeight: '700' },
+    segLabelActive: { color: t.background },
+    killRow: { flexDirection: 'row' },
+    killChip: {
+      flex: 1,
+      paddingVertical: 14,
+      borderWidth: 1,
+      borderColor: t.textPrimary,
+      marginRight: -1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: MIN_TOUCH_TARGET,
+    },
+    killLabel: { color: t.textPrimary, fontSize: 14, fontWeight: '800', letterSpacing: 0.5 },
+    killDesc: { color: t.textSecondary, fontSize: 12, marginTop: 8 },
+    healthCard: { paddingVertical: 4, gap: 12 },
+    healthRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    evalCard: { paddingVertical: 4, gap: 12 },
+    verdict: { fontSize: 16, fontWeight: '800', letterSpacing: 0.5 },
+    verdictWrap: { alignItems: 'flex-end' },
+    trend: { fontSize: 11, fontWeight: '700', marginTop: 1 },
+    evalGrid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 12, justifyContent: 'space-between' },
+    evalStat: { alignItems: 'flex-start' },
+    evalStatLabel: { color: t.textSecondary, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8 },
+    evalStatValue: { color: t.textPrimary, fontSize: 18, fontWeight: '800', marginTop: 2 },
+    evalStatGate: { color: t.textSecondary, fontSize: 10, marginTop: 1 },
+    evalReason: { color: t.warning, fontSize: 11 },
+    flowCaveat: { color: t.warning, fontSize: 11, marginTop: 8, lineHeight: 16 },
+    countdown: { color: t.textSecondary, fontSize: 12, fontWeight: '600' },
+    gateList: { gap: 6, borderTopWidth: 1, borderTopColor: t.divider, paddingTop: 10 },
+    gateRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    gateIcon: { fontSize: 13, fontWeight: '800', width: 16, textAlign: 'center' },
+    gateName: { color: t.textPrimary, fontSize: 13, flex: 1 },
+    gateDetail: { color: t.textSecondary, fontSize: 12 },
+    button: {
+      backgroundColor: t.textPrimary,
+      padding: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: MIN_TOUCH_TARGET,
+      marginTop: 8,
+    },
+    buttonText: { color: t.background, fontSize: 14, fontWeight: '800' },
+    buttonSecondary: { backgroundColor: 'transparent', borderWidth: 1, borderColor: t.textPrimary },
+    buttonSecondaryText: { color: t.textPrimary, fontSize: 13, fontWeight: '600' },
+  });

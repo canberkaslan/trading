@@ -308,7 +308,14 @@ export default function ApproveOrderScreen() {
           <Stat label="Tutar" value={formatUsd(notional)} />
           <Stat label="Portföy %" value={formatPct(weight)} />
           <Stat label="Stop" value={formatUsd(target.stop_loss)} />
-          <Stat label="Kâr al" value={formatUsd(decision?.take_profit)} />
+          {/* `take_profit` is dead on the wire: it exists in the schema and the
+              DB row, and nothing ever writes it — the pipeline never sets it, so
+              this cell rendered an em dash on every order while the take-profit
+              leg the broker actually receives is built from `price_target`
+              (executor.py:301, `config.take_profit_price or decision.price_target`).
+              An approval screen must show the number that will be placed, so
+              this cell reads that field and says whose it is. */}
+          <Stat label="Kâr al (broker)" value={formatUsd(decision?.price_target)} />
           <Stat label="Giriş" value={formatUsd(decision?.entry_price)} />
           <Stat label="Hedef" value={formatUsd(decision?.price_target)} />
           <Stat label="Vade" value={decision?.time_horizon ?? '—'} />

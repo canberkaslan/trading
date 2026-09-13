@@ -17,6 +17,13 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_MAX_RISK_ROUNDS":      "max_risk_discuss_rounds",
     "TRADINGAGENTS_CHECKPOINT_ENABLED":   "checkpoint_enabled",
     "TRADINGAGENTS_BENCHMARK_TICKER":     "benchmark_ticker",
+    # Anthropic reasoning effort. The rest of this chain already existed —
+    # trading_graph._get_provider_kwargs reads `anthropic_effort` and passes it
+    # as `effort`, anthropic_client lists "effort" in _PASSTHROUGH_KWARGS, and
+    # ChatAnthropic accepts it as the alias of `reasoning_effort`. Only this row
+    # was missing, so the knob was reachable from a config dict but not from a
+    # deployment — which is the only way this system is ever configured.
+    "TRADINGAGENTS_ANTHROPIC_EFFORT":     "anthropic_effort",
 }
 
 
@@ -63,7 +70,11 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # Provider-specific thinking configuration
     "google_thinking_level": None,      # "high", "minimal", etc.
     "openai_reasoning_effort": None,    # "medium", "high", "low"
-    "anthropic_effort": None,           # "high", "medium", "low"
+    # "low" | "medium" | "high" | "xhigh" | "max". None leaves the model at its
+    # own default. Invalid values are rejected by ChatAnthropic at construction
+    # (pydantic Literal), so a typo fails the run loudly rather than silently
+    # dropping back to default — which is the behaviour we want on this path.
+    "anthropic_effort": None,
     # Checkpoint/resume: when True, LangGraph saves state after each node
     # so a crashed run can resume from the last successful step.
     "checkpoint_enabled": False,

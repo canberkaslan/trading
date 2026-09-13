@@ -90,11 +90,14 @@ MODEL_OPTIONS: ProviderModeOptions = {
     },
     "anthropic": {
         "quick": [
+            ("Claude Sonnet 5 - Current generation, speed and intelligence balance", "claude-sonnet-5"),
             ("Claude Sonnet 4.6 - Best speed and intelligence balance", "claude-sonnet-4-6"),
             ("Claude Haiku 4.5 - Fastest with near-frontier intelligence", "claude-haiku-4-5"),
             ("Claude Sonnet 4.5 - High-performance for agents and coding", "claude-sonnet-4-5"),
         ],
         "deep": [
+            ("Claude Opus 5 - Current frontier, long-running agents and coding", "claude-opus-5"),
+            ("Claude Sonnet 5 - Current generation, speed and intelligence balance", "claude-sonnet-5"),
             ("Claude Opus 4.7 - Latest frontier, long-running agents and coding", "claude-opus-4-7"),
             ("Claude Opus 4.6 - Frontier intelligence, agents and coding", "claude-opus-4-6"),
             ("Claude Opus 4.5 - Premium, max intelligence", "claude-opus-4-5"),

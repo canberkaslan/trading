@@ -45,6 +45,7 @@ import {
   Animated,
   AppState,
   Linking,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -66,7 +67,10 @@ import { inertiaNote } from '@/utils/actionability';
 import { topWeightTone } from '@/utils/concentration';
 import { getPermissionStatus, requestAndRegisterPush, type PushPermission } from '@/notifications';
 import { useInboxStore } from '@/stores/notifications';
+import { useQueryClient } from '@tanstack/react-query';
+
 import { useAuthStore } from '@/stores/auth';
+import { useApiTokenStore } from '@/stores/apiToken';
 import { toast } from '@/stores/toast';
 import { useTheme, useThemeName, useSetTheme } from '@/theme/useTheme';
 import { setLanguage, type Language } from '@/i18n';
@@ -324,6 +328,27 @@ export default function SettingsScreen() {
   const setTheme = useSetTheme();
   const { t: tr, i18n } = useTranslation();
   const lang: Language = i18n.language?.startsWith('tr') ? 'tr' : 'en';
+
+  const qc = useQueryClient();
+  const apiToken = useApiTokenStore((s) => s.token);
+  const setApiToken = useApiTokenStore((s) => s.set);
+  const hydrateToken = useApiTokenStore((s) => s.hydrate);
+  const [tokenDraft, setTokenDraft] = useState('');
+  const hasToken = !!apiToken;
+
+  useEffect(() => {
+    void hydrateToken();
+  }, [hydrateToken]);
+
+  const saveToken = useCallback(async () => {
+    await setApiToken(tokenDraft);
+    setTokenDraft('');
+    // Every screen fetched without a bearer, or with a stale one. Drop the
+    // cache so they refetch rather than sitting on their error states until
+    // something else happens to invalidate them.
+    await qc.invalidateQueries();
+    toast('Token kaydedildi');
+  }, [qc, setApiToken, tokenDraft]);
   const PERMISSION_COPY = useMemo(() => permissionCopy(theme), [theme]);
 
   const [pushBusy, setPushBusy] = useState(false);
@@ -487,6 +512,40 @@ export default function SettingsScreen() {
             Broker ucu sunucudaki ALPACA_BASE_URL ile belirlenir; yukarıdaki mod oradan okunur.
             Live'a geçiş: canlı hesap + KYC + live key + secrets.env. Uygulamadan yapılamaz.
           </Text>
+          {/* The bearer lives in the device keystore, not in the bundle: Expo
+              republishes app.config's `extra` verbatim in the OTA manifest,
+              which anyone can fetch unauthenticated. A token that gates order
+              approval and the kill switch does not belong there. Cost is one
+              setup step per phone. */}
+          <Text style={styles.kvKey}>Sunucu token'ı</Text>
+          <View style={styles.tokenRow}>
+            <TextInput
+              style={styles.tokenInput}
+              value={tokenDraft}
+              onChangeText={setTokenDraft}
+              placeholder={hasToken ? '•••••••• kayıtlı' : 'secrets.env içindeki DEV_API_TOKEN'}
+              placeholderTextColor={theme.textSecondary}
+              autoCapitalize="none"
+              autoCorrect={false}
+              secureTextEntry
+              accessibilityLabel="Sunucu token'ı"
+            />
+            <Pressable
+              style={[styles.tokenSave, !tokenDraft.trim() && styles.tokenSaveOff]}
+              onPress={saveToken}
+              disabled={!tokenDraft.trim()}
+              accessibilityRole="button"
+              accessibilityLabel="Token'ı kaydet"
+            >
+              <Text style={styles.tokenSaveLabel}>Kaydet</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.note}>
+            {hasToken
+              ? 'Bu cihazda kayıtlı. Sunucuda token değişirse yenisini buraya gir.'
+              : 'Token olmadan portföy, emirler ve ajan ekranları 401 döner. Sunucudaki secrets.env içinde DEV_API_TOKEN olarak duruyor.'}
+          </Text>
+
           <SecondaryButton
             label="Çıkış yap"
             onPress={() => setSignOutOpen(true)}
@@ -814,6 +873,27 @@ const makeStyles = (t: Palette) =>
     muted: { color: t.textSecondary, marginTop: 8, lineHeight: 18, ...TYPE.body },
 
     // Hesap & mod
+    tokenRow: { flexDirection: 'row', marginTop: 6 },
+    tokenInput: {
+      flex: 1,
+      backgroundColor: t.surfaceElevated,
+      color: t.textPrimary,
+      borderWidth: 1,
+      borderColor: t.textPrimary,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      ...TYPE.body,
+    },
+    tokenSave: {
+      backgroundColor: t.textPrimary,
+      paddingHorizontal: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: MIN_TOUCH_TARGET,
+      marginLeft: -1,
+    },
+    tokenSaveOff: { opacity: 0.45 },
+    tokenSaveLabel: { color: t.background, ...TYPE.body, ...font(800) },
     modeRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 },
     modeAccount: { color: t.textPrimary, flexShrink: 1, ...TYPE.bodyStrong },
     kvList: { marginTop: 10, borderTopWidth: 1, borderTopColor: t.divider },

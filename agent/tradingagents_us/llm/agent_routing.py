@@ -64,10 +64,33 @@ def is_enabled() -> bool:
     return (os.environ.get("TRADINGAGENTS_AGENT_ROUTING") or "").strip() in ("1", "true", "yes")
 
 
-def _cheap_llm(temperature: float = 0.1) -> Any:
-    from langchain_anthropic import ChatAnthropic
+def _cheap_llm(temperature: float = 0.1, callbacks: list[Any] | None = None) -> Any:
+    """Build the cheap client through the SAME factory upstream uses.
 
-    return ChatAnthropic(model=HAIKU, temperature=temperature)
+    Constructing `ChatAnthropic` directly here was a quiet, serious bug. Two
+    things in this system attach to the client the factory produces, and both
+    would have missed every routed call:
+
+    - `UsageCollector` reaches an LLM only as a constructor `callbacks` kwarg
+      that `TradingAgentsGraph` forwards through `create_llm_client`. A client
+      built outside it is invisible, so the routed roles would have reported
+      ZERO tokens and ZERO cost — and the before/after comparison this module's
+      own docstring prescribes would have read that as a saving of their entire
+      share rather than the real fraction. The measurement would have flattered
+      the change, which is the worst direction for an error to run.
+    - `prompt_cache.install()` patches `NormalizedChatAnthropic`, which only
+      this factory instantiates. Bypassing it also silently dropped caching
+      from the routed calls.
+
+    Going through the factory fixes both in one move, and carries base_url,
+    max_tokens and max_retries along with them.
+    """
+    from tradingagents.llm_clients import create_llm_client
+
+    kwargs: dict[str, Any] = {"temperature": temperature}
+    if callbacks:
+        kwargs["callbacks"] = callbacks
+    return create_llm_client(provider="anthropic", model=HAIKU, **kwargs).get_llm()
 
 
 def _rebind(module: Any, factory_name: str, llm: Any) -> bool:
@@ -90,8 +113,11 @@ def _rebind(module: Any, factory_name: str, llm: Any) -> bool:
     return True
 
 
-def install() -> list[str]:
+def install(callbacks: list[Any] | None = None) -> list[str]:
     """Point the cheap roles at the cheap model. Returns the roles routed.
+
+    `callbacks` must carry the same UsageCollector the graph is given, or the
+    routed calls are absent from the cost record — see `_cheap_llm`.
 
     Idempotent, and a no-op when disabled or when upstream has moved — an empty
     list means nothing changed, which is the safe outcome.
@@ -106,7 +132,7 @@ def install() -> list[str]:
         return []
 
     try:
-        llm = _cheap_llm()
+        llm = _cheap_llm(callbacks=callbacks)
     except Exception:  # noqa: BLE001
         log.warning("agent routing: could not build the cheap client — skipped", exc_info=True)
         return []

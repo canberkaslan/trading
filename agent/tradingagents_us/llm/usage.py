@@ -28,18 +28,50 @@ missing price, never like a cheap model.
 from __future__ import annotations
 
 import contextlib
+import json
+import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
 from langchain_core.callbacks import BaseCallbackHandler
 
+log = logging.getLogger(__name__)
+
 # USD per million tokens, (input, output). Cache reads bill at 0.10x input and
 # cache writes at 1.25x input, applied below rather than duplicated here.
-_PRICES: dict[str, tuple[float, float]] = {
+#
+# THESE RATES ARE ASSUMPTIONS, not measurements, and they are the one number
+# here that cannot be checked from inside the process. Tokens are counted from
+# the API's own response; cost is those counts multiplied by this table. A
+# stale entry silently rescales every comparison — and worst of all it does so
+# ASYMMETRICALLY when only some models are stale, which flatters or damns a
+# routing change for reasons that have nothing to do with the change.
+#
+# So: override them rather than editing this file, with
+# TRADINGAGENTS_PRICES='{"claude-sonnet-5": [2.0, 10.0]}', and treat the
+# per-decision `tokens_*` columns as the durable record. Cost is derived and
+# can be recomputed; tokens cannot be recovered after the fact.
+_DEFAULT_PRICES: dict[str, tuple[float, float]] = {
     "claude-opus-5": (15.0, 75.0),
     "claude-sonnet-5": (3.0, 15.0),
     "claude-haiku-4-5": (1.0, 5.0),
 }
+
+
+def _prices() -> dict[str, tuple[float, float]]:
+    """Rate table, with env overrides merged over the defaults."""
+    table = dict(_DEFAULT_PRICES)
+    raw = os.environ.get("TRADINGAGENTS_PRICES")
+    if not raw:
+        return table
+    try:
+        for name, pair in json.loads(raw).items():
+            table[str(name)] = (float(pair[0]), float(pair[1]))
+    except Exception:  # noqa: BLE001
+        # A malformed override must not silently zero the cost of everything.
+        log.warning("TRADINGAGENTS_PRICES is not usable — falling back to defaults")
+    return table
 
 _CACHE_READ_MULTIPLIER = 0.10
 _CACHE_WRITE_MULTIPLIER = 1.25
@@ -52,7 +84,7 @@ def _price_for(model: str) -> tuple[float, float] | None:
     snapshot ("claude-haiku-4-5-20251001"); both must price the same.
     """
     best: tuple[str, tuple[float, float]] | None = None
-    for name, price in _PRICES.items():
+    for name, price in _prices().items():
         if model.startswith(name) and (best is None or len(name) > len(best[0])):
             best = (name, price)
     return best[1] if best else None

@@ -90,7 +90,7 @@ class TestInstallAgainstTheRealGraph:
         monkeypatch.setenv("TRADINGAGENTS_AGENT_ROUTING", "1")
         import tradingagents_us.llm.agent_routing as ar
 
-        monkeypatch.setattr(ar, "_cheap_llm", lambda temperature=0.1: "CHEAP")
+        monkeypatch.setattr(ar, "_cheap_llm", lambda temperature=0.1, callbacks=None: "CHEAP")
         from tradingagents.graph import setup as setup_mod
 
         originals = {n: getattr(setup_mod, n) for n in set(_FACTORY_FOR_ROLE.values())}
@@ -115,7 +115,7 @@ class TestInstallAgainstTheRealGraph:
         monkeypatch.setenv("TRADINGAGENTS_AGENT_ROUTING", "1")
         import tradingagents_us.llm.agent_routing as ar
 
-        monkeypatch.setattr(ar, "_cheap_llm", lambda temperature=0.1: "CHEAP")
+        monkeypatch.setattr(ar, "_cheap_llm", lambda temperature=0.1, callbacks=None: "CHEAP")
         from tradingagents.graph import setup as setup_mod
 
         original = setup_mod.create_sentiment_analyst
@@ -125,3 +125,50 @@ class TestInstallAgainstTheRealGraph:
             assert getattr(wrapped, "_wraps", None) is original
         finally:
             setup_mod.create_sentiment_analyst = original
+
+
+class TestTheCollectorReachesTheRoutedClient:
+    """The routed calls must land in the SAME cost record as the rest.
+
+    Building the client outside `create_llm_client` was a quiet, serious bug:
+    UsageCollector attaches only as a constructor callbacks kwarg that the
+    factory forwards, so routed calls reported zero tokens and zero cost — and
+    the before/after this module prescribes would have read that as a saving of
+    their entire share. The error ran in the flattering direction.
+    """
+
+    def test_install_forwards_callbacks_to_the_client_builder(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TRADINGAGENTS_AGENT_ROUTING", "1")
+        import tradingagents_us.llm.agent_routing as ar
+
+        seen: dict = {}
+
+        def fake(temperature=0.1, callbacks=None):
+            seen["callbacks"] = callbacks
+            return "CHEAP"
+
+        monkeypatch.setattr(ar, "_cheap_llm", fake)
+        from tradingagents.graph import setup as setup_mod
+
+        originals = {n: getattr(setup_mod, n) for n in set(_FACTORY_FOR_ROLE.values())}
+        try:
+            sentinel = object()
+            install(callbacks=[sentinel])
+            assert seen["callbacks"] == [sentinel]
+        finally:
+            for n, f in originals.items():
+                setattr(setup_mod, n, f)
+
+    def test_the_builder_goes_through_the_upstream_factory(self) -> None:
+        # Not langchain_anthropic.ChatAnthropic directly: the factory is also
+        # what instantiates the prompt-cache-patched class, so bypassing it
+        # dropped caching from the routed calls too.
+        import inspect
+
+        import tradingagents_us.llm.agent_routing as ar
+
+        src = inspect.getsource(ar._cheap_llm)
+        assert "create_llm_client" in src
+        assert "from langchain_anthropic import ChatAnthropic" not in src

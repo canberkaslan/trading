@@ -86,11 +86,14 @@ def propagate(ticker: str, trade_date: str) -> AgentDecision:
     # Also before construction: this rebinds the agent factories setup.py calls.
     # Off unless TRADINGAGENTS_AGENT_ROUTING is set, because it changes what the
     # agents say and not only what they cost.
-    routed = install_agent_routing()
+    usage = UsageCollector()
+
+    # After the collector exists and before the graph is built: the routed
+    # clients must carry the SAME collector, or their calls vanish from the
+    # cost record and the saving reads larger than it is.
+    routed = install_agent_routing(callbacks=[usage])
     if routed:
         log.info("cheap-tier routing active for: %s", ", ".join(sorted(routed)))
-
-    usage = UsageCollector()
     ta = TradingAgentsGraph(
         selected_analysts=["market", "social", "news", "fundamentals"],
         debug=False,

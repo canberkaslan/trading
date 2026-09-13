@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from tradingagents_us.llm.usage import UsageCollector, _price_for
 
 
@@ -171,3 +173,47 @@ class TestPerTtlCacheWriteKeys:
         plain = UsageCollector()
         plain.on_llm_end(self._resp_with_ttl_keys())
         assert written.usage.cost_usd > plain.usage.cost_usd
+
+
+class TestPriceOverrides:
+    """Rates are the one input here that cannot be checked from inside the process.
+
+    Tokens come from the API's own response; cost is those counts times a table
+    someone typed. A stale entry rescales every comparison, and when only SOME
+    models are stale it does so asymmetrically — which flatters or damns a
+    routing change for reasons unrelated to the change.
+    """
+
+    def test_an_override_replaces_one_model_and_leaves_the_rest(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from tradingagents_us.llm.usage import _DEFAULT_PRICES, _prices
+
+        monkeypatch.setenv("TRADINGAGENTS_PRICES", '{"claude-sonnet-5": [2.0, 10.0]}')
+        table = _prices()
+        assert table["claude-sonnet-5"] == (2.0, 10.0)
+        assert table["claude-haiku-4-5"] == _DEFAULT_PRICES["claude-haiku-4-5"]
+
+    def test_cost_follows_the_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TRADINGAGENTS_PRICES", '{"claude-sonnet-5": [2.0, 10.0]}')
+        c = UsageCollector()
+        c.on_llm_end(_resp("claude-sonnet-5", inp=1_000_000, out=1_000_000))
+        assert round(c.usage.cost_usd, 6) == 12.0
+
+    def test_a_malformed_override_falls_back_rather_than_zeroing_everything(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The dangerous failure: an unparseable table that empties the rates
+        # would report every run as free.
+        from tradingagents_us.llm.usage import _DEFAULT_PRICES, _prices
+
+        monkeypatch.setenv("TRADINGAGENTS_PRICES", "not json")
+        assert _prices()["claude-sonnet-5"] == _DEFAULT_PRICES["claude-sonnet-5"]
+
+    def test_a_partially_malformed_entry_does_not_take_the_table_down(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from tradingagents_us.llm.usage import _DEFAULT_PRICES, _prices
+
+        monkeypatch.setenv("TRADINGAGENTS_PRICES", '{"claude-sonnet-5": ["a", "b"]}')
+        assert _prices()["claude-sonnet-5"] == _DEFAULT_PRICES["claude-sonnet-5"]

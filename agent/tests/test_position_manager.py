@@ -21,6 +21,7 @@ from tradingagents_us.risk.position_manager import (
     TimeExit,
     average_true_range,
     plan_actions,
+    tick_round_down,
     true_range,
 )
 
@@ -310,3 +311,53 @@ class TestStopBackfill:
         )
         assert len(actions) == 1
         assert isinstance(actions[0], TimeExit)
+
+
+class TestTickRounding:
+    """Alpaca rejects a sub-penny stop price on any stock at or above $1.00
+    with HTTP 422 'does not fulfill minimum pricing criteria'. The ATR
+    arithmetic produces 308.10663493563885, so every level this module emits
+    has to be tradeable — the seven back-fill orders in the first live run all
+    failed on exactly this, while the ratchet succeeded because the transport
+    happened to round on its way out."""
+
+    def test_rounds_to_a_penny(self) -> None:
+        assert tick_round_down(308.10663493563885) == 308.10
+        assert tick_round_down(197.669809547951) == 197.66
+
+    def test_rounds_DOWN_never_up(self) -> None:
+        # Up would tighten a long's stop toward the market — a loss the
+        # operator never chose, arriving half a cent at a time.
+        assert tick_round_down(100.999) == 100.99
+        assert tick_round_down(100.991) == 100.99
+
+    def test_leaves_an_already_valid_price_alone(self) -> None:
+        assert tick_round_down(150.25) == 150.25
+        assert tick_round_down(7.00) == 7.00
+
+    def test_every_emitted_level_is_tradeable(self) -> None:
+        # The property that matters: whatever the ATR maths produces, nothing
+        # leaves this module with more than two decimals.
+        cfg = ManagementConfig(backfill_missing_stops=True)
+        positions = [
+            position(ticker="AAPL", current_price=332.27, current_stop=None,
+                     stop_order_id=None, naked_quantity=33.0),
+            position(ticker="XOM", current_price=161.44, current_stop=145.0),
+        ]
+        bars = {"AAPL": flat_bars(30, 333.1, 330.9, 332.27),
+                "XOM": flat_bars(30, 162.0, 160.0, 161.44)}
+        actions, _ = plan_actions(positions, bars, cfg)
+        assert actions
+        for act in actions:
+            level = act.stop_price if isinstance(act, PlaceStop) else act.new_stop
+            assert round(level, 2) == level, f"{act.ticker} emitted {level}"
+
+    def test_a_ratchet_still_only_moves_up_after_rounding(self) -> None:
+        # Rounding down must not turn a valid ratchet into a stop BELOW the
+        # one already standing.
+        actions, skips = plan_actions(
+            [position(current_price=120.0, current_stop=113.999)], {"AAPL": flat_bars(30)}
+        )
+        for act in actions:
+            if isinstance(act, RatchetStop):
+                assert act.new_stop > act.old_stop

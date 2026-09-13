@@ -35,7 +35,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
+import math
+
 from tradingagents_us.risk.stop_loss import atr_trailing_stop, time_exit
+
 
 #: Wilder's default. 14 bars is also the shortest window that survives a single
 #: gap day without the ATR halving, which matters on a 3x multiplier.
@@ -50,10 +53,33 @@ DEFAULT_MAX_BARS = 20
 #: thesis worth holding capital for.
 DEFAULT_FLAT_PNL_PCT = 0.03
 
+#: Alpaca refuses a stop price with a sub-penny increment on any stock priced
+#: at or above $1.00 ("invalid stop_price … does not fulfill minimum pricing
+#: criteria", HTTP 422). The ATR arithmetic produces prices like 308.10663…,
+#: so the level is rounded here rather than at the transport: what price gets
+#: placed is a decision this module makes, and rounding it downstream would
+#: mean the number this module reasons about is not the number that reaches
+#: the broker.
+#:
+#: DOWN, not nearest: rounding a long's protective stop up moves it closer to
+#: the market, which is the one direction that must never happen by accident.
+PRICE_DECIMALS = 2
+
 #: ATR multiple for the trailing stop. 3.0 is the `atr_trailing_stop` default
 #: and is deliberately loose: this stop exists to end a broken trade, not to
 #: scalp a wick.
 DEFAULT_ATR_MULT = 3.0
+
+
+def tick_round_down(price: float, decimals: int = PRICE_DECIMALS) -> float:
+    """Round a long's stop DOWN to a tradeable increment.
+
+    See PRICE_DECIMALS. Down rather than to-nearest because rounding a
+    protective stop up tightens it, and a stop that creeps toward the market
+    by half a cent per run is a loss the operator never chose.
+    """
+    factor = 10**decimals
+    return math.floor(price * factor) / factor
 
 
 @dataclass(frozen=True)
@@ -249,7 +275,7 @@ def plan_actions(
             # doubled since entry would otherwise get a stop far below anything
             # it has traded at recently, which protects nothing. Floored at zero
             # so a violently wide ATR cannot produce a negative stop.
-            level = max(0.01, pos.current_price - atr * config.atr_mult)
+            level = tick_round_down(max(0.01, pos.current_price - atr * config.atr_mult))
             if level >= pos.current_price:
                 detail = f"level {level:.2f} >= price {pos.current_price:.2f}"
                 skips.append(Skip(pos.ticker, "stop_would_widen", detail))
@@ -257,12 +283,14 @@ def plan_actions(
             actions.append(PlaceStop(pos.ticker, pos.naked_quantity, level, atr))
             continue
 
-        candidate = atr_trailing_stop(
-            current_close=pos.current_price,
-            atr=atr,
-            previous_stop=pos.current_stop,
-            atr_mult=config.atr_mult,
-            side="LONG",
+        candidate = tick_round_down(
+            atr_trailing_stop(
+                current_close=pos.current_price,
+                atr=atr,
+                previous_stop=pos.current_stop,
+                atr_mult=config.atr_mult,
+                side="LONG",
+            )
         )
 
         if candidate < pos.current_stop:

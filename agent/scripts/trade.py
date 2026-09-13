@@ -59,6 +59,7 @@ from tradingagents_us.risk.market_inputs import (  # noqa: E402
     rolling_price_stats,
 )
 from tradingagents_us.risk.portfolio_limits import PortfolioContext, PortfolioLimits  # noqa: E402
+from tradingagents_us.risk.precouncil import should_council  # noqa: E402
 from tradingagents_us.risk.sizer import MarketContext, size_from_decision  # noqa: E402
 from tradingagents_us.schemas import AgentDecision, AgentReasoning  # noqa: E402
 from tradingagents_us.storage import TradeLogRepository  # noqa: E402
@@ -193,33 +194,7 @@ def main() -> int:
     except ValueError:
         run_date = datetime.now(UTC).date()
 
-    # 1. Get decision
-    if args.use_cached:
-        log.info("loading cached decision for %s", args.ticker)
-        decision = _decision_from_cached(args.ticker)
-    else:
-        log.info(
-            "running fresh LLM pipeline for %s @ %s (~5-10 min, ~$0.50-1.50)",
-            args.ticker, args.date,
-        )
-        decision = propagate(args.ticker, args.date)
-    _print_decision(decision)
-
-    if repo is not None:
-        repo.save_decision(decision)
-        log.info("persisted decision %s", decision.decision_id)
-
-    # An entry and a stop are what size a BUY. A Sell closes a position and is
-    # sized off the holding, so requiring them there discarded exit signals: the
-    # trader agent has no reason to quote an entry price for a name it wants out
-    # of, and this returned 1 before writing any row — so the exit never reached
-    # the broker, never reached the DB, and daily_run.sh counted it as a generic
-    # ticker failure rather than a dropped trade.
-    if decision.rating != "Sell" and not (decision.entry_price and decision.stop_loss):
-        log.warning("decision missing entry/stop — cannot size; aborting before risk layer")
-        return 1
-
-    # 2. Live Alpaca context (equity + CURRENT positions so we don't re-buy
+    # 1. Live Alpaca context (equity + CURRENT positions so we don't re-buy
     #    a name we already hold up to its cap — the daily run would otherwise
     #    accumulate the same Overweight ticker every day).
     existing_by_ticker: dict[str, float] = {}
@@ -259,6 +234,60 @@ def main() -> int:
     else:
         print(f"  Open BUYs: {len(open_buys)} reserving ${reserved:,.2f} "
               f"-> spendable ${spendable:,.2f}")
+
+    # 2. Can this name possibly be acted on today? Asked BEFORE the council.
+    #
+    # The council costs five to ten minutes and roughly a dollar of model
+    # spend, and the cash budget above already determines, with certainty, that
+    # some names cannot be bought at all. Paying for reasoning whose conclusion
+    # the arithmetic has already overruled is pure waste — at eleven tickers a
+    # rounding error, at a hundred about $68 a day.
+    #
+    # The gate only ever rejects the provably impossible. "Unpromising" is not
+    # its business: that judgement belongs to the sizer, with the council's
+    # output in hand. And a held name is never skipped, because the council is
+    # this system's only discretionary exit.
+    _gate = should_council(
+        args.ticker,
+        held_qty=held_qty,
+        spendable=spendable,
+        price=_fetch_current_price(args.ticker),
+        max_cash_utilization=PortfolioLimits().max_cash_utilization,
+    )
+    if not _gate.run:
+        # No decision row is written, so this line is the only record that the
+        # ticker was considered at all.
+        log.info("skipping council for %s: %s", args.ticker, _gate.reason)
+        print(f"\n=== COUNCIL SKIPPED ===\n  {args.ticker}: {_gate.reason}")
+        return 0
+    log.info("councilling %s: %s", args.ticker, _gate.reason)
+
+    # 3. Get decision
+    if args.use_cached:
+        log.info("loading cached decision for %s", args.ticker)
+        decision = _decision_from_cached(args.ticker)
+    else:
+        log.info(
+            "running fresh LLM pipeline for %s @ %s (~5-10 min, ~$0.50-1.50)",
+            args.ticker, args.date,
+        )
+        decision = propagate(args.ticker, args.date)
+    _print_decision(decision)
+
+    if repo is not None:
+        repo.save_decision(decision)
+        log.info("persisted decision %s", decision.decision_id)
+
+    # An entry and a stop are what size a BUY. A Sell closes a position and is
+    # sized off the holding, so requiring them there discarded exit signals: the
+    # trader agent has no reason to quote an entry price for a name it wants out
+    # of, and this returned 1 before writing any row — so the exit never reached
+    # the broker, never reached the DB, and daily_run.sh counted it as a generic
+    # ticker failure rather than a dropped trade.
+    if decision.rating != "Sell" and not (decision.entry_price and decision.stop_loss):
+        log.warning("decision missing entry/stop — cannot size; aborting before risk layer")
+        return 1
+
 
     # Real liquidity, from the bars the price cache already holds. The old
     # hardcoded $1B meant the $100k floor could never reject anything, so a
@@ -348,7 +377,7 @@ def main() -> int:
     if streak:
         log.info("replayed %d consecutive realized losses into the breaker", streak)
 
-    # 3. Risk sizing -> TradeOrder
+    # 4. Risk sizing -> TradeOrder
     order = size_from_decision(
         decision=decision,
         account_equity=acct.portfolio_value,
@@ -380,7 +409,7 @@ def main() -> int:
     if order.rejection_reasons:
         print(f"  Reasons:     {order.rejection_reasons}")
 
-    # 4. Submit / hold / dry-run
+    # 5. Submit / hold / dry-run
     current_price = _fetch_current_price(args.ticker)
     if current_price:
         print(f"\n  Current price (Polygon, delayed): ${current_price:.2f}")

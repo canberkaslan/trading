@@ -91,6 +91,18 @@ def _price_for(model: str) -> tuple[float, float] | None:
 
 
 @dataclass
+class NodeUsage:
+    """One graph node's share of the bill."""
+
+    calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    cost_usd: float = 0.0
+
+
+@dataclass
 class Usage:
     """Token totals for one council run, and what they cost."""
 
@@ -103,6 +115,15 @@ class Usage:
     # Models seen but not priced. Surfaced so an unpriced model reads as a gap
     # rather than as a free one.
     unpriced_models: set[str] = field(default_factory=set)
+
+    # Per graph node. The aggregate says what a council costs; this says which
+    # of its eighteen calls that money went to — which is the only basis on
+    # which any of them could be cut.
+    by_node: dict[str, NodeUsage] = field(default_factory=dict)
+
+    def breakdown(self) -> list[tuple[str, NodeUsage]]:
+        """Nodes ordered by spend, dearest first."""
+        return sorted(self.by_node.items(), key=lambda kv: kv[1].cost_usd, reverse=True)
 
     @property
     def cache_hit_rate(self) -> float | None:
@@ -123,16 +144,36 @@ class UsageCollector(BaseCallbackHandler):
     measurement must never cost a trading decision.
     """
 
+    # LangGraph puts the node name in the callback metadata, and on_llm_start
+    # and on_llm_end share a run_id — so the two can be joined without the
+    # agents knowing they are being measured.
+    _NODE_KEY = "langgraph_node"
+
     def __init__(self) -> None:
         self.usage = Usage()
+        self._node_of: dict[Any, str] = {}
 
-    def on_llm_end(self, response: Any, **_: Any) -> None:
+    def on_llm_start(self, serialized: Any, prompts: Any, **kwargs: Any) -> None:
+        with contextlib.suppress(Exception):
+            run_id = kwargs.get("run_id")
+            meta = kwargs.get("metadata") or {}
+            node = meta.get(self._NODE_KEY)
+            if run_id is not None and node:
+                self._node_of[run_id] = str(node)
+
+    def on_llm_end(self, response: Any, **kwargs: Any) -> None:
         # Telemetry must never break the run: a malformed payload costs a
         # measurement, not a trading decision.
         with contextlib.suppress(Exception):
-            self._collect(response)
+            run_id = kwargs.get("run_id")
+            # Unattributed rather than guessed. A call whose node is unknown
+            # must not be silently folded into a neighbour's total, or the
+            # breakdown would quietly misattribute the very thing it exists to
+            # show.
+            node = self._node_of.pop(run_id, None) if run_id is not None else None
+            self._collect(response, node or "(unattributed)")
 
-    def _collect(self, response: Any) -> None:
+    def _collect(self, response: Any, node: str = "(unattributed)") -> None:
         for generation_list in getattr(response, "generations", []) or []:
             for generation in generation_list or []:
                 message = getattr(generation, "message", None)
@@ -168,6 +209,13 @@ class UsageCollector(BaseCallbackHandler):
                 u.cache_read_tokens += cache_read
                 u.cache_write_tokens += cache_write
 
+                n = u.by_node.setdefault(node, NodeUsage())
+                n.calls += 1
+                n.input_tokens += fresh_in
+                n.output_tokens += out
+                n.cache_read_tokens += cache_read
+                n.cache_write_tokens += cache_write
+
                 model = str(
                     (getattr(message, "response_metadata", None) or {}).get("model_name")
                     or (getattr(message, "response_metadata", None) or {}).get("model")
@@ -179,9 +227,11 @@ class UsageCollector(BaseCallbackHandler):
                         u.unpriced_models.add(model)
                     continue
                 in_rate, out_rate = price
-                u.cost_usd += (
+                call_cost = (
                     fresh_in * in_rate
                     + cache_read * in_rate * _CACHE_READ_MULTIPLIER
                     + cache_write * in_rate * _CACHE_WRITE_MULTIPLIER
                     + out * out_rate
                 ) / 1_000_000
+                u.cost_usd += call_cost
+                n.cost_usd += call_cost

@@ -112,6 +112,16 @@ def propagate(ticker: str, trade_date: str) -> AgentDecision:
         u.cache_read_tokens, u.cache_write_tokens, u.cost_usd,
         "n/a" if hit is None else f"{hit:.1%}",
     )
+    # The aggregate says what a council costs; this says where that money went.
+    # Without it "which of the eighteen calls is worth keeping" has no answer
+    # except taste, and every cut is a guess about someone else's spend.
+    for node, n in u.breakdown():
+        share = (n.cost_usd / u.cost_usd * 100) if u.cost_usd else 0.0
+        log.info(
+            "  %-22s %2d calls  in=%6d out=%6d  $%.4f  (%.0f%% of run)",
+            node, n.calls, n.input_tokens, n.output_tokens, n.cost_usd, share,
+        )
+
     if u.unpriced_models:
         # Cost is understated by whatever these models consumed. Say so rather
         # than letting a low figure read as a cheap run.

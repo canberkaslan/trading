@@ -49,6 +49,14 @@ _ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # (table, column, SQL type) — the type is spelled out because this runs as
     # raw DDL on both SQLite (the box) and Postgres (Aurora).
     ("closed_trades", "exit_class", "VARCHAR(16)"),
+    # Cost telemetry. Added after the fact, so every decision written before
+    # this lands keeps NULL rather than a misleading zero — a run that was
+    # never measured must not read as a run that cost nothing.
+    ("agent_decisions", "tokens_in", "INTEGER"),
+    ("agent_decisions", "tokens_out", "INTEGER"),
+    ("agent_decisions", "cache_read_tokens", "INTEGER"),
+    ("agent_decisions", "cache_write_tokens", "INTEGER"),
+    ("agent_decisions", "cost_usd", "FLOAT"),
 )
 
 
@@ -115,7 +123,24 @@ class TradeLogRepository:
                 reasoning_json=[r.model_dump() for r in decision.reasoning],
                 final_decision_text=decision.final_decision_text,
                 timestamp_utc=decision.timestamp_utc,
+                tokens_in=decision.tokens_in,
+                tokens_out=decision.tokens_out,
+                cache_read_tokens=decision.cache_read_tokens,
+                cache_write_tokens=decision.cache_write_tokens,
+                cost_usd=decision.cost_usd,
             )
+            # merge() writes every mapped attribute, so a re-save carrying no
+            # usage would blank a figure already recorded. A decision is saved
+            # once per run today, but the column must not depend on that staying
+            # true — an unmeasured re-save leaves the stored measurement alone.
+            if decision.cost_usd is None:
+                existing = s.get(AgentDecisionRow, decision.decision_id)
+                if existing is not None and existing.cost_usd is not None:
+                    row.tokens_in = existing.tokens_in
+                    row.tokens_out = existing.tokens_out
+                    row.cache_read_tokens = existing.cache_read_tokens
+                    row.cache_write_tokens = existing.cache_write_tokens
+                    row.cost_usd = existing.cost_usd
             s.merge(row)  # idempotent
 
     def save_order(self, order: TradeOrder, broker_order_id: str | None = None) -> None:

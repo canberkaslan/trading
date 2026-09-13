@@ -7,14 +7,33 @@
  * backend layout. This shows an honest TR message + an optional retry, and
  * keeps the raw error one line, muted, for support without shouting a shell
  * command at the user.
+ *
+ * It now also distinguishes WHY the fetch failed, because one generic line was
+ * actively misleading. An operator opening the app without a bearer saw
+ * "Sunucuya ulaşılamıyor — bağlantını kontrol et" over a `Tekrar dene` button,
+ * while the server was up, answering in milliseconds, and refusing them for
+ * want of a token. They were sent to debug their network, and the only button
+ * on screen could not do anything but reproduce the same 401.
+ *
+ * So an auth failure gets its own copy and its own action: say which of the
+ * two token problems it is, and offer the screen that fixes it. Everything
+ * else keeps the connection message and the retry, which is the right pair
+ * when nothing answered.
+ *
+ * The raw error is deliberately suppressed for auth failures. ky's HTTPError
+ * message embeds the full request URL, so rendering it puts the API host and
+ * path on screen to say something the headline already says better.
  */
 
 import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { useRouter } from 'expo-router';
 
 import { useMemo } from 'react';
 
+import { useApiTokenStore } from '@/stores/apiToken';
 import { useTheme } from '@/theme/useTheme';
 import { MIN_TOUCH_TARGET } from '@/utils/a11y';
+import { authErrorKind } from '@/utils/apiError';
 import { font } from '@/theme/type';
 
 type Props = {
@@ -26,12 +45,54 @@ type Props = {
   onRetry?: () => void;
 };
 
+/**
+ * Copy per auth failure. Both send the operator to the same field; they differ
+ * in what they claim happened, because "you never entered one" and "the one you
+ * entered was refused" lead to different next moves.
+ */
+const AUTH_COPY = {
+  missing: {
+    title: 'Sunucu token’ı girilmemiş',
+    hint: 'Bu cihaz sunucuya kimlik gösteremiyor. Ayarlar’daki “Sunucu token’ı” alanına secrets.env içindeki DEV_API_TOKEN’ı yapıştır.',
+  },
+  invalid: {
+    title: 'Sunucu token’ı geçersiz',
+    hint: 'Kayıtlı token sunucu tarafından reddedildi. Sunucudaki DEV_API_TOKEN ile birebir aynı olduğundan emin ol; değiştiyse Ayarlar’dan güncelle.',
+  },
+} as const;
+
 export function ErrorState({ title, detail, onRetry }: Props) {
   const theme = useTheme();
+  const router = useRouter();
   const styles = useMemo(() => makeStyles(theme), [theme]);
+
+  // Whether a token is stored is what separates "never entered" from
+  // "rejected", and the store already knows it without a round trip.
+  const hasToken = useApiTokenStore((s) => s.token != null);
+  const kind = authErrorKind(detail, hasToken);
+
+  if (kind) {
+    const copy = AUTH_COPY[kind];
+    return (
+      <View style={styles.container} accessibilityRole="alert">
+        <Text style={styles.title}>{copy.title}</Text>
+        <Text style={styles.hint}>{copy.hint}</Text>
+        <Pressable
+          style={styles.retry}
+          onPress={() => router.push('/(tabs)/settings' as never)}
+          accessibilityRole="button"
+          accessibilityLabel="Ayarlara git"
+          accessibilityHint="Sunucu token’ının girildiği ekranı açar"
+        >
+          <Text style={styles.retryText}>Ayarlara git</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container} accessibilityRole="alert">
-      <Text style={styles.title}>{title ?? "Sunucuya ulaşılamıyor"}</Text>
+      <Text style={styles.title}>{title ?? 'Sunucuya ulaşılamıyor'}</Text>
       <Text style={styles.hint}>Bağlantını kontrol edip tekrar dene.</Text>
       {detail != null ? (
         <Text style={styles.detail} numberOfLines={2}>

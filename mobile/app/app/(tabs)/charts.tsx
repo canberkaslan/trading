@@ -22,6 +22,7 @@ import { MIN_TOUCH_TARGET } from '@/utils/a11y';
 import { font, TABULAR, TYPE } from '@/theme/type';
 import { positionStop } from '@/utils/positions';
 import { formatUsd, formatPct, parseUtc, relativeAgeTr } from '@/utils/format';
+import { isAuthError } from '@/utils/apiError';
 import { pnlTone, type Tone } from '@/utils/realized';
 import { Seg, type SegOption } from '@/components/Seg';
 
@@ -71,7 +72,7 @@ export default function ChartsScreen() {
   const [range, setRange] = useState<RangeKey>('3A');
   const [mode, setMode] = useState<Mode>('candle');
   const days = RANGE_DAYS[range];
-  const { data, isLoading, isError, refetch, isRefetching } = usePrices(ticker, days);
+  const { data, isLoading, isError, error, refetch, isRefetching } = usePrices(ticker, days);
   // The last decision and the open position for THIS name — the block under
   // the chart. Both are already-cached queries on any screen that showed them.
   const { data: decisions } = useDecisions({ ticker, limit: 1 });
@@ -227,7 +228,16 @@ export default function ChartsScreen() {
           {isLoading ? (
             <ActivityIndicator color={theme.textPrimary} />
           ) : isError ? (
-            <Text style={styles.err}>Fiyat alınamadı — ticker geçerli mi?</Text>
+            // Not the user's ticker. "ticker geçerli mi?" blamed their input
+            // for what is usually a refused bearer, sending them to re-type a
+            // symbol that was correct all along — and that branch offered no
+            // retry, so there was nothing to do but leave. isAuthError tells
+            // the two apart.
+            <Text style={styles.err}>
+              {isAuthError(error)
+                ? 'Fiyat alınamadı — sunucu token’ı gerekli.'
+                : 'Fiyat alınamadı — bağlantını kontrol et.'}
+            </Text>
           ) : !geom ? (
             <Text style={styles.err}>Veri yok</Text>
           ) : mode === 'candle' ? (

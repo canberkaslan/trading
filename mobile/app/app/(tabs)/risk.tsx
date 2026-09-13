@@ -51,6 +51,7 @@ import type { Concentration, KillSwitchState,
 } from '@/api/types';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
+import { isAuthError } from '@/utils/apiError';
 import { Seg, type SegOption } from '@/components/Seg';
 import { Sheet } from '@/components/Sheet';
 import { Tag } from '@/components/Tag';
@@ -206,7 +207,7 @@ export default function RiskScreen() {
   const t = useTheme();
   const styles = useMemo(() => makeStyles(t), [t]);
 
-  const { data: ks, isError: ksError } = useKillSwitch();
+  const { data: ks, isError: ksError, error: ksErr } = useKillSwitch();
   const setKs = useSetKillSwitch();
   const [flattenOpen, setFlattenOpen] = useState(false);
 
@@ -445,6 +446,20 @@ export default function RiskScreen() {
   const limitsFailed =
     limitRows.length === 0 && (concentration.isError || portfolio.isError);
 
+  /**
+   * The error to hand ErrorState when a section is fed by several queries.
+   *
+   * ErrorState classifies 401 to tell the operator their token is the problem
+   * rather than their network, and it can only do that if it is given an
+   * error. A section that ORs three `isError` flags has no single error object,
+   * so this picks the first one that actually failed. When the cause is a
+   * missing bearer every one of them is the same 401, so the first is
+   * representative; when they differ, the first failure is still the honest
+   * thing to show.
+   */
+  const firstError = (...queries: { error?: unknown }[]): unknown =>
+    queries.find((q) => q.error != null)?.error;
+
   const retryLimits = () => {
     void concentration.refetch();
     void portfolio.refetch();
@@ -461,8 +476,14 @@ export default function RiskScreen() {
         <View style={styles.header}>
           <Text style={styles.h2}>Risk & uyarılar</Text>
           {/* No count until the sources it counts have answered — "0 açık" on a
-              screen that has not loaded reads as an all-clear. */}
-          {alertsWaiting ? null : <Tag label={`${openCount} açık`} variant="accent" />}
+              screen that has not loaded reads as an all-clear. A FAILED read
+              said the same thing and was not covered: `alertsWaiting` is only
+              the loading flag, so a 401 left the header asserting zero open
+              risk alerts directly above an error block saying the risk data
+              could not be read. Absence of evidence, printed as an all-clear. */}
+          {alertsWaiting || alertsFailed ? null : (
+            <Tag label={`${openCount} açık`} variant="accent" />
+          )}
         </View>
 
         {/* ── Kill switch ─────────────────────────────────────────────────── */}
@@ -472,7 +493,13 @@ export default function RiskScreen() {
             options={killOptions}
             value={ks?.state}
             onChange={applyKill}
-            disabled={setKs.isPending}
+            /* Locked until the current state is known. Unauthenticated, `ks` is
+               undefined so no segment reads as selected — and FLATTEN_ALL, which
+               closes the entire book at market, was still tappable. The operator
+               could walk the whole irreversible-confirmation flow and only learn
+               at the end that nothing was sent. Worse, an armed control whose
+               state is unknown invites a tap to "fix" it. */
+            disabled={setKs.isPending || ks == null}
             block
             style={styles.seg}
           />
@@ -480,7 +507,9 @@ export default function RiskScreen() {
             {ks?.state
               ? `${killEntry(ks.state)?.desc ?? ks.state} · timer'ı SSH olmadan durdurur.`
               : ksError
-                ? 'Durum okunamadı — sunucuya ulaşılamıyor.'
+                ? isAuthError(ksErr)
+                  ? 'Durum okunamadı — sunucu token’ı gerekli. Ayarlar’dan gir.'
+                  : 'Durum okunamadı — sunucuya ulaşılamıyor.'
                 : 'Durum yükleniyor…'}
           </Text>
         </View>
@@ -489,6 +518,7 @@ export default function RiskScreen() {
           <View style={styles.gutterReset}>
             <ErrorState
               title="Risk verileri okunamıyor"
+              detail={portfolio.error}
               onRetry={() => {
                 void portfolio.refetch();
                 void concentration.refetch();
@@ -515,7 +545,11 @@ export default function RiskScreen() {
                 <View style={styles.gutterReset}>
                   {/* Never render "0% çıplak" on a failed read: that says the
                       book is safe because nothing was checked. */}
-                  <ErrorState title="Stop kapsaması okunamadı" onRetry={coverage.refetch} />
+                  <ErrorState
+                    title="Stop kapsaması okunamadı"
+                    detail={coverage.error}
+                    onRetry={coverage.refetch}
+                  />
                 </View>
               ) : coverage.data.total_qty === 0 ? (
                 <Text style={styles.helper}>Açık pozisyon yok — korunacak bir şey yok.</Text>
@@ -595,6 +629,7 @@ export default function RiskScreen() {
                 <View style={styles.gutterReset}>
                   <ErrorState
                     title="Emir akışı okunamadı"
+                    detail={flow.error}
                     onRetry={() => void flow.refetch()}
                   />
                 </View>
@@ -639,7 +674,11 @@ export default function RiskScreen() {
                 <Text style={styles.muted}>Yükleniyor…</Text>
               ) : limitsFailed ? (
                 <View style={styles.gutterReset}>
-                  <ErrorState title="Portföy verisi okunamadı" onRetry={retryLimits} />
+                  <ErrorState
+                    title="Portföy verisi okunamadı"
+                    detail={firstError(concentration, portfolio)}
+                    onRetry={retryLimits}
+                  />
                 </View>
               ) : limitRows.length === 0 ? (
                 <View style={styles.gutterReset}>
@@ -669,7 +708,11 @@ export default function RiskScreen() {
                 <Text style={styles.muted}>Yükleniyor…</Text>
               ) : alertsFailed ? (
                 <View style={styles.gutterReset}>
-                  <ErrorState title="Uyarılar okunamadı" onRetry={retryAlerts} />
+                  <ErrorState
+                    title="Uyarılar okunamadı"
+                    detail={firstError(flow, concentration, orders)}
+                    onRetry={retryAlerts}
+                  />
                 </View>
               ) : alerts.length === 0 ? (
                 <View style={styles.gutterReset}>

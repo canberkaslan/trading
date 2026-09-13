@@ -29,6 +29,7 @@ import { useUnreadCount } from '@/stores/notifications';
 import { useTheme } from '@/theme/useTheme';
 import { badgeLabel } from '@/utils/inbox';
 import { lastSubmitLabel } from '@/utils/actionability';
+import { isAuthError } from '@/utils/apiError';
 import { font } from '@/theme/type';
 
 /** Lucide `bell`, traced rather than shipped as a font so it inherits colour. */
@@ -47,7 +48,7 @@ export function StatusBanner() {
   const router = useRouter();
   const t = useTheme();
   const { data, isError, failureCount } = useReadiness();
-  const { data: flow } = useActionability();
+  const { data: flow, error: flowError } = useActionability();
   const unread = useUnreadCount();
   const badge = badgeLabel(unread);
 
@@ -66,6 +67,15 @@ export function StatusBanner() {
   } else if (!data) {
     statusText = '● bağlanıyor…';
     statusColor = t.textSecondary;
+  } else if (isAuthError(flowError)) {
+    // /readyz needs no bearer, so on a pure auth failure it answers 200 and the
+    // strip said "● bağlı" while every screen under it said the server could
+    // not be reached. Both were describing different things and the operator
+    // had to reconcile them. The strip already polls an AUTHENTICATED endpoint
+    // for the last-run stamp, so it can simply report what that one saw: the
+    // backend is up and refusing us.
+    statusText = '● sunucu token’ı gerekli — veriler okunamıyor';
+    statusColor = t.danger;
   } else if (data.status !== 'ok') {
     const broken = [!data.alpaca && 'broker', !data.db && 'db'].filter(Boolean).join(' + ');
     statusText = `● degraded: ${broken || 'bilinmiyor'}`;

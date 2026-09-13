@@ -167,7 +167,7 @@ export default function OrdersScreen() {
         {active.isLoading ? (
           <Text style={styles.muted}>Yükleniyor…</Text>
         ) : active.isError ? (
-          <ErrorState onRetry={active.refetch} />
+          <ErrorState detail={active.error} onRetry={active.refetch} />
         ) : !active.data || active.data.length === 0 ? (
           tab === 'pending' ? (
             <EmptyState title="Onay bekleyen emir yok" hint="Günlük koşu bir emri onaya düşürdüğünde burada görünür." />

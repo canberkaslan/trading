@@ -325,7 +325,7 @@ class TestTickRounding:
         assert tick_round_down(308.10663493563885) == 308.10
         assert tick_round_down(197.669809547951) == 197.66
 
-    def test_rounds_DOWN_never_up(self) -> None:
+    def test_rounds_down_never_up(self) -> None:
         # Up would tighten a long's stop toward the market — a loss the
         # operator never chose, arriving half a cent at a time.
         assert tick_round_down(100.999) == 100.99
@@ -361,3 +361,77 @@ class TestTickRounding:
         for act in actions:
             if isinstance(act, RatchetStop):
                 assert act.new_stop > act.old_stop
+
+
+class TestPartiallyProtectedPosition:
+    """A position can need a ratchet AND a back-fill at the same time.
+
+    Found live: GOOGL held 32 shares behind stops covering 3. The pass saw a
+    stop, took the ratchet branch, and never looked at the other 29 — so the
+    one name that most obviously needed protection was the one the back-fill
+    skipped, and the coverage report kept reporting it naked run after run.
+    """
+
+    def test_places_a_stop_on_the_naked_remainder_and_ratchets_the_rest(self) -> None:
+        cfg = ManagementConfig(backfill_missing_stops=True)
+        actions, _ = plan_actions(
+            [position(quantity=32.0, current_price=120.0, current_stop=90.0,
+                      stop_order_id="ord_1", naked_quantity=29.0)],
+            {"AAPL": flat_bars(30)},
+            cfg,
+        )
+        kinds = {type(a).__name__ for a in actions}
+        assert kinds == {"PlaceStop", "RatchetStop"}
+
+        place = next(a for a in actions if isinstance(a, PlaceStop))
+        ratchet = next(a for a in actions if isinstance(a, RatchetStop))
+        # The new stop covers ONLY the uncovered shares.
+        assert place.quantity == 29.0
+        # And the existing one still moves up rather than being replaced.
+        assert ratchet.old_stop == 90.0
+        assert ratchet.new_stop > ratchet.old_stop
+
+    def test_the_two_stops_together_never_exceed_the_holding(self) -> None:
+        # Over-protection is the failure that matters: a stop for more shares
+        # than are held opens a short when it triggers.
+        cfg = ManagementConfig(backfill_missing_stops=True)
+        held, covered = 32.0, 3.0
+        actions, _ = plan_actions(
+            [position(quantity=held, current_price=120.0, current_stop=90.0,
+                      stop_order_id="ord_1", naked_quantity=held - covered)],
+            {"AAPL": flat_bars(30)},
+            cfg,
+        )
+        placed = sum(a.quantity for a in actions if isinstance(a, PlaceStop))
+        assert placed + covered == held
+
+    def test_a_fully_covered_position_gets_no_new_order(self) -> None:
+        cfg = ManagementConfig(backfill_missing_stops=True)
+        actions, _ = plan_actions(
+            [position(current_stop=90.0, stop_order_id="ord_1", naked_quantity=0.0)],
+            {"AAPL": flat_bars(30)},
+            cfg,
+        )
+        assert not any(isinstance(a, PlaceStop) for a in actions)
+
+    def test_an_indeterminate_symbol_is_never_backfilled(self) -> None:
+        # The runner passes naked_quantity=0 unless stop_coverage called the
+        # symbol actionable, so an ambiguous book cannot be acted on here.
+        cfg = ManagementConfig(backfill_missing_stops=True)
+        actions, _ = plan_actions(
+            [position(current_stop=90.0, stop_order_id="ord_1", naked_quantity=0.0)],
+            {"AAPL": flat_bars(30)},
+            cfg,
+        )
+        assert not any(isinstance(a, PlaceStop) for a in actions)
+
+    def test_a_time_exit_still_suppresses_both(self) -> None:
+        cfg = ManagementConfig(backfill_missing_stops=True)
+        actions, _ = plan_actions(
+            [position(bars_held=25, current_price=101.0, current_stop=90.0,
+                      stop_order_id="ord_1", naked_quantity=29.0)],
+            {"AAPL": flat_bars(30)},
+            cfg,
+        )
+        assert len(actions) == 1
+        assert isinstance(actions[0], TimeExit)

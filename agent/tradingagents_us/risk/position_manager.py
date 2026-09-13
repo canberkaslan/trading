@@ -31,14 +31,12 @@ Two safety properties are structural rather than conventional:
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-import math
-
 from tradingagents_us.risk.stop_loss import atr_trailing_stop, time_exit
-
 
 #: Wilder's default. 14 bars is also the shortest window that survives a single
 #: gap day without the ATR halving, which matters on a 3x multiplier.
@@ -258,10 +256,36 @@ def plan_actions(
             skips.append(Skip(pos.ticker, "insufficient_bars", f"have={len(bars)} need={need}"))
             continue
 
+        # ---- Back-fill the naked remainder ---------------------------------
+        # Independent of the ratchet below, because a position can need BOTH: a
+        # partially protected name has a stop to move up AND shares with nothing
+        # under them. Gating the back-fill on "has no stop at all" is what left
+        # GOOGL with 3 of 32 shares covered — the pass saw a stop, took the
+        # ratchet branch, and never looked at the other 29.
+        #
+        # `naked_quantity` is only ever non-zero when stop_coverage called the
+        # symbol actionable (naked shares, nothing indeterminate), so this can
+        # never double-protect shares that already have a stop — which would
+        # leave two stops on one lot, and a short position when both trigger.
+        if config.backfill_missing_stops and pos.naked_quantity > 0:
+            # Seeded from the CURRENT price, not from entry: a name that has
+            # doubled since entry would otherwise get a stop far below anything
+            # it has traded at recently, which protects nothing. Floored at a
+            # cent so a violently wide ATR cannot produce a negative stop.
+            level = tick_round_down(max(0.01, pos.current_price - atr * config.atr_mult))
+            if level >= pos.current_price:
+                # A stop at or above the market is a market sell wearing a
+                # stop's clothes — it fires the instant it is accepted.
+                detail = f"level {level:.2f} >= price {pos.current_price:.2f}"
+                skips.append(Skip(pos.ticker, "stop_would_widen", detail))
+            else:
+                actions.append(PlaceStop(pos.ticker, pos.naked_quantity, level, atr))
+
+        # ---- Ratchet the stop that already stands --------------------------
         if pos.current_stop is None or pos.stop_order_id is None:
-            if not config.backfill_missing_stops or pos.naked_quantity <= 0:
-                # Unprotected is the loudest thing this pass can find, but
-                # placing a stop is an ORDER. Reported unless explicitly asked.
+            if pos.naked_quantity <= 0 or not config.backfill_missing_stops:
+                # Unprotected and not asked to fix it: report. Placing a stop is
+                # an ORDER, and this module does not submit them uninvited.
                 skips.append(
                     Skip(
                         pos.ticker,
@@ -269,18 +293,6 @@ def plan_actions(
                         f"unprotected, atr={atr:.2f}, price={pos.current_price:.2f}",
                     )
                 )
-                continue
-
-            # Seeded from the CURRENT price, not from entry: a name that has
-            # doubled since entry would otherwise get a stop far below anything
-            # it has traded at recently, which protects nothing. Floored at zero
-            # so a violently wide ATR cannot produce a negative stop.
-            level = tick_round_down(max(0.01, pos.current_price - atr * config.atr_mult))
-            if level >= pos.current_price:
-                detail = f"level {level:.2f} >= price {pos.current_price:.2f}"
-                skips.append(Skip(pos.ticker, "stop_would_widen", detail))
-                continue
-            actions.append(PlaceStop(pos.ticker, pos.naked_quantity, level, atr))
             continue
 
         candidate = tick_round_down(

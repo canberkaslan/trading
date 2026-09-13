@@ -16,6 +16,7 @@ Auth modes (mutually exclusive, selected by env):
 
 from __future__ import annotations
 
+import logging
 import os
 import secrets
 import time
@@ -28,6 +29,8 @@ from sqlalchemy import create_engine
 
 from tradingagents_us.dataflows.alpaca_broker import AlpacaClient
 from tradingagents_us.storage import TradeLogRepository
+
+log = logging.getLogger(__name__)
 
 
 @lru_cache(maxsize=1)
@@ -240,7 +243,33 @@ async def require_token(authorization: str | None = Header(default=None)) -> str
     if os.environ.get("FIREBASE_PROJECT_ID"):
         if not authorization or not authorization.lower().startswith("bearer "):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing bearer token")
-        return _validate_firebase_jwt(authorization.split(" ", 1)[1].strip())
+        presented = authorization.split(" ", 1)[1].strip()
+
+        # Migration window. Setting FIREBASE_PROJECT_ID used to cut the shared
+        # DEV_API_TOKEN dead in the same instant — every already-signed-in
+        # browser and phone would have started returning 401 the moment the
+        # box restarted, with no warning and nothing on screen explaining it.
+        #
+        # A Firebase ID token is a JWT and therefore has three dot-separated
+        # parts; the dev bearer is an opaque string. The token's own shape
+        # decides which path it takes, so no new flag is needed and neither
+        # kind is ever checked against the wrong validator.
+        #
+        # This deliberately keeps the shared secret alive, so the cutover is a
+        # separate, explicit act: delete DEV_API_TOKEN from secrets.env. Until
+        # then every use logs, so "is anyone still on the old token?" is a
+        # question the logs answer.
+        if presented.count(".") != 2:
+            expected = os.environ.get("DEV_API_TOKEN", "")
+            if expected and secrets.compare_digest(presented, expected):
+                log.warning(
+                    "accepted the shared DEV_API_TOKEN while Firebase is configured — "
+                    "remove DEV_API_TOKEN from secrets.env to complete the cutover"
+                )
+                return "dev-user"
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid token")
+
+        return _validate_firebase_jwt(presented)
 
     # Cognito path
     if os.environ.get("COGNITO_USER_POOL_ID"):

@@ -166,9 +166,10 @@ class TestRefuses:
 class TestDispatcher:
     @pytest.mark.anyio
     async def test_firebase_wins_when_configured(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # JWT-shaped, because the token's shape is what selects the path now.
         monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool")
         monkeypatch.setattr(deps, "_validate_firebase_jwt", lambda t: "fb-uid")
-        assert await deps.require_token("Bearer x") == "fb-uid"
+        assert await deps.require_token("Bearer aaa.bbb.ccc") == "fb-uid"
 
     @pytest.mark.anyio
     async def test_a_missing_header_is_401_not_anonymous(
@@ -182,3 +183,58 @@ class TestDispatcher:
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
+
+class TestMigrationWindow:
+    """Setting FIREBASE_PROJECT_ID must not cut the shared token dead."""
+
+    @pytest.mark.anyio
+    async def test_the_shared_token_still_works_during_migration(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Before this, flipping Firebase on would have 401'd every already
+        # signed-in browser and phone the moment the box restarted, with
+        # nothing on screen explaining why.
+        monkeypatch.setenv("DEV_API_TOKEN", "a" * 64)
+        assert await deps.require_token(f"Bearer {'a' * 64}") == "dev-user"
+
+    @pytest.mark.anyio
+    async def test_a_wrong_opaque_token_is_still_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DEV_API_TOKEN", "a" * 64)
+        with pytest.raises(HTTPException) as e:
+            await deps.require_token("Bearer " + "b" * 64)
+        assert e.value.status_code == 401
+
+    @pytest.mark.anyio
+    async def test_removing_the_dev_token_completes_the_cutover(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The cutover is deleting DEV_API_TOKEN from secrets.env — a separate,
+        # explicit act rather than a side effect of enabling Firebase.
+        monkeypatch.delenv("DEV_API_TOKEN", raising=False)
+        with pytest.raises(HTTPException) as e:
+            await deps.require_token("Bearer " + "a" * 64)
+        assert e.value.status_code == 401
+
+    @pytest.mark.anyio
+    async def test_a_jwt_shaped_token_goes_to_firebase_not_the_shared_compare(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The token's own shape decides the path, so neither kind is ever
+        # checked against the wrong validator.
+        monkeypatch.setenv("DEV_API_TOKEN", "a" * 64)
+        seen: list[str] = []
+        monkeypatch.setattr(deps, "_validate_firebase_jwt", lambda t: seen.append(t) or "uid")
+        assert await deps.require_token("Bearer aaa.bbb.ccc") == "uid"
+        assert seen == ["aaa.bbb.ccc"]
+
+    @pytest.mark.anyio
+    async def test_a_malformed_jwt_is_not_silently_accepted_as_a_shared_token(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Four parts is not a JWT and not the shared secret either.
+        monkeypatch.setenv("DEV_API_TOKEN", "a" * 64)
+        with pytest.raises(HTTPException):
+            await deps.require_token("Bearer a.b.c.d")

@@ -19,9 +19,35 @@ so that:
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+# LLMs sometimes write a placeholder string ("None", "N/A", ...) into an optional
+# numeric field instead of omitting it. Coerce those to None so the structured
+# call validates instead of erroring (#1058). Pydantic still parses real numeric
+# strings ("189.5") to float.
+_NULLISH_FLOAT = {"", "none", "n/a", "na", "null", "nil", "-", "tbd", "unknown"}
+
+
+def _coerce_optional_float(value):
+    """Normalise an LLM-written optional numeric field before validation.
+
+    Three shapes show up in practice: a placeholder string ("None", "N/A") in
+    place of an omitted value (#1058); a percentage where a price was asked for
+    ("15%", #1288); and a human-formatted price ("$1,234.50"). A percentage
+    cannot be salvaged into an absolute level -- reading "15%" as 15 would put a
+    stop at $15 on a $600 stock -- so it is dropped like a placeholder, leaving
+    one bad field to null out instead of failing the whole proposal. A formatted
+    price is reduced to its number. Anything else passes through to pydantic.
+    """
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if text.lower() in _NULLISH_FLOAT or text.endswith("%"):
+        return None
+    cleaned = text.replace(",", "").lstrip("$€£¥").strip()
+    return cleaned or None
 
 
 # ---------------------------------------------------------------------------
@@ -70,9 +96,11 @@ class ResearchPlan(BaseModel):
     recommendation: PortfolioRating = Field(
         description=(
             "The investment recommendation. Exactly one of Buy / Overweight / "
-            "Hold / Underweight / Sell. Reserve Hold for situations where the "
-            "evidence on both sides is genuinely balanced; otherwise commit to "
-            "the side with the stronger arguments."
+            "Hold / Underweight / Sell. Choose Hold when the evidence is "
+            "balanced, materially conflicting, ambiguous, or insufficient to "
+            "justify changing exposure; otherwise commit to the side with the "
+            "clearly stronger arguments. Do not pick a direction merely to be "
+            "decisive."
         ),
     )
     rationale: str = Field(
@@ -124,18 +152,31 @@ class TraderProposal(BaseModel):
             "the research plan. Two to four sentences."
         ),
     )
-    entry_price: Optional[float] = Field(
+    entry_price: float | None = Field(
         default=None,
-        description="Optional entry price target in the instrument's quote currency.",
+        description=(
+            "Optional entry price target as an absolute number in the instrument's "
+            "quote currency (e.g. 189.5), never a percentage or a range. Omit it "
+            "if you cannot state a specific level."
+        ),
     )
-    stop_loss: Optional[float] = Field(
+    stop_loss: float | None = Field(
         default=None,
-        description="Optional stop-loss price in the instrument's quote currency.",
+        description=(
+            "Optional stop-loss as an absolute price in the instrument's quote "
+            "currency (e.g. 172.0), never a percentage. Convert a percentage "
+            "distance to the price level it implies, or omit it."
+        ),
     )
-    position_sizing: Optional[str] = Field(
+    position_sizing: str | None = Field(
         default=None,
         description="Optional sizing guidance, e.g. '5% of portfolio'.",
     )
+
+    @field_validator("entry_price", "stop_loss", mode="before")
+    @classmethod
+    def _nullish_float_to_none(cls, v):
+        return _coerce_optional_float(v)
 
 
 def render_trader_proposal(proposal: TraderProposal) -> str:
@@ -180,7 +221,10 @@ class PortfolioDecision(BaseModel):
     rating: PortfolioRating = Field(
         description=(
             "The final position rating. Exactly one of Buy / Overweight / Hold / "
-            "Underweight / Sell, picked based on the analysts' debate."
+            "Underweight / Sell, picked based on the analysts' debate. Choose "
+            "Hold when the case is balanced, materially conflicting, ambiguous, "
+            "or insufficient to justify changing exposure, rather than forcing a "
+            "direction to appear decisive."
         ),
     )
     executive_summary: str = Field(
@@ -196,14 +240,19 @@ class PortfolioDecision(BaseModel):
             "incorporate them; otherwise rely solely on the current analysis."
         ),
     )
-    price_target: Optional[float] = Field(
+    price_target: float | None = Field(
         default=None,
         description="Optional target price in the instrument's quote currency.",
     )
-    time_horizon: Optional[str] = Field(
+    time_horizon: str | None = Field(
         default=None,
         description="Optional recommended holding period, e.g. '3-6 months'.",
     )
+
+    @field_validator("price_target", mode="before")
+    @classmethod
+    def _nullish_float_to_none(cls, v):
+        return _coerce_optional_float(v)
 
 
 def render_pm_decision(decision: PortfolioDecision) -> str:
@@ -226,3 +275,94 @@ def render_pm_decision(decision: PortfolioDecision) -> str:
     if decision.time_horizon:
         parts.extend(["", f"**Time Horizon**: {decision.time_horizon}"])
     return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Sentiment Analyst
+# ---------------------------------------------------------------------------
+
+
+class SentimentBand(str, Enum):
+    """Discrete sentiment direction produced by the Sentiment Analyst.
+
+    Six tiers keep the signal granular enough to be actionable while remaining
+    small enough for every provider to map reliably from its JSON output.
+    """
+
+    BULLISH = "Bullish"
+    MILDLY_BULLISH = "Mildly Bullish"
+    NEUTRAL = "Neutral"
+    MIXED = "Mixed"
+    MILDLY_BEARISH = "Mildly Bearish"
+    BEARISH = "Bearish"
+
+
+class SentimentReport(BaseModel):
+    """Structured sentiment report produced by the Sentiment Analyst.
+
+    Replaces the previous free-form prose output so downstream consumers
+    (dashboards, audit logs, PDF renderers, other agents) can read
+    ``overall_band`` and ``overall_score`` without maintaining fragile regex
+    fallbacks that drift with every model release. ``narrative`` preserves the
+    rich source-by-source analysis; ``render_sentiment_report`` prepends a
+    deterministic header so the saved report stays human-readable.
+    """
+
+    overall_band: SentimentBand = Field(
+        description=(
+            "Overall sentiment direction. Exactly one of: "
+            "Bullish / Mildly Bullish / Neutral / Mixed / Mildly Bearish / Bearish. "
+            "Use Mixed when sources point in clearly different directions. "
+            "Use Neutral only when all sources are genuinely silent or non-committal."
+        ),
+    )
+    overall_score: float = Field(
+        ge=0.0,
+        le=10.0,
+        description=(
+            "Numeric sentiment intensity on a 0–10 scale. "
+            "0 = maximally bearish, 5 = neutral, 10 = maximally bullish. "
+            "Guideline for consistency with overall_band: "
+            "Bullish ~6.5–10, Mildly Bullish ~5.5–6.4, Neutral/Mixed ~4.5–5.5, "
+            "Mildly Bearish ~3.5–4.4, Bearish ~0–3.4. "
+            "Only the 0–10 bounds are enforced."
+        ),
+    )
+    confidence: Literal["low", "medium", "high"] = Field(
+        description=(
+            "Confidence in the assessment based on data quality and sample size. "
+            "Use 'low' when one or more sources returned a placeholder or fewer "
+            "than 5 data points; 'medium' when data is present but sparse; "
+            "'high' when all three sources returned substantive data."
+        ),
+    )
+    narrative: str = Field(
+        description=(
+            "Full sentiment report covering, in order: "
+            "(1) source-by-source breakdown with specific evidence (cite message "
+            "counts, ratios, notable posts); "
+            "(2) cross-source divergences and alignments; "
+            "(3) dominant narrative themes; "
+            "(4) catalysts and risks surfaced by the data; "
+            "(5) a markdown table summarising key sentiment signals, their "
+            "direction, source, and supporting evidence. "
+            "Keep it informative and substantive: develop each section thoroughly "
+            "with concrete evidence so every point adds new signal for the trader."
+        ),
+    )
+
+
+def render_sentiment_report(report: SentimentReport) -> str:
+    """Render a SentimentReport to the markdown shape the rest of the system expects.
+
+    The structured header (band + score + confidence) is prepended to the
+    narrative so the saved report is both human-readable and machine-parseable
+    without regex.
+    """
+    return "\n".join([
+        f"**Overall Sentiment:** **{report.overall_band.value}** "
+        f"(Score: {report.overall_score:.1f}/10)",
+        f"**Confidence:** {report.confidence.capitalize()}",
+        "",
+        report.narrative,
+    ])

@@ -1,4 +1,8 @@
-from tradingagents.agents.utils.agent_utils import get_language_instruction
+from tradingagents.agents.utils.agent_utils import (
+    get_instrument_context_from_state,
+    get_language_instruction,
+    opponent_argument_or_opening,
+)
 
 
 def create_bull_researcher(llm):
@@ -7,13 +11,23 @@ def create_bull_researcher(llm):
         history = investment_debate_state.get("history", "")
         bull_history = investment_debate_state.get("bull_history", "")
 
-        current_response = investment_debate_state.get("current_response", "")
+        current_response = opponent_argument_or_opening(
+            investment_debate_state.get("current_response", ""), "bear analyst"
+        )
         market_research_report = state["market_report"]
         sentiment_report = state["sentiment_report"]
         news_report = state["news_report"]
         fundamentals_report = state["fundamentals_report"]
+        instrument_context = get_instrument_context_from_state(state)
+        asset_type = state.get("asset_type", "stock")
+        target_label = "stock" if asset_type == "stock" else "asset"
+        fundamentals_label = (
+            "Company fundamentals report"
+            if asset_type == "stock"
+            else "Asset fundamentals report (may be unavailable for crypto)"
+        )
 
-        prompt = f"""You are a Bull Analyst advocating for investing in the stock. Your task is to build a strong, evidence-based case emphasizing growth potential, competitive advantages, and positive market indicators. Leverage the provided research and data to address concerns and counter bearish arguments effectively.
+        prompt = f"""You are a Bull Analyst advocating for investing in the {target_label}. Your task is to build a strong, evidence-based case emphasizing growth potential, competitive advantages, and positive market indicators. Leverage the provided research and data to address concerns and counter bearish arguments effectively.
 
 Key points to focus on:
 - Growth Potential: Highlight the company's market opportunities, revenue projections, and scalability.
@@ -23,10 +37,11 @@ Key points to focus on:
 - Engagement: Present your argument in a conversational style, engaging directly with the bear analyst's points and debating effectively rather than just listing data.
 
 Resources available:
+{instrument_context}
 Market research report: {market_research_report}
 Social media sentiment report: {sentiment_report}
 Latest world affairs news: {news_report}
-Company fundamentals report: {fundamentals_report}
+{fundamentals_label}: {fundamentals_report}
 Conversation history of the debate: {history}
 Last bear argument: {current_response}
 Use this information to deliver a compelling bull argument, refute the bear's concerns, and engage in a dynamic debate that demonstrates the strengths of the bull position.

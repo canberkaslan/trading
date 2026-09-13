@@ -1,16 +1,12 @@
-import os
 import re
-import json
-import pandas as pd
-from datetime import date, timedelta, datetime
-from typing import Annotated
+from datetime import date
 
-SavePathType = Annotated[str, "File path to save data. If None, data is not saved."]
-
-# Tickers can contain letters, digits, dot, dash, underscore, and caret
-# (for index symbols like ^GSPC). Anything else is rejected so the value
-# never escapes a containing directory when interpolated into a path.
-_TICKER_PATH_RE = re.compile(r"^[A-Za-z0-9._\-\^]+$")
+# Tickers can contain letters, digits, dot, dash, underscore, caret
+# (index symbols like ^GSPC), equals (futures like GC=F), and plus
+# (forex/CFD symbols like XAUUSD+). None of these enable directory
+# traversal, so the value never escapes a containing directory when
+# interpolated into a path. Anything else is rejected.
+_TICKER_PATH_RE = re.compile(r"^[A-Za-z0-9._\-\^=+]+$")
 
 
 def safe_ticker_component(value: str, *, max_len: int = 32) -> str:
@@ -41,34 +37,5 @@ def safe_ticker_component(value: str, *, max_len: int = 32) -> str:
     return value
 
 
-def save_output(data: pd.DataFrame, tag: str, save_path: SavePathType = None) -> None:
-    if save_path:
-        data.to_csv(save_path, encoding="utf-8")
-        print(f"{tag} saved to {save_path}")
-
-
 def get_current_date():
     return date.today().strftime("%Y-%m-%d")
-
-
-def decorate_all_methods(decorator):
-    def class_decorator(cls):
-        for attr_name, attr_value in cls.__dict__.items():
-            if callable(attr_value):
-                setattr(cls, attr_name, decorator(attr_value))
-        return cls
-
-    return class_decorator
-
-
-def get_next_weekday(date):
-
-    if not isinstance(date, datetime):
-        date = datetime.strptime(date, "%Y-%m-%d")
-
-    if date.weekday() >= 5:
-        days_to_add = 7 - date.weekday()
-        next_weekday = date + timedelta(days=days_to_add)
-        return next_weekday
-    else:
-        return date

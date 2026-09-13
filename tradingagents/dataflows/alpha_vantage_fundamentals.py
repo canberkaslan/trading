@@ -1,34 +1,53 @@
+import json
+
 from .alpha_vantage_common import _make_api_request
+from .date_window import withhold_live_profile
 
 
 def _filter_reports_by_date(result, curr_date: str):
-    """Filter annualReports/quarterlyReports to exclude entries after curr_date.
+    """Drop annual/quarterly reports dated after curr_date to prevent look-ahead.
 
-    Prevents look-ahead bias by removing fiscal periods that end after
-    the simulation's current date.
+    ``_make_api_request`` returns the fundamentals payload as a JSON string, so
+    parse, filter, and re-serialize. A non-JSON body or an unset ``curr_date`` is
+    returned unchanged.
     """
-    if not curr_date or not isinstance(result, dict):
+    if not curr_date or not isinstance(result, str):
+        return result
+    try:
+        payload = json.loads(result)
+    except json.JSONDecodeError:
+        return result
+    if not isinstance(payload, dict):
         return result
     for key in ("annualReports", "quarterlyReports"):
-        if key in result:
-            result[key] = [
-                r for r in result[key]
+        if isinstance(payload.get(key), list):
+            payload[key] = [
+                r for r in payload[key]
                 if r.get("fiscalDateEnding", "") <= curr_date
             ]
-    return result
+    return json.dumps(payload)
 
 
 def get_fundamentals(ticker: str, curr_date: str = None) -> str:
     """
     Retrieve comprehensive fundamental data for a given ticker symbol using Alpha Vantage.
 
+    OVERVIEW serves only present-day values and carries no historical vintage, so
+    a past ``curr_date`` withholds it rather than leaking post-decision figures
+    into a backtest (#1300); the statement endpoints below stay point-in-time via
+    ``_filter_reports_by_date``.
+
     Args:
         ticker (str): Ticker symbol of the company
-        curr_date (str): Current date you are trading at, yyyy-mm-dd (not used for Alpha Vantage)
+        curr_date (str): Analysis date, yyyy-mm-dd
 
     Returns:
         str: Company overview data including financial ratios and key metrics
     """
+    withheld = withhold_live_profile(curr_date, ticker)
+    if withheld:
+        return withheld
+
     params = {
         "symbol": ticker,
     }

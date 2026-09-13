@@ -114,7 +114,13 @@ SUBMIT_FLAG=""
 # decision loop that did not run is a lost trading day.
 echo "" | tee -a "$RUN_LOG"
 echo "--- position management ---" | tee -a "$RUN_LOG"
-if PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.manage_positions $SUBMIT_FLAG 2>&1 | tee -a "$RUN_LOG"; then
+# --backfill-stops: place protective stops on shares that have none. Without
+# it the pass only REPORTS them, and the first live coverage check found 75.5%
+# of the book naked — bracket legs go missing over time (a take-profit fills and
+# cancels its OCO sibling, a flatten cancels orders, a position is added to) and
+# nothing was putting them back. The flag is gated by --submit like everything
+# else here, so SUBMIT=0 still only reports.
+if PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.manage_positions --backfill-stops $SUBMIT_FLAG 2>&1 | tee -a "$RUN_LOG"; then
   :
 else
   echo "  -> position management failed (non-fatal) — continuing to decisions" | tee -a "$RUN_LOG"

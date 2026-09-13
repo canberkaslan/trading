@@ -109,3 +109,65 @@ class TestFailuresCostAMeasurementNotADecision:
         c = UsageCollector()
         c.on_llm_end(_resp("claude-sonnet-5", inp=100, out=0, cache_read=500))
         assert c.usage.input_tokens == 0
+
+
+class TestPerTtlCacheWriteKeys:
+    """langchain zeroes `cache_creation` when it populates the per-TTL keys.
+
+    Observed in production: a run with cache_read=17,387 reported
+    cache_write=0, because only the generic key was read. Writes bill at 1.25x
+    against plain input's 1.0x, so those tokens were silently priced as
+    ordinary input and the run looked cheaper than it was.
+    """
+
+    def _resp_with_ttl_keys(self, **details):
+        msg = SimpleNamespace(
+            usage_metadata={
+                "input_tokens": 10_000,
+                "output_tokens": 0,
+                "input_token_details": {"cache_read": 0, "cache_creation": 0, **details},
+            },
+            response_metadata={"model_name": "claude-sonnet-5"},
+        )
+        return SimpleNamespace(generations=[[SimpleNamespace(message=msg)]])
+
+    def test_five_minute_writes_are_counted(self) -> None:
+        c = UsageCollector()
+        c.on_llm_end(self._resp_with_ttl_keys(ephemeral_5m_input_tokens=4_000))
+        assert c.usage.cache_write_tokens == 4_000
+        assert c.usage.input_tokens == 6_000
+
+    def test_one_hour_writes_are_counted(self) -> None:
+        c = UsageCollector()
+        c.on_llm_end(self._resp_with_ttl_keys(ephemeral_1h_input_tokens=2_500))
+        assert c.usage.cache_write_tokens == 2_500
+
+    def test_both_ttls_in_one_response_are_summed(self) -> None:
+        c = UsageCollector()
+        c.on_llm_end(
+            self._resp_with_ttl_keys(
+                ephemeral_5m_input_tokens=1_000, ephemeral_1h_input_tokens=500
+            )
+        )
+        assert c.usage.cache_write_tokens == 1_500
+
+    def test_the_generic_key_still_wins_when_it_is_the_one_populated(self) -> None:
+        # Older responses, and any path where langchain does not split by TTL.
+        c = UsageCollector()
+        msg = SimpleNamespace(
+            usage_metadata={
+                "input_tokens": 5_000,
+                "output_tokens": 0,
+                "input_token_details": {"cache_read": 0, "cache_creation": 3_000},
+            },
+            response_metadata={"model_name": "claude-sonnet-5"},
+        )
+        c.on_llm_end(SimpleNamespace(generations=[[SimpleNamespace(message=msg)]]))
+        assert c.usage.cache_write_tokens == 3_000
+
+    def test_writes_are_priced_above_plain_input(self) -> None:
+        written = UsageCollector()
+        written.on_llm_end(self._resp_with_ttl_keys(ephemeral_5m_input_tokens=10_000))
+        plain = UsageCollector()
+        plain.on_llm_end(self._resp_with_ttl_keys())
+        assert written.usage.cost_usd > plain.usage.cost_usd

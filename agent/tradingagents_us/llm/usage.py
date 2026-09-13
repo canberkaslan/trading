@@ -110,7 +110,17 @@ class UsageCollector(BaseCallbackHandler):
 
                 details = meta.get("input_token_details") or {}
                 cache_read = int(details.get("cache_read") or 0)
-                cache_write = int(details.get("cache_creation") or 0)
+                # langchain moves the write count into per-TTL keys and ZEROES
+                # the generic `cache_creation` whenever it does, to avoid double
+                # counting. Reading only the generic key therefore reported
+                # cache_write=0 on a run that demonstrably wrote entries — and
+                # since writes bill at 1.25x while plain input bills at 1.0x,
+                # those tokens were being priced as ordinary input and the cost
+                # came out low. Take whichever the response actually used.
+                cache_write = int(details.get("cache_creation") or 0) or sum(
+                    int(details.get(k) or 0)
+                    for k in ("ephemeral_5m_input_tokens", "ephemeral_1h_input_tokens")
+                )
                 # langchain reports `input_tokens` as the TOTAL including cached
                 # portions. Billing them again at full rate would overstate cost
                 # exactly where caching is meant to help, so the cached parts are

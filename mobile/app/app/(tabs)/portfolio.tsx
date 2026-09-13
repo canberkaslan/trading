@@ -163,10 +163,25 @@ export default function PortfolioScreen() {
     );
   }
 
-  if (isError || !data) {
+  // A failed read and a not-yet-arrived one are different states, and folding
+  // them together made the error screen lie twice over. `isLoading` is
+  // first-load-only in react-query, so a query that is retrying after a failure
+  // leaves it false while `error` is still null — and this branch then rendered
+  // the generic "Sunucuya ulaşılamıyor" with no detail, for a request that had
+  // not actually failed yet. Worse, once it HAD failed, ErrorState could not
+  // classify the 401 it was never handed.
+  if (isError) {
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
         <ErrorState detail={error} onRetry={refetch} />
+      </SafeAreaView>
+    );
+  }
+
+  if (!data) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top']}>
+        <View style={styles.center}><Text style={styles.muted}>Loading…</Text></View>
       </SafeAreaView>
     );
   }

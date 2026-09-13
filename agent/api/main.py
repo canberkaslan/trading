@@ -24,7 +24,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 
 from .deps import get_alpaca, get_repo
 from .routes import (
@@ -84,7 +84,23 @@ _STATIC = Path(__file__).resolve().parent / "static"
 
 
 @app.get("/dashboard", include_in_schema=False)
-async def dashboard() -> FileResponse:
+async def dashboard() -> RedirectResponse:
+    """Superseded by /app — the Modernist screens the phone runs.
+
+    This URL is in the operator's muscle memory and their browser history, so
+    it kept reopening the old ops panel and reading as "the redesign did not
+    ship". The two are not two views of the same thing: /app is the product,
+    this was the stopgap. A redirect is therefore the honest answer rather than
+    a banner pointing elsewhere.
+
+    307 rather than 301: a permanent redirect is cached by the browser
+    indefinitely, and this one should stay reversible while /app is new.
+    """
+    return RedirectResponse(url="/app", status_code=307)
+
+
+@app.get("/dashboard-legacy", include_in_schema=False)
+async def dashboard_legacy() -> FileResponse:
     """Web dashboard. The HTML itself is public (no data in it); every data
     call it makes goes through the bearer-token API. Token is entered once in
     the page and kept in localStorage — never embedded here."""

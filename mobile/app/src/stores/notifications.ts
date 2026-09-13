@@ -10,7 +10,7 @@
  */
 
 import { create } from 'zustand';
-import * as SecureStore from 'expo-secure-store';
+import * as SecureStore from '@/utils/storage';
 
 import {
   markAllRead as markAllReadItems,

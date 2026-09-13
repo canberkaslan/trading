@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, ScrollView, Pressable, LayoutAnimation, Platfor
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { create } from 'zustand';
-import * as SecureStore from 'expo-secure-store';
+import * as SecureStore from '@/utils/storage';
 
 import { LESSONS, type LessonText } from '@/content/lessons';
 import { useTheme } from '@/theme/useTheme';

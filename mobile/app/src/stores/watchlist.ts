@@ -14,7 +14,7 @@
  */
 
 import { create } from 'zustand';
-import * as SecureStore from 'expo-secure-store';
+import * as SecureStore from '@/utils/storage';
 
 const STORAGE_KEY = 'watchlist_v1';
 

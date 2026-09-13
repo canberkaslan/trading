@@ -17,7 +17,7 @@
  */
 
 import { create } from 'zustand';
-import * as SecureStore from 'expo-secure-store';
+import * as SecureStore from '@/utils/storage';
 
 /** Deliberately not `cognito_id_token`: this is a static bearer, not a JWT. */
 const STORAGE_KEY = 'api_bearer_v1';

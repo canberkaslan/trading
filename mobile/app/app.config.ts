@@ -43,6 +43,18 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     permissions: ['USE_BIOMETRIC', 'USE_FINGERPRINT', 'POST_NOTIFICATIONS'],
   },
 
+  // Web build. `output: 'single'` emits a plain SPA — one index.html plus a JS
+  // bundle — rather than static-rendering every route, which is what we want
+  // behind the tunnel: the screens are all client-side and token-gated, so
+  // there is nothing to pre-render. `baseUrl` makes every asset path resolve
+  // under /app so the bundle can be mounted next to the API on the same
+  // origin, with no extra hostname and no CORS.
+  web: {
+    bundler: 'metro',
+    output: 'single',
+    favicon: './assets/icon.png',
+  },
+
   plugins: [
     'expo-router',
     'expo-font',
@@ -63,6 +75,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
 
   experiments: {
     typedRoutes: true,
+    baseUrl: '/app',
   },
 
   extra: {

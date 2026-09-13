@@ -8,7 +8,6 @@ that benefit from reasoning, and Haiku for heuristic risk debators.
 from __future__ import annotations
 
 import os
-
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:

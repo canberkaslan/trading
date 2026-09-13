@@ -39,7 +39,8 @@ class TestParsing:
 
 class TestMentionChange:
     def test_computes_the_change(self) -> None:
-        assert _m(mentions=17, mentions_24h_ago=31).mention_change_pct == pytest.approx(-45.16, abs=0.1)
+        change = _m(mentions=17, mentions_24h_ago=31).mention_change_pct
+        assert change == pytest.approx(-45.16, abs=0.1)
 
     def test_no_prior_figure_is_none_not_zero_percent(self) -> None:
         # A new entrant showing 0% would read as the quietest name on the list

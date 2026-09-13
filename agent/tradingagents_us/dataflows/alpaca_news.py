@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
@@ -119,7 +119,7 @@ class AlpacaNewsClient:
             # The endpoint defaults to a wide window. Pinning the start keeps a
             # "recent news" block from quietly including last month's story.
             "start": (
-                datetime.now(timezone.utc) - timedelta(days=lookback_days)
+                datetime.now(UTC) - timedelta(days=lookback_days)
             ).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
         if symbols:

@@ -83,7 +83,10 @@ def should_council(
     if budget < price:
         return CouncilGate(
             False,
-            f"spendable ${budget:,.2f} < one share at ${price:,.2f} — no BUY is arithmetically possible",
+            f"spendable ${budget:,.2f} < one share at ${price:,.2f} — "
+            "no BUY is arithmetically possible",
         )
 
-    return CouncilGate(True, f"spendable ${budget:,.2f} covers at least one share at ${price:,.2f}")
+    return CouncilGate(
+        True, f"spendable ${budget:,.2f} covers at least one share at ${price:,.2f}"
+    )

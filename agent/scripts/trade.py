@@ -42,6 +42,7 @@ from tradingagents_us.graph.pipeline import (  # noqa: E402
     _parse_trader_output,
     propagate,
 )
+from tradingagents_us.log_redaction import install as install_log_redaction  # noqa: E402
 from tradingagents_us.risk.cash_budget import (  # noqa: E402
     PendingBuy,
     reserved_cash_for_open_buys,
@@ -59,7 +60,6 @@ from tradingagents_us.risk.market_inputs import (  # noqa: E402
     rolling_price_stats,
 )
 from tradingagents_us.risk.portfolio_limits import PortfolioContext, PortfolioLimits  # noqa: E402
-from tradingagents_us.log_redaction import install as install_log_redaction  # noqa: E402
 from tradingagents_us.risk.precouncil import should_council  # noqa: E402
 from tradingagents_us.risk.sizer import MarketContext, size_from_decision  # noqa: E402
 from tradingagents_us.schemas import AgentDecision, AgentReasoning  # noqa: E402
@@ -153,7 +153,8 @@ def _print_decision(d: AgentDecision) -> None:
 
 def main() -> int:
     logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s | %(message)s"
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s | %(message)s",
     )
     # httpx logs every request URL at INFO, and Polygon carries its key in the
     # query string — so a correctly-configured run writes a live credential
@@ -476,9 +477,7 @@ def main() -> int:
     # Exit non-zero ONLY on an operational failure (broker/API error). A policy
     # refusal — non-actionable Hold, risk guard, PDT, market closed — is the
     # intended "no trade today" outcome and must not mark the daily run failed.
-    if result.error:
-        return 1
-    return 0
+    return 1 if result.error else 0
 
 
 if __name__ == "__main__":

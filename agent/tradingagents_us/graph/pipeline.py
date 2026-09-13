@@ -33,9 +33,9 @@ _VENDOR = Path(__file__).resolve().parent.parent.parent / "vendor" / "tradingage
 if str(_VENDOR) not in sys.path:
     sys.path.insert(0, str(_VENDOR))
 
-from ..schemas import AgentDecision, AgentReasoning  # noqa: E402
+from tradingagents_us.llm.usage import UsageCollector  # noqa: E402
 
-from tradingagents_us.llm.usage import UsageCollector
+from ..schemas import AgentDecision, AgentReasoning  # noqa: E402
 
 log = logging.getLogger(__name__)
 

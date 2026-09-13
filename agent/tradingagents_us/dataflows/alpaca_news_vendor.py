@@ -54,7 +54,10 @@ def get_alpaca_news(ticker: str, start_date: str, end_date: str) -> str:
     symbol = ticker.upper()
     with AlpacaNewsClient() as nc:
         articles = nc.news(symbols=symbol, lookback_days=_days_between(start_date, end_date))
-    return f"## {symbol} News (Alpaca/Benzinga), {start_date} to {end_date}:\n{_fmt(articles, focus=symbol)}"
+    return (
+        f"## {symbol} News (Alpaca/Benzinga), {start_date} to {end_date}:\n"
+        f"{_fmt(articles, focus=symbol)}"
+    )
 
 
 def get_alpaca_global_news(
@@ -71,7 +74,10 @@ def get_alpaca_global_news(
             limit=limit or 15,
             lookback_days=min(look_back_days or 5, _MAX_LOOKBACK_DAYS),
         )
-    return f"## Global Market News (Alpaca/Benzinga), as of {curr_date}:\n{_fmt(articles, focus=None)}"
+    return (
+        f"## Global Market News (Alpaca/Benzinga), as of {curr_date}:\n"
+        f"{_fmt(articles, focus=None)}"
+    )
 
 
 def register() -> bool:

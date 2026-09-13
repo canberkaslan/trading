@@ -63,7 +63,7 @@ class TestUncertaintyNeverSkips:
 
 
 class TestOnlyImpossibilityIsSkipped:
-    def test_a_small_but_possible_position_is_NOT_skipped(self) -> None:
+    def test_a_small_but_possible_position_is_not_skipped(self) -> None:
         # Exactly one share is affordable. Whether a one-share position is worth
         # holding is the sizer's judgement, made with the council's output —
         # skipping here would be a strategy change disguised as a saving.

@@ -27,6 +27,7 @@ missing price, never like a cheap model.
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -94,10 +95,10 @@ class UsageCollector(BaseCallbackHandler):
         self.usage = Usage()
 
     def on_llm_end(self, response: Any, **_: Any) -> None:
-        try:
+        # Telemetry must never break the run: a malformed payload costs a
+        # measurement, not a trading decision.
+        with contextlib.suppress(Exception):
             self._collect(response)
-        except Exception:  # noqa: BLE001 — telemetry must not break the run
-            pass
 
     def _collect(self, response: Any) -> None:
         for generation_list in getattr(response, "generations", []) or []:

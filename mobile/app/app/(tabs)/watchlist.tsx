@@ -16,6 +16,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import Svg, { Path } from 'react-native-svg';
 
 import { useDecisions, usePendingOrders, usePortfolio, usePrices } from '@/api/hooks';
+import { ErrorState } from '@/components/ErrorState';
 import type { AgentDecision, Bar, OrderListItem, Position } from '@/api/types';
 import { Tag } from '@/components/Tag';
 import { useTheme } from '@/theme/useTheme';
@@ -167,6 +168,18 @@ export default function WatchlistScreen() {
     toast(`${ticker} listeden çıkarıldı`);
   };
 
+  /**
+   * The ticker list is local, so this screen renders complete and healthy even
+   * when every server read has failed — and each server-derived field then
+   * degrades into a POSITIVE claim: "karar yok" for a decision we were not
+   * allowed to fetch, no position tag for a name the operator is actually
+   * holding. A watchlist that quietly drops the position on a held name is the
+   * worst version of this, so the failure is stated once at the top and the
+   * rows stop asserting absence.
+   */
+  const serverDown = portfolio.isError || decisions.isError || pending.isError;
+  const serverError = portfolio.error ?? decisions.error ?? pending.error;
+
   const refreshing = portfolio.isRefetching || pending.isRefetching || decisions.isRefetching;
   const onRefresh = () => {
     void portfolio.refetch();
@@ -236,11 +249,23 @@ export default function WatchlistScreen() {
           <Text style={styles.empty}>Liste boş. Bir sembol ekle — günlük koşu onu da analiz eder.</Text>
         ) : (
           <View style={styles.list}>
+            {serverDown ? (
+              <ErrorState
+                title="Sunucu verileri okunamadı"
+                detail={serverError}
+                onRetry={() => {
+                  void portfolio.refetch();
+                  void decisions.refetch();
+                  void pending.refetch();
+                }}
+              />
+            ) : null}
             {tickers.map((ticker) => (
               <WatchRow
                 key={ticker}
                 ticker={ticker}
                 decision={latestDecision.get(ticker) ?? null}
+                serverDown={serverDown}
                 position={positions.get(ticker) ?? null}
                 pending={pendingByTicker.has(ticker)}
                 equity={equity}
@@ -264,6 +289,7 @@ export default function WatchlistScreen() {
 function WatchRow({
   ticker,
   decision,
+  serverDown,
   position,
   pending,
   equity,
@@ -273,6 +299,7 @@ function WatchRow({
 }: {
   ticker: string;
   decision: AgentDecision | null;
+  serverDown: boolean;
   position: Position | null;
   pending: boolean;
   equity: number;
@@ -310,7 +337,7 @@ function WatchRow({
       <View style={styles.rowBottom}>
         <View style={styles.meta}>
           <Text style={styles.date} numberOfLines={1}>
-            {decision ? formatOrderDate(decision.timestamp_utc) : 'karar yok'}
+            {decision ? formatOrderDate(decision.timestamp_utc) : serverDown ? '—' : 'karar yok'}
           </Text>
           {/* The prototype's precedence is on the POSITION, not on the weight:
               a held name says "Pozisyon" even in the moment before the snapshot

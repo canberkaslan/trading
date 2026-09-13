@@ -1,5 +1,6 @@
 import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { ErrorState } from '@/components/ErrorState';
 import { useTranslation } from 'react-i18next';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState, useMemo, useRef } from 'react';
@@ -121,7 +122,13 @@ export default function ApproveOrderScreen() {
   const { t } = useTranslation();
   const { orderId } = useLocalSearchParams<{ orderId: string }>();
   const router = useRouter();
-  const { data: orders, isLoading: ordersLoading } = usePendingOrders();
+  const {
+    data: orders,
+    isLoading: ordersLoading,
+    isError: ordersFailed,
+    error: ordersError,
+    refetch: refetchOrders,
+  } = usePendingOrders();
   const { data: portfolio } = usePortfolio();
   const approve = useApproveOrder();
   const reject = useRejectOrder();
@@ -172,6 +179,33 @@ export default function ApproveOrderScreen() {
           <ActivityIndicator color={theme.textPrimary} />
           <Text style={styles.muted}>Emir yükleniyor…</Text>
         </View>
+      </SafeAreaView>
+    );
+  }
+
+  /**
+   * A failed read is not an absent order.
+   *
+   * The loading race above is guarded for exactly this reason, but the error
+   * case fell straight through to it: a 401 leaves `orders` undefined with
+   * `ordersLoading` false, so the screen told the operator "Bu emir artık
+   * bekleyen listesinde değil" — that someone had already approved, rejected
+   * or filled it. This screen is opened by a push deep-link and it approves
+   * real orders, so a false claim that an order is gone is the worst sentence
+   * the app can produce: the operator stops looking for a trade that is still
+   * sitting there waiting for them.
+   *
+   * ErrorState knows the difference between a refused credential and a dead
+   * socket, so it says which one happened and offers the matching action.
+   */
+  if (!order && ordersFailed) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top']}>
+        <ErrorState
+          title="Bekleyen emirler okunamadı"
+          detail={ordersError}
+          onRetry={() => void refetchOrders()}
+        />
       </SafeAreaView>
     );
   }

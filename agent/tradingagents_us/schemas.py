@@ -63,6 +63,16 @@ class AgentDecision(BaseModel):
     advice_status: str = ADVICE_STATUS
     disclaimer: str = DISCLAIMER
 
+    # What the council cost to produce. None means "not measured" — decisions
+    # written before the accounting existed genuinely have no figure, and 0.0
+    # would claim they were free. Anything that averages this column depends on
+    # the difference.
+    tokens_in: int | None = None
+    tokens_out: int | None = None
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    cost_usd: float | None = None
+
 
 class TradeOrder(BaseModel):
     """Risk-approved order ready for executor."""

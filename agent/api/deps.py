@@ -2,6 +2,10 @@
 
 Auth modes (mutually exclusive, selected by env):
 
+- **Firebase ID token** — set FIREBASE_PROJECT_ID. Validates RS256 against
+  Google's JWKS, checks `aud` == project id, `iss` ==
+  https://securetoken.google.com/<project>, a non-empty `sub`, and that
+  `auth_time` is not in the future.
 - **Cognito JWT (production, Phase 5h)** — set COGNITO_USER_POOL_ID +
   COGNITO_APP_CLIENT_ID + AWS_REGION. Validates RS256 signature against
   the JWKS endpoint, checks `aud` / `iss` / `token_use=access` / `exp`.
@@ -12,6 +16,7 @@ Auth modes (mutually exclusive, selected by env):
 
 from __future__ import annotations
 
+import logging
 import os
 import secrets
 import time
@@ -25,6 +30,8 @@ from sqlalchemy import create_engine
 from tradingagents_us.dataflows.alpaca_broker import AlpacaClient
 from tradingagents_us.storage import TradeLogRepository
 
+log = logging.getLogger(__name__)
+
 
 @lru_cache(maxsize=1)
 def get_repo() -> TradeLogRepository:
@@ -37,6 +44,95 @@ def get_alpaca() -> AlpacaClient:
     """Per-request Alpaca client. Caller is responsible for closing it
     (FastAPI uses it within one request and discards)."""
     return AlpacaClient()
+
+
+# -------------------------- Firebase ID token validation -------------------------
+#
+# Firebase is NOT Cognito with different URLs, and the differences are exactly
+# the ones that matter for verification:
+#
+#   aud        the Firebase PROJECT ID — not an app/client id
+#   iss        https://securetoken.google.com/<project id>
+#   sub        the uid, and Google's own spec requires it be non-empty
+#   token_use  does not exist; a Cognito-shaped check for it would reject
+#              every valid Firebase token
+#
+# The signing keys are served as JWKS at a fixed Google URL and rotate, so they
+# are fetched and cached with the same TTL as the Cognito path rather than
+# pinned.
+
+_FIREBASE_JWKS_URL = (
+    "https://www.googleapis.com/service_accounts/v1/jwks/"
+    "securetoken@system.gserviceaccount.com"
+)
+
+
+def _firebase_issuer(project_id: str) -> str:
+    return f"https://securetoken.google.com/{project_id}"
+
+
+def _validate_firebase_jwt(token: str) -> str:
+    """Return the validated Firebase uid (`sub`). Raises HTTPException otherwise.
+
+    Fails closed when python-jose is missing. The Cognito path above allows an
+    unverified parse behind ALLOW_UNVERIFIED_JWT for local work; this one does
+    not offer that door at all. An unverified Firebase token is a uid the
+    caller chose for themselves, and this uid is what will separate one family
+    member's actions from another's.
+    """
+    project_id = os.environ.get("FIREBASE_PROJECT_ID", "")
+    if not project_id:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR, "firebase not configured"
+        )
+
+    try:
+        from jose import jwt  # type: ignore[import-untyped]
+    except ImportError as import_err:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "jwt verification unavailable (python-jose not installed)",
+        ) from import_err
+
+    jwks = _load_jwks(_FIREBASE_JWKS_URL)
+
+    try:
+        kid = jwt.get_unverified_header(token).get("kid")
+        key = next((k for k in jwks.get("keys", []) if k.get("kid") == kid), None)
+        if key is None:
+            # Keys rotate; a kid we have never seen is more often a stale cache
+            # than an attack, so refresh once before refusing.
+            _JWKS_CACHE.pop(_FIREBASE_JWKS_URL, None)
+            jwks = _load_jwks(_FIREBASE_JWKS_URL)
+            key = next((k for k in jwks.get("keys", []) if k.get("kid") == kid), None)
+        if key is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "kid not in JWKS")
+
+        claims = jwt.decode(
+            token,
+            key,
+            algorithms=["RS256"],
+            audience=project_id,
+            issuer=_firebase_issuer(project_id),
+        )
+
+        # Google's spec, and not redundant with signature verification: a token
+        # can be correctly signed and still carry an empty subject.
+        sub = str(claims.get("sub") or "")
+        if not sub:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "empty sub claim")
+
+        # auth_time in the future means the token describes a sign-in that has
+        # not happened. Skew is allowed; travel is not.
+        auth_time = claims.get("auth_time")
+        if isinstance(auth_time, int | float) and auth_time > time.time() + 300:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "auth_time in the future")
+
+        return sub
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"firebase token invalid: {e}") from e
 
 
 # --------------------------- Cognito JWT validation ---------------------------
@@ -134,8 +230,47 @@ def _validate_cognito_jwt(token: str) -> str:
 
 
 async def require_token(authorization: str | None = Header(default=None)) -> str:
-    """Authentication dispatcher: Cognito if configured, else dev bearer,
-    else fully open ('anonymous')."""
+    """Authentication dispatcher: Firebase, else Cognito, else dev bearer,
+    else fully open ('anonymous').
+
+    Order is by specificity, not preference: each mode is selected by its own
+    env var, and a box configures exactly one. Firebase is checked first only
+    because it is the mode this deployment is moving to — a box with both set
+    is a misconfiguration, and picking a deterministic winner beats picking
+    one at random.
+    """
+    # Firebase path
+    if os.environ.get("FIREBASE_PROJECT_ID"):
+        if not authorization or not authorization.lower().startswith("bearer "):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing bearer token")
+        presented = authorization.split(" ", 1)[1].strip()
+
+        # Migration window. Setting FIREBASE_PROJECT_ID used to cut the shared
+        # DEV_API_TOKEN dead in the same instant — every already-signed-in
+        # browser and phone would have started returning 401 the moment the
+        # box restarted, with no warning and nothing on screen explaining it.
+        #
+        # A Firebase ID token is a JWT and therefore has three dot-separated
+        # parts; the dev bearer is an opaque string. The token's own shape
+        # decides which path it takes, so no new flag is needed and neither
+        # kind is ever checked against the wrong validator.
+        #
+        # This deliberately keeps the shared secret alive, so the cutover is a
+        # separate, explicit act: delete DEV_API_TOKEN from secrets.env. Until
+        # then every use logs, so "is anyone still on the old token?" is a
+        # question the logs answer.
+        if presented.count(".") != 2:
+            expected = os.environ.get("DEV_API_TOKEN", "")
+            if expected and secrets.compare_digest(presented, expected):
+                log.warning(
+                    "accepted the shared DEV_API_TOKEN while Firebase is configured — "
+                    "remove DEV_API_TOKEN from secrets.env to complete the cutover"
+                )
+                return "dev-user"
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid token")
+
+        return _validate_firebase_jwt(presented)
+
     # Cognito path
     if os.environ.get("COGNITO_USER_POOL_ID"):
         if not authorization or not authorization.lower().startswith("bearer "):

@@ -43,6 +43,18 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     permissions: ['USE_BIOMETRIC', 'USE_FINGERPRINT', 'POST_NOTIFICATIONS'],
   },
 
+  // Web build. `output: 'single'` emits a plain SPA — one index.html plus a JS
+  // bundle — rather than static-rendering every route, which is what we want
+  // behind the tunnel: the screens are all client-side and token-gated, so
+  // there is nothing to pre-render. `baseUrl` makes every asset path resolve
+  // under /app so the bundle can be mounted next to the API on the same
+  // origin, with no extra hostname and no CORS.
+  web: {
+    bundler: 'metro',
+    output: 'single',
+    favicon: './assets/icon.png',
+  },
+
   plugins: [
     'expo-router',
     'expo-font',
@@ -63,6 +75,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
 
   experiments: {
     typedRoutes: true,
+    baseUrl: '/app',
   },
 
   extra: {
@@ -70,6 +83,29 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     // any network, TLS). A bundle built without EXPO_PUBLIC_API_URL still works.
     apiUrl: process.env.EXPO_PUBLIC_API_URL ?? 'https://trader.fusapp.com',
     wsUrl: process.env.EXPO_PUBLIC_WS_URL ?? 'wss://trader.fusapp.com/ws',
+    // Firebase's web config identifies a project; it does not authorise
+    // anything. Access is decided by the ID token the server verifies, so
+    // shipping this in the bundle is correct — unlike `devApiToken`, which WAS
+    // a credential and is why nothing secret rides in `extra` any more.
+    // Absent env vars leave `firebase` undefined, which the client treats as
+    // "not configured" and falls back to the shared bearer.
+    // All four, not two. The client requires every field and returns "not
+    // configured" on a partial config — so gating on a subset here meant
+    // forgetting APP_ID produced an app that LOOKED configured and silently
+    // fell back to the old local sign-in. A half-set config must look unset.
+    firebase:
+      process.env.EXPO_PUBLIC_FIREBASE_API_KEY &&
+      process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID &&
+      process.env.EXPO_PUBLIC_FIREBASE_APP_ID
+        ? {
+            apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
+            authDomain:
+              process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN ??
+              `${process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID}.firebaseapp.com`,
+            projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
+            appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
+          }
+        : undefined,
     cognitoPoolId: process.env.EXPO_PUBLIC_COGNITO_POOL_ID,
     cognitoClientId: process.env.EXPO_PUBLIC_COGNITO_CLIENT_ID,
     sentryDsn: process.env.EXPO_PUBLIC_SENTRY_DSN,

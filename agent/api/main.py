@@ -22,9 +22,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
+
+from tradingagents_us.log_redaction import install as install_log_redaction
 
 from .deps import get_alpaca, get_repo
 from .routes import (
@@ -80,11 +82,31 @@ app.include_router(diagnostics.router, prefix="/v1/diagnostics", tags=["diagnost
 app.include_router(risk.router, prefix="/v1/risk", tags=["risk"])
 
 
+# Same reason as the scripts: an outbound call that carries its key in the
+# query string must not land in the service log.
+install_log_redaction()
+
 _STATIC = Path(__file__).resolve().parent / "static"
 
 
 @app.get("/dashboard", include_in_schema=False)
-async def dashboard() -> FileResponse:
+async def dashboard() -> RedirectResponse:
+    """Superseded by /app — the Modernist screens the phone runs.
+
+    This URL is in the operator's muscle memory and their browser history, so
+    it kept reopening the old ops panel and reading as "the redesign did not
+    ship". The two are not two views of the same thing: /app is the product,
+    this was the stopgap. A redirect is therefore the honest answer rather than
+    a banner pointing elsewhere.
+
+    307 rather than 301: a permanent redirect is cached by the browser
+    indefinitely, and this one should stay reversible while /app is new.
+    """
+    return RedirectResponse(url="/app", status_code=307)
+
+
+@app.get("/dashboard-legacy", include_in_schema=False)
+async def dashboard_legacy() -> FileResponse:
     """Web dashboard. The HTML itself is public (no data in it); every data
     call it makes goes through the bearer-token API. Token is entered once in
     the page and kept in localStorage — never embedded here."""
@@ -93,6 +115,80 @@ async def dashboard() -> FileResponse:
         media_type="text/html",
         # Always revalidate: browsers heuristically cached the old page and
         # users kept seeing stale designs after deploys.
+        headers={"Cache-Control": "no-store, must-revalidate"},
+    )
+
+
+# The Expo web build (the Modernist RN screens compiled with react-native-web).
+# Deployed as a directory of static files rather than vendored into the repo —
+# it is ~4 MB of hashed build output that changes on every UI edit.
+#
+# `baseUrl: '/app'` is set in the app's expo config, so every asset the bundle
+# requests is already prefixed with /app; serving it anywhere else would 404 on
+# the JS entry point.
+_WEBAPP = Path(os.environ.get("WEBAPP_DIR", "/opt/ai-trader/webapp"))
+
+
+def _webapp_file(rel: str) -> Path | None:
+    """Resolve `rel` under the web build, or None if it escapes or is missing.
+
+    The resolve()/is_relative_to() pair is the guard: without it a request for
+    `/app/../../etc/passwd` would be read straight off disk. Symlinks resolve
+    first, so a link planted inside the build cannot point out of it either.
+    """
+    if not _WEBAPP.is_dir():
+        return None
+    try:
+        target = (_WEBAPP / rel).resolve()
+    except (OSError, RuntimeError):
+        return None
+    root = _WEBAPP.resolve()
+    if not target.is_relative_to(root) or not target.is_file():
+        return None
+    return target
+
+
+@app.get("/app", include_in_schema=False)
+@app.get("/app/{path:path}", include_in_schema=False)
+async def webapp(path: str = "") -> FileResponse:
+    """Serve the Expo web build, falling back to index.html for client routes.
+
+    expo-router does its own routing in the browser, so /app/portfolio is not a
+    file — it is a route the bundle resolves after it boots. Anything that is
+    not a real file therefore has to return index.html rather than a 404, or a
+    reload on any screen but the first would break.
+
+    The HTML shell is public for the same reason /dashboard is: it contains no
+    data. Every figure it shows arrives over the bearer-gated /v1 API, and the
+    bearer is typed into the app and kept per-device, never built into the
+    bundle.
+    """
+    if not _WEBAPP.is_dir():
+        raise HTTPException(
+            status_code=503,
+            detail="web build not deployed — run scripts/deploy_webapp.sh",
+        )
+
+    target = _webapp_file(path) if path else None
+    if target is not None:
+        # Bundle filenames carry a content hash, so they are safe to cache hard.
+        # index.html must not be: it is what names the current hash.
+        immutable = "/_expo/static/" in f"/{path}"
+        return FileResponse(
+            target,
+            headers={
+                "Cache-Control": "public, max-age=31536000, immutable"
+                if immutable
+                else "no-store, must-revalidate"
+            },
+        )
+
+    index = _WEBAPP / "index.html"
+    if not index.is_file():
+        raise HTTPException(status_code=503, detail="web build incomplete: no index.html")
+    return FileResponse(
+        index,
+        media_type="text/html",
         headers={"Cache-Control": "no-store, must-revalidate"},
     )
 

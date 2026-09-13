@@ -162,7 +162,7 @@ export default function AgentsScreen() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
-  const { data, isLoading, isError, refetch } = useDecisions({ limit: DECISION_LIMIT });
+  const { data, isLoading, isError, error, refetch } = useDecisions({ limit: DECISION_LIMIT });
   const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -211,7 +211,7 @@ export default function AgentsScreen() {
         {isLoading ? (
           <Text style={styles.muted}>Yükleniyor…</Text>
         ) : isError ? (
-          <ErrorState onRetry={refetch} />
+          <ErrorState detail={error} onRetry={refetch} />
         ) : decisions.length === 0 ? (
           <EmptyState
             title="Henüz karar yok"

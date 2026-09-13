@@ -41,6 +41,7 @@ import sys
 from datetime import UTC, date, datetime, timedelta
 
 from tradingagents_us.dataflows.alpaca_broker import AlpacaClient
+from tradingagents_us.log_redaction import install as install_log_redaction
 from tradingagents_us.risk.kill_switch import FileKillSwitchReader, default_kill_switch_path
 from tradingagents_us.risk.position_manager import (
     DEFAULT_CONFIG,
@@ -300,6 +301,7 @@ def main() -> int:
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    install_log_redaction()
 
     ks = FileKillSwitchReader(os.environ.get("KILL_SWITCH_FILE", default_kill_switch_path())).read()
     if ks == "FLATTEN_ALL":

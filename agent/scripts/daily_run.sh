@@ -32,6 +32,31 @@ PYTHON="${PYTHON:-./.venv/bin/python}"
 # Default matches the LIVE production universe — a box missing the env var
 # must not silently trade a smaller book mid-eval.
 UNIVERSE="${UNIVERSE:-SPY AAPL MSFT NVDA GOOGL AMZN META JPM V XOM UNH}"
+
+# Hard ceiling on how many tickers one run may council, whatever the source.
+#
+# Nothing else in this system bounds the cost of a run: the only limit is the
+# length of a shell variable. At roughly a dollar of model spend per ticker, a
+# mistyped UNIVERSE — or a screener that one day feeds this loop its ranking —
+# is an unbounded bill that nobody finds out about until the invoice, because
+# there is no per-decision token accounting to catch it sooner.
+#
+# The cap is deliberately dumb and unconditional. It does not know where the
+# list came from and does not try to choose well among the names; a run that
+# silently trades a different book than intended is the failure this prevents,
+# so it truncates in the order given and says so loudly in the log.
+#
+# Raise it consciously via the env var. Note that the book can only hold about
+# ten positions anyway (portfolio_limits.max_position_pct = 0.10 against a
+# cash-only account), so a much larger number buys refusals at full price
+# rather than more positions.
+MAX_TICKERS="${MAX_TICKERS:-20}"
+_UNIVERSE_COUNT=$(echo $UNIVERSE | wc -w | tr -d " ")
+if [ "$_UNIVERSE_COUNT" -gt "$MAX_TICKERS" ]; then
+  echo "WARNING: universe has $_UNIVERSE_COUNT tickers, MAX_TICKERS=$MAX_TICKERS — truncating, $(( _UNIVERSE_COUNT - MAX_TICKERS )) dropped"
+  UNIVERSE=$(echo $UNIVERSE | tr " " "\n" | head -n "$MAX_TICKERS" | tr "\n" " ")
+  echo "WARNING: run continues with: $UNIVERSE"
+fi
 SUBMIT="${SUBMIT:-1}"              # 1 = real paper submit, 0 = dry-run
 LOG_DIR="${LOG_DIR:-./logs}"
 # Hard wall-clock cap per ticker — one hung LangGraph/httpx call must not

@@ -33,6 +33,10 @@ _VENDOR = Path(__file__).resolve().parent.parent.parent / "vendor" / "tradingage
 if str(_VENDOR) not in sys.path:
     sys.path.insert(0, str(_VENDOR))
 
+from tradingagents_us.llm.agent_routing import install as install_agent_routing  # noqa: E402
+from tradingagents_us.llm.prompt_cache import install as install_prompt_cache  # noqa: E402
+from tradingagents_us.llm.usage import UsageCollector  # noqa: E402
+
 from ..schemas import AgentDecision, AgentReasoning  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -70,13 +74,51 @@ def propagate(ticker: str, trade_date: str) -> AgentDecision:
     )
 
     log.info("initializing TradingAgentsGraph for %s @ %s", ticker, trade_date)
+    # `callbacks` is upstream's own seam (trading_graph.py forwards it into the
+    # LLM constructor), so the accounting rides along without a patch. Until
+    # this existed the only cost figure in the system was a hand-written string
+    # in a log line, and every budget argument was derived from it.
+    # Must run BEFORE the graph is built: it swaps the class the vendor's
+    # get_llm() instantiates, and the graph constructs its LLMs in __init__.
+    if not install_prompt_cache():
+        log.warning("prompt cache not installed — upstream client moved; running uncached")
+
+    # Also before construction: this rebinds the agent factories setup.py calls.
+    # Off unless TRADINGAGENTS_AGENT_ROUTING is set, because it changes what the
+    # agents say and not only what they cost.
+    usage = UsageCollector()
+
+    # After the collector exists and before the graph is built: the routed
+    # clients must carry the SAME collector, or their calls vanish from the
+    # cost record and the saving reads larger than it is.
+    routed = install_agent_routing(callbacks=[usage])
+    if routed:
+        log.info("cheap-tier routing active for: %s", ", ".join(sorted(routed)))
     ta = TradingAgentsGraph(
         selected_analysts=["market", "social", "news", "fundamentals"],
         debug=False,
+        callbacks=[usage],
     )
 
     log.info("propagating decision pipeline (this will make ~12 LLM calls)…")
     final_state, processed_signal = ta.propagate(ticker, trade_date)
+
+    u = usage.usage
+    hit = u.cache_hit_rate
+    log.info(
+        "council usage for %s: %d calls, in=%d out=%d cache_read=%d cache_write=%d "
+        "cost=$%.4f hit_rate=%s",
+        ticker, u.calls, u.input_tokens, u.output_tokens,
+        u.cache_read_tokens, u.cache_write_tokens, u.cost_usd,
+        "n/a" if hit is None else f"{hit:.1%}",
+    )
+    if u.unpriced_models:
+        # Cost is understated by whatever these models consumed. Say so rather
+        # than letting a low figure read as a cheap run.
+        log.warning(
+            "cost EXCLUDES unpriced models: %s — figure is a floor, not a total",
+            ", ".join(sorted(u.unpriced_models)),
+        )
 
     # Upstream returns final_state dict and a processed decision string.
     # Map to our AgentDecision schema. Many fields are placeholders pending
@@ -170,6 +212,13 @@ def propagate(ticker: str, trade_date: str) -> AgentDecision:
         final_decision_text=str(final or "")[:8000],
         timestamp_utc=datetime.now(UTC),
         decision_id=str(uuid.uuid4()),
+        tokens_in=u.input_tokens,
+        tokens_out=u.output_tokens,
+        cache_read_tokens=u.cache_read_tokens,
+        cache_write_tokens=u.cache_write_tokens,
+        # A floor rather than a total when a model was not priced; the warning
+        # above names which, so a low figure cannot pass as a cheap run.
+        cost_usd=u.cost_usd,
     )
 
 

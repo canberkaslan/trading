@@ -70,6 +70,7 @@ import { useInboxStore } from '@/stores/notifications';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { useAuthStore } from '@/stores/auth';
+import { signOut as firebaseSignOut } from '@/auth/firebase';
 import { useApiTokenStore } from '@/stores/apiToken';
 import { toast } from '@/stores/toast';
 import { useTheme, useThemeName, useSetTheme } from '@/theme/useTheme';
@@ -333,6 +334,7 @@ export default function SettingsScreen() {
   const apiToken = useApiTokenStore((s) => s.token);
   const setApiToken = useApiTokenStore((s) => s.set);
   const hydrateToken = useApiTokenStore((s) => s.hydrate);
+  const clearToken = useApiTokenStore((s) => s.clear);
   const [tokenDraft, setTokenDraft] = useState('');
   const hasToken = !!apiToken;
 
@@ -430,7 +432,19 @@ export default function SettingsScreen() {
 
   const handleSignOut = () => {
     setSignOutOpen(false);
+    // Sign-out cleared only the identity fields and left the bearer in the
+    // keystore — the one credential that approves orders, rejects them and
+    // throws the kill switch. Handing the device to someone else after
+    // "Çıkış yap" therefore handed over the ability to flatten the book. The
+    // token is the session here, so signing out has to take it with it.
+    void clearToken();
+    // Firebase holds its own persisted session; clearing only the local store
+    // would leave the app signed out while the credential that proves who you
+    // are is still on the device.
+    void firebaseSignOut();
     signOut();
+    // Queries cached under the old token are not this user's to keep.
+    qc.clear();
     router.replace('/(auth)/login' as never);
   };
 
@@ -493,7 +507,15 @@ export default function SettingsScreen() {
         {/* ── Hesap & mod ───────────────────────────────────────── */}
         <Section title="Hesap & mod" first>
           <View style={styles.modeRow}>
-            <Tag label={isLive ? 'LIVE — GERÇEK PARA' : 'PAPER'} variant="outline" />
+            {/* Tri-state, matching StatusBanner: PAPER is a claim about where
+                real money goes, and `mode` is null whenever readiness AND health
+                both failed — including a plain 401. Collapsing null to PAPER
+                meant an unauthenticated app asserted the account was on paper.
+                After go-live that is the one lie this screen must never tell. */}
+            <Tag
+              label={mode == null ? 'MOD ?' : isLive ? 'LIVE — GERÇEK PARA' : 'PAPER'}
+              variant="outline"
+            />
             <Text style={styles.modeAccount}>{isLive ? 'Alpaca LIVE hesabı' : 'Alpaca paper hesabı'}</Text>
           </View>
           <View style={styles.kvList}>

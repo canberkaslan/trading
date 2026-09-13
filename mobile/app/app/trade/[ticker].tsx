@@ -29,6 +29,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMemo } from 'react';
 
 import { useDecisions } from '@/api/hooks';
+import { ErrorState } from '@/components/ErrorState';
 import { useTheme } from '@/theme/useTheme';
 import { ratingChip, modelBadge } from '@/theme/rating';
 import { Tag } from '@/components/Tag';
@@ -59,7 +60,7 @@ export default function DecisionDetailScreen() {
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const { ticker } = useLocalSearchParams<{ ticker: string }>();
   const router = useRouter();
-  const { data, isLoading } = useDecisions({ ticker, limit: 1 });
+  const { data, isLoading, isError, error, refetch } = useDecisions({ ticker, limit: 1 });
 
   const decision = data?.[0];
   const debate = debateEntries(decision?.debate_transcript);
@@ -95,7 +96,21 @@ export default function DecisionDetailScreen() {
           <Text style={styles.backText}>← Ajanlar</Text>
         </Pressable>
 
-        {isLoading || !decision || !chip ? (
+        {isError ? (
+          /* "Karar bulunamadı." is an assertion that the council never rated
+             this ticker. On a 401 that assertion is manufactured out of a
+             refused read — the app speaking for the agents about work it was
+             not allowed to see. A failed read and an empty result must not
+             share a branch here. */
+          <>
+            <Text style={styles.title}>{ticker}</Text>
+            <ErrorState
+              title="Karar okunamadı"
+              detail={error}
+              onRetry={() => void refetch()}
+            />
+          </>
+        ) : isLoading || !decision || !chip ? (
           <>
             <Text style={styles.title}>{ticker}</Text>
             <Text style={styles.muted}>{isLoading ? 'Yükleniyor…' : 'Karar bulunamadı.'}</Text>

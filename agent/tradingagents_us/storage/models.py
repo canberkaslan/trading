@@ -44,6 +44,16 @@ class AgentDecisionRow(Base):
     final_decision_text: Mapped[str | None] = mapped_column(String, nullable=True)
     timestamp_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
+    # Cost telemetry — nullable on purpose. These landed after decisions were
+    # already being written, and a decision made before the accounting existed
+    # genuinely has no figure. NULL says "not measured"; 0.0 would say "free",
+    # and the difference matters the moment anyone averages this column.
+    tokens_in: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tokens_out: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_read_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_write_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     orders: Mapped[list[TradeOrderRow]] = relationship(
         back_populates="decision", cascade="all, delete-orphan"
     )

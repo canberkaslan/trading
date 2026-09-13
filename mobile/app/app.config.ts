@@ -89,9 +89,14 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     // a credential and is why nothing secret rides in `extra` any more.
     // Absent env vars leave `firebase` undefined, which the client treats as
     // "not configured" and falls back to the shared bearer.
+    // All four, not two. The client requires every field and returns "not
+    // configured" on a partial config — so gating on a subset here meant
+    // forgetting APP_ID produced an app that LOOKED configured and silently
+    // fell back to the old local sign-in. A half-set config must look unset.
     firebase:
       process.env.EXPO_PUBLIC_FIREBASE_API_KEY &&
-      process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID
+      process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID &&
+      process.env.EXPO_PUBLIC_FIREBASE_APP_ID
         ? {
             apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
             authDomain:

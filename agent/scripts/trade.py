@@ -59,6 +59,7 @@ from tradingagents_us.risk.market_inputs import (  # noqa: E402
     rolling_price_stats,
 )
 from tradingagents_us.risk.portfolio_limits import PortfolioContext, PortfolioLimits  # noqa: E402
+from tradingagents_us.log_redaction import install as install_log_redaction  # noqa: E402
 from tradingagents_us.risk.precouncil import should_council  # noqa: E402
 from tradingagents_us.risk.sizer import MarketContext, size_from_decision  # noqa: E402
 from tradingagents_us.schemas import AgentDecision, AgentReasoning  # noqa: E402
@@ -154,6 +155,11 @@ def main() -> int:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s | %(message)s"
     )
+    # httpx logs every request URL at INFO, and Polygon carries its key in the
+    # query string — so a correctly-configured run writes a live credential
+    # into its own log, once per call. Installed immediately after
+    # basicConfig so it covers the handler basicConfig just created.
+    install_log_redaction()
     _load_env()
 
     parser = argparse.ArgumentParser(

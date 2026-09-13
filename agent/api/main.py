@@ -26,6 +26,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 
+from tradingagents_us.log_redaction import install as install_log_redaction
+
 from .deps import get_alpaca, get_repo
 from .routes import (
     agents,
@@ -79,6 +81,10 @@ app.include_router(trades.router, prefix="/v1/trades", tags=["trades"])
 app.include_router(diagnostics.router, prefix="/v1/diagnostics", tags=["diagnostics"])
 app.include_router(risk.router, prefix="/v1/risk", tags=["risk"])
 
+
+# Same reason as the scripts: an outbound call that carries its key in the
+# query string must not land in the service log.
+install_log_redaction()
 
 _STATIC = Path(__file__).resolve().parent / "static"
 

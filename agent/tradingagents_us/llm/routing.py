@@ -7,14 +7,26 @@ that benefit from reasoning, and Haiku for heuristic risk debators.
 
 from __future__ import annotations
 
+import os
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from langchain_anthropic import ChatAnthropic
 
-OPUS = "claude-opus-4-7"
-SONNET = "claude-sonnet-4-6"
-HAIKU = "claude-haiku-4-5"
+# The tiers follow the SAME environment variables the pipeline reads, so this
+# map can never silently disagree with the models the box is configured to run.
+# They were hard-coded to claude-opus-4-7 / claude-sonnet-4-6 — two releases
+# behind what the box actually runs (claude-opus-5 / claude-sonnet-5). Nothing
+# imports this module yet, so the staleness was invisible; the moment anyone
+# wired it, it would have silently DOWNGRADED every deliberately-chosen model.
+# A routing table is the wrong place to re-decide which model a tier is.
+OPUS = os.environ.get("TRADINGAGENTS_DEEP_THINK_LLM", "claude-opus-5")
+SONNET = os.environ.get("TRADINGAGENTS_QUICK_THINK_LLM", "claude-sonnet-5")
+
+# The cheap tier is the point of this module and has no upstream equivalent, so
+# it gets its own variable rather than borrowing one of the two above.
+HAIKU = os.environ.get("TRADINGAGENTS_CHEAP_LLM", "claude-haiku-4-5-20251001")
 
 AGENT_MODEL_MAP: dict[str, str] = {
     "market_analyst": HAIKU,

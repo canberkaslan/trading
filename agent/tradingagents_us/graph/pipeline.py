@@ -242,13 +242,25 @@ def _parse_pm_output(text: str) -> tuple[str, float | None, str | None]:
     rating_match = re.search(
         r"\*\*Rating\*\*\s*:?\s*(Buy|Overweight|Hold|Underweight|Sell)", text, re.I
     )
-    rating_raw = (rating_match.group(1).capitalize() if rating_match else "Hold")
+    if rating_match is None:
+        # An unparseable PM decision used to become "Hold" here, which is a
+        # TRADEABLE rating: the sizer maps it to no order, the log records a
+        # deliberate decision to stand pat, and a parse failure becomes
+        # indistinguishable from the model actually saying hold. Upstream fixed
+        # the same bug in its own parser (#1170, returning REVIEW) but that fix
+        # never reaches this code — pipeline.py re-parses the PM markdown itself
+        # rather than using the vendored SignalProcessor's answer.
+        #
+        # Raising is the honest branch. Every caller of this pipeline is the
+        # daily run, which already treats a failed ticker as a failed ticker,
+        # logs it, and carries on with the rest of the universe. A visible gap
+        # in one name beats a fabricated Hold in the decision record.
+        raise ValueError(
+            "portfolio manager output carries no parseable **Rating** — refusing "
+            "to default to Hold, which would be indistinguishable from a real one"
+        )
     # Normalize: pydantic Literal is case-sensitive
-    rating_map = {
-        "Buy": "Buy", "Overweight": "Overweight", "Hold": "Hold",
-        "Underweight": "Underweight", "Sell": "Sell",
-    }
-    rating = rating_map.get(rating_raw, "Hold")
+    rating = rating_match.group(1).capitalize()
 
     pt_match = re.search(r"\*\*Price Target\*\*\s*:?\s*\$?([\d,]+(?:\.\d+)?)", text, re.I)
     price_target: float | None = None

@@ -19,6 +19,9 @@
  * (`authPolicy.resolveAuthMode`) and is unit-tested there.
  */
 
+import { isConfigured as isFirebaseConfigured, signIn as firebaseSignIn } from '@/auth/firebase';
+import { useAuthStore } from '@/stores/auth';
+import { signInErrorTr } from '@/auth/signInError';
 import {
   View,
   Text,
@@ -121,6 +124,8 @@ export default function LoginScreen() {
   const [focused, setFocused] = useState<'email' | 'password' | null>(null);
   const [deviceBusy, setDeviceBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const authSignIn = useAuthStore((s) => s.signIn);
   const passwordRef = useRef<TextInput>(null);
 
   /*
@@ -150,9 +155,39 @@ export default function LoginScreen() {
 
   const enter = () => router.replace('/(tabs)/portfolio');
 
-  const signIn = () => {
-    if (!canSignIn) return;
-    enter();
+  /**
+   * The credentialed path. It used to be `enter()` — no network call at all,
+   * so any address containing "@" and four characters was admitted and the
+   * form was decoration over an open door.
+   *
+   * It now asks Firebase, when Firebase is configured. When it is not — which
+   * is still the live deployment — the old local check stands rather than
+   * locking everyone out of a working app for an identity system that has not
+   * been set up yet. The difference is visible: a deployment without Firebase
+   * gets no identity, and pretending otherwise would be the more dangerous of
+   * the two states.
+   */
+  const signIn = async () => {
+    if (!canSignIn || busy) return;
+    setAuthError(null);
+
+    if (!isFirebaseConfigured()) {
+      enter();
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const user = await firebaseSignIn(email, password);
+      // The uid is what will separate one family member's actions from
+      // another's; the email is only for display.
+      authSignIn(user.uid, user.email ?? email.trim());
+      enter();
+    } catch (e) {
+      setAuthError(signInErrorTr(e));
+    } finally {
+      setBusy(false);
+    }
   };
 
   /*
@@ -298,11 +333,14 @@ export default function LoginScreen() {
 
             <Pressable
               onPress={signIn}
-              disabled={!canSignIn}
-              style={[styles.primaryBtn, !canSignIn && styles.btnDisabled]}
+              // Sign-in is now a network call, so the button has to say it is
+              // working. Without this the form looks inert for a second or two
+              // and the natural response is to tap again.
+              disabled={!canSignIn || busy}
+              style={[styles.primaryBtn, (!canSignIn || busy) && styles.btnDisabled]}
               accessibilityRole="button"
               accessibilityLabel={signInLabel}
-              accessibilityState={{ disabled: !canSignIn }}
+              accessibilityState={{ disabled: !canSignIn || busy, busy }}
               accessibilityHint={
                 canSignIn
                   ? undefined
@@ -313,7 +351,9 @@ export default function LoginScreen() {
                       : 'Yasal metni onaylayın'
               }
             >
-              <Text style={styles.primaryBtnText}>{signInLabel}</Text>
+              <Text style={styles.primaryBtnText}>
+                {busy ? 'Giriş yapılıyor…' : signInLabel}
+              </Text>
             </Pressable>
 
             <Pressable

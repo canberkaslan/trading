@@ -1,5 +1,6 @@
 import ky, { type KyInstance } from 'ky';
 import Constants from 'expo-constants';
+import { getIdToken } from '@/auth/firebase';
 import { readApiToken } from '@/stores/apiToken';
 
 const API_URL = (Constants.expoConfig?.extra?.apiUrl ?? 'http://localhost:8000') as string;
@@ -20,7 +21,16 @@ export const apiClient: KyInstance = ky.create({
   hooks: {
     beforeRequest: [
       async (request) => {
-        const bearer = await readApiToken();
+        // A Firebase ID token identifies WHO is calling; the stored bearer only
+        // proves the caller holds a shared secret. So the identified one wins
+        // whenever it exists, and the shared bearer remains the path for a
+        // deployment with no Firebase project — which is still the live one.
+        //
+        // Fetched per request rather than cached: Firebase ID tokens last an
+        // hour and `getIdToken()` refreshes them near expiry, so a copy we kept
+        // ourselves would be the one guaranteed to go stale.
+        const idToken = await getIdToken();
+        const bearer = idToken ?? (await readApiToken());
         if (bearer) {
           request.headers.set('Authorization', `Bearer ${bearer}`);
         }

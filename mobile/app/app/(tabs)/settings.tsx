@@ -70,6 +70,7 @@ import { useInboxStore } from '@/stores/notifications';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { useAuthStore } from '@/stores/auth';
+import { signOut as firebaseSignOut } from '@/auth/firebase';
 import { useApiTokenStore } from '@/stores/apiToken';
 import { toast } from '@/stores/toast';
 import { useTheme, useThemeName, useSetTheme } from '@/theme/useTheme';
@@ -437,6 +438,10 @@ export default function SettingsScreen() {
     // "Çıkış yap" therefore handed over the ability to flatten the book. The
     // token is the session here, so signing out has to take it with it.
     void clearToken();
+    // Firebase holds its own persisted session; clearing only the local store
+    // would leave the app signed out while the credential that proves who you
+    // are is still on the device.
+    void firebaseSignOut();
     signOut();
     // Queries cached under the old token are not this user's to keep.
     qc.clear();

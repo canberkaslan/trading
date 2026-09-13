@@ -83,6 +83,24 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     // any network, TLS). A bundle built without EXPO_PUBLIC_API_URL still works.
     apiUrl: process.env.EXPO_PUBLIC_API_URL ?? 'https://trader.fusapp.com',
     wsUrl: process.env.EXPO_PUBLIC_WS_URL ?? 'wss://trader.fusapp.com/ws',
+    // Firebase's web config identifies a project; it does not authorise
+    // anything. Access is decided by the ID token the server verifies, so
+    // shipping this in the bundle is correct — unlike `devApiToken`, which WAS
+    // a credential and is why nothing secret rides in `extra` any more.
+    // Absent env vars leave `firebase` undefined, which the client treats as
+    // "not configured" and falls back to the shared bearer.
+    firebase:
+      process.env.EXPO_PUBLIC_FIREBASE_API_KEY &&
+      process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID
+        ? {
+            apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
+            authDomain:
+              process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN ??
+              `${process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID}.firebaseapp.com`,
+            projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
+            appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
+          }
+        : undefined,
     cognitoPoolId: process.env.EXPO_PUBLIC_COGNITO_POOL_ID,
     cognitoClientId: process.env.EXPO_PUBLIC_COGNITO_CLIENT_ID,
     sentryDsn: process.env.EXPO_PUBLIC_SENTRY_DSN,

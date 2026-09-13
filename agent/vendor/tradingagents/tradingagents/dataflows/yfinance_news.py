@@ -1,13 +1,15 @@
 """yfinance-based news data fetching functions."""
 
-from typing import Optional
+import contextlib
+from datetime import datetime, timezone
 
 import yfinance as yf
-from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
 from .config import get_config
+from .date_window import in_window
 from .stockstats_utils import yf_retry
+from .symbol_utils import normalize_symbol
 
 
 def _extract_article_data(article: dict) -> dict:
@@ -28,10 +30,8 @@ def _extract_article_data(article: dict) -> dict:
         pub_date_str = content.get("pubDate", "")
         pub_date = None
         if pub_date_str:
-            try:
+            with contextlib.suppress(ValueError, AttributeError):
                 pub_date = datetime.fromisoformat(pub_date_str.replace("Z", "+00:00"))
-            except (ValueError, AttributeError):
-                pass
 
         return {
             "title": title,
@@ -41,13 +41,22 @@ def _extract_article_data(article: dict) -> dict:
             "pub_date": pub_date,
         }
     else:
-        # Fallback for flat structure
+        # Fallback for flat structure. Parse the epoch publish time so flat
+        # articles are date-filterable too (otherwise they bypass the
+        # historical window and leak future news, #992/#1007).
+        pub_date = None
+        ts = article.get("providerPublishTime")
+        if ts:
+            # Epoch seconds are UTC; parse them as UTC-aware so filtering does
+            # not shift with the host timezone (#1126).
+            with contextlib.suppress(ValueError, OSError, TypeError):
+                pub_date = datetime.fromtimestamp(ts, tz=timezone.utc)
         return {
             "title": article.get("title", "No title"),
             "summary": article.get("summary", ""),
             "publisher": article.get("publisher", "Unknown"),
             "link": article.get("link", ""),
-            "pub_date": None,
+            "pub_date": pub_date,
         }
 
 
@@ -68,12 +77,17 @@ def get_news_yfinance(
         Formatted string containing news articles
     """
     article_limit = get_config()["news_article_limit"]
+    # Query Yahoo with the canonical symbol, like every other yfinance path —
+    # a raw broker/forex/crypto alias (XAUUSD, BTCUSD) otherwise silently
+    # returns no news. Keep the user's ticker in the report header.
+    canonical = normalize_symbol(ticker)
+    resolved = "" if canonical == ticker else f" (resolved to {canonical})"
     try:
-        stock = yf.Ticker(ticker)
+        stock = yf.Ticker(canonical)
         news = yf_retry(lambda: stock.get_news(count=article_limit))
 
         if not news:
-            return f"No news found for {ticker}"
+            return f"No news found for {ticker}{resolved}"
 
         # Parse date range for filtering
         start_dt = datetime.strptime(start_date, "%Y-%m-%d")
@@ -85,11 +99,9 @@ def get_news_yfinance(
         for article in news:
             data = _extract_article_data(article)
 
-            # Filter by date if publish time is available
-            if data["pub_date"]:
-                pub_date_naive = data["pub_date"].replace(tzinfo=None)
-                if not (start_dt <= pub_date_naive <= end_dt + relativedelta(days=1)):
-                    continue
+            # Keep only articles within the requested window (look-ahead safe).
+            if not in_window(data["pub_date"], start_dt, end_dt):
+                continue
 
             news_str += f"### {data['title']} (source: {data['publisher']})\n"
             if data["summary"]:
@@ -100,9 +112,9 @@ def get_news_yfinance(
             filtered_count += 1
 
         if filtered_count == 0:
-            return f"No news found for {ticker} between {start_date} and {end_date}"
+            return f"No news found for {ticker}{resolved} between {start_date} and {end_date}"
 
-        return f"## {ticker} News, from {start_date} to {end_date}:\n\n{news_str}"
+        return f"## {ticker}{resolved} News, from {start_date} to {end_date}:\n\n{news_str}"
 
     except Exception as e:
         return f"Error fetching news for {ticker}: {str(e)}"
@@ -110,8 +122,8 @@ def get_news_yfinance(
 
 def get_global_news_yfinance(
     curr_date: str,
-    look_back_days: Optional[int] = None,
-    limit: Optional[int] = None,
+    look_back_days: int | None = None,
+    limit: int | None = None,
 ) -> str:
     """
     Retrieve global/macro economic news using yfinance Search.
@@ -170,31 +182,25 @@ def get_global_news_yfinance(
         start_date = start_dt.strftime("%Y-%m-%d")
 
         news_str = ""
+        kept = 0
         for article in all_news[:limit]:
-            # Handle both flat and nested structures
-            if "content" in article:
-                data = _extract_article_data(article)
-                # Skip articles published after curr_date (look-ahead guard)
-                if data.get("pub_date"):
-                    pub_naive = data["pub_date"].replace(tzinfo=None) if hasattr(data["pub_date"], "replace") else data["pub_date"]
-                    if pub_naive > curr_dt + relativedelta(days=1):
-                        continue
-                title = data["title"]
-                publisher = data["publisher"]
-                link = data["link"]
-                summary = data["summary"]
-            else:
-                title = article.get("title", "No title")
-                publisher = article.get("publisher", "Unknown")
-                link = article.get("link", "")
-                summary = ""
-
-            news_str += f"### {title} (source: {publisher})\n"
-            if summary:
-                news_str += f"{summary}\n"
-            if link:
-                news_str += f"Link: {link}\n"
+            # Extract uniformly (flat + nested) and apply the same look-ahead-safe
+            # window filter, so flat articles can't leak future news (#1007).
+            data = _extract_article_data(article)
+            if not in_window(data["pub_date"], start_dt, curr_dt):
+                continue
+            news_str += f"### {data['title']} (source: {data['publisher']})\n"
+            if data["summary"]:
+                news_str += f"{data['summary']}\n"
+            if data["link"]:
+                news_str += f"Link: {data['link']}\n"
             news_str += "\n"
+            kept += 1
+
+        # All candidates fell outside the window -> say so rather than return an
+        # empty-bodied report (#993).
+        if kept == 0:
+            return f"No global news found between {start_date} and {curr_date}"
 
         return f"## Global Market News, from {start_date} to {curr_date}:\n\n{news_str}"
 

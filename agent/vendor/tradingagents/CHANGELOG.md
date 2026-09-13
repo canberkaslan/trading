@@ -6,6 +6,164 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Breaking changes within the 0.x line are called out explicitly.
 
+## [0.4.0] — 2026-08-31
+
+Look-ahead and point-in-time fixes across the data and memory layers, clearer
+decision signals, working CLI checkpoint resume, and the GPT-5.6 / GLM-5.3 models.
+
+### Fixed
+
+- **FRED macro look-ahead.** Historical macro requests were served from today's
+  data vintage, leaking later revisions into a backtest; both the observations
+  and metadata requests now pin the vintage to the as-of date. (#1275)
+- **Social sentiment look-ahead.** StockTwits and Reddit were fetched with no
+  date, so a historical run showed today's chatter as if it were from the as-of
+  date; the social path is now trimmed to the analysis window, via one shared
+  UTC half-open window rule (`dataflows/date_window`) used by news too. (#1220)
+- **Memory point-in-time guard.** `get_past_context` returned every resolved
+  lesson regardless of the run date; each resolved entry now records the date
+  its outcome became known, and a historical run only sees lessons resolved by
+  the trade date. (#1251)
+- **Premature reflection.** A decision was settled on a partial return if a rerun
+  happened before its holding window fully traded; resolution now waits for the
+  full window. (#1169)
+- **Latest OHLCV bar dropped.** The newest bar with a NaN close was silently
+  dropped before the date cutoff, making the previous trading day look like the
+  latest; dates are normalized per element (DST- and non-US-market safe) and a
+  missing latest close raises rather than falling back. (#1201)
+- **Debate opening fabrication.** The first speaker in each debate round rebutted
+  an empty opponent response, fabricating the other side; all five debators now
+  open with their own case when no opponent has spoken. (#1176)
+- **Silent Hold.** An unparseable Portfolio Manager rating (including a fullwidth
+  colon) was coerced to a tradeable Hold; it now surfaces a `REVIEW` sentinel,
+  with `parse_rating` keeping its silent default for compatibility callers. (#1170)
+- **`--checkpoint` was a no-op on the CLI.** Checkpoint setup lived only in
+  `propagate()`; the CLI streamed the checkpointer-less graph. The lifecycle is
+  now shared, and a resume feeds `None` so LangGraph continues the interrupted
+  run instead of duplicating messages. (#1249)
+- **DeepSeek via OpenRouter.** `deepseek/<id>` fell through to default
+  capabilities and had object-form `tool_choice` forced on it; the official
+  namespace is stripped so it reuses the native DeepSeek quirks. (#1199)
+- **Trader price grounding.** The Trader saw only the digested plan; it now also
+  receives the technical market report so entry/stop levels anchor to real price
+  structure. (#1167)
+
+### Added
+
+- **Configurable output-token cap.** `max_tokens` / `TRADINGAGENTS_MAX_TOKENS`,
+  forwarded to every provider (Gemini as `max_output_tokens`), so a model that
+  emits unbounded reasoning can be bounded instead of hanging. (#1204)
+- **Latest models.** Added the GPT-5.6 family (`gpt-5.6` / `gpt-5.6-terra` /
+  `gpt-5.6-luna`) and GLM-5.3 (`glm-5.3`, `glm-5.3-flash`). The default models
+  are now `gpt-5.6` (deep) and `gpt-5.6-luna` (quick).
+
+### Contributors
+
+Thanks to everyone who reported these or sent a fix:
+
+[@PyriteResearch](https://github.com/PyriteResearch), [@yiran1268](https://github.com/yiran1268), [@fabiolenine](https://github.com/fabiolenine), [@lx7720](https://github.com/lx7720), [@taro0915](https://github.com/taro0915), [@Jaswanth-Sriram-Veturi](https://github.com/Jaswanth-Sriram-Veturi), [@ariesy](https://github.com/ariesy), [@liangzj1999](https://github.com/liangzj1999), [@zkwang616](https://github.com/zkwang616), [@aniketshukla1](https://github.com/aniketshukla1), [@loulanyue](https://github.com/loulanyue), [@hudsonwa](https://github.com/hudsonwa), [@daleselaji-dev](https://github.com/daleselaji-dev), [@wolfoswald777-crypto](https://github.com/wolfoswald777-crypto).
+
+## [0.3.1] — 2026-07-05
+
+Correctness and stability patch: data look-ahead, graph-router crash-safety,
+checkpoint identity, crypto sentiment sources, and configurable resilience.
+
+### Fixed
+
+- **Alpha Vantage look-ahead filter now runs.** The fundamentals payload is a
+  JSON string, so the dict-only guard skipped filtering and future-dated reports
+  leaked into historical runs; parse before filtering. (#1115, @zachthebird)
+- **News analyst prompt matches the tool.** The prompt advertised
+  `get_news(query, ...)` but the tool takes a ticker; aligned to stop
+  hallucinated free-text query calls. (#1116, @shcheuk)
+- **Shared debate/risk routers can't crash mid-run.** Both routers return more
+  targets than any one edge mapped; every edge now shares the complete path map,
+  so a fall-through under prompt/i18n/refactor drift stays routable.
+  (#1088, @Fr3ya, @sa7an7, @Sushanth012)
+- **Checkpoint resume respects graph shape.** The thread id folds in selected
+  analysts, debate/risk depth, and asset mode, so a resume under different
+  choices no longer continues the wrong graph. (#1089, @bossjoker1, @Ghraven)
+- **Crypto sentiment sources resolve.** StockTwits lists crypto as `<BASE>.X`
+  (Yahoo's `BTC-USD` 404s) and Reddit needs the base symbol to match; the social
+  path now maps crypto correctly for both. (#1113, @suremadoreai)
+
+### Added
+
+- **Configurable LLM retry budget.** `llm_max_retries` /
+  `TRADINGAGENTS_LLM_MAX_RETRIES` is forwarded to every provider, so a transient
+  429 burst no longer aborts a run. (#1091, @yanggaome)
+- **Bedrock API-key auth.** `AWS_BEARER_TOKEN_BEDROCK` authenticates Amazon
+  Bedrock without AWS access keys and takes precedence over an ambient
+  `AWS_PROFILE`. (#1103, @praxstack)
+- **Latest Claude models.** Added Claude Sonnet 5 (`claude-sonnet-5`) and
+  Fable 5 (`claude-fable-5`); effort control now covers the Claude 5 line.
+
+## [0.3.0] — 2026-06-22
+
+Stabilization and extensibility release: a CI gate, a unified verified
+data-access contract, a provider and data-vendor registry, and a maintenance
+sweep that hardened config precedence, the model catalog, data resilience, and
+structured output.
+
+### Added
+
+- **CI gate.** GitHub Actions runs the pytest suite across Python 3.10-3.13,
+  strict `ruff`, and a clean-install smoke that imports the package and CLI to
+  catch undeclared dependencies. (#994, #197)
+- **Provider registry.** OpenAI-compatible providers register as a single spec,
+  and a generic `openai_compatible` endpoint covers vLLM, LM Studio, and relays.
+  Adds NVIDIA NIM, Kimi, Groq, Mistral, and a native Amazon Bedrock client.
+- **Macro and prediction-market vendors.** FRED macro indicators and Polymarket
+  event probabilities, surfaced to the news and macro analysts.
+- **Programmatic report output.** `TradingAgentsGraph.save_reports()` writes the
+  same report tree the CLI produces, for headless and API runs. (#1037)
+- **Env-configurable reasoning depth** via `TRADINGAGENTS_OPENAI_REASONING_EFFORT`,
+  `TRADINGAGENTS_GOOGLE_THINKING_LEVEL`, and `TRADINGAGENTS_ANTHROPIC_EFFORT`,
+  each gated to the models that accept it.
+
+### Changed
+
+- **Verified data-access contract.** Symbol normalization on every vendor path
+  (identity, returns, CLI, news); the configured vendor list is the exact
+  resolution chain with no silent fallback to unselected vendors; a typed
+  `VendorError` taxonomy; look-ahead-safe news windows; stale-OHLCV rejection;
+  inclusive yfinance date ranges.
+- **Config precedence.** An explicit `TRADINGAGENTS_*` value or CLI flag now wins
+  over interactive defaults for debate and risk round counts,
+  `--checkpoint / --no-checkpoint`, and the Docker provider profile; invalid
+  boolean env values fail loudly. (#975, #976, #977)
+- **Current-generation model catalog.** Refreshed provider lineups; retired
+  `gpt-4.1`, Claude Sonnet 4.5, and the Gemini 2.5 line.
+- **Optional vendors degrade** instead of aborting a run: a failed macro or
+  prediction-market lookup returns a no-data sentinel.
+- **Analyst prompts lead with the current date** so tool-call date ranges anchor
+  to the run date rather than the model's training cutoff. (#836)
+
+### Fixed
+
+- **Instrument identity.** Deterministic ticker-to-company resolution prevents
+  wrong-company hallucination, and a verified market-data snapshot grounds price
+  and indicator claims. (#814, #830)
+- **Social and market data sources.** Reddit RSS-first with 429 backoff,
+  StockTwits transport hardening, and Alpha Vantage timeout plus
+  key-versus-rate-limit handling.
+- **Structured output.** Local OpenAI-compatible servers no longer reject
+  object-form `tool_choice`; a thinking model that returns no parsed result falls
+  back to free text; null-ish strings in optional price fields coerce to `None`.
+  (#1038, #1051, #1057)
+
+### Removed
+
+- The no-op `analyst_concurrency_limit` config knob; parallel analyst execution
+  is planned for a later release. (#979)
+- The unused committed `uv.lock`. (#1030)
+
+### Contributors
+
+Thanks to everyone who shaped this release through code, design, and reports:
+
+[@CadeYu](https://github.com/CadeYu), [@Zavianx](https://github.com/Zavianx), [@weijianz-opc](https://github.com/weijianz-opc), [@naltun](https://github.com/naltun), [@brahmasky](https://github.com/brahmasky), [@nik2208](https://github.com/nik2208), [@thieucong98](https://github.com/thieucong98), [@Derekko-web](https://github.com/Derekko-web), [@LukiPrince](https://github.com/LukiPrince), [@Eddieargenal](https://github.com/Eddieargenal), [@Ghraven](https://github.com/Ghraven), [@ms32035](https://github.com/ms32035), [@yting27](https://github.com/yting27), [@nyxst4ck](https://github.com/nyxst4ck), [@KenCheung-AIxFinance](https://github.com/KenCheung-AIxFinance), [@yangyusheng2n](https://github.com/yangyusheng2n), [@fareloj](https://github.com/fareloj), [@haosenwang1018](https://github.com/haosenwang1018), [@octo-patch](https://github.com/octo-patch), [@seifenk](https://github.com/seifenk), [@CaoYuhaoCarl](https://github.com/CaoYuhaoCarl), [@mihailnica10](https://github.com/mihailnica10), [@Dado-hash](https://github.com/Dado-hash), [@Handsomemikezzz](https://github.com/Handsomemikezzz), [@ydhawesome](https://github.com/ydhawesome), [@macd2](https://github.com/macd2), [@AyushKar2005](https://github.com/AyushKar2005), [@wildhuman](https://github.com/wildhuman), [@robert23kim](https://github.com/robert23kim), [@bngness](https://github.com/bngness), [@tedix-rodrigo](https://github.com/tedix-rodrigo), [@malaccan](https://github.com/malaccan), [@rfalken78](https://github.com/rfalken78), [@dengli1971-droid](https://github.com/dengli1971-droid), [@proofconcept39](https://github.com/proofconcept39), [@prasta1](https://github.com/prasta1), [@liximin](https://github.com/liximin), [@jeffhuen](https://github.com/jeffhuen), [@mazar](https://github.com/mazar), [@soyangelromero](https://github.com/soyangelromero), [@CNQQC](https://github.com/CNQQC), [@dovetaill](https://github.com/dovetaill), [@fperdigon](https://github.com/fperdigon), [@gyx09212214-prog](https://github.com/gyx09212214-prog), [@RSXLX](https://github.com/RSXLX).
+
 ## [0.2.5] — 2026-05-11
 
 ### Added

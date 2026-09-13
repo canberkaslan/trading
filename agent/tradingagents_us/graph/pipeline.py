@@ -33,6 +33,7 @@ _VENDOR = Path(__file__).resolve().parent.parent.parent / "vendor" / "tradingage
 if str(_VENDOR) not in sys.path:
     sys.path.insert(0, str(_VENDOR))
 
+from tradingagents_us.llm.agent_routing import install as install_agent_routing  # noqa: E402
 from tradingagents_us.llm.prompt_cache import install as install_prompt_cache  # noqa: E402
 from tradingagents_us.llm.usage import UsageCollector  # noqa: E402
 
@@ -81,6 +82,13 @@ def propagate(ticker: str, trade_date: str) -> AgentDecision:
     # get_llm() instantiates, and the graph constructs its LLMs in __init__.
     if not install_prompt_cache():
         log.warning("prompt cache not installed — upstream client moved; running uncached")
+
+    # Also before construction: this rebinds the agent factories setup.py calls.
+    # Off unless TRADINGAGENTS_AGENT_ROUTING is set, because it changes what the
+    # agents say and not only what they cost.
+    routed = install_agent_routing()
+    if routed:
+        log.info("cheap-tier routing active for: %s", ", ".join(sorted(routed)))
 
     usage = UsageCollector()
     ta = TradingAgentsGraph(

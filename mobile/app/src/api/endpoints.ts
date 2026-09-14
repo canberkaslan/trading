@@ -92,6 +92,12 @@ export const api = {
       .get('v1/tickers', { searchParams: { q } })
       .json<{ ticker: string; name: string }[]>(),
 
+  /** The most traded US common shares, for browsing rather than searching. */
+  browseTickers: (limit = 60) =>
+    apiClient
+      .get('v1/tickers/browse', { searchParams: { limit } })
+      .json<{ ticker: string; name: string }[]>(),
+
   /** Who am I, and may I act — see useMe. */
   getMe: () => apiClient.get('v1/me').json<{ uid: string; is_admin: boolean }>(),
 

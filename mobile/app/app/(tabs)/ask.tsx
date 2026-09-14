@@ -33,7 +33,8 @@ import { HTTPError } from 'ky';
 
 import { useStartAnalysis, useAnalysisJob } from '@/api/hooks';
 import { useIsAdmin } from '@/api/useMe';
-import { useTickerSearch } from '@/api/useTickerSearch';
+import { useBrowseTickers, useTickerSearch } from '@/api/useTickerSearch';
+import { ErrorState } from '@/components/ErrorState';
 import { statusLine } from '@/utils/askStatus';
 import type { AgentDecision, } from '@/api/types';
 import { useTheme } from '@/theme/useTheme';
@@ -135,6 +136,13 @@ export default function AskScreen() {
     (!job || job.status === 'queued' || job.status === 'running');
   const isAdmin = useIsAdmin();
   const { data: hits } = useTickerSearch(chat.input);
+  const [browseOpen, setBrowseOpen] = useState(false);
+  const {
+    data: browse,
+    isLoading: browseLoading,
+    error: browseError,
+    refetch: refetchBrowse,
+  } = useBrowseTickers(browseOpen);
   // Hidden once the field holds an exact symbol from the list: the operator has
   // chosen, and a list still offering that same choice reads as not having
   // registered the tap.
@@ -290,19 +298,80 @@ export default function AskScreen() {
           onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}
         >
           {isEmpty ? (
-            <View style={styles.chips}>
-              {CHIPS.map((c) => (
-                <Pressable
-                  key={c}
-                  style={styles.chip}
-                  onPress={() => runAnalysis(c)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${c} analiz et`}
-                >
-                  <Text style={styles.chipText}>{c}</Text>
-                </Pressable>
-              ))}
-            </View>
+            <>
+              <View style={styles.chips}>
+                {CHIPS.map((c) => (
+                  <Pressable
+                    key={c}
+                    style={styles.chip}
+                    onPress={() => runAnalysis(c)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${c} analiz et`}
+                  >
+                    <Text style={styles.chipText}>{c}</Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              {/* The rest of the market, for when nothing on the shortlist is
+                  what you came for. Any US stock has always been analysable —
+                  the endpoint never checked a universe — but the screen only
+                  ever offered six names and a text box, so the other thirteen
+                  thousand were reachable solely from memory.
+
+                  Ranked by the previous session's dollar volume, common shares
+                  only. A raw volume list is topped by leveraged ETFs, and
+                  "give me a stock" does not mean those. */}
+              <View style={styles.browseBlock}>
+                <View style={styles.browseHead}>
+                  <Text style={styles.browseTitle}>Tüm ABD hisseleri</Text>
+                  <Pressable
+                    onPress={() => setBrowseOpen((v) => !v)}
+                    style={styles.browseToggle}
+                    accessibilityRole="button"
+                    accessibilityLabel={browseOpen ? 'Listeyi kapat' : 'Listeyi aç'}
+                    accessibilityState={{ expanded: browseOpen }}
+                  >
+                    <Text style={styles.browseToggleText}>
+                      {browseOpen ? 'Kapat' : 'En çok işlem görenler →'}
+                    </Text>
+                  </Pressable>
+                </View>
+
+                {browseOpen ? (
+                  browseError ? (
+                    <ErrorState
+                      title="Liste alınamadı"
+                      detail={browseError}
+                      onRetry={() => void refetchBrowse()}
+                    />
+                  ) : browseLoading ? (
+                    <Text style={styles.browseHint}>Yükleniyor…</Text>
+                  ) : (
+                    <>
+                      <Text style={styles.browseHint}>
+                        Aramak için aşağıya sembol ya da şirket adı yaz.
+                      </Text>
+                      {(browse ?? []).map((b) => (
+                        <Pressable
+                          key={b.ticker}
+                          style={styles.browseRow}
+                          onPress={() => runAnalysis(b.ticker)}
+                          accessibilityRole="button"
+                          accessibilityLabel={`${b.ticker}, ${b.name}`}
+                          accessibilityHint="Bu sembolü analiz eder"
+                        >
+                          <Text style={styles.browseTicker}>{b.ticker}</Text>
+                          <Text style={styles.browseName} numberOfLines={1}>
+                            {b.name}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </>
+                  )
+                ) : null}
+              </View>
+            </>
           ) : null}
 
           {chat.messages.map((m) =>
@@ -543,6 +612,24 @@ const makeStyles = (t: Palette) =>
       justifyContent: 'center',
     },
     chipText: { color: t.textPrimary, fontSize: 14, ...font(800), letterSpacing: 0.5 },
+
+    browseBlock: { marginTop: 24, borderTopWidth: 2, borderTopColor: t.divider, paddingTop: 12 },
+    browseHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    browseTitle: { color: t.textPrimary, fontSize: 15, ...font(800) },
+    browseToggle: { minHeight: MIN_TOUCH_TARGET, justifyContent: 'center', paddingLeft: 8 },
+    browseToggleText: { color: t.accent700 ?? t.accent, fontSize: 12, ...font(600) },
+    browseHint: { color: t.textSecondary, fontSize: 12, marginTop: 6, marginBottom: 6 },
+    browseRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingVertical: 10,
+      minHeight: MIN_TOUCH_TARGET,
+      borderBottomWidth: 1,
+      borderBottomColor: t.divider,
+    },
+    browseTicker: { color: t.textPrimary, fontSize: 14, ...font(800), minWidth: 62 },
+    browseName: { color: t.textSecondary, fontSize: 12, flex: 1 },
 
     suggestions: { borderTopWidth: 1, borderTopColor: t.divider },
     suggestion: {

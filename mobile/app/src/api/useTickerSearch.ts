@@ -45,3 +45,24 @@ export function useTickerSearch(query: string) {
     retry: false,
   });
 }
+
+
+/**
+ * The most traded US common shares, for picking when you do not have a symbol
+ * in mind.
+ *
+ * Thirteen thousand symbols is not a list anyone reads. This is the previous
+ * session's dollar-volume ranking with ETFs, warrants and units removed —
+ * the names an operator would plausibly ask about, in the order the market
+ * itself traded them.
+ */
+export function useBrowseTickers(enabled: boolean) {
+  return useQuery({
+    queryKey: ['tickers', 'browse'],
+    queryFn: () => api.browseTickers(60),
+    enabled,
+    // The ranking is yesterday's session; it does not move while the app is open.
+    staleTime: 60 * 60_000,
+    retry: false,
+  });
+}

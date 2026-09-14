@@ -39,6 +39,7 @@ from tradingagents_us.dataflows import (  # noqa: E402
     alpha_vantage_limited,
     sentiment_supplement,
 )
+from tradingagents_us.llm import translate as _translate  # noqa: E402
 from tradingagents_us.llm.agent_routing import install as install_agent_routing  # noqa: E402
 from tradingagents_us.llm.prompt_cache import install as install_prompt_cache  # noqa: E402
 from tradingagents_us.llm.usage import UsageCollector  # noqa: E402
@@ -231,6 +232,18 @@ def propagate(
     if os.environ.get("LLM_COUNCIL", "0") in ("1", "true", "True"):
         rating = _apply_council(ticker, final_state, rating, str(final or ""), reasoning)
 
+    # Translated here rather than by the agents: doubling eighteen outputs on
+    # reasoning-priced models costs ~$0.61 a ticker, while one Haiku pass over
+    # the finished report costs ~$0.012 for the same thing on screen. The
+    # collector is passed in so it lands in the cost record instead of being
+    # spent invisibly.
+    final_text = str(final or "")[:8000]
+    final_tr = (
+        _translate.translate_to_turkish(final_text, callbacks=[usage])
+        if _translate.is_enabled()
+        else None
+    )
+
     return AgentDecision(
         ticker=ticker,
         market="US",
@@ -243,7 +256,8 @@ def propagate(
         time_horizon=horizon,
         reasoning=reasoning,
         debate_transcript={},
-        final_decision_text=str(final or "")[:8000],
+        final_decision_text=final_text,
+        final_decision_text_tr=final_tr,
         timestamp_utc=datetime.now(UTC),
         decision_id=str(uuid.uuid4()),
         tokens_in=u.input_tokens,

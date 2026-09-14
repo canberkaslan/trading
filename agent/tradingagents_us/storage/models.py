@@ -48,6 +48,11 @@ class AgentDecisionRow(Base):
     # already being written, and a decision made before the accounting existed
     # genuinely has no figure. NULL says "not measured"; 0.0 would say "free",
     # and the difference matters the moment anyone averages this column.
+    # Stored rather than translated on read: a report is translated once and
+    # looked at many times, and paying per view would turn a $0.012 job into a
+    # recurring one.
+    final_decision_text_tr: Mapped[str | None] = mapped_column(String, nullable=True)
+
     tokens_in: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tokens_out: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cache_read_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)

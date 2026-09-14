@@ -67,6 +67,11 @@ class AgentDecision(BaseModel):
     # written before the accounting existed genuinely have no figure, and 0.0
     # would claim they were free. Anything that averages this column depends on
     # the difference.
+    # The report in Turkish. None means "not translated" — the English text is
+    # always authoritative, and an absent translation must not read as an empty
+    # report.
+    final_decision_text_tr: str | None = None
+
     tokens_in: int | None = None
     tokens_out: int | None = None
     cache_read_tokens: int | None = None

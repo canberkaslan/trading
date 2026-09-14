@@ -52,6 +52,7 @@ _ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # Cost telemetry. Added after the fact, so every decision written before
     # this lands keeps NULL rather than a misleading zero — a run that was
     # never measured must not read as a run that cost nothing.
+    ("agent_decisions", "final_decision_text_tr", "TEXT"),
     ("agent_decisions", "tokens_in", "INTEGER"),
     ("agent_decisions", "tokens_out", "INTEGER"),
     ("agent_decisions", "cache_read_tokens", "INTEGER"),
@@ -123,6 +124,7 @@ class TradeLogRepository:
                 reasoning_json=[r.model_dump() for r in decision.reasoning],
                 final_decision_text=decision.final_decision_text,
                 timestamp_utc=decision.timestamp_utc,
+                final_decision_text_tr=decision.final_decision_text_tr,
                 tokens_in=decision.tokens_in,
                 tokens_out=decision.tokens_out,
                 cache_read_tokens=decision.cache_read_tokens,

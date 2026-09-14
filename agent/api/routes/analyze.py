@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 from tradingagents_us.graph.pipeline import propagate
 from tradingagents_us.schemas import AgentDecision
 
-from ..deps import require_token
+from ..deps import require_admin, require_token
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -118,7 +118,7 @@ def _run(job_id: str, ticker: str, trade_date: str) -> None:
 @router.post("", response_model=AnalyzeJobView, status_code=202)
 async def start_analysis(
     req: AnalyzeRequest,
-    user: str = Depends(require_token),
+    user: str = Depends(require_admin),
 ) -> AnalyzeJobView:
     ticker = req.ticker.strip().upper()
     if not ticker.isalpha():

@@ -24,7 +24,7 @@ from functools import lru_cache
 from typing import Any
 
 import httpx
-from fastapi import Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy import create_engine
 
 from tradingagents_us.dataflows.alpaca_broker import AlpacaClient
@@ -307,3 +307,68 @@ async def require_token(authorization: str | None = Header(default=None)) -> str
 
     # Open (local dev only)
     return "anonymous"
+
+
+# ------------------------------- Authorisation --------------------------------
+#
+# Authentication answers "who is this"; this answers "may they". Until now the
+# two were the same question: any valid Firebase user of the project could
+# approve an order or throw FLATTEN_ALL, which closes the entire book at
+# market. For a household of eight or nine that is not a theoretical concern —
+# it is one mistaken tap from a family member who only wanted to look.
+#
+# The list is uids in an env var rather than Firebase custom claims. Claims
+# would need an Admin SDK service account — another credential to create,
+# store and rotate — to express a fact about eight people that changes once a
+# year. A line in secrets.env is auditable by reading it.
+
+
+def _admin_uids() -> frozenset[str]:
+    raw = os.environ.get("ADMIN_UIDS", "")
+    return frozenset(u.strip() for u in raw.split(",") if u.strip())
+
+
+def is_admin(user: str) -> bool:
+    """Whether `user` (a uid from require_token) may take privileged actions.
+
+    Three cases, and the reasoning for each matters more than the code:
+
+    `anonymous` — auth is switched off entirely, which only happens when
+    neither Firebase nor a dev token is configured. That is a local machine
+    with no identity to check, so denying would break development while
+    protecting nothing.
+
+    `dev-user` — the shared bearer during the Firebase migration. NOT admin.
+    It is one secret held by everyone, so it cannot say who acted; and the
+    operator's real session already runs on Firebase, so refusing it costs
+    nothing and makes any remaining fallback path visible instead of silently
+    privileged.
+
+    Anything else is a Firebase uid, admitted only if it is on the list.
+    """
+    if user == "anonymous":
+        return True
+    if user == "dev-user":
+        return False
+    return user in _admin_uids()
+
+
+async def require_admin(user: str = Depends(require_token)) -> str:
+    """Authenticated AND authorised. Raises 403 for a known but unprivileged user.
+
+    401 and 403 are kept distinct on purpose: 401 means "I do not know you",
+    403 means "I know you and the answer is no". Collapsing them would send a
+    signed-in family member to re-enter a password that was never the problem.
+
+    When ADMIN_UIDS is unset this denies everyone (except the anonymous local
+    case above). The asymmetry is deliberate: failing open would silently hand
+    the kill switch to every user the moment an env var went missing, while
+    failing closed is a loud lockout the operator fixes by editing one line.
+    A missing list must not read as an empty restriction.
+    """
+    if not is_admin(user):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "this action requires an administrator account",
+        )
+    return user

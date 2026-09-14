@@ -19,7 +19,7 @@ from tradingagents_us.storage import TradeLogRepository
 from tradingagents_us.storage.models import AgentDecisionRow, TradeOrderRow
 from tradingagents_us.storage.repository import row_to_decision
 
-from ..deps import get_alpaca, get_repo, require_token
+from ..deps import get_alpaca, get_repo, require_admin, require_token
 
 router = APIRouter()
 
@@ -137,7 +137,7 @@ async def list_pending_orders(
 @router.post("/{order_id}/approve")
 async def approve_order(
     order_id: str,
-    user: str = Depends(require_token),
+    user: str = Depends(require_admin),
     repo: TradeLogRepository = Depends(get_repo),
 ) -> dict:
     """Mobile-approved submission. Re-runs the executor with dry_run=False so
@@ -216,7 +216,7 @@ async def approve_order(
 @router.post("/{order_id}/reject")
 async def reject_order(
     order_id: str,
-    user: str = Depends(require_token),
+    user: str = Depends(require_admin),
     repo: TradeLogRepository = Depends(get_repo),
 ) -> dict:
     """User-rejected: record a REJECTED update so the order disappears from
@@ -239,7 +239,7 @@ async def reject_order(
 @router.post("/{order_id}/cancel")
 async def cancel_order(
     order_id: str,
-    user: str = Depends(require_token),
+    user: str = Depends(require_admin),
     repo: TradeLogRepository = Depends(get_repo),
     alpaca: AlpacaClient = Depends(get_alpaca),
 ) -> dict[str, str | None]:
@@ -295,7 +295,7 @@ async def cancel_order(
 @router.post("/kill-switch")
 async def set_kill_switch(
     body: KillSwitchUpdate,
-    user: str = Depends(require_token),
+    user: str = Depends(require_admin),
     repo: TradeLogRepository = Depends(get_repo),
 ) -> dict[str, str]:
     """Mobile-controlled remote kill switch. See ADR-005.

@@ -24,6 +24,11 @@ from pydantic import BaseModel, Field
 
 from tradingagents_us.graph.pipeline import propagate
 from tradingagents_us.schemas import AgentDecision
+from tradingagents_us.symbols import (
+    MAX_TICKER_LEN,
+    is_valid_ticker,
+    normalize_ticker,
+)
 
 from ..deps import require_admin, require_token
 
@@ -57,7 +62,7 @@ class AnalyzeJob:
 
 
 class AnalyzeRequest(BaseModel):
-    ticker: str = Field(min_length=1, max_length=6)
+    ticker: str = Field(min_length=1, max_length=MAX_TICKER_LEN)
 
 
 class AnalyzeJobView(BaseModel):
@@ -132,8 +137,8 @@ async def start_analysis(
     req: AnalyzeRequest,
     user: str = Depends(require_admin),
 ) -> AnalyzeJobView:
-    ticker = req.ticker.strip().upper()
-    if not ticker.isalpha():
+    ticker = normalize_ticker(req.ticker)
+    if not is_valid_ticker(ticker):
         raise HTTPException(422, f"invalid ticker: {req.ticker!r}")
     with _lock:
         # Reuse an in-flight job for the same ticker to avoid duplicate spend.

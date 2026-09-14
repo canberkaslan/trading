@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from tradingagents_us.dataflows.polygon import PolygonClient
 from tradingagents_us.storage import price_cache
+from tradingagents_us.symbols import is_valid_ticker
 
 from ..deps import get_repo, require_token
 
@@ -150,7 +151,7 @@ def get_prices(
     user: str = Depends(require_token),
 ) -> PriceSeries:
     sym = ticker.strip().upper()
-    if not sym.isalpha() or len(sym) > 6:
+    if not is_valid_ticker(sym):
         raise HTTPException(422, f"invalid ticker: {ticker!r}")
     days = max(5, min(days, 365))
     key = f"{sym}:{days}"

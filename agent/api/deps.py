@@ -61,9 +61,14 @@ def get_alpaca() -> AlpacaClient:
 # are fetched and cached with the same TTL as the Cognito path rather than
 # pinned.
 
-_FIREBASE_JWKS_URL = (
-    "https://www.googleapis.com/service_accounts/v1/jwks/"
-    "securetoken@system.gserviceaccount.com"
+# Note the singular "jwk". The plural spelling — which is what every other
+# provider uses and what I assumed — returns 404 from Google, so Firebase
+# verification could never have succeeded. The dev-token migration window hid
+# it: the shared bearer kept working, so nothing looked broken.
+_FIREBASE_JWKS_URL = os.environ.get(
+    "FIREBASE_JWKS_URL",
+    "https://www.googleapis.com/service_accounts/v1/jwk/"
+    "securetoken@system.gserviceaccount.com",
 )
 
 
@@ -94,7 +99,17 @@ def _validate_firebase_jwt(token: str) -> str:
             "jwt verification unavailable (python-jose not installed)",
         ) from import_err
 
-    jwks = _load_jwks(_FIREBASE_JWKS_URL)
+    # A key-server failure is OUR inability to verify, not the caller's bad
+    # token, so it must not surface as a 401 that tells a legitimate user their
+    # credentials are wrong. It sat outside the try below and arrived as a bare
+    # 500 with no message at all.
+    try:
+        jwks = _load_jwks(_FIREBASE_JWKS_URL)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            f"cannot reach the Firebase key server: {e}",
+        ) from e
 
     try:
         kid = jwt.get_unverified_header(token).get("kid")

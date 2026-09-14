@@ -33,6 +33,11 @@ _VENDOR = Path(__file__).resolve().parent.parent.parent / "vendor" / "tradingage
 if str(_VENDOR) not in sys.path:
     sys.path.insert(0, str(_VENDOR))
 
+from tradingagents_us.dataflows import (  # noqa: E402
+    alpaca_news_vendor,
+    alpha_vantage_limited,
+    sentiment_supplement,
+)
 from tradingagents_us.llm.agent_routing import install as install_agent_routing  # noqa: E402
 from tradingagents_us.llm.prompt_cache import install as install_prompt_cache  # noqa: E402
 from tradingagents_us.llm.usage import UsageCollector  # noqa: E402
@@ -86,6 +91,17 @@ def propagate(ticker: str, trade_date: str) -> AgentDecision:
     # Also before construction: this rebinds the agent factories setup.py calls.
     # Off unless TRADINGAGENTS_AGENT_ROUTING is set, because it changes what the
     # agents say and not only what they cost.
+    # Selectable news vendors. Neither becomes the default — `data_vendors`
+    # still decides — but they cannot be chosen if nothing registered them.
+    alpaca_news_vendor.register()
+    alpha_vantage_limited.register()
+
+    # Measured: the sentiment analyst received 394 input tokens and produced
+    # 2,616 — every source had failed and it formed an opinion out of nothing.
+    # ApeWisdom aggregates the same corpus Reddit RSS was 429ing on.
+    if not sentiment_supplement.install():
+        log.warning("sentiment supplement not installed — analyst keeps its existing sources")
+
     usage = UsageCollector()
 
     # After the collector exists and before the graph is built: the routed
@@ -112,6 +128,16 @@ def propagate(ticker: str, trade_date: str) -> AgentDecision:
         u.cache_read_tokens, u.cache_write_tokens, u.cost_usd,
         "n/a" if hit is None else f"{hit:.1%}",
     )
+    # The aggregate says what a council costs; this says where that money went.
+    # Without it "which of the eighteen calls is worth keeping" has no answer
+    # except taste, and every cut is a guess about someone else's spend.
+    for node, n in u.breakdown():
+        share = (n.cost_usd / u.cost_usd * 100) if u.cost_usd else 0.0
+        log.info(
+            "  %-22s %2d calls  in=%6d out=%6d  $%.4f  (%.0f%% of run)",
+            node, n.calls, n.input_tokens, n.output_tokens, n.cost_usd, share,
+        )
+
     if u.unpriced_models:
         # Cost is understated by whatever these models consumed. Say so rather
         # than letting a low figure read as a cheap run.

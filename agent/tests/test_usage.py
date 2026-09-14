@@ -217,3 +217,67 @@ class TestPriceOverrides:
 
         monkeypatch.setenv("TRADINGAGENTS_PRICES", '{"claude-sonnet-5": ["a", "b"]}')
         assert _prices()["claude-sonnet-5"] == _DEFAULT_PRICES["claude-sonnet-5"]
+
+
+class TestPerNodeAttribution:
+    """The aggregate says what a run costs; this says where the money went.
+
+    Without it, "which of the eighteen calls is worth keeping" has no answer
+    except taste.
+    """
+
+    def _start(self, c: UsageCollector, run_id: str, node: str | None) -> None:
+        c.on_llm_start({}, [], run_id=run_id, metadata={"langgraph_node": node} if node else {})
+
+    def test_attributes_each_call_to_its_graph_node(self) -> None:
+        c = UsageCollector()
+        self._start(c, "r1", "Market Analyst")
+        c.on_llm_end(_resp("claude-sonnet-5", inp=1000, out=100), run_id="r1")
+        self._start(c, "r2", "Portfolio Manager")
+        c.on_llm_end(_resp("claude-sonnet-5", inp=2000, out=200), run_id="r2")
+
+        assert c.usage.by_node["Market Analyst"].input_tokens == 1000
+        assert c.usage.by_node["Portfolio Manager"].input_tokens == 2000
+        assert c.usage.by_node["Portfolio Manager"].calls == 1
+
+    def test_repeat_calls_to_one_node_accumulate(self) -> None:
+        c = UsageCollector()
+        for rid in ("a", "b", "c"):
+            self._start(c, rid, "Bull Researcher")
+            c.on_llm_end(_resp("claude-sonnet-5", inp=100, out=10), run_id=rid)
+        assert c.usage.by_node["Bull Researcher"].calls == 3
+        assert c.usage.by_node["Bull Researcher"].output_tokens == 30
+
+    def test_the_breakdown_sums_to_the_aggregate(self) -> None:
+        # If these ever disagree, one of the two numbers is lying and there is
+        # no way to tell which from the log alone.
+        c = UsageCollector()
+        for rid, node in (("a", "X"), ("b", "Y"), ("c", "X")):
+            self._start(c, rid, node)
+            c.on_llm_end(_resp("claude-sonnet-5", inp=500, out=50), run_id=rid)
+        assert sum(n.calls for _, n in c.usage.breakdown()) == c.usage.calls
+        assert round(sum(n.cost_usd for _, n in c.usage.breakdown()), 10) == round(
+            c.usage.cost_usd, 10
+        )
+
+    def test_breakdown_is_ordered_dearest_first(self) -> None:
+        c = UsageCollector()
+        self._start(c, "cheap", "Cheap")
+        c.on_llm_end(_resp("claude-sonnet-5", inp=10, out=1), run_id="cheap")
+        self._start(c, "dear", "Dear")
+        c.on_llm_end(_resp("claude-sonnet-5", inp=10_000, out=1000), run_id="dear")
+        assert [n for n, _ in c.usage.breakdown()][0] == "Dear"
+
+    def test_an_unknown_node_is_labelled_not_guessed(self) -> None:
+        # Folding it into a neighbour's total would quietly misattribute the
+        # very thing the breakdown exists to show.
+        c = UsageCollector()
+        c.on_llm_end(_resp("claude-sonnet-5", inp=100, out=10), run_id="orphan")
+        assert "(unattributed)" in c.usage.by_node
+
+    def test_missing_metadata_does_not_raise(self) -> None:
+        c = UsageCollector()
+        c.on_llm_start({}, [], run_id="r")
+        c.on_llm_start({}, [])
+        c.on_llm_end(_resp("claude-sonnet-5", inp=1, out=1), run_id="r")
+        assert c.usage.calls == 1

@@ -238,3 +238,53 @@ class TestMigrationWindow:
         monkeypatch.setenv("DEV_API_TOKEN", "a" * 64)
         with pytest.raises(HTTPException):
             await deps.require_token("Bearer a.b.c.d")
+
+
+class TestKeyServer:
+    """The JWKS URL was wrong and nothing caught it.
+
+    The plural spelling — /jwks/, which is what every other provider uses —
+    returns 404 from Google, so Firebase verification could never have
+    succeeded. The dev-token migration window hid it completely: the shared
+    bearer kept working, so nothing looked broken from outside.
+    """
+
+    def test_the_default_url_uses_the_singular_jwk_path(self) -> None:
+        assert "/service_accounts/v1/jwk/" in deps._FIREBASE_JWKS_URL
+        assert "/jwks/" not in deps._FIREBASE_JWKS_URL
+
+    def test_a_key_server_failure_is_503_not_401(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Our inability to verify is not the caller's bad credential. A 401
+        # here would tell a legitimate user their password is wrong.
+        import sys
+        import types
+
+        fake = types.ModuleType("jose")
+        fake.jwt = types.SimpleNamespace(get_unverified_header=lambda t: {"kid": "k"})  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "jose", fake)
+        monkeypatch.setattr(
+            deps, "_load_jwks", lambda url: (_ for _ in ()).throw(RuntimeError("dns"))
+        )
+        with pytest.raises(HTTPException) as e:
+            deps._validate_firebase_jwt("aaa.bbb.ccc")
+        assert e.value.status_code == 503
+        assert "key server" in e.value.detail
+
+    def test_a_key_server_failure_is_never_a_bare_500(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # It reached the client as "Internal Server Error" with no detail,
+        # because the fetch sat outside the handler's try block.
+        import sys
+        import types
+
+        fake = types.ModuleType("jose")
+        fake.jwt = types.SimpleNamespace(get_unverified_header=lambda t: {"kid": "k"})  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "jose", fake)
+        monkeypatch.setattr(
+            deps, "_load_jwks", lambda url: (_ for _ in ()).throw(RuntimeError("boom"))
+        )
+        with pytest.raises(HTTPException) as e:
+            deps._validate_firebase_jwt("a.b.c")
+        assert e.value.status_code != 500
+        assert e.value.detail

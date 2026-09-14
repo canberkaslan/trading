@@ -39,6 +39,7 @@ import { useTranslation } from 'react-i18next';
 
 import type { AgentDecision } from '@/api/types';
 import { useDecisions } from '@/api/hooks';
+import { todaysCalls, summaryLine } from '@/utils/todaysCalls';
 import { useTheme } from '@/theme/useTheme';
 import { ratingChip, modelBadge } from '@/theme/rating';
 import { Tag } from '@/components/Tag';
@@ -50,7 +51,7 @@ import { formatTokens, formatLatency,
 } from '@/utils/decision';
 import { formatOrderDate } from '@/utils/orders';
 import { hitSlopFor, MIN_TOUCH_TARGET } from '@/utils/a11y';
-import { font, TABULAR } from '@/theme/type';
+import { TABULAR, TYPE, font } from '@/theme/type';
 
 type Palette = ReturnType<typeof useTheme>;
 
@@ -163,6 +164,7 @@ export default function AgentsScreen() {
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const { data, isLoading, isError, error, refetch } = useDecisions({ limit: DECISION_LIMIT });
+  const today = useMemo(() => todaysCalls(data), [data]);
   const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -207,6 +209,39 @@ export default function AgentsScreen() {
           Portfolio Manager + LLM konseyi · son {decisions.length} karar
           {lastRun ? ` · son koşu ${formatOrderDate(lastRun)}` : ''}
         </Text>
+
+        {/* Today's run, lifted out of the page of 25. The question an operator
+            opens the app with is "what did the agents say today", and that was
+            answerable only by reading timestamps down a list. Rendered only
+            when today has produced something: before the 22:30 run fires,
+            "nothing yet" and "nothing decided" are different facts and a
+            "0 karar" row would collapse them. */}
+        {today.items.length > 0 ? (
+          <View style={styles.todayBlock}>
+            <View style={styles.todayHead}>
+              <Text style={styles.todayTitle}>Bugünün önerileri</Text>
+              <Text style={styles.todayCount}>{summaryLine(today)}</Text>
+            </View>
+            <View style={styles.todayRow}>
+              {today.items.map((t) => {
+                const c = ratingChip(theme, t.rating);
+                return (
+                  <Pressable
+                    key={`today-${t.decision_id}`}
+                    style={styles.todayChip}
+                    onPress={() => router.push(`/trade/${t.ticker}` as never)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${t.ticker}, ${t.rating}`}
+                    accessibilityHint="Karar detayını açar"
+                  >
+                    <Text style={styles.todayTicker}>{t.ticker}</Text>
+                    <Text style={[styles.todayRating, { color: c.color }]}>{t.rating}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        ) : null}
 
         {isLoading ? (
           <Text style={styles.muted}>Yükleniyor…</Text>
@@ -386,6 +421,25 @@ const makeStyles = (t: Palette) =>
 
     heading: { color: t.textPrimary, fontSize: 24, ...font(800) },
     subheading: { color: t.textSecondary, fontSize: 13, marginTop: 4, marginBottom: 12, ...font(400) },
+
+    // The day's calls sit above the log as a block, not as more rows: it is a
+    // different question from "what happened recently", and rows would read as
+    // duplicates of the list beneath.
+    todayBlock: { borderTopWidth: 2, borderTopColor: t.divider, paddingTop: 12, marginBottom: 16 },
+    todayHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
+    todayTitle: { color: t.textPrimary, fontSize: 15, ...font(800) },
+    todayCount: { color: t.textSecondary, ...TYPE.helper },
+    todayRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
+    todayChip: {
+      borderWidth: 1,
+      borderColor: t.divider,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      minHeight: MIN_TOUCH_TARGET,
+      justifyContent: 'center',
+    },
+    todayTicker: { color: t.textPrimary, fontSize: 13, ...font(800) },
+    todayRating: { fontSize: 11, ...font(600), marginTop: 2 },
 
     row: { borderBottomWidth: 1, borderBottomColor: t.divider },
     rowInner: { flexDirection: 'row', alignItems: 'flex-start' },

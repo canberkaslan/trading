@@ -105,6 +105,13 @@ async def whoami(user: str = Depends(require_token)) -> dict[str, object]:
     return {"uid": user, "is_admin": is_admin(user)}
 
 
+@app.get("/", include_in_schema=False)
+async def root() -> RedirectResponse:
+    """The bare hostname is what someone types from memory, so it has to land
+    somewhere. It answered 404 — the app was at /app and nothing said so."""
+    return RedirectResponse(url="/app", status_code=307)
+
+
 @app.get("/dashboard", include_in_schema=False)
 async def dashboard() -> RedirectResponse:
     """Superseded by /app — the Modernist screens the phone runs.

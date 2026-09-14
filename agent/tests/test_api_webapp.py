@@ -122,3 +122,11 @@ def test_missing_build_reports_503_rather_than_500(
     r = TestClient(api.main.app).get("/app")
     assert r.status_code == 503
     assert "deploy" in r.json()["detail"]
+
+
+def test_the_bare_hostname_lands_on_the_app(client: TestClient) -> None:
+    """Typing trader.fusapp.com with no path answered 404 — the app was at
+    /app and nothing on the bare host said so."""
+    r = client.get("/", follow_redirects=False)
+    assert r.status_code == 307
+    assert r.headers["location"] == "/app"

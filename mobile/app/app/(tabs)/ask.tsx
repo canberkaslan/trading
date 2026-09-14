@@ -33,6 +33,7 @@ import { HTTPError } from 'ky';
 
 import { useStartAnalysis, useAnalysisJob } from '@/api/hooks';
 import { useIsAdmin } from '@/api/useMe';
+import { useTickerSearch } from '@/api/useTickerSearch';
 import { statusLine } from '@/utils/askStatus';
 import type { AgentDecision, } from '@/api/types';
 import { useTheme } from '@/theme/useTheme';
@@ -133,6 +134,13 @@ export default function AskScreen() {
     !jobQuery.isError &&
     (!job || job.status === 'queued' || job.status === 'running');
   const isAdmin = useIsAdmin();
+  const { data: hits } = useTickerSearch(chat.input);
+  // Hidden once the field holds an exact symbol from the list: the operator has
+  // chosen, and a list still offering that same choice reads as not having
+  // registered the tap.
+  const suggestions = (hits ?? []).filter(
+    (h) => h.ticker !== chat.input.trim().toUpperCase(),
+  ).slice(0, 6);
   // Starting an analysis spends ~$1.61 of measured model time, so it is an
   // administrator action even though it never touches the broker.
   const busy = start.isPending || polling;
@@ -329,16 +337,43 @@ export default function AskScreen() {
 
         {/* 2px rule, then the composer — the one control the screen always shows. */}
         <View style={styles.composer}>
+          {/* Matches from the whole US listing. Analysing any stock always
+              worked; finding one did not, because this was a bare text box and
+              the operator had to know the symbol already. Shown above the
+              input so a tap lands where the thumb already is. */}
+          {suggestions.length > 0 && !chat.busy ? (
+            <View style={styles.suggestions}>
+              {suggestions.map((hit) => (
+                <Pressable
+                  key={hit.ticker}
+                  style={styles.suggestion}
+                  onPress={() => {
+                    setChat((c) => ({ ...c, input: hit.ticker }));
+                    void runAnalysis(hit.ticker);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${hit.ticker}, ${hit.name}`}
+                  accessibilityHint="Bu sembolü analiz eder"
+                >
+                  <Text style={styles.suggestionTicker}>{hit.ticker}</Text>
+                  <Text style={styles.suggestionName} numberOfLines={1}>
+                    {hit.name}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
           <View style={styles.inputRow}>
             <TextInput
               style={styles.input}
               value={chat.input}
               onChangeText={(v) => setChat((c) => ({ ...c, input: v }))}
-              placeholder="AAPL"
+              placeholder="AAPL veya Apple"
               placeholderTextColor={theme.textSecondary}
               autoCapitalize="characters"
+              // Name search needs more than six characters of room.
               autoCorrect={false}
-              maxLength={6}
+              maxLength={8}
               returnKeyType="send"
               onSubmitEditing={() => runAnalysis(chat.input)}
               editable={!chat.busy}
@@ -508,6 +543,20 @@ const makeStyles = (t: Palette) =>
       justifyContent: 'center',
     },
     chipText: { color: t.textPrimary, fontSize: 14, ...font(800), letterSpacing: 0.5 },
+
+    suggestions: { borderTopWidth: 1, borderTopColor: t.divider },
+    suggestion: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingVertical: 10,
+      paddingHorizontal: 16,
+      minHeight: MIN_TOUCH_TARGET,
+      borderBottomWidth: 1,
+      borderBottomColor: t.divider,
+    },
+    suggestionTicker: { color: t.textPrimary, fontSize: 14, ...font(800), minWidth: 62 },
+    suggestionName: { color: t.textSecondary, fontSize: 12, flex: 1 },
 
     composer: {
       borderTopWidth: 2,

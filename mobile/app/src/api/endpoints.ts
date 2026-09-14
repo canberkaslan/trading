@@ -86,6 +86,12 @@ export const api = {
   // Orders
   listOrders: () => apiClient.get('v1/orders').json<OrderListItem[]>(),
   listPendingOrders: () => apiClient.get('v1/orders/pending').json<OrderListItem[]>(),
+  /** Search all listed US stocks by symbol or company name. */
+  searchTickers: (q: string) =>
+    apiClient
+      .get('v1/tickers', { searchParams: { q } })
+      .json<{ ticker: string; name: string }[]>(),
+
   /** Who am I, and may I act — see useMe. */
   getMe: () => apiClient.get('v1/me').json<{ uid: string; is_admin: boolean }>(),
 

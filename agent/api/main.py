@@ -39,6 +39,7 @@ from .routes import (
     portfolio,
     prices,
     risk,
+    tickers,
     trades,
 )
 from .routes import (
@@ -80,6 +81,7 @@ app.include_router(notifications.router, prefix="/v1/notifications", tags=["noti
 app.include_router(trades.router, prefix="/v1/trades", tags=["trades"])
 app.include_router(diagnostics.router, prefix="/v1/diagnostics", tags=["diagnostics"])
 app.include_router(risk.router, prefix="/v1/risk", tags=["risk"])
+app.include_router(tickers.router, prefix="/v1/tickers", tags=["tickers"])
 
 
 # Same reason as the scripts: an outbound call that carries its key in the

@@ -111,6 +111,29 @@ class PolygonClient:
 
     # --------------------------- reference ----------------------------
 
+    def grouped_daily_previous(self, days_back: int = 5) -> list[dict]:
+        """Every US stock's last completed session, in one call.
+
+        The grouped endpoint returns ~12,500 rows for a date in about a second,
+        which is what makes a whole-market ranking cheap enough to be worth
+        having. It answers empty on weekends and holidays, so this walks back
+        until a session is found rather than reporting a quiet market as an
+        empty one.
+        """
+        from datetime import date, timedelta
+
+        day = date.today()
+        for _ in range(max(1, days_back)):
+            day -= timedelta(days=1)
+            resp = self._get(
+                f"/v2/aggs/grouped/locale/us/market/stocks/{day.isoformat()}",
+                {"adjusted": "true", "apiKey": self.api_key},
+            )
+            results = resp.get("results") or []
+            if results:
+                return results
+        return []
+
     def list_tickers(
         self,
         market: Literal["stocks", "crypto", "fx", "otc", "indices"] = "stocks",

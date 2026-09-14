@@ -18,14 +18,18 @@ from __future__ import annotations
 
 import re
 
-# Letters, optionally one dot followed by a one- or two-letter class or series
-# suffix: BRK.B, AKO.B, AAC.WS. Anchored, upper-case only — the caller
-# normalises first, so anything still lower-case is a caller bug worth failing.
-_TICKER = re.compile(r"^[A-Z]{1,6}(\.[A-Z]{1,2})?$")
+# Letters, then up to two dot-separated suffixes of one or two letters:
+# BRK.B, AKO.B, AAC.WS, and NE.WS.A — a warrant series, the single symbol in
+# the whole catalogue that carries two dots. A one-dot rule rejected exactly
+# that one, which is how the second suffix came to be here: not from imagining
+# what the market might contain, but from the one row that failed.
+_TICKER = re.compile(r"^[A-Z]{1,6}(\.[A-Z]{1,2}){0,2}$")
 
-# The longest symbol observed in the live catalogue. A cap belongs here rather
-# than in each route, where the two copies had already drifted apart.
-MAX_TICKER_LEN = 7
+# Comfortably past the longest symbol observed (7), because the cap is a sanity
+# bound against garbage rather than a second, competing definition of the
+# format — the regex is what decides shape. A cap belongs here rather than in
+# each route, where the two copies had already drifted apart.
+MAX_TICKER_LEN = 10
 
 
 def normalize_ticker(raw: str) -> str:

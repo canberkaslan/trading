@@ -91,6 +91,92 @@ def search(rows: list[dict[str, str]], q: str, limit: int = _MAX_RESULTS) -> lis
     return (by_symbol + by_name)[:limit]
 
 
+# Names that mark an instrument as something other than a common share. A
+# volume ranking is otherwise topped by leveraged ETFs, and "give me a stock"
+# does not mean those.
+_NOT_A_SHARE = (
+    " ETF", "ETF ", " FUND", "TRUST", " ETN", "WARRANT", " UNITS", " UNIT ",
+    "PREFERRED", " NOTES", " BOND", "INDEX",
+)
+
+# A dot means a class, warrant or series line (BRK.B, AAC.WS). The primary
+# listing is what a picker should offer.
+def _is_common_share(row: dict[str, str]) -> bool:
+    if "." in row["ticker"]:
+        return False
+    name = row["name"].upper()
+    return not any(marker in name for marker in _NOT_A_SHARE)
+
+
+def _most_traded(limit: int) -> list[dict[str, str]]:
+    """Catalogue rows for the highest dollar-volume common shares."""
+    from tradingagents_us.dataflows.polygon import PolygonClient
+
+    with _lock:
+        held = _cache.get("volume")
+    if held and (time.time() - held[0]) < _TTL_S:
+        ranked = held[1]
+    else:
+        with PolygonClient() as client:
+            bars = client.grouped_daily_previous()
+        # close x volume: what actually changed hands, not share count. A $3
+        # stock trading ten million shares is not more liquid than a $500 one
+        # trading a million.
+        ranked = sorted(
+            (
+                {
+                    "ticker": str(b.get("T", "")).upper(),
+                    "dv": float(b.get("c", 0)) * float(b.get("v", 0)),
+                }
+                for b in bars
+                if b.get("T")
+            ),
+            key=lambda r: r["dv"],
+            reverse=True,
+        )
+        with _lock:
+            _cache["volume"] = (time.time(), ranked)
+
+    names = {r["ticker"]: r["name"] for r in _load()}
+    out: list[dict[str, str]] = []
+    for r in ranked:
+        name = names.get(r["ticker"])
+        if name is None:
+            continue
+        row = {"ticker": r["ticker"], "name": name}
+        if _is_common_share(row):
+            out.append(row)
+        if len(out) >= limit:
+            break
+    return out
+
+
+@router.get("/browse", response_model=list[TickerHit])
+async def browse_tickers(
+    limit: int = Query(default=60, ge=1, le=200),
+    _user: str = Depends(require_token),
+) -> list[TickerHit]:
+    """The most traded US stocks, for picking rather than searching.
+
+    A list of thirteen thousand symbols is not a list anyone reads, so this is
+    ranked by the previous session's dollar volume — the names an operator
+    would plausibly ask about, in the order the market itself traded them.
+
+    ETFs, warrants and units are filtered out. They dominate a raw
+    volume ranking and none of them is what "give me a stock to analyse"
+    means; a picker whose first screen is leveraged ETFs is a picker the
+    operator scrolls past rather than uses.
+    """
+    try:
+        return [TickerHit(**r) for r in _most_traded(limit)]
+    except Exception as exc:  # noqa: BLE001
+        log.warning("browse list unavailable", exc_info=True)
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            f"ticker catalogue unavailable: {exc}",
+        ) from exc
+
+
 @router.get("", response_model=list[TickerHit])
 async def search_tickers(
     q: str = Query(min_length=1, max_length=32, description="Symbol or company name"),

@@ -51,6 +51,7 @@ import type { Concentration, KillSwitchState,
 } from '@/api/types';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
+import { useIsAdmin } from '@/api/useMe';
 import { isAuthError } from '@/utils/apiError';
 import { Seg, type SegOption } from '@/components/Seg';
 import { Sheet } from '@/components/Sheet';
@@ -208,6 +209,7 @@ export default function RiskScreen() {
   const styles = useMemo(() => makeStyles(t), [t]);
 
   const { data: ks, isError: ksError, error: ksErr } = useKillSwitch();
+  const isAdmin = useIsAdmin();
   const setKs = useSetKillSwitch();
   const [flattenOpen, setFlattenOpen] = useState(false);
 
@@ -493,20 +495,25 @@ export default function RiskScreen() {
             options={killOptions}
             value={ks?.state}
             onChange={applyKill}
-            /* Locked until the current state is known. Unauthenticated, `ks` is
-               undefined so no segment reads as selected — and FLATTEN_ALL, which
-               closes the entire book at market, was still tappable. The operator
-               could walk the whole irreversible-confirmation flow and only learn
-               at the end that nothing was sent. Worse, an armed control whose
-               state is unknown invites a tap to "fix" it. */
-            disabled={setKs.isPending || ks == null}
+            /* Locked until the current state is known, and for anyone the
+               server will refuse. Unauthenticated, `ks` is undefined so no
+               segment reads as selected — and FLATTEN_ALL, which closes the
+               entire book at market, was still tappable. The operator could
+               walk the whole irreversible-confirmation flow and only learn at
+               the end that nothing was sent. Worse, an armed control whose
+               state is unknown invites a tap to "fix" it. The same argument
+               covers a non-administrator: the 403 would arrive after the
+               decision, not before it. */
+            disabled={setKs.isPending || ks == null || !isAdmin}
             block
             style={styles.seg}
           />
           <Text style={styles.helper}>
             {ks?.state
               ? `${killEntry(ks.state)?.desc ?? ks.state} · timer'ı SSH olmadan durdurur.`
-              : ksError
+              : !isAdmin
+                ? 'Kill switch yalnızca yöneticiler tarafından değiştirilebilir.'
+                : ksError
                 ? isAuthError(ksErr)
                   ? 'Durum okunamadı — sunucu token’ı gerekli. Ayarlar’dan gir.'
                   : 'Durum okunamadı — sunucuya ulaşılamıyor.'

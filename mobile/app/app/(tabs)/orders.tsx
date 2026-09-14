@@ -8,6 +8,7 @@ import { usePendingOrders, useOrders, useCancelOrder, useDecisions } from '@/api
 import type { AgentDecision, OrderListItem } from '@/api/types';
 import { getPermissionStatus, requestAndRegisterPush } from '@/notifications';
 import { useTheme } from '@/theme/useTheme';
+import { useIsAdmin } from '@/api/useMe';
 import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
 import { Tag, type TagVariant } from '@/components/Tag';
@@ -323,6 +324,9 @@ function HistoryRow({
   cancelling: boolean;
   onAskCancel: () => void;
 }) {
+  // The server refuses a cancel from a non-administrator; drawing the button
+  // anyway would deliver that answer as a 403 after the decision was made.
+  const isAdmin = useIsAdmin();
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
 
@@ -368,11 +372,11 @@ function HistoryRow({
         <Pressable
           style={styles.cancelBtn}
           onPress={onAskCancel}
-          disabled={cancelling}
+          disabled={cancelling || !isAdmin}
           accessibilityRole="button"
           accessibilityLabel={orderActionLabel(o, 'cancel')}
           accessibilityHint="Onay sorulur"
-          accessibilityState={{ disabled: cancelling }}
+          accessibilityState={{ disabled: cancelling || !isAdmin }}
         >
           <Text style={styles.cancelLabel}>
             {cancelling ? 'İptal ediliyor…' : 'Emri iptal et'}

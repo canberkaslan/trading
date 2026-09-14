@@ -19,7 +19,11 @@
  * (`authPolicy.resolveAuthMode`) and is unit-tested there.
  */
 
-import { isConfigured as isFirebaseConfigured, signIn as firebaseSignIn } from '@/auth/firebase';
+import {
+  currentUser,
+  isConfigured as isFirebaseConfigured,
+  signIn as firebaseSignIn,
+} from '@/auth/firebase';
 import { useAuthStore } from '@/stores/auth';
 import { signInErrorTr } from '@/auth/signInError';
 import {
@@ -203,6 +207,27 @@ export default function LoginScreen() {
     try {
       const { success, mode: factor } = await authenticate('Trader hesabını aç');
       if (success) {
+        // Device unlock is a RE-ENTRY, not an authentication. It proves the
+        // person holding the device is its owner; it cannot prove who they are
+        // to the server. Before Firebase that distinction did not matter,
+        // because the shared bearer was the whole security model — so this
+        // path called enter() and the app fell back to that secret.
+        //
+        // With Firebase configured it does matter: no session means no ID
+        // token, the app silently drops to the shared bearer, and the moment
+        // that secret is deleted this path 401s on every screen with nothing
+        // on screen explaining why. And while it works it is a hole — the
+        // whole point of identities is that a device lock is not one.
+        //
+        // Firebase persists the session, so a returning user still gets the
+        // one tap. Someone who has never signed in on this device is asked to,
+        // once.
+        if (isFirebaseConfigured() && currentUser() === null) {
+          setAuthError(
+            'Bu cihazda önce e-posta ve şifre ile giriş yapmalısın. Sonraki açılışlarda cihaz kilidi yeterli.',
+          );
+          return;
+        }
         enter();
         return;
       }

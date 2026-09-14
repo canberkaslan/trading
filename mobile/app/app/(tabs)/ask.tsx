@@ -32,6 +32,7 @@ import { useTranslation } from 'react-i18next';
 import { HTTPError } from 'ky';
 
 import { useStartAnalysis, useAnalysisJob } from '@/api/hooks';
+import { useIsAdmin } from '@/api/useMe';
 import type { AgentDecision, AnalyzeStatus } from '@/api/types';
 import { useTheme } from '@/theme/useTheme';
 import { ratingChip, modelBadge } from '@/theme/rating';
@@ -136,6 +137,9 @@ export default function AskScreen() {
     !!jobId &&
     !jobQuery.isError &&
     (!job || job.status === 'queued' || job.status === 'running');
+  const isAdmin = useIsAdmin();
+  // Starting an analysis spends ~$1.61 of measured model time, so it is an
+  // administrator action even though it never touches the broker.
   const busy = start.isPending || polling;
 
   // Mirror the poller into the handoff's chat shape.
@@ -323,7 +327,7 @@ export default function AskScreen() {
             <Pressable
               style={[styles.btn, chat.busy && styles.btnDisabled]}
               onPress={() => runAnalysis(chat.input)}
-              disabled={chat.busy}
+              disabled={chat.busy || !isAdmin}
               accessibilityRole="button"
               accessibilityLabel="Girilen sembolü analiz et"
               accessibilityState={{ disabled: chat.busy, busy: chat.busy }}

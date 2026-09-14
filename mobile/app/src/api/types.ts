@@ -102,6 +102,8 @@ export interface AnalyzeJob {
   error: string | null;
   created_utc: string;
   finished_utc: string | null;
+  /** Graph node currently running, so a ten-minute wait can show its shape. */
+  phase: string | null;
 }
 
 export interface Position {

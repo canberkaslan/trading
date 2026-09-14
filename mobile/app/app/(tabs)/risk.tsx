@@ -52,7 +52,7 @@ import type { Concentration, KillSwitchState,
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
 import { useIsAdmin } from '@/api/useMe';
-import { isAuthError } from '@/utils/apiError';
+import { isAuthError, isPartialFlatten, PARTIAL_FLATTEN_TR } from '@/utils/apiError';
 import { Seg, type SegOption } from '@/components/Seg';
 import { Sheet } from '@/components/Sheet';
 import { Tag } from '@/components/Tag';
@@ -266,9 +266,16 @@ export default function RiskScreen() {
         setFlattenOpen(false);
         toast('FLATTEN_ALL gönderildi — pozisyonlar piyasa fiyatından kapatılıyor');
       },
-      onError: () => {
+      onError: (e) => {
         setFlattenOpen(false);
-        toast('FLATTEN_ALL gönderilemedi — sunucuya ulaşılamadı');
+        // A PARTIAL flatten is NOT a transport failure, and calling it one is
+        // the most dangerous sentence this screen can produce. The server
+        // returns 502 with "flatten was PARTIAL" when some positions closed
+        // and others did not — and the others have already had their stop legs
+        // cancelled, so they are sitting open with no protection. Reporting
+        // that as "could not reach the server" tells the operator to check
+        // their wifi while money is exposed.
+        toast(isPartialFlatten(e) ? PARTIAL_FLATTEN_TR : 'FLATTEN_ALL gönderilemedi — sunucuya ulaşılamadı');
       },
     });
   };

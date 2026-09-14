@@ -14,6 +14,11 @@ from tradingagents_us.execution.flatten import FlattenResult
 
 @pytest.fixture()
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    # These exercise kill-switch BEHAVIOUR, not authorisation. The open
+    # posture used to be implied by the absence of every auth env var;
+    # it is now asked for, so the test says which posture it wants
+    # instead of inheriting one.
+    monkeypatch.setenv("ALLOW_ANONYMOUS_ADMIN", "1")
     monkeypatch.delenv("DEV_API_TOKEN", raising=False)
     monkeypatch.delenv("COGNITO_USER_POOL_ID", raising=False)
     monkeypatch.setenv("KILL_SWITCH_PATH", str(tmp_path / "kill.state"))

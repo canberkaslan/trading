@@ -25,6 +25,7 @@ import logging
 import os
 import sys
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -62,12 +63,19 @@ def _load_env() -> None:
             os.environ.setdefault(k, v)
 
 
-def propagate(ticker: str, trade_date: str) -> AgentDecision:
+def propagate(
+    ticker: str,
+    trade_date: str,
+    on_progress: Callable[[str], None] | None = None,
+) -> AgentDecision:
     """Run the upstream 7-agent pipeline for one US ticker.
 
     Args:
         ticker: e.g. "AAPL"
         trade_date: ISO date string (the "as-of" date for the decision)
+        on_progress: called with each graph node as it starts, so a caller
+            waiting ten minutes can say which of the eighteen steps is running
+            instead of only that something is.
 
     Returns:
         AgentDecision with the final rating and reasoning blobs.
@@ -102,7 +110,7 @@ def propagate(ticker: str, trade_date: str) -> AgentDecision:
     if not sentiment_supplement.install():
         log.warning("sentiment supplement not installed — analyst keeps its existing sources")
 
-    usage = UsageCollector()
+    usage = UsageCollector(on_node=on_progress)
 
     # After the collector exists and before the graph is built: the routed
     # clients must carry the SAME collector, or their calls vanish from the

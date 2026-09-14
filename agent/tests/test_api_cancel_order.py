@@ -51,6 +51,11 @@ def alpaca() -> MagicMock:
 def client(
     repo: TradeLogRepository, alpaca: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> TestClient:
+    # These exercise the endpoint's BEHAVIOUR, not its authorisation.
+    # The open posture used to be implied by the absence of every auth
+    # env var; it is now asked for, so the test states which posture it
+    # wants rather than inheriting one.
+    monkeypatch.setenv("ALLOW_ANONYMOUS_ADMIN", "1")
     monkeypatch.delenv("DEV_API_TOKEN", raising=False)
     monkeypatch.delenv("COGNITO_USER_POOL_ID", raising=False)
 

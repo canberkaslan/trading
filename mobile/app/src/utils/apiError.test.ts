@@ -1,6 +1,12 @@
 import { describe, it, expect } from '@jest/globals';
 
-import { statusOf, isAuthError, authErrorKind } from './apiError';
+import {
+  statusOf,
+  isAuthError,
+  authErrorKind,
+  isPartialFlatten,
+  PARTIAL_FLATTEN_TR,
+} from './apiError';
 
 /** The shape ky throws: an Error carrying the Response. */
 const httpError = (status: number) =>
@@ -65,5 +71,45 @@ describe('authErrorKind', () => {
     expect(authErrorKind(httpError(503), false)).toBeNull();
     expect(authErrorKind(httpError(503), true)).toBeNull();
     expect(authErrorKind(new Error('offline'), true)).toBeNull();
+  });
+});
+
+describe('a partial flatten is not a connection problem', () => {
+  const partial = Object.assign(
+    new Error('Request failed with status code 502: POST https://h/v1/orders/kill-switch'),
+    { name: 'HTTPError', response: { status: 502 }, message: 'kill switch armed, but flatten was PARTIAL: 2/5 submitted' },
+  );
+
+  it('recognises the server saying PARTIAL', () => {
+    // The positions that did NOT close have already had their stop legs
+    // cancelled. Calling this "could not reach the server" sends the operator
+    // to check their wifi while money sits unprotected.
+    expect(isPartialFlatten(partial)).toBe(true);
+  });
+
+  it('is not confused by an ordinary 502', () => {
+    const plain = Object.assign(new Error('bad gateway'), {
+      response: { status: 502 },
+      message: 'broker refused cancel: timeout',
+    });
+    expect(isPartialFlatten(plain)).toBe(false);
+  });
+
+  it('is not triggered by other statuses', () => {
+    const notFound = Object.assign(new Error('x'), {
+      response: { status: 404 },
+      message: 'flatten was PARTIAL',
+    });
+    expect(isPartialFlatten(notFound)).toBe(false);
+  });
+
+  it('survives a transport error with no response at all', () => {
+    expect(isPartialFlatten(new Error('Network request failed'))).toBe(false);
+    expect(isPartialFlatten(null)).toBe(false);
+  });
+
+  it('the message names the actual danger, not a generic failure', () => {
+    expect(PARTIAL_FLATTEN_TR).toContain('stop koruması kaldırıldı');
+    expect(PARTIAL_FLATTEN_TR).not.toContain('sunucuya ulaşılamadı');
   });
 });

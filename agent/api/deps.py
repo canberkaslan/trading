@@ -333,10 +333,22 @@ def is_admin(user: str) -> bool:
 
     Three cases, and the reasoning for each matters more than the code:
 
-    `anonymous` — auth is switched off entirely, which only happens when
-    neither Firebase nor a dev token is configured. That is a local machine
-    with no identity to check, so denying would break development while
-    protecting nothing.
+    `anonymous` — auth is switched off entirely, which happens when neither
+    Firebase, Cognito nor a dev token is configured. This used to be admitted
+    on the reasoning that it is "a local machine with no identity to check".
+    That reasoning was wrong in the one way that matters: it inferred intent
+    from ABSENCE. A box that boots with an unmounted or empty secrets.env has
+    no auth configured either, and it would have published the kill switch —
+    an unauthenticated POST could cancel every protective stop and market out
+    the whole book, recorded as actor="anonymous".
+
+    It directly contradicted the paragraph below, which refuses to fail open on
+    a missing ADMIN_UIDS for exactly this reason. A missing list failed closed
+    while missing auth failed open.
+
+    So the open posture must now be ASKED for: ALLOW_ANONYMOUS_ADMIN=1. Local
+    development says so in one line; a box that lost its secrets says nothing,
+    and gets nothing.
 
     `dev-user` — the shared bearer during the Firebase migration. NOT admin.
     It is one secret held by everyone, so it cannot say who acted; and the
@@ -347,7 +359,7 @@ def is_admin(user: str) -> bool:
     Anything else is a Firebase uid, admitted only if it is on the list.
     """
     if user == "anonymous":
-        return True
+        return (os.environ.get("ALLOW_ANONYMOUS_ADMIN") or "").strip() in ("1", "true", "yes")
     if user == "dev-user":
         return False
     return user in _admin_uids()
@@ -360,11 +372,11 @@ async def require_admin(user: str = Depends(require_token)) -> str:
     403 means "I know you and the answer is no". Collapsing them would send a
     signed-in family member to re-enter a password that was never the problem.
 
-    When ADMIN_UIDS is unset this denies everyone (except the anonymous local
-    case above). The asymmetry is deliberate: failing open would silently hand
-    the kill switch to every user the moment an env var went missing, while
-    failing closed is a loud lockout the operator fixes by editing one line.
-    A missing list must not read as an empty restriction.
+    When ADMIN_UIDS is unset this denies everyone. The asymmetry is deliberate:
+    failing open would silently hand the kill switch to every user the moment
+    an env var went missing, while failing closed is a loud lockout the
+    operator fixes by editing one line. A missing list must not read as an
+    empty restriction — and neither must missing auth configuration.
     """
     if not is_admin(user):
         raise HTTPException(

@@ -41,6 +41,11 @@ class _NoOpRepo:
 
 @pytest.fixture()
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    # These exercise the endpoint's BEHAVIOUR, not its authorisation.
+    # The open posture used to be implied by the absence of every auth
+    # env var; it is now asked for, so the test states which posture it
+    # wants rather than inheriting one.
+    monkeypatch.setenv("ALLOW_ANONYMOUS_ADMIN", "1")
     monkeypatch.delenv("DEV_API_TOKEN", raising=False)
     monkeypatch.delenv("COGNITO_USER_POOL_ID", raising=False)
     # Import the app BEFORE patching api.deps.get_repo. Every route module
@@ -54,7 +59,10 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     # Don't touch the real DB or LLM pipeline. _run imports get_repo lazily
     # inside its worker thread — outside request scope, so dependency_overrides
     # can't reach it — hence patching the name on api.deps for that path.
-    monkeypatch.setattr("api.routes.analyze.propagate", lambda t, d: _fake_decision(t))
+    monkeypatch.setattr(
+        "api.routes.analyze.propagate",
+        lambda t, d, on_progress=None: _fake_decision(t),
+    )
     monkeypatch.setattr("api.deps.get_repo", _NoOpRepo)
     import api.routes.analyze as mod
 
@@ -97,7 +105,7 @@ def test_analyze_dedupes_inflight_same_ticker(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Make the pipeline slow so both POSTs land while the first is in-flight.
-    def _slow(t: str, d: str) -> AgentDecision:
+    def _slow(t: str, d: str, on_progress: object = None) -> AgentDecision:
         time.sleep(0.3)
         return _fake_decision(t)
 
@@ -115,7 +123,7 @@ def test_get_unknown_job_404(client: TestClient) -> None:
 def test_pipeline_error_surfaces_as_error_status(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def _boom(t: str, d: str) -> AgentDecision:
+    def _boom(t: str, d: str, on_progress: object = None) -> AgentDecision:
         raise RuntimeError("polygon down")
 
     monkeypatch.setattr("api.routes.analyze.propagate", _boom)

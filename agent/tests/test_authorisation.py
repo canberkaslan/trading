@@ -67,10 +67,16 @@ class TestTheSharedBearerIsNotPrivileged:
 
 
 class TestLocalDevelopment:
-    def test_anonymous_is_allowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # Auth switched off entirely — a local machine with no identity to
-        # check. Denying would break development while protecting nothing.
+    def test_anonymous_needs_the_explicit_opt_in(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # This assertion used to be `is True` on the reasoning that no auth
+        # configured means a local machine. That inferred intent from absence,
+        # and a box with an unmounted secrets.env looks identical.
         monkeypatch.delenv("ADMIN_UIDS", raising=False)
+        monkeypatch.delenv("ALLOW_ANONYMOUS_ADMIN", raising=False)
+        assert deps.is_admin("anonymous") is False
+        monkeypatch.setenv("ALLOW_ANONYMOUS_ADMIN", "1")
         assert deps.is_admin("anonymous") is True
 
 
@@ -146,3 +152,48 @@ class TestTheRightEndpointsAreGuarded:
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
+
+class TestAnonymousIsNotAutomaticallyAdmin:
+    """Inferring intent from ABSENCE was the hole.
+
+    "anonymous" was admitted on the reasoning that no auth configured means a
+    local machine with no identity to check. But a box that boots with an
+    unmounted or empty secrets.env has no auth configured either — and it would
+    have published the kill switch: an unauthenticated POST could cancel every
+    protective stop and market out the whole book, recorded as
+    actor="anonymous".
+
+    It contradicted the module's own refusal to fail open on a missing
+    ADMIN_UIDS. A missing list failed closed while missing auth failed open.
+    """
+
+    def test_a_box_that_lost_its_secrets_locks_the_switch(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        for k in ("FIREBASE_PROJECT_ID", "COGNITO_USER_POOL_ID", "DEV_API_TOKEN",
+                  "ADMIN_UIDS", "ALLOW_ANONYMOUS_ADMIN"):
+            monkeypatch.delenv(k, raising=False)
+        assert deps.is_admin("anonymous") is False
+
+    def test_local_development_says_so_in_one_line(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ALLOW_ANONYMOUS_ADMIN", "1")
+        assert deps.is_admin("anonymous") is True
+
+    @pytest.mark.parametrize("value", ["0", "false", "", "no", "maybe"])
+    def test_anything_other_than_a_clear_yes_stays_closed(
+        self, monkeypatch: pytest.MonkeyPatch, value: str
+    ) -> None:
+        monkeypatch.setenv("ALLOW_ANONYMOUS_ADMIN", value)
+        assert deps.is_admin("anonymous") is False
+
+    @pytest.mark.anyio
+    async def test_require_admin_refuses_an_unconfigured_box(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("ALLOW_ANONYMOUS_ADMIN", raising=False)
+        with pytest.raises(HTTPException) as e:
+            await deps.require_admin("anonymous")
+        assert e.value.status_code == 403

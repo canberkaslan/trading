@@ -55,3 +55,25 @@ export function authErrorKind(err: unknown, hasStoredToken: boolean): AuthErrorK
   if (!isAuthError(err)) return null;
   return hasStoredToken ? 'invalid' : 'missing';
 }
+
+/**
+ * A FLATTEN_ALL that closed some positions and not others.
+ *
+ * The server answers 502 with "flatten was PARTIAL" when the broker accepted
+ * part of the liquidation. The positions it did NOT close have already had
+ * their protective stop legs cancelled by the same call, so they are open and
+ * unprotected — the single worst state this system can be in.
+ *
+ * It was being reported to the operator as "sunucuya ulaşılamadı", which sends
+ * them to check their connection while money sits exposed. Same mistake as the
+ * 401 that read as a network failure, with a far higher price.
+ */
+export function isPartialFlatten(err: unknown): boolean {
+  if (statusOf(err) !== 502) return false;
+  const message = (err as { message?: unknown } | null)?.message;
+  return typeof message === 'string' && /partial/i.test(message);
+}
+
+/** Deliberately alarming, and deliberately specific about what to do. */
+export const PARTIAL_FLATTEN_TR =
+  'FLATTEN_ALL KISMEN GERÇEKLEŞTİ — bazı pozisyonlar kapanmadı ve stop koruması kaldırıldı. Broker hesabını hemen kontrol et.';

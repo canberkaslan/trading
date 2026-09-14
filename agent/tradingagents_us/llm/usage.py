@@ -31,6 +31,7 @@ import contextlib
 import json
 import logging
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -149,9 +150,13 @@ class UsageCollector(BaseCallbackHandler):
     # agents knowing they are being measured.
     _NODE_KEY = "langgraph_node"
 
-    def __init__(self) -> None:
+    def __init__(self, on_node: Callable[[str], None] | None = None) -> None:
         self.usage = Usage()
         self._node_of: dict[Any, str] = {}
+        # Optional progress sink. A council takes about ten minutes, and a
+        # caller that can only report "running" for that long is
+        # indistinguishable from one that has hung.
+        self._on_node = on_node
 
     def on_llm_start(self, serialized: Any, prompts: Any, **kwargs: Any) -> None:
         with contextlib.suppress(Exception):
@@ -160,6 +165,10 @@ class UsageCollector(BaseCallbackHandler):
             node = meta.get(self._NODE_KEY)
             if run_id is not None and node:
                 self._node_of[run_id] = str(node)
+                if self._on_node is not None:
+                    # Never let a progress listener break the run it reports on.
+                    with contextlib.suppress(Exception):
+                        self._on_node(str(node))
 
     def on_llm_end(self, response: Any, **kwargs: Any) -> None:
         # Telemetry must never break the run: a malformed payload costs a

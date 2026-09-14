@@ -50,6 +50,10 @@ class AnalyzeJob:
     error: str | None = None
     created_utc: datetime = field(default_factory=lambda: datetime.now(UTC))
     finished_utc: datetime | None = None
+    # The graph node currently running. A council takes about ten minutes, and
+    # a screen that can only say "running" for that long is indistinguishable
+    # from one that has hung — which is exactly how it was read.
+    phase: str | None = None
 
 
 class AnalyzeRequest(BaseModel):
@@ -64,6 +68,7 @@ class AnalyzeJobView(BaseModel):
     error: str | None = None
     created_utc: datetime
     finished_utc: datetime | None = None
+    phase: str | None = None
 
 
 def _view(job: AnalyzeJob) -> AnalyzeJobView:
@@ -75,6 +80,7 @@ def _view(job: AnalyzeJob) -> AnalyzeJobView:
         error=job.error,
         created_utc=job.created_utc,
         finished_utc=job.finished_utc,
+        phase=job.phase,
     )
 
 
@@ -94,8 +100,14 @@ def _run(job_id: str, ticker: str, trade_date: str) -> None:
     with _lock:
         job = _jobs[job_id]
         job.status = "running"
+    def note(node: str) -> None:
+        # Called from the LLM callback thread, so it takes the same lock the
+        # reader does rather than assuming the write is atomic.
+        with _lock:
+            job.phase = node
+
     try:
-        decision = propagate(ticker, trade_date)
+        decision = propagate(ticker, trade_date, on_progress=note)
         # Persist so the on-demand decision also shows in /v1/agents history.
         try:
             from ..deps import get_repo

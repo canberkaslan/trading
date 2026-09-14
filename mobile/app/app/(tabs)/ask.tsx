@@ -33,7 +33,8 @@ import { HTTPError } from 'ky';
 
 import { useStartAnalysis, useAnalysisJob } from '@/api/hooks';
 import { useIsAdmin } from '@/api/useMe';
-import type { AgentDecision, AnalyzeStatus } from '@/api/types';
+import { statusLine } from '@/utils/askStatus';
+import type { AgentDecision, } from '@/api/types';
 import { useTheme } from '@/theme/useTheme';
 import { ratingChip, modelBadge } from '@/theme/rating';
 import { font, TABULAR, TYPE } from '@/theme/type';
@@ -47,13 +48,7 @@ const CHIPS = ['AAPL', 'NVDA', 'MSFT', 'GOOGL', 'AMZN', 'AVGO'] as const;
 /** The link back to the full decision is 13px of text; slop it up to 44. */
 const LINK_HEIGHT = 20;
 
-const QUEUED_TR = 'sıraya alındı…';
-const RUNNING_TR = 'ajanlar tartışıyor… (~5-10 dk)';
 
-function statusLine(ticker: string, status: AnalyzeStatus | undefined): string {
-  const phase = status === 'running' ? RUNNING_TR : QUEUED_TR;
-  return ticker ? `${ticker}: ${phase}` : phase;
-}
 
 /**
  * Why the job never started. A 422 is the backend ANSWERING — it takes only
@@ -142,14 +137,33 @@ export default function AskScreen() {
   // administrator action even though it never touches the broker.
   const busy = start.isPending || polling;
 
+  // A clock, ticking only while something is running. Without it the elapsed
+  // count would freeze between polls and the screen would look stuck again —
+  // the exact thing this is here to disprove.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!busy) return;
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [busy]);
+
   // Mirror the poller into the handoff's chat shape.
   useEffect(() => {
     setChat((c) => {
-      const status = busy ? statusLine(job?.ticker ?? askedTicker.current, job?.status) : '';
+      const status = busy
+        ? statusLine(
+            job?.ticker ?? askedTicker.current,
+            job?.status,
+            job?.phase,
+            job?.created_utc,
+            now,
+          )
+        : '';
       if (c.busy === busy && c.status === status) return c;
       return { ...c, busy, status };
     });
-  }, [busy, job?.ticker, job?.status]);
+  }, [busy, job?.ticker, job?.status, job?.phase, job?.created_utc, now]);
 
   // Terminal state -> one assistant message.
   useEffect(() => {
@@ -197,7 +211,7 @@ export default function AskScreen() {
         messages: [...c.messages, { id: `ask-${Date.now()}`, role: 'user', text: ticker }],
         input: '',
         busy: true,
-        status: statusLine(ticker, 'queued'),
+        status: statusLine(ticker, 'queued', null, undefined, Date.now()),
       }));
       start.mutate(ticker, {
         onSuccess: (j) => setJobId(j.job_id),

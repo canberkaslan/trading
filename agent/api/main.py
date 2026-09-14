@@ -22,13 +22,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 
 from tradingagents_us.log_redaction import install as install_log_redaction
 
-from .deps import get_alpaca, get_repo
+from .deps import get_alpaca, get_repo, is_admin, require_token
 from .routes import (
     agents,
     analyze,
@@ -87,6 +87,22 @@ app.include_router(risk.router, prefix="/v1/risk", tags=["risk"])
 install_log_redaction()
 
 _STATIC = Path(__file__).resolve().parent / "static"
+
+
+@app.get("/v1/me", include_in_schema=True, tags=["auth"])
+async def whoami(user: str = Depends(require_token)) -> dict[str, object]:
+    """Who the caller is and what they may do.
+
+    The app needs this to stop drawing controls that will 403. Showing a kill
+    switch to someone who cannot throw it is the same failure this codebase
+    already fixed once — a control whose state or effect is unknown invites a
+    tap to find out, and the answer arrives as an error after the decision has
+    been made.
+
+    It returns the caller's OWN privilege only, never the list. A refusal must
+    not enumerate the privileged accounts, and neither must a success.
+    """
+    return {"uid": user, "is_admin": is_admin(user)}
 
 
 @app.get("/dashboard", include_in_schema=False)

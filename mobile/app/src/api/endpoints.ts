@@ -86,6 +86,9 @@ export const api = {
   // Orders
   listOrders: () => apiClient.get('v1/orders').json<OrderListItem[]>(),
   listPendingOrders: () => apiClient.get('v1/orders/pending').json<OrderListItem[]>(),
+  /** Who am I, and may I act — see useMe. */
+  getMe: () => apiClient.get('v1/me').json<{ uid: string; is_admin: boolean }>(),
+
   approveOrder: (orderId: string) =>
     apiClient
       .post(`v1/orders/${orderId}/approve`)

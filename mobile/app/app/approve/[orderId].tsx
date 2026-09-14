@@ -1,5 +1,6 @@
 import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useIsAdmin } from '@/api/useMe';
 import { ErrorState } from '@/components/ErrorState';
 import { useTranslation } from 'react-i18next';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -130,6 +131,7 @@ export default function ApproveOrderScreen() {
     refetch: refetchOrders,
   } = usePendingOrders();
   const { data: portfolio } = usePortfolio();
+  const isAdmin = useIsAdmin();
   const approve = useApproveOrder();
   const reject = useRejectOrder();
   const [decision, setDecision] = useState<AgentDecision | null>(null);
@@ -358,7 +360,7 @@ export default function ApproveOrderScreen() {
 
         <View style={styles.actions}>
           <Pressable
-            disabled={busy}
+            disabled={busy || !isAdmin}
             style={[styles.btn, styles.btnSecondary, busy && styles.btnDisabled]}
             onPress={() => setFlow({ step: 'rejectConfirm' })}
             accessibilityRole="button"
@@ -368,7 +370,7 @@ export default function ApproveOrderScreen() {
             <Text style={styles.btnSecondaryText}>Reddet</Text>
           </Pressable>
           <Pressable
-            disabled={busy}
+            disabled={busy || !isAdmin}
             style={[styles.btn, styles.btnPrimary, busy && styles.btnDisabled]}
             onPress={askForAuth}
             accessibilityRole="button"

@@ -39,6 +39,8 @@ export interface AgentDecision {
   reasoning: AgentReasoning[];
   debate_transcript: Record<string, string>;
   final_decision_text: string | null;
+  /** The same report in Turkish, or null when it was not translated. */
+  final_decision_text_tr: string | null;
   timestamp_utc: string;
   decision_id: string;
 }

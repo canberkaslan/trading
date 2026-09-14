@@ -201,7 +201,11 @@ export default function DecisionDetailScreen() {
             <View style={styles.sectionHead}>
               <Text style={styles.section}>Portföy yöneticisi çıktısı</Text>
             </View>
-            <Text style={styles.body}>{decision.final_decision_text ?? '(PM metni yok)'}</Text>
+            <Text style={styles.body}>
+              {decision.final_decision_text_tr ??
+                decision.final_decision_text ??
+                '(PM metni yok)'}
+            </Text>
 
             <Text style={styles.note}>
               Onay/red, emir bekleyen listeye düştüğünde Emirler'den yapılır.

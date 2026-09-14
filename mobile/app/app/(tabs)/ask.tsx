@@ -175,7 +175,13 @@ export default function AskScreen() {
       if (settled.current === jobId) return;
       settled.current = jobId;
       if (job.status === 'done') {
-        const text = job.decision?.final_decision_text?.trim();
+        // Turkish when it exists, English otherwise. The English text stays
+        // authoritative — a missing translation shows the original rather than
+        // an empty report, because absence of a translation is not absence of
+        // an answer.
+        const text = (
+          job.decision?.final_decision_text_tr ?? job.decision?.final_decision_text
+        )?.trim();
         append(jobId, {
           role: 'assistant',
           text: text || 'Gerekçe metni gelmedi — ajan analizleri tam karar detayında.',

@@ -12,12 +12,13 @@ import type {
   EvalResult,
   Health,
   KillSwitchState,
+  Mover,
   OrderListItem,
   PortfolioSnapshot,
   PriceSeries,
   Readiness,
-  TradesResponse,
   StopCoverage,
+  TradesResponse,
 } from './types';
 
 export const api = {
@@ -97,6 +98,12 @@ export const api = {
     apiClient
       .get('v1/tickers/browse', { searchParams: { limit } })
       .json<{ ticker: string; name: string }[]>(),
+
+  /** Today's board: most traded, biggest gainers, biggest losers. */
+  marketMovers: (sort: string, universe: string, limit = 40) =>
+    apiClient
+      .get('v1/market/movers', { searchParams: { sort, universe, limit } })
+      .json<Mover[]>(),
 
   /** Who am I, and may I act — see useMe. */
   getMe: () => apiClient.get('v1/me').json<{ uid: string; is_admin: boolean }>(),

@@ -372,3 +372,14 @@ export interface Actionability {
   first_order_at_utc: string | null;
   last_order_at_utc: string | null;
 }
+
+/** One row of the market board. */
+export interface Mover {
+  ticker: string;
+  name: string;
+  price: number;
+  change_pct: number;
+  dollar_volume: number;
+  sector: string | null;
+  in_sp500: boolean;
+}

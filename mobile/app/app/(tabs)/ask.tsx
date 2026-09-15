@@ -33,14 +33,19 @@ import { HTTPError } from 'ky';
 
 import { useStartAnalysis, useAnalysisJob } from '@/api/hooks';
 import { useIsAdmin } from '@/api/useMe';
-import { useBrowseTickers, useTickerSearch } from '@/api/useTickerSearch';
+import {
+  useMarketMovers,
+  useTickerSearch,
+  type MoverSort,
+  type MoverUniverse,
+} from '@/api/useTickerSearch';
 import { ErrorState } from '@/components/ErrorState';
 import { statusLine } from '@/utils/askStatus';
 import type { AgentDecision, } from '@/api/types';
 import { useTheme } from '@/theme/useTheme';
 import { ratingChip, modelBadge } from '@/theme/rating';
 import { font, TABULAR, TYPE } from '@/theme/type';
-import { formatUsd } from '@/utils/format';
+import { formatPct, formatUsd } from '@/utils/format';
 import { MIN_TOUCH_TARGET, hitSlopFor } from '@/utils/a11y';
 import { BlinkSquare } from '@/components/BlinkSquare';
 
@@ -137,12 +142,14 @@ export default function AskScreen() {
   const isAdmin = useIsAdmin();
   const { data: hits } = useTickerSearch(chat.input);
   const [browseOpen, setBrowseOpen] = useState(false);
+  const [sort, setSort] = useState<MoverSort>('volume');
+  const [universe, setUniverse] = useState<MoverUniverse>('sp500');
   const {
-    data: browse,
-    isLoading: browseLoading,
-    error: browseError,
-    refetch: refetchBrowse,
-  } = useBrowseTickers(browseOpen);
+    data: movers,
+    isLoading: moversLoading,
+    error: moversError,
+    refetch: refetchMovers,
+  } = useMarketMovers(sort, universe, browseOpen);
   // Hidden once the field holds an exact symbol from the list: the operator has
   // chosen, and a list still offering that same choice reads as not having
   // registered the tap.
@@ -313,62 +320,117 @@ export default function AskScreen() {
                 ))}
               </View>
 
-              {/* The rest of the market, for when nothing on the shortlist is
-                  what you came for. Any US stock has always been analysable —
-                  the endpoint never checked a universe — but the screen only
-                  ever offered six names and a text box, so the other thirteen
-                  thousand were reachable solely from memory.
-
-                  Ranked by the previous session's dollar volume, common shares
-                  only. A raw volume list is topped by leveraged ETFs, and
-                  "give me a stock" does not mean those. */}
+              {/* The board, not a list of names. The first version showed
+                  sixty symbols and their company names, which answers "which
+                  stocks exist" rather than "what moved today" — the question
+                  every market screen answers and the one that was asked. */}
               <View style={styles.browseBlock}>
                 <View style={styles.browseHead}>
-                  <Text style={styles.browseTitle}>Tüm ABD hisseleri</Text>
+                  <Text style={styles.browseTitle}>Piyasa</Text>
                   <Pressable
                     onPress={() => setBrowseOpen((v) => !v)}
                     style={styles.browseToggle}
                     accessibilityRole="button"
-                    accessibilityLabel={browseOpen ? 'Listeyi kapat' : 'Listeyi aç'}
+                    accessibilityLabel={browseOpen ? 'Piyasa tablosunu kapat' : 'Piyasa tablosunu aç'}
                     accessibilityState={{ expanded: browseOpen }}
                   >
                     <Text style={styles.browseToggleText}>
-                      {browseOpen ? 'Kapat' : 'En çok işlem görenler →'}
+                      {browseOpen ? 'Kapat' : 'Tabloyu aç →'}
                     </Text>
                   </Pressable>
                 </View>
 
                 {browseOpen ? (
-                  browseError ? (
-                    <ErrorState
-                      title="Liste alınamadı"
-                      detail={browseError}
-                      onRetry={() => void refetchBrowse()}
-                    />
-                  ) : browseLoading ? (
-                    <Text style={styles.browseHint}>Yükleniyor…</Text>
-                  ) : (
-                    <>
-                      <Text style={styles.browseHint}>
-                        Aramak için aşağıya sembol ya da şirket adı yaz.
-                      </Text>
-                      {(browse ?? []).map((b) => (
+                  <>
+                    <View style={styles.moverTabs}>
+                      {(
+                        [
+                          ['volume', 'En çok işlem'],
+                          ['gainers', 'Yükselenler'],
+                          ['losers', 'Düşenler'],
+                        ] as const
+                      ).map(([key, label]) => (
                         <Pressable
-                          key={b.ticker}
-                          style={styles.browseRow}
-                          onPress={() => runAnalysis(b.ticker)}
+                          key={key}
+                          style={[styles.moverTab, sort === key && styles.moverTabOn]}
+                          onPress={() => setSort(key)}
                           accessibilityRole="button"
-                          accessibilityLabel={`${b.ticker}, ${b.name}`}
-                          accessibilityHint="Bu sembolü analiz eder"
+                          accessibilityLabel={label}
+                          accessibilityState={{ selected: sort === key }}
                         >
-                          <Text style={styles.browseTicker}>{b.ticker}</Text>
-                          <Text style={styles.browseName} numberOfLines={1}>
-                            {b.name}
+                          <Text style={[styles.moverTabText, sort === key && styles.moverTabTextOn]}>
+                            {label}
                           </Text>
                         </Pressable>
                       ))}
-                    </>
-                  )
+                      {/* Defaults ON. Unfiltered, the gainers board is penny
+                          stocks — a real session had an $8 name at +179% — and
+                          a screen whose top row is that is one the operator
+                          learns to ignore. */}
+                      <Pressable
+                        style={[styles.moverTab, universe === 'sp500' && styles.moverTabOn]}
+                        onPress={() => setUniverse((u) => (u === 'sp500' ? 'all' : 'sp500'))}
+                        accessibilityRole="button"
+                        accessibilityLabel="Sadece S&P 500"
+                        accessibilityState={{ selected: universe === 'sp500' }}
+                      >
+                        <Text
+                          style={[
+                            styles.moverTabText,
+                            universe === 'sp500' && styles.moverTabTextOn,
+                          ]}
+                        >
+                          S&P 500
+                        </Text>
+                      </Pressable>
+                    </View>
+
+                    {moversError ? (
+                      <ErrorState
+                        title="Piyasa verisi alınamadı"
+                        detail={moversError}
+                        onRetry={() => void refetchMovers()}
+                      />
+                    ) : moversLoading ? (
+                      <Text style={styles.browseHint}>Yükleniyor…</Text>
+                    ) : (
+                      (movers ?? []).map((m) => (
+                        <Pressable
+                          key={m.ticker}
+                          style={styles.moverRow}
+                          onPress={() => runAnalysis(m.ticker)}
+                          accessibilityRole="button"
+                          accessibilityLabel={`${m.ticker}, ${m.name}, ${m.change_pct.toFixed(2)} yüzde`}
+                          accessibilityHint="Bu sembolü analiz eder"
+                        >
+                          <View style={styles.moverLeft}>
+                            <Text style={styles.moverTicker}>{m.ticker}</Text>
+                            <Text style={styles.moverName} numberOfLines={1}>
+                              {m.name}
+                            </Text>
+                          </View>
+                          <View style={styles.moverRight}>
+                            <Text style={styles.moverPrice}>{formatUsd(m.price)}</Text>
+                            <Text
+                              style={[
+                                styles.moverChange,
+                                {
+                                  color:
+                                    m.change_pct > 0
+                                      ? theme.up
+                                      : m.change_pct < 0
+                                        ? (theme.downText ?? theme.down)
+                                        : theme.textSecondary,
+                                },
+                              ]}
+                            >
+                              {formatPct(m.change_pct / 100, { signed: true })}
+                            </Text>
+                          </View>
+                        </Pressable>
+                      ))
+                    )}
+                  </>
                 ) : null}
               </View>
             </>
@@ -619,7 +681,21 @@ const makeStyles = (t: Palette) =>
     browseToggle: { minHeight: MIN_TOUCH_TARGET, justifyContent: 'center', paddingLeft: 8 },
     browseToggleText: { color: t.accent700 ?? t.accent, fontSize: 12, ...font(600) },
     browseHint: { color: t.textSecondary, fontSize: 12, marginTop: 6, marginBottom: 6 },
-    browseRow: {
+    // Selector chips, not a Seg: four independent choices where one is a
+    // toggle, so a segmented control would imply they are mutually exclusive.
+    moverTabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10, marginBottom: 4 },
+    moverTab: {
+      borderWidth: 1,
+      borderColor: t.divider,
+      paddingHorizontal: 10,
+      minHeight: MIN_TOUCH_TARGET,
+      justifyContent: 'center',
+    },
+    moverTabOn: { borderColor: t.textPrimary, backgroundColor: t.surfaceElevated },
+    moverTabText: { color: t.textSecondary, fontSize: 12, ...font(600) },
+    moverTabTextOn: { color: t.textPrimary, ...font(800) },
+
+    moverRow: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 10,
@@ -628,8 +704,14 @@ const makeStyles = (t: Palette) =>
       borderBottomWidth: 1,
       borderBottomColor: t.divider,
     },
-    browseTicker: { color: t.textPrimary, fontSize: 14, ...font(800), minWidth: 62 },
-    browseName: { color: t.textSecondary, fontSize: 12, flex: 1 },
+    moverLeft: { flex: 1 },
+    moverRight: { alignItems: 'flex-end' },
+    moverTicker: { color: t.textPrimary, fontSize: 14, ...font(800) },
+    moverName: { color: t.textSecondary, fontSize: 11, marginTop: 1 },
+    // Tabular so the decimal points line up down the column; a price list
+    // that jitters is harder to scan than one that does not.
+    moverPrice: { color: t.textPrimary, fontSize: 13, ...font(600), ...TABULAR },
+    moverChange: { fontSize: 12, ...font(800), ...TABULAR, marginTop: 1 },
 
     suggestions: { borderTopWidth: 1, borderTopColor: t.divider },
     suggestion: {

@@ -56,13 +56,23 @@ export function useTickerSearch(query: string) {
  * the names an operator would plausibly ask about, in the order the market
  * itself traded them.
  */
-export function useBrowseTickers(enabled: boolean) {
+export type MoverSort = 'volume' | 'gainers' | 'losers';
+export type MoverUniverse = 'all' | 'sp500';
+
+/**
+ * Today's board — price, change and volume, not just a list of names.
+ *
+ * The first version of this listed sixty symbols and their company names,
+ * which answers "which stocks exist" rather than "what moved today". Every
+ * market screen answers the second one.
+ */
+export function useMarketMovers(sort: MoverSort, universe: MoverUniverse, enabled: boolean) {
   return useQuery({
-    queryKey: ['tickers', 'browse'],
-    queryFn: () => api.browseTickers(60),
+    queryKey: ['market', 'movers', sort, universe],
+    queryFn: () => api.marketMovers(sort, universe, 40),
     enabled,
-    // The ranking is yesterday's session; it does not move while the app is open.
-    staleTime: 60 * 60_000,
+    // A closed session does not move while the app is open.
+    staleTime: 30 * 60_000,
     retry: false,
   });
 }

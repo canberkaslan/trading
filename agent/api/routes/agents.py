@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from tradingagents_us.schemas import AgentDecision
 from tradingagents_us.storage import TradeLogRepository
+from tradingagents_us.storage.models import AgentDecisionRow
 from tradingagents_us.storage.repository import row_to_decision
 
 from ..deps import get_repo, require_token
@@ -19,28 +20,41 @@ router = APIRouter()
 _PREVIEW_CHARS = 2000
 
 
-def _preview(decision):
-    """A copy whose reasoning summaries are trimmed for the list response."""
-    blocks = getattr(decision, "reasoning", None)
-    if not blocks:
-        return decision
+def _preview(row: AgentDecisionRow) -> AgentDecisionRow:
+    """Trim each agent report on a decision ROW for the list response.
+
+    It operates on `reasoning_json` — a list of plain dicts — because
+    `list_recent_decisions` returns SQLAlchemy rows, not schemas. The first
+    version reached for `.reasoning` and `.model_copy()`, which a row has
+    neither of, so `getattr(..., None)` found nothing and it returned the row
+    untouched. It was a silent no-op: no error, no trimming, and a response
+    that looked exactly like the one it was supposed to shrink.
+
+    The row is mutated rather than copied. These are detached objects the
+    session has already released, and they exist only to be serialised into
+    this response; copying a SQLAlchemy instance to avoid touching something
+    nobody else holds would be ceremony.
+    """
+    blocks = row.reasoning_json or []
+    if not isinstance(blocks, list):
+        return row
+
     trimmed = []
     for b in blocks:
-        summary = getattr(b, "summary", "") or ""
+        if not isinstance(b, dict):
+            trimmed.append(b)
+            continue
+        summary = b.get("summary") or ""
         if len(summary) <= _PREVIEW_CHARS:
             trimmed.append(b)
             continue
         # Say it was trimmed. A report that simply stops mid-sentence reads as
         # a model that stopped mid-sentence, which is a different fault.
         trimmed.append(
-            b.model_copy(
-                update={
-                    "summary": summary[:_PREVIEW_CHARS]
-                    + "\n\n[…tam metin için karara dokun]"
-                }
-            )
+            {**b, "summary": summary[:_PREVIEW_CHARS] + "\n\n[…tam metin için karara dokun]"}
         )
-    return decision.model_copy(update={"reasoning": trimmed})
+    row.reasoning_json = trimmed
+    return row
 
 
 @router.get("/decisions", response_model=list[AgentDecision])

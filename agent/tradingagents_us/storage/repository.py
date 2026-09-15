@@ -348,6 +348,11 @@ def row_to_decision(row: AgentDecisionRow) -> AgentDecision:
         suggested_size_pct=row.suggested_size_pct,
         reasoning=[AgentReasoning(**r) for r in (row.reasoning_json or [])],
         final_decision_text=row.final_decision_text,
+        # Written since the translation landed, never read back — so every
+        # report came out of the API as English-only while the Turkish sat in
+        # the column beside it. A write path without its matching read is
+        # invisible until someone checks the two against each other.
+        final_decision_text_tr=row.final_decision_text_tr,
         timestamp_utc=row.timestamp_utc,
         decision_id=row.decision_id,
     )

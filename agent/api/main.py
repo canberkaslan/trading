@@ -34,6 +34,7 @@ from .routes import (
     analyze,
     diagnostics,
     learn,
+    market,
     notifications,
     orders,
     portfolio,
@@ -82,6 +83,7 @@ app.include_router(trades.router, prefix="/v1/trades", tags=["trades"])
 app.include_router(diagnostics.router, prefix="/v1/diagnostics", tags=["diagnostics"])
 app.include_router(risk.router, prefix="/v1/risk", tags=["risk"])
 app.include_router(tickers.router, prefix="/v1/tickers", tags=["tickers"])
+app.include_router(market.router, prefix="/v1/market", tags=["market"])
 
 
 # Same reason as the scripts: an outbound call that carries its key in the

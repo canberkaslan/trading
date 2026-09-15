@@ -28,12 +28,41 @@ instrument on different days, which is worse than reading a consistent one.
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 from typing import Any
 
 from tradingagents_us.dataflows.apewisdom import apewisdom_block
 
 log = logging.getLogger(__name__)
+
+# After this many consecutive failures, stop calling Reddit for the rest of the
+# process. Measured: last night's run logged nineteen 429s, each backing off
+# about a minute — roughly twenty minutes of a one-hour-fifty run spent asleep
+# waiting for a source that was refusing us on every single ticker.
+#
+# Two is not impatience. One failure is a blip; two in a row from a per-IP rate
+# limiter means the limiter has us, and the next ticker will be refused too.
+# ApeWisdom aggregates the same corpus keylessly, so the wait buys nothing that
+# is not already in the block beside it.
+#
+# It resets per process, so tomorrow's run tries Reddit again from scratch —
+# the limiter forgets, and a permanent giving-up would be a different decision
+# from the one being made here.
+_FAILURE_LIMIT = 2
+
+_state_lock = threading.Lock()
+_consecutive_failures = {"n": 0}
+
+
+def _record(success: bool) -> None:
+    with _state_lock:
+        _consecutive_failures["n"] = 0 if success else _consecutive_failures["n"] + 1
+
+
+def _reddit_is_giving_up() -> bool:
+    with _state_lock:
+        return _consecutive_failures["n"] >= _FAILURE_LIMIT
 
 
 def supplement(reddit_block: str, ticker: str) -> str:
@@ -64,16 +93,33 @@ def install() -> bool:
         return True
 
     def supplemented(ticker: str, *args: Any, **kwargs: Any) -> str:
+        if _reddit_is_giving_up():
+            # Skipped, and SAID so. Reporting this as "no posts found" would
+            # claim a silence we never observed — the same distinction the
+            # vendor's own empty-result message is careful to make.
+            return supplement(
+                "<Reddit skipped: the rate limiter refused repeated attempts this run; "
+                "this is not an absence of discussion>",
+                ticker,
+            )
+
         try:
             block = original(ticker, *args, **kwargs)
         except Exception:
             # Reddit itself failing is the case this exists for, so the
             # aggregate still goes in rather than the analyst seeing nothing.
+            _record(success=False)
             log.warning("reddit fetch raised; supplying the aggregate alone", exc_info=True)
             return supplement(
                 "<Reddit unavailable: fetch raised; this is not an absence of discussion>",
                 ticker,
             )
+
+        # The vendor returns its failure as TEXT rather than raising, so a
+        # successful call can still mean every source was refused. Counting
+        # only exceptions would leave the breaker permanently open-eyed while
+        # the run slept through nineteen of exactly this.
+        _record(success="unavailable" not in block.lower())
         return supplement(block, ticker)
 
     supplemented._supplemented = True  # type: ignore[attr-defined]

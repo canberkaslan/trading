@@ -28,7 +28,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { useMemo } from 'react';
 
-import { useDecisions } from '@/api/hooks';
+import { useDecision, useDecisions } from '@/api/hooks';
 import { ErrorState } from '@/components/ErrorState';
 import { useTheme } from '@/theme/useTheme';
 import { ratingChip, modelBadge } from '@/theme/rating';
@@ -61,8 +61,14 @@ export default function DecisionDetailScreen() {
   const { ticker } = useLocalSearchParams<{ ticker: string }>();
   const router = useRouter();
   const { data, isLoading, isError, error, refetch } = useDecisions({ ticker, limit: 1 });
+  // The list carries previews; this screen is where the reasoning is actually
+  // read, so it asks for the untrimmed record by id.
+  const listed = data?.[0];
+  const { data: full } = useDecision(listed?.decision_id);
 
-  const decision = data?.[0];
+  // Prefer the untrimmed record; fall back to the listed preview while it
+  // loads, so the screen renders immediately rather than blanking and filling.
+  const decision = full ?? listed;
   const debate = debateEntries(decision?.debate_transcript);
   const totalTokens = (decision?.reasoning ?? []).reduce(
     (sum, r) => sum + (r.tokens_in ?? 0) + (r.tokens_out ?? 0),

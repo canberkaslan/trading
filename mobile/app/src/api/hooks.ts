@@ -224,3 +224,21 @@ export function useReadiness() {
     retry: false,
   });
 }
+
+/**
+ * One decision, with its reports WHOLE.
+ *
+ * The list endpoint trims each agent report to a preview — a page of 25 full
+ * decisions is about a megabyte, real weight on a phone. The detail endpoint
+ * does not trim, so a screen showing the actual reasoning has to ask for it by
+ * id rather than reusing the row it was listed in.
+ */
+export function useDecision(decisionId: string | undefined) {
+  return useQuery({
+    queryKey: ['decision', decisionId],
+    queryFn: () => api.getDecision(decisionId as string),
+    enabled: !!decisionId,
+    // A recorded decision is immutable.
+    staleTime: Infinity,
+  });
+}

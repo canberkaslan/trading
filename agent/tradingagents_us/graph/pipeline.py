@@ -159,6 +159,12 @@ def propagate(
     # Map to our AgentDecision schema. Many fields are placeholders pending
     # Phase 3 wiring (structured output extraction from upstream).
     reasoning: list[AgentReasoning] = []
+    # Reports are stored WHOLE. They used to be cut at 2,000 characters here,
+    # which is where the analysis was actually lost: every one of last night's
+    # eleven sentiment reports came back exactly 2,000 characters long, so the
+    # cut was landing mid-sentence on all of them. What the agents reasoned is
+    # the record; a cap at write time destroys it permanently to save bytes on
+    # a response that can trim at read time instead.
     for agent_key, report_key in [
         ("market_analyst", "market_report"),
         ("sentiment_analyst", "sentiment_report"),
@@ -171,7 +177,7 @@ def propagate(
                 AgentReasoning(
                     agent=agent_key,
                     model=os.environ.get("TRADINGAGENTS_QUICK_THINK_LLM", "claude-sonnet-4-6"),
-                    summary=body[:2000],
+                    summary=body,
                     tokens_in=0,
                     tokens_out=0,
                     latency_ms=0,
@@ -183,7 +189,7 @@ def propagate(
             AgentReasoning(
                 agent="research_manager",
                 model=os.environ.get("TRADINGAGENTS_DEEP_THINK_LLM", "claude-opus-4-7"),
-                summary=final_state["investment_plan"][:2000],
+                summary=final_state["investment_plan"],
                 tokens_in=0,
                 tokens_out=0,
                 latency_ms=0,
@@ -195,7 +201,7 @@ def propagate(
             AgentReasoning(
                 agent="trader",
                 model=os.environ.get("TRADINGAGENTS_QUICK_THINK_LLM", "claude-sonnet-4-6"),
-                summary=final_state["trader_investment_plan"][:2000],
+                summary=final_state["trader_investment_plan"],
                 tokens_in=0,
                 tokens_out=0,
                 latency_ms=0,
@@ -208,7 +214,7 @@ def propagate(
             AgentReasoning(
                 agent="portfolio_manager",
                 model=os.environ.get("TRADINGAGENTS_DEEP_THINK_LLM", "claude-opus-4-7"),
-                summary=str(final)[:2000],
+                summary=str(final),
                 tokens_in=0,
                 tokens_out=0,
                 latency_ms=0,

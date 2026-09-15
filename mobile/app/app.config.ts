@@ -4,6 +4,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: 'Trading',
   slug: 'trading',
+  // Two accounts are reachable from this login; naming the owner keeps every
+  // eas command from needing --force and from picking one by default.
+  owner: 'canberka',
   scheme: 'trading',
   version: '0.1.0',
   orientation: 'portrait',
@@ -20,7 +23,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   // JS bundles; bump it only on native changes.
   runtimeVersion: { policy: 'appVersion' },
   updates: {
-    url: 'https://u.expo.dev/c6b1f8ea-1c38-4bd8-b091-c6bacf17bbaa',
+    url: 'https://u.expo.dev/8a169dfd-9bed-479b-87b1-238e6630ab31',
   },
 
   ios: {
@@ -111,7 +114,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     sentryDsn: process.env.EXPO_PUBLIC_SENTRY_DSN,
     posthogKey: process.env.EXPO_PUBLIC_POSTHOG_KEY,
     eas: {
-      projectId: process.env.EAS_PROJECT_ID ?? 'c6b1f8ea-1c38-4bd8-b091-c6bacf17bbaa',
+      projectId: process.env.EAS_PROJECT_ID ?? '8a169dfd-9bed-479b-87b1-238e6630ab31',
     },
   },
 });

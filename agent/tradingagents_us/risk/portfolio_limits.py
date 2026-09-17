@@ -34,13 +34,19 @@ class PortfolioContext:
 
 def check_limits(
     ticker: str,
-    sector: str | None,
+    sector: str,
     new_position_value: float,
     avg_daily_volume_usd: float,
     ctx: PortfolioContext,
     limits: PortfolioLimits = PortfolioLimits(),
 ) -> tuple[bool, list[str]]:
-    """Return (allowed, rejection_reasons)."""
+    """Return (allowed, rejection_reasons).
+
+    ``sector`` is always provided (defaults to "Unknown" from sector_for when a
+    ticker lacks metadata), so the sector cap always operates. This prevents
+    unlimited exposure to unmapped tickers that would have bypassed the cap when
+    sector was None.
+    """
     reasons: list[str] = []
 
     if ctx.equity <= 0:
@@ -55,15 +61,14 @@ def check_limits(
             f"exceeds {limits.max_position_pct:.0%}"
         )
 
-    # 2. Per-sector cap
-    if sector:
-        existing_in_sector = ctx.existing_position_values_by_sector.get(sector, 0.0)
-        total_in_sector = existing_in_sector + new_position_value
-        if total_in_sector / ctx.equity > limits.max_sector_pct:
-            reasons.append(
-                f"sector_pct={(total_in_sector / ctx.equity):.2%} "
-                f"exceeds {limits.max_sector_pct:.0%}"
-            )
+    # 2. Per-sector cap (always enforced — unmapped tickers bucket as "Unknown")
+    existing_in_sector = ctx.existing_position_values_by_sector.get(sector, 0.0)
+    total_in_sector = existing_in_sector + new_position_value
+    if total_in_sector / ctx.equity > limits.max_sector_pct:
+        reasons.append(
+            f"sector_pct={(total_in_sector / ctx.equity):.2%} "
+            f"exceeds {limits.max_sector_pct:.0%}"
+        )
 
     # 3. Correlation cap
     if ctx.high_correlation_count >= limits.max_correlated:

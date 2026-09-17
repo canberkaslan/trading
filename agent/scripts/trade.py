@@ -347,15 +347,11 @@ def main() -> int:
         avg_daily_volume_usd=adv,
         sector=sector_for(args.ticker),
     )
-    # Sector exposure from the live book. `sector_for` returns None for a name
-    # outside the mapped universe, and unknowns are deliberately NOT bucketed
-    # together — one shared "Unknown" sector would invent concentration between
-    # unrelated names and reject on it.
+    # Sector exposure from the live book. Unknown tickers bucketed as "Unknown".
     existing_by_sector: dict[str, float] = {}
     for sym, value in existing_by_ticker.items():
         sec = sector_for(sym)
-        if sec:
-            existing_by_sector[sec] = existing_by_sector.get(sec, 0.0) + value
+        existing_by_sector[sec] = existing_by_sector.get(sec, 0.0) + value
 
     portfolio_ctx = PortfolioContext(
         equity=acct.portfolio_value,

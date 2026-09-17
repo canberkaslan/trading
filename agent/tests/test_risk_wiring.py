@@ -217,21 +217,49 @@ def test_an_empty_sector_book_can_never_breach_the_sector_cap() -> None:
     assert ok and not reasons
 
 
-def test_unmapped_sectors_are_not_bucketed_together() -> None:
-    """Two unrelated names whose sector is unknown must not accumulate into one
-    bucket — that would invent concentration and reject on it."""
+def test_unmapped_sectors_are_bucketed_together_to_enforce_cap() -> None:
+    """Unmapped tickers are now bucketed as "Unknown" so sector cap operates.
+
+    Prior behavior: sector_for() returned None for unmapped tickers, and
+    portfolio_limits.check_limits() had `if sector:` which skipped the cap. As
+    the universe grew from 20 -> 500+ tickers, the sector cap became a dead
+    letter for 96% of the book.
+
+    New behavior: unmapped tickers resolve to "Unknown", are bucketed together,
+    and are capped collectively. This enforces the sector limit even when ticker
+    metadata is incomplete. The trade-off: unrelated unknown tickers accumulate
+    into one bucket, which can reject a safe trade when the "Unknown" sector is
+    full. The alternative — exempting unknowns — allowed unlimited concentration
+    and made the cap ineffective as the universe expanded (bug B-8).
+    """
     from tradingagents_us.dataflows.sector_map import sector_for
 
-    assert sector_for("ZZZZ") is None
+    # Unmapped tickers now return "Unknown" instead of None
+    assert sector_for("ZZZZ") == "Unknown"
+
+    # If holding 25% in IT and trying to add 10% Unknown, it passes (not yet at 30% cap)
     ok, _ = check_limits(
         ticker="ZZZZ",
-        sector=None,
+        sector="Unknown",
         new_position_value=10_000.0,
         avg_daily_volume_usd=500_000_000.0,
         ctx=_portfolio(existing_position_values_by_sector={"Information Technology": 25_000.0}),
         limits=PortfolioLimits(),
     )
     assert ok
+
+    # But if already holding 25% Unknown and trying to add another 10% Unknown
+    # (total 35%), it is REJECTED by the 30% sector cap
+    ok2, reasons = check_limits(
+        ticker="ZZZZ2",
+        sector="Unknown",
+        new_position_value=10_000.0,
+        avg_daily_volume_usd=500_000_000.0,
+        ctx=_portfolio(existing_position_values_by_sector={"Unknown": 25_000.0}),
+        limits=PortfolioLimits(),
+    )
+    assert not ok2
+    assert any("sector_pct" in r for r in reasons)
 
 
 # --------------------------------------------------------------------------
@@ -242,7 +270,7 @@ def test_unmapped_sectors_are_not_bucketed_together() -> None:
 def test_liquidity_floor_rejects_a_thin_name() -> None:
     ok, reasons = check_limits(
         ticker="THIN",
-        sector=None,
+        sector="Unknown",
         new_position_value=5_000.0,
         avg_daily_volume_usd=50_000.0,     # under the 100k floor
         ctx=_portfolio(),
@@ -261,7 +289,7 @@ def test_the_cold_cache_fallback_does_not_block_every_order() -> None:
     limits = PortfolioLimits()
     ok, reasons = check_limits(
         ticker="ANY",
-        sector=None,
+        sector="Unknown",
         new_position_value=5_000.0,
         avg_daily_volume_usd=limits.min_liquidity_adv,
         ctx=_portfolio(),
@@ -274,7 +302,7 @@ def test_a_hardcoded_billion_makes_every_name_liquid() -> None:
     """What the caller used to pass, pinned as the mistake it was."""
     ok, _ = check_limits(
         ticker="THIN",
-        sector=None,
+        sector="Unknown",
         new_position_value=5_000.0,
         avg_daily_volume_usd=1_000_000_000.0,
         ctx=_portfolio(),
@@ -291,7 +319,7 @@ def test_a_hardcoded_billion_makes_every_name_liquid() -> None:
 def test_correlation_cap_rejects_a_crowded_book() -> None:
     ok, reasons = check_limits(
         ticker="MSFT",
-        sector=None,
+        sector="Unknown",
         new_position_value=5_000.0,
         avg_daily_volume_usd=500_000_000.0,
         ctx=_portfolio(high_correlation_count=3),
@@ -304,7 +332,7 @@ def test_correlation_cap_rejects_a_crowded_book() -> None:
 def test_a_hardcoded_zero_can_never_breach_the_correlation_cap() -> None:
     ok, _ = check_limits(
         ticker="MSFT",
-        sector=None,
+        sector="Unknown",
         new_position_value=5_000.0,
         avg_daily_volume_usd=500_000_000.0,
         ctx=_portfolio(high_correlation_count=0),

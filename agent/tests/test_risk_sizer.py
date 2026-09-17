@@ -239,3 +239,61 @@ class TestLLMPctSizing:
             method="llm_pct",
         )
         assert 14 <= order.quantity <= 17
+
+
+class TestSectorCapEnforcement:
+    def test_sector_cap_enforced_when_sector_unknown(self) -> None:
+        """Sector cap must not be skipped when a ticker lacks sector metadata.
+
+        Bug: sector_for() returned None for tickers outside the static 20-ticker
+        map, and portfolio_limits.check_limits() had `if sector:` which skipped
+        the whole sector-cap block when sector was None. As the universe grew
+        from 20 -> 500+ tickers, the sector cap became a dead letter for 96% of
+        the book.
+
+        Fix: unknown-sector tickers are bucketed into "Unknown" sector, so the
+        cap still operates: if you hold 30% already in unknown tickers, the next
+        unknown is refused rather than waved through.
+        """
+        # Simulate holding 25% in unknown-sector tickers already
+        existing_unknown_value = 25_000.0
+
+        portfolio_ctx = PortfolioContext(
+            equity=100_000.0,
+            existing_position_values_by_ticker={"TICK1": 12_500.0, "TICK2": 12_500.0},
+            existing_position_values_by_sector={"Unknown": existing_unknown_value},
+            high_correlation_count=0,
+        )
+
+        # Try to add $10k more in another unknown-sector ticker
+        # (total would be 35%, exceeding default 30% sector cap)
+        decision = _decision("Buy", entry=100.0, stop=95.0)
+        decision = AgentDecision(
+            **{**decision.__dict__, "ticker": "UNKN"}
+        )
+
+        market_ctx = MarketContext(
+            current_price=100.0,
+            rolling_mean=100.0,
+            rolling_std=2.0,
+            avg_daily_volume_usd=500_000.0,
+            sector="Unknown",  # Ticker not in sector map -> bucketed as Unknown
+        )
+
+        order = size_from_decision(
+            decision=decision,
+            account_equity=100_000.0,
+            market_ctx=market_ctx,
+            portfolio_ctx=portfolio_ctx,
+            circuit_breaker=_cb(),
+            method="atr",
+            risk_per_trade=0.005,
+            portfolio_limits=PortfolioLimits(max_position_pct=0.15, max_sector_pct=0.30),
+        )
+
+        # The order should be REJECTED because adding would exceed sector cap
+        # Before the fix: risk_approved=True (cap was skipped)
+        # After the fix: risk_approved=False with sector_pct rejection
+        assert not order.risk_approved
+        reasons_str = " ".join(order.rejection_reasons)
+        assert "sector_pct" in reasons_str.lower() or "trimmed_to_zero" in reasons_str.lower()

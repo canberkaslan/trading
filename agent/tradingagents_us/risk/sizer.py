@@ -44,7 +44,7 @@ class MarketContext:
     rolling_std: float
     atr: float | None = None      # if None, derived from |entry - stop|
     avg_daily_volume_usd: float = 1_000_000.0
-    sector: str | None = None
+    sector: str = "Unknown"       # GICS sector or "Unknown" for unmapped tickers
 
 
 def _side_from_rating(rating: str) -> str | None:

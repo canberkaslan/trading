@@ -216,15 +216,46 @@ def main() -> int:
         # before any of the post-close orders fill. Without reserving what earlier
         # tickers already committed, all eleven size against the same cash balance
         # and the sum blows straight through it.
-        open_buys = [
-            PendingBuy(
-                symbol=o.symbol,
-                unfilled_qty=o.qty - o.filled_qty,
-                limit_price=o.limit_price,
-            )
-            for o in ac.list_orders(status="open", limit=500)
-            if o.side.upper() == "BUY"
-        ]
+        #
+        # Pagination: Alpaca list_orders has a 500-order max per call. When the book
+        # has >500 open orders, a single call truncates and under-reserves cash.
+        # Loop until fewer than 500 orders are returned (final page).
+        open_buys: list[PendingBuy] = []
+        page_limit = 500
+        fetched_count = page_limit
+        until_timestamp: str | None = None
+
+        while fetched_count >= page_limit:
+            # AlpacaClient.list_orders does not expose 'until' directly; use httpx
+            query = f"/orders?status=open&limit={page_limit}&direction=desc"
+            if until_timestamp is not None:
+                query += f"&until={until_timestamp}"
+            page = ac._http.get(ac.base_url + query).json()
+            if not isinstance(page, list):
+                break
+            fetched_count = len(page)
+            if fetched_count == 0:
+                break
+
+            for o_dict in page:
+                if o_dict.get("side", "").upper() != "BUY":
+                    continue
+                qty = float(o_dict["qty"])
+                filled = float(o_dict.get("filled_qty", 0))
+                limit_price = (
+                    float(o_dict["limit_price"]) if o_dict.get("limit_price") else None
+                )
+                open_buys.append(
+                    PendingBuy(
+                        symbol=o_dict["symbol"],
+                        unfilled_qty=qty - filled,
+                        limit_price=limit_price,
+                    )
+                )
+
+            # Next page starts BEFORE the oldest (last in desc order) of this page
+            if fetched_count >= page_limit and page:
+                until_timestamp = page[-1]["submitted_at"]
         print("\n=== ALPACA ACCOUNT ===")
         print(f"  Number:    {acct.account_number} ({acct.status})")
         print(f"  Equity:    ${acct.portfolio_value:,.2f}")

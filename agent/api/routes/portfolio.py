@@ -128,7 +128,7 @@ async def get_snapshot(
             unrealized_pnl=p.unrealized_pl,
             unrealized_pnl_pct=p.unrealized_plpc,
             stop_loss=0.0,                # broker-side leg lives on order, not position
-            sector=sector_for(p.symbol),  # static GICS map, display-only (off trading path)
+            sector=sector_for(p.symbol),  # GICS sector: static map + Polygon fallback (display-only)
             opened_at_utc=datetime.now(UTC),  # Alpaca doesn't expose open ts on position
         )
         for p in positions_raw

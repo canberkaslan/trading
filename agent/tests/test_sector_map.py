@@ -1,12 +1,13 @@
-"""Tests for the static GICS sector map (display-only, off trading path)."""
+"""Tests for GICS sector map with Wikipedia scraping and Unknown bucket."""
 
 from tradingagents_us.dataflows.bulk_loader import US_UNIVERSE
 from tradingagents_us.dataflows.sector_map import sector_for
 
 
 def test_every_universe_ticker_has_a_sector():
-    missing = [t for t in US_UNIVERSE if sector_for(t) is None]
-    assert missing == [], f"universe tickers without a sector: {missing}"
+    """Core universe tickers must resolve to a known GICS sector, not Unknown."""
+    unknown = [t for t in US_UNIVERSE if sector_for(t) == "Unknown"]
+    assert unknown == [], f"universe tickers bucketed as Unknown: {unknown}"
 
 
 def test_known_tickers():
@@ -20,7 +21,8 @@ def test_case_and_dash_normalization():
     assert sector_for("brk-b") == sector_for("BRK.B") == "Financials"
 
 
-def test_unknown_and_empty():
-    assert sector_for("ZZZZ") is None
-    assert sector_for("") is None
-    assert sector_for(None) is None
+def test_unknown_and_empty_return_unknown_bucket():
+    """Unmapped tickers return "Unknown" so sector caps still operate."""
+    assert sector_for("ZZZZ") == "Unknown"
+    assert sector_for("") == "Unknown"
+    assert sector_for(None) == "Unknown"

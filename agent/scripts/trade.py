@@ -347,10 +347,10 @@ def main() -> int:
         avg_daily_volume_usd=adv,
         sector=sector_for(args.ticker),
     )
-    # Sector exposure from the live book. `sector_for` returns None for a name
-    # outside the mapped universe, and unknowns are deliberately NOT bucketed
-    # together — one shared "Unknown" sector would invent concentration between
-    # unrelated names and reject on it.
+    # Sector exposure from the live book. `sector_for` returns None only if
+    # the ticker is unknown to both the static map and Polygon's reference data.
+    # Unknowns are deliberately NOT bucketed together — one shared "Unknown"
+    # sector would invent concentration between unrelated names and reject on it.
     existing_by_sector: dict[str, float] = {}
     for sym, value in existing_by_ticker.items():
         sec = sector_for(sym)

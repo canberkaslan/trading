@@ -86,9 +86,13 @@ def sector_for(ticker: str | None) -> str | None:
             log.info("Polygon returned no sector for %s", key)
             return None
 
-        # Write to cache
+        # Write to cache (re-create repo in case DB read failed earlier)
         try:
-            with repo.session() as s:
+            from ..storage import TradeLogRepository
+            from ..storage.models import SectorCacheRow
+
+            cache_repo = TradeLogRepository()
+            with cache_repo.session() as s:
                 s.merge(
                     SectorCacheRow(
                         ticker=key, sector=sector, fetched_at_utc=datetime.now(UTC)

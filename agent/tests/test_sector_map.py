@@ -35,6 +35,7 @@ def test_screener_ticker_gets_sector_from_polygon():
     mock_client.ticker_details.return_value = {
         "results": {"sic_description": "SEMICONDUCTORS & RELATED DEVICES"}
     }
+    mock_client.close = Mock()
 
     # Mock TradeLogRepository to skip DB cache layer
     mock_repo = Mock()

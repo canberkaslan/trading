@@ -113,6 +113,23 @@ class TestNeverBreaksTheCall:
         apply_cache_control(dict(payload))
 
 
+class TestCacheMinimum:
+    def test_agent_instruction_is_long_enough_for_anthropic_minimum(self) -> None:
+        """AGENT_INSTRUCTION must be >=760 chars to push prefix over 1024 tokens.
+
+        Anthropic silently refuses to cache prefixes under 1024 tokens (2048 for
+        Haiku). Measured prefix with tools + system is ~966 tokens, 58 short of
+        minimum. AGENT_INSTRUCTION needs ~230 more chars (~58 tokens) to cross
+        the threshold, bringing total to ~760 characters.
+        """
+        from tradingagents_us.compliance import AGENT_INSTRUCTION
+
+        assert len(AGENT_INSTRUCTION) >= 760, (
+            f"AGENT_INSTRUCTION is {len(AGENT_INSTRUCTION)} chars; "
+            "need >=760 to reach cache minimum (prefix currently ~966 tokens)"
+        )
+
+
 class TestInstall:
     def test_is_idempotent(self) -> None:
         first = install()

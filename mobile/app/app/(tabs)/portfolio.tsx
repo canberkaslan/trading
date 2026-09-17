@@ -13,6 +13,7 @@ import {
   useConcentration,
   useTrades,
   useActionability,
+  useReadiness,
 } from '@/api/hooks';
 import type { Position } from '@/api/types';
 import { useTheme } from '@/theme/useTheme';
@@ -141,6 +142,7 @@ export default function PortfolioScreen() {
   const { data: concentration } = useConcentration();
   const { data: realized } = useTrades();
   const { data: flow } = useActionability();
+  const { data: readiness } = useReadiness();
   const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
 
@@ -210,12 +212,21 @@ export default function PortfolioScreen() {
   // A GO badge over a book that has submitted nothing for days is the single
   // most misleading thing on this screen — qualify it where it is read.
   const badgeQualifier = verdictQualifier(flow);
+  const mode = readiness?.trading_mode;
+  const isLive = mode === 'live';
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <ScrollView
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.textPrimary} />}
       >
+        <View style={styles.modeRow}>
+          <Tag
+            label={mode == null ? 'MOD ?' : isLive ? 'LIVE — GERÇEK PARA' : 'PAPER'}
+            variant={isLive ? 'accent' : 'outline'}
+          />
+        </View>
+
         <View style={styles.hero}>
           <View style={styles.heroTop}>
             <Text style={styles.heroLabel}>Portföy değeri</Text>
@@ -744,7 +755,8 @@ const makeStyles = (t: Palette) =>
     container: { flex: 1, backgroundColor: t.background },
     center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
 
-    hero: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 16, ...TABULAR },
+    modeRow: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 8 },
+    hero: { paddingHorizontal: 16, paddingBottom: 16, ...TABULAR },
     heroTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
     badgeWrap: { alignItems: 'flex-end' },
     // Square, outlined — the verdict is a stamp, not a pill.

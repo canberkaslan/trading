@@ -37,6 +37,7 @@ import { initializeApp, getApps, getApp, type FirebaseApp } from 'firebase/app';
 import {
   browserLocalPersistence,
   createUserWithEmailAndPassword,
+  deleteUser as fbDeleteUser,
   getAuth,
   initializeAuth,
   onAuthStateChanged,
@@ -153,6 +154,18 @@ export async function signUp(email: string, password: string): Promise<User> {
 export async function signOut(): Promise<void> {
   const a = auth();
   if (a) await fbSignOut(a);
+}
+
+/**
+ * Delete the currently signed-in user's account from Firebase.
+ *
+ * This removes the user from Firebase Authentication. The caller is responsible
+ * for removing any server-side data associated with this user.
+ */
+export async function deleteAccount(): Promise<void> {
+  const user = currentUser();
+  if (!user) throw new Error('No user is currently signed in');
+  await fbDeleteUser(user);
 }
 
 /**

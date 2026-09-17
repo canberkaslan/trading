@@ -8,7 +8,7 @@ import { useEffect, useState, useMemo, useRef } from 'react';
 import Svg, { Path } from 'react-native-svg';
 import { HTTPError } from 'ky';
 
-import { useApproveOrder, usePendingOrders, useRejectOrder, usePortfolio } from '@/api/hooks';
+import { useApproveOrder, usePendingOrders, useRejectOrder, usePortfolio, useReadiness } from '@/api/hooks';
 import { api } from '@/api/endpoints';
 import { useTheme } from '@/theme/useTheme';
 import { authenticate } from '@/auth/biometric';
@@ -131,6 +131,7 @@ export default function ApproveOrderScreen() {
     refetch: refetchOrders,
   } = usePendingOrders();
   const { data: portfolio } = usePortfolio();
+  const { data: readiness } = useReadiness();
   const isAdmin = useIsAdmin();
   const approve = useApproveOrder();
   const reject = useRejectOrder();
@@ -305,6 +306,8 @@ export default function ApproveOrderScreen() {
   };
 
   const busy = flow.step === 'verifying' || flow.step === 'rejecting';
+  const mode = readiness?.trading_mode;
+  const isLive = mode === 'live';
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -318,6 +321,13 @@ export default function ApproveOrderScreen() {
         >
           <Text style={styles.backText}>← Emirler</Text>
         </Pressable>
+
+        <View style={styles.modeRow}>
+          <Tag
+            label={mode == null ? 'MOD ?' : isLive ? 'LIVE — GERÇEK PARA' : 'PAPER'}
+            variant={isLive ? 'accent' : 'outline'}
+          />
+        </View>
 
         <View style={styles.titleRow}>
           {/* 40px per the handoff: the ticker is the first thing to resolve on
@@ -513,6 +523,7 @@ const makeStyles = (t: Palette) =>
     center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 16 },
     back: { marginBottom: 12, minHeight: 24, justifyContent: 'center' },
     backText: { color: t.accent700 ?? t.accent, fontSize: 14, ...font(600) },
+    modeRow: { marginBottom: 12 },
     titleRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
     title: { color: t.textPrimary, fontSize: 40, ...font(800), letterSpacing: -0.5 },
     ratingChip: { paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1 },

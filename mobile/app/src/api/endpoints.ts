@@ -108,6 +108,9 @@ export const api = {
   /** Who am I, and may I act — see useMe. */
   getMe: () => apiClient.get('v1/me').json<{ uid: string; is_admin: boolean }>(),
 
+  /** Delete the current user's account and all associated data. */
+  deleteAccount: () => apiClient.delete('v1/me').json<{ status: string }>(),
+
   approveOrder: (orderId: string) =>
     apiClient
       .post(`v1/orders/${orderId}/approve`)

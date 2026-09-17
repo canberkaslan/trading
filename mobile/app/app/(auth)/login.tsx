@@ -160,23 +160,18 @@ export default function LoginScreen() {
   const enter = () => router.replace('/(tabs)/portfolio');
 
   /**
-   * The credentialed path. It used to be `enter()` — no network call at all,
-   * so any address containing "@" and four characters was admitted and the
-   * form was decoration over an open door.
-   *
-   * It now asks Firebase, when Firebase is configured. When it is not — which
-   * is still the live deployment — the old local check stands rather than
-   * locking everyone out of a working app for an identity system that has not
-   * been set up yet. The difference is visible: a deployment without Firebase
-   * gets no identity, and pretending otherwise would be the more dangerous of
-   * the two states.
+   * The credentialed path. Requires Firebase configuration and will not allow
+   * entry without valid authentication. The fallback to local-only signin has
+   * been removed for App Store compliance.
    */
   const signIn = async () => {
     if (!canSignIn || busy) return;
     setAuthError(null);
 
     if (!isFirebaseConfigured()) {
-      enter();
+      setAuthError(
+        'Firebase yapılandırması eksik. Uygulamayı doğru build profili ile yeniden oluşturun.',
+      );
       return;
     }
 

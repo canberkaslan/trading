@@ -145,6 +145,17 @@ class TestReservedCashForOpenBuys:
         ]
         assert reserved_cash_for_open_buys(pending, lambda _s: 50.0) == 200.0
 
+    def test_handles_more_than_200_pending_orders(self) -> None:
+        # Regression: list_orders(limit=200) truncated, unreserved tail orders
+        # caused over-allocation. This test pins that ALL pending buys, not
+        # just the first 200, shrink the budget.
+        pending = [
+            PendingBuy(symbol=f"SYM{i:03d}", unfilled_qty=1, limit_price=100.0)
+            for i in range(250)
+        ]
+        # 250 orders * 1 share * $100 = $25,000
+        assert reserved_cash_for_open_buys(pending, lambda _s: 100.0) == 25_000.0
+
 
 class TestSpendableCash:
     def test_subtracts_reservation(self) -> None:

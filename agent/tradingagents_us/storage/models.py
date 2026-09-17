@@ -188,3 +188,23 @@ class PriceBarRow(Base):
     close: Mapped[float] = mapped_column(Float)
     volume: Mapped[float] = mapped_column(Float, default=0.0)
     fetched_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class SectorCacheRow(Base):
+    """Sector metadata cache from Polygon ticker details.
+
+    Screener-sourced tickers are not in the static US_UNIVERSE map, so sector
+    concentration caps could not fire for them. This cache stores the GICS
+    sector fetched from Polygon's /v3/reference/tickers/{ticker} endpoint.
+    A cached sector never expires (tickers rarely switch sectors) but can be
+    re-fetched manually if needed.
+
+    New table — created automatically by create_all(), so no additive-column
+    entry and no migration.
+    """
+
+    __tablename__ = "sector_cache"
+
+    ticker: Mapped[str] = mapped_column(String(16), primary_key=True)
+    sector: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    fetched_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

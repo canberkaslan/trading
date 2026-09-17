@@ -65,8 +65,14 @@ class IndexChange:
     reason: str | None = None
 
 
-def _fetch_html(url: str = WIKI_URL) -> str:
-    r = httpx.get(url, headers={"User-Agent": USER_AGENT}, timeout=30, follow_redirects=True)
+def _fetch_html(url: str = WIKI_URL, timeout: float = 5.0) -> str:
+    """Fetch Wikipedia page with a short timeout suitable for trade-path calls.
+
+    Default timeout is 5s rather than 30s: when called from daily trade or an
+    API endpoint, hanging for half a minute on a network failure is unacceptable.
+    Callers outside the hot path (backtest, analysis) can pass a longer timeout.
+    """
+    r = httpx.get(url, headers={"User-Agent": USER_AGENT}, timeout=timeout, follow_redirects=True)
     r.raise_for_status()
     return r.text
 

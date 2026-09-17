@@ -43,13 +43,23 @@ _FALLBACK_SECTOR_MAP: dict[str, str] = {
 }
 
 
-@lru_cache(maxsize=1)
+_CACHED_SECTOR_MAP: dict[str, str] | None = None
+
+
 def _load_sector_map() -> dict[str, str]:
     """Fetch current S&P 500 constituents from Wikipedia and build sector map.
 
-    Cached in-process so repeated calls (once per trade) do not hit the network.
+    Cached in-process only when the scrape succeeds. A failed scrape is retried
+    on the next call rather than permanently caching the fallback — a transient
+    network blip during deployment must not degrade the system for the rest of
+    the process lifetime.
+
     Starts with fallback map (ETFs + core tickers), then merges Wikipedia data.
     """
+    global _CACHED_SECTOR_MAP
+    if _CACHED_SECTOR_MAP is not None:
+        return _CACHED_SECTOR_MAP
+
     sector_map = _FALLBACK_SECTOR_MAP.copy()
     try:
         from .sp500_history import fetch_current_constituents
@@ -65,8 +75,11 @@ def _load_sector_map() -> dict[str, str]:
                 if "-" in sym:
                     sector_map[sym.replace("-", ".")] = sector
         log.info("loaded %d sectors from S&P 500 constituents + fallback", len(sector_map))
+        _CACHED_SECTOR_MAP = sector_map  # Cache only on success
     except Exception as e:
-        log.warning("sector map scrape failed (%s), using fallback only", e)
+        log.warning("sector map scrape failed (%s), using fallback only — will retry next call", e)
+        # Do NOT cache the fallback: a transient network error should not
+        # permanently degrade the universe to 20 tickers
     return sector_map
 
 

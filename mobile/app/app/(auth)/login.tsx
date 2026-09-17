@@ -169,9 +169,7 @@ export default function LoginScreen() {
     setAuthError(null);
 
     if (!isFirebaseConfigured()) {
-      setAuthError(
-        'Firebase yapılandırması eksik. Uygulamayı doğru build profili ile yeniden oluşturun.',
-      );
+      setAuthError('Giriş yapılamıyor. Lütfen daha sonra tekrar deneyin.');
       return;
     }
 

@@ -346,6 +346,8 @@ export default function ApproveOrderScreen() {
           {` — ${target.order_type}${legsLabel ? ` · ${legsLabel}` : ''}`}
         </Text>
 
+        <Text style={styles.disclaimer}>{t('disclaimer.short')}</Text>
+
         {/* The 2px-ruled stat grid: everything the order commits to, in one
             block. Rules rather than a card — the system has no cards. */}
         <View style={styles.grid}>

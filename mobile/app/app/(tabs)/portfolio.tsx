@@ -613,6 +613,8 @@ export default function PortfolioScreen() {
           );
         })()}
 
+        <Text style={styles.disclaimer}>{t('disclaimer.short')}</Text>
+
         {(() => {
           // Weight goes through the concentration util rather than being
           // multiplied out here: a one-position allocation is that position's
@@ -650,8 +652,6 @@ export default function PortfolioScreen() {
             </View>
           );
         })()}
-
-        <Text style={styles.disclaimer}>{t('disclaimer.short')}</Text>
       </ScrollView>
     </SafeAreaView>
   );

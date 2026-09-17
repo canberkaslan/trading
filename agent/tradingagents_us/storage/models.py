@@ -195,12 +195,13 @@ class SectorCacheRow(Base):
 
     Screener-sourced tickers are not in the static US_UNIVERSE map, so sector
     concentration caps could not fire for them. This cache stores the GICS
-    sector fetched from Polygon's /v3/reference/tickers/{ticker} endpoint.
+    sector mapped from the SIC code returned by Polygon's ticker_details.
     A cached sector never expires (tickers rarely switch sectors) but can be
     re-fetched manually if needed.
 
-    New table — created automatically by create_all(), so no additive-column
-    entry and no migration.
+    New table — created by create_all() on TradeLogRepository init. Production
+    instances that predated this code won't have the table until the process
+    restarts; the sector_for fallback handles OperationalError gracefully.
     """
 
     __tablename__ = "sector_cache"

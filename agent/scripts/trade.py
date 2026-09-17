@@ -222,7 +222,7 @@ def main() -> int:
                 unfilled_qty=o.qty - o.filled_qty,
                 limit_price=o.limit_price,
             )
-            for o in ac.list_orders(status="open", limit=200)
+            for o in ac.list_orders(status="open", limit=500)
             if o.side.upper() == "BUY"
         ]
         print("\n=== ALPACA ACCOUNT ===")

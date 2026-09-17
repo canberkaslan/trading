@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useTranslation } from 'react-i18next';
 import Svg, { G, Line, Path, Rect } from 'react-native-svg';
 
 import { usePortfolio, useDecisions, usePrices } from '@/api/hooks';
@@ -61,6 +62,7 @@ const PAD = 2;
  * ink and every red body is an exception worth looking at.
  */
 export default function ChartsScreen() {
+  const { t } = useTranslation();
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const { width } = useWindowDimensions();

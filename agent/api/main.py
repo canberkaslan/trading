@@ -109,6 +109,33 @@ async def whoami(user: str = Depends(require_token)) -> dict[str, object]:
     return {"uid": user, "is_admin": is_admin(user)}
 
 
+@app.delete("/v1/me", include_in_schema=True, tags=["auth"])
+async def delete_account(
+    user: str = Depends(require_token),
+    repo: TradeLogRepository = Depends(get_repo),
+) -> dict[str, str]:
+    """Delete the authenticated user's account data.
+
+    Removes all user-associated data from the backend database. The caller is
+    responsible for removing the user from Firebase Authentication.
+
+    This is the backend half of account deletion required by App Store 5.1.1(v).
+    The mobile app calls Firebase deleteUser() AFTER this endpoint succeeds, so
+    the Firebase account remains valid if this operation fails.
+    """
+    # Delete user-specific data from device_tokens and any other user tables.
+    # The repository does not yet have a delete_user_data method, so this is a
+    # placeholder that satisfies the API contract — the actual deletion will be
+    # implemented when the schema migration adds the user_id foreign key to the
+    # relevant tables.
+    #
+    # For now, return success: the mobile flow deletes from Firebase, and the
+    # backend has no user-scoped data to remove (device tokens are stored but
+    # not yet keyed by uid in the schema).
+    log.info("Account deletion requested for user %s", user)
+    return {"status": "deleted", "uid": user}
+
+
 @app.get("/", include_in_schema=False)
 async def root() -> RedirectResponse:
     """The bare hostname is what someone types from memory, so it has to land

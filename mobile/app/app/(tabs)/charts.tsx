@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useTranslation } from 'react-i18next';
 import Svg, { G, Line, Path, Rect } from 'react-native-svg';
 
 import { usePortfolio, useDecisions, usePrices } from '@/api/hooks';
@@ -61,6 +62,7 @@ const PAD = 2;
  * ink and every red body is an exception worth looking at.
  */
 export default function ChartsScreen() {
+  const { t } = useTranslation();
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const { width } = useWindowDimensions();
@@ -290,24 +292,27 @@ export default function ChartsScreen() {
         ) : null}
 
         {decision && chip ? (
-          <View style={styles.decisionBlock}>
-            <View style={styles.decisionHead}>
-              <View
-                style={[
-                  styles.ratingChip,
-                  { backgroundColor: chip.background, borderColor: chip.borderColor ?? 'transparent' },
-                ]}
-              >
-                <Text style={[styles.rating, { color: chip.color }]}>{decision.rating}</Text>
+          <>
+            <Text style={styles.disclaimer}>{t('disclaimer.short')}</Text>
+            <View style={styles.decisionBlock}>
+              <View style={styles.decisionHead}>
+                <View
+                  style={[
+                    styles.ratingChip,
+                    { backgroundColor: chip.background, borderColor: chip.borderColor ?? 'transparent' },
+                  ]}
+                >
+                  <Text style={[styles.rating, { color: chip.color }]}>{decision.rating}</Text>
+                </View>
+                <Text style={styles.decisionMeta}>
+                  {decisionAge(decision.timestamp_utc)} · hedef {formatUsd(decision.price_target)}
+                </Text>
               </View>
-              <Text style={styles.decisionMeta}>
-                {decisionAge(decision.timestamp_utc)} · hedef {formatUsd(decision.price_target)}
-              </Text>
+              {decision.final_decision_text ? (
+                <Text style={styles.decisionText}>{decision.final_decision_text}</Text>
+              ) : null}
             </View>
-            {decision.final_decision_text ? (
-              <Text style={styles.decisionText}>{decision.final_decision_text}</Text>
-            ) : null}
-          </View>
+          </>
         ) : null}
 
         {position ? (
@@ -405,6 +410,7 @@ const makeStyles = (t: Palette) =>
     // TYPE.body rather than a bare fontSize: without font() this renders in the
     // system face, which on Android is a different typeface, not a lighter one.
     err: { color: t.accent700 ?? t.danger, ...TYPE.body, textAlign: 'center' },
+    disclaimer: { color: t.textSecondary, ...TYPE.helper, marginTop: 8, marginBottom: 4 },
     // Primary = ink fill, as on the approve screen and in Sheet. The handoff
     // draws .btn-primary in the accent, but the accent under ground-coloured
     // text is 3.76:1 — the LIVE strip is the one place the system spends that.

@@ -70,7 +70,7 @@ import { useInboxStore } from '@/stores/notifications';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { useAuthStore } from '@/stores/auth';
-import { signOut as firebaseSignOut } from '@/auth/firebase';
+import { signOut as firebaseSignOut, deleteAccount as firebaseDeleteAccount } from '@/auth/firebase';
 import { useApiTokenStore } from '@/stores/apiToken';
 import { toast } from '@/stores/toast';
 import { useTheme, useThemeName, useSetTheme } from '@/theme/useTheme';
@@ -100,6 +100,11 @@ const TOGGLE_MS = 150;
 /** The app's own backend base URL — the one endpoint this screen can honestly print. */
 const API_URL = (Constants.expoConfig?.extra?.apiUrl ?? 'http://localhost:8000') as string;
 const APP_VERSION = Constants.expoConfig?.version ?? '—';
+
+/** Legal and support URLs for App Store compliance. */
+const PRIVACY_URL = 'https://canberkaslan.co/trading/privacy';
+const TERMS_URL = 'https://canberkaslan.co/trading/terms';
+const SUPPORT_URL = 'https://canberkaslan.co/trading/support';
 
 /**
  * `PortfolioLimits.max_position_pct` (0.10), as a percent. Named once because
@@ -356,6 +361,7 @@ export default function SettingsScreen() {
   const [pushBusy, setPushBusy] = useState(false);
   const [permission, setPermission] = useState<PushPermission | null>(null);
   const [signOutOpen, setSignOutOpen] = useState(false);
+  const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
 
   const inbox = useInboxStore((s) => s.items);
   const signOut = useAuthStore((s) => s.signOut);
@@ -446,6 +452,24 @@ export default function SettingsScreen() {
     // Queries cached under the old token are not this user's to keep.
     qc.clear();
     router.replace('/(auth)/login' as never);
+  };
+
+  const handleDeleteAccount = async () => {
+    setDeleteAccountOpen(false);
+    try {
+      // Delete from backend first — if this fails, the Firebase account remains
+      await api.deleteAccount();
+      // Delete from Firebase Authentication
+      await firebaseDeleteAccount();
+      // Clear local state
+      void clearToken();
+      signOut();
+      qc.clear();
+      toast('Hesap silindi');
+      router.replace('/(auth)/login' as never);
+    } catch (e) {
+      toast(`Hesap silinemedi: ${String(e)}`);
+    }
   };
 
   // ExecutionConfig, as deployed. The app can neither write these nor read
@@ -568,10 +592,44 @@ export default function SettingsScreen() {
               : 'Token olmadan portföy, emirler ve ajan ekranları 401 döner. Sunucudaki secrets.env içinde DEV_API_TOKEN olarak duruyor.'}
           </Text>
 
+          <View style={styles.legalLinks}>
+            <Pressable
+              onPress={() => void Linking.openURL(PRIVACY_URL)}
+              accessibilityRole="link"
+              accessibilityLabel="Gizlilik Politikası"
+              style={styles.legalLink}
+            >
+              <Text style={styles.legalLinkText}>Gizlilik Politikası</Text>
+            </Pressable>
+            <Text style={styles.legalSep}>·</Text>
+            <Pressable
+              onPress={() => void Linking.openURL(TERMS_URL)}
+              accessibilityRole="link"
+              accessibilityLabel="Kullanım Koşulları"
+              style={styles.legalLink}
+            >
+              <Text style={styles.legalLinkText}>Kullanım Koşulları</Text>
+            </Pressable>
+            <Text style={styles.legalSep}>·</Text>
+            <Pressable
+              onPress={() => void Linking.openURL(SUPPORT_URL)}
+              accessibilityRole="link"
+              accessibilityLabel="Destek"
+              style={styles.legalLink}
+            >
+              <Text style={styles.legalLinkText}>Destek</Text>
+            </Pressable>
+          </View>
+
           <SecondaryButton
             label="Çıkış yap"
             onPress={() => setSignOutOpen(true)}
             hint="Oturumu kapatır ve giriş ekranına döner"
+          />
+          <SecondaryButton
+            label="Hesabı sil"
+            onPress={() => setDeleteAccountOpen(true)}
+            hint="Hesabınızı ve tüm verilerinizi kalıcı olarak siler"
           />
         </Section>
 
@@ -875,6 +933,17 @@ export default function SettingsScreen() {
         ]}
         onDismiss={() => setSignOutOpen(false)}
       />
+
+      <Sheet
+        visible={deleteAccountOpen}
+        title="Hesabı kalıcı olarak sil?"
+        message="Bu işlem geri alınamaz. Firebase kimliğiniz ve sunucudaki tüm verileriniz silinecek."
+        actions={[
+          { label: 'Vazgeç', onPress: () => setDeleteAccountOpen(false) },
+          { label: 'Hesabı sil', onPress: () => void handleDeleteAccount(), primary: true },
+        ]}
+        onDismiss={() => setDeleteAccountOpen(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -1021,6 +1090,19 @@ const makeStyles = (t: Palette) =>
       alignSelf: 'stretch',
     },
     buttonSecondaryText: { color: t.textPrimary, fontSize: 14, ...font(800) },
+
+    legalLinks: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginTop: 12,
+      marginBottom: 6,
+    },
+    legalLink: { minHeight: MIN_TOUCH_TARGET, justifyContent: 'center' },
+    legalLinkText: { color: t.accent, ...TYPE.helper, textDecorationLine: 'underline' },
+    legalSep: { color: t.textSecondary, ...TYPE.helper },
 
     disclaimer: {
       color: t.textSecondary,

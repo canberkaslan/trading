@@ -22,10 +22,15 @@ def test_case_and_dash_normalization():
     assert sector_for("brk-b") == sector_for("BRK.B") == "Financials"
 
 
-def test_unknown_and_empty():
+def test_unknown_and_empty_fall_into_the_unknown_bucket():
+    """Nothing resolves to None any more — see sector_for's docstring for why.
+
+    `check_limits` no longer guards on a truthy sector, so a None here would be
+    a dict key of None in the sector-exposure map, not a skipped cap.
+    """
     # Empty/None inputs short-circuit before any lookup
-    assert sector_for("") is None
-    assert sector_for(None) is None
+    assert sector_for("") == "Unknown"
+    assert sector_for(None) == "Unknown"
 
     # ZZZZ not in static map → tries Polygon → no SIC code → None
     mock_client = Mock()
@@ -40,7 +45,7 @@ def test_unknown_and_empty():
 
     with patch("tradingagents_us.dataflows.sector_map.PolygonClient", return_value=mock_client), \
          patch("tradingagents_us.dataflows.sector_map._get_repo", return_value=mock_repo):
-        assert sector_for("ZZZZ") is None
+        assert sector_for("ZZZZ") == "Unknown"
 
 
 def test_screener_ticker_gets_sector_from_polygon():

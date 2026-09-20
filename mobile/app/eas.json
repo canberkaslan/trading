@@ -44,7 +44,11 @@
         "buildType": "app-bundle"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://api-paper.trading.canberkaslan.co"
+        "EXPO_PUBLIC_API_URL": "https://trader.fusapp.com",
+        "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyB5iHcL5Yds1FmYvs6FsAeLfVLRxQ03kek",
+        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "fusapp-trader.firebaseapp.com",
+        "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "fusapp-trader",
+        "EXPO_PUBLIC_FIREBASE_APP_ID": "1:944060102826:web:cfaa8aa5212cad63db78d3"
       }
     },
     "production": {
@@ -57,7 +61,11 @@
         "buildType": "app-bundle"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://api.trading.canberkaslan.co"
+        "EXPO_PUBLIC_API_URL": "https://trader.fusapp.com",
+        "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyB5iHcL5Yds1FmYvs6FsAeLfVLRxQ03kek",
+        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "fusapp-trader.firebaseapp.com",
+        "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "fusapp-trader",
+        "EXPO_PUBLIC_FIREBASE_APP_ID": "1:944060102826:web:cfaa8aa5212cad63db78d3"
       }
     }
   },

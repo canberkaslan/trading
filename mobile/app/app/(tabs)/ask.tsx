@@ -551,6 +551,8 @@ function AgentMessage({
   const badge = model ? modelBadge(theme, model) : null;
   const chip = decision ? ratingChip(theme, decision.rating) : null;
 
+  const { t } = useTranslation();
+
   return (
     <View style={styles.agentBlock}>
       <Text style={styles.kicker}>
@@ -561,25 +563,28 @@ function AgentMessage({
       </Text>
 
       {decision && chip ? (
-        <View style={styles.strip}>
-          <View style={styles.stripHead}>
-            <Text style={styles.stripTicker}>{decision.ticker}</Text>
-            <View
-              style={[
-                styles.ratingTag,
-                { backgroundColor: chip.background, borderColor: chip.borderColor ?? 'transparent' },
-              ]}
-            >
-              <Text style={[styles.ratingText, { color: chip.color }]}>{decision.rating}</Text>
+        <>
+          <Text style={styles.disclaimer}>{t('disclaimer.short')}</Text>
+          <View style={styles.strip}>
+            <View style={styles.stripHead}>
+              <Text style={styles.stripTicker}>{decision.ticker}</Text>
+              <View
+                style={[
+                  styles.ratingTag,
+                  { backgroundColor: chip.background, borderColor: chip.borderColor ?? 'transparent' },
+                ]}
+              >
+                <Text style={[styles.ratingText, { color: chip.color }]}>{decision.rating}</Text>
+              </View>
+            </View>
+            <View style={styles.stripGrid}>
+              <StripField label="Giriş" value={formatUsd(decision.entry_price)} styles={styles} />
+              <StripField label="Stop" value={formatUsd(decision.stop_loss)} styles={styles} />
+              <StripField label="Hedef" value={formatUsd(decision.price_target)} styles={styles} />
+              <StripField label="Vade" value={decision.time_horizon ?? '—'} styles={styles} />
             </View>
           </View>
-          <View style={styles.stripGrid}>
-            <StripField label="Giriş" value={formatUsd(decision.entry_price)} styles={styles} />
-            <StripField label="Stop" value={formatUsd(decision.stop_loss)} styles={styles} />
-            <StripField label="Hedef" value={formatUsd(decision.price_target)} styles={styles} />
-            <StripField label="Vade" value={decision.time_horizon ?? '—'} styles={styles} />
-          </View>
-        </View>
+        </>
       ) : null}
 
       <Text style={styles.pmText}>{message.text}</Text>

@@ -52,12 +52,12 @@ type Props = {
  */
 const AUTH_COPY = {
   missing: {
-    title: 'Sunucu token’ı girilmemiş',
-    hint: 'Bu cihaz sunucuya kimlik gösteremiyor. Ayarlar’daki “Sunucu token’ı” alanına secrets.env içindeki DEV_API_TOKEN’ı yapıştır.',
+    title: 'Kimlik doğrulama gerekli',
+    hint: 'Bu cihaz sunucuya erişim yetkisine sahip değil. Lütfen giriş yapın.',
   },
   invalid: {
-    title: 'Sunucu token’ı geçersiz',
-    hint: 'Kayıtlı token sunucu tarafından reddedildi. Sunucudaki DEV_API_TOKEN ile birebir aynı olduğundan emin ol; değiştiyse Ayarlar’dan güncelle.',
+    title: 'Kimlik doğrulama başarısız',
+    hint: 'Oturumunuz geçersiz. Lütfen çıkış yapıp yeniden giriş yapın.',
   },
 } as const;
 

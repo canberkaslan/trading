@@ -43,6 +43,9 @@ _SECTOR_MAP: dict[str, str] = {
 }
 
 
+UNKNOWN_SECTOR = "Unknown"
+"""Bucket for names steps 1-3 could not resolve. Never None — see sector_for."""
+
 log = logging.getLogger(__name__)
 
 
@@ -112,7 +115,7 @@ def _cached_sector(key: str) -> str | None:
         repo = _get_repo()
         with repo.session() as s:
             row = s.query(SectorCacheRow).filter_by(ticker=key).first()
-            return row.sector if row else None
+            return row.sector if row else None  # None = miss, caller continues
     except Exception:  # noqa: BLE001
         log.warning("sector cache read failed for %s", key, exc_info=True)
         return None
@@ -159,19 +162,27 @@ def _cache_sector(key: str, sector: str) -> None:
         log.warning("sector cache write failed for %s", key, exc_info=True)
 
 
-def sector_for(ticker: str | None) -> str | None:
-    """Return the GICS sector for ``ticker`` or ``None`` if unknown.
+def sector_for(ticker: str | None) -> str:
+    """Return the GICS sector for ``ticker``, or ``"Unknown"`` if unresolved.
 
     Lookup order:
     1. Static map (US_UNIVERSE tickers)
     2. DB cache (sector_cache table)
     3. Polygon ticker_details API (SIC code -> GICS mapping, written back to cache)
+    4. ``"Unknown"``
+
+    Never returns None, and step 4 is the point. `check_limits` used to carry
+    `if sector:`, so an unresolved name SKIPPED the 30% sector cap entirely —
+    unlimited concentration in exactly the names we know least about (B-8).
+    Bucketing them together can reject a safe trade when the bucket is full;
+    that false positive is the accepted price of the cap never being silently
+    off. Steps 1-3 exist to keep the bucket small.
 
     Normalizes case and treats Alpaca's dash form (``BRK-B``) as the dot form
     (``BRK.B``) so either spelling resolves.
     """
     if not ticker:
-        return None
+        return UNKNOWN_SECTOR
     key = ticker.strip().upper().replace("-", ".")
 
     if key in _SECTOR_MAP:
@@ -184,4 +195,4 @@ def sector_for(ticker: str | None) -> str | None:
     sector = _polygon_sector(key)
     if sector:
         _cache_sector(key, sector)
-    return sector
+    return sector or UNKNOWN_SECTOR

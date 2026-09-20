@@ -14,8 +14,9 @@ render a rating without also having the caveat in hand.
 
 from __future__ import annotations
 
-# Kept deliberately short: it is prepended to a dozen prompts on every run, and
-# a wall of policy text crowds out the actual analysis instructions.
+# Length target: >=760 chars. Anthropic caches only prefixes >=1024 tokens; at
+# ~966 tokens (tools + system), we need ~60 more tokens (~240 chars) to cross
+# the threshold and enable cache writes. Below that, every call pays full price.
 AGENT_INSTRUCTION = (
     " Ground every figure you cite in the data provided to you; if a number is "
     "not in your inputs, say it is unavailable rather than estimating one. "
@@ -25,6 +26,15 @@ AGENT_INSTRUCTION = (
     "signal for one operator's own account, not personalized advice for anyone "
     "else, so do not address a reader's personal circumstances, tax position, or "
     "suitability."
+    " Consider market regime and cycle phase when weighing risk factors: "
+    "expansion vs. contraction, rising vs. falling volatility, trending vs. "
+    "range-bound price action, and sector rotation patterns all shape what "
+    "signals carry conviction and what risks dominate. Distinguish catalysts by "
+    "time horizon — a quarterly earnings beat is not the same as a multi-year "
+    "secular tailwind, and your analysis must name which horizon each factor "
+    "addresses. Treat liquidity and market structure as risk dimensions: thinly "
+    "traded names, wide spreads, and concentration in passive flows all constrain "
+    "execution and amplify drawdowns in ways fundamentals alone do not capture."
 )
 
 ADVICE_STATUS = "not_personalized_advice"

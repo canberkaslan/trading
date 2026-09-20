@@ -322,7 +322,12 @@ def main() -> int:
     # of, and this returned 1 before writing any row — so the exit never reached
     # the broker, never reached the DB, and daily_run.sh counted it as a generic
     # ticker failure rather than a dropped trade.
-    if decision.rating != "Sell" and not (decision.entry_price and decision.stop_loss):
+    #
+    # Hold/Underweight are non-actionable by design: the sizer rejects them with
+    # "non-actionable rating=X", writes a row with risk_approved=False, and the
+    # run completes successfully. Missing entry/stop is only a failure for
+    # actionable ratings (Buy/Overweight).
+    if decision.rating in ("Buy", "Overweight") and not (decision.entry_price and decision.stop_loss):
         log.warning("decision missing entry/stop — cannot size; aborting before risk layer")
         return 1
 

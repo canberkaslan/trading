@@ -220,9 +220,24 @@ def test_an_empty_sector_book_can_never_breach_the_sector_cap() -> None:
 def test_unmapped_sectors_are_not_bucketed_together() -> None:
     """Two unrelated names whose sector is unknown must not accumulate into one
     bucket — that would invent concentration and reject on it."""
+    from unittest.mock import Mock, patch
     from tradingagents_us.dataflows.sector_map import sector_for
 
-    assert sector_for("ZZZZ") is None
+    # Mock Polygon to return no SIC code for ZZZZ
+    mock_client = Mock()
+    mock_client.ticker_details.return_value = {"results": {}}
+    mock_client.close = Mock()
+    mock_repo = Mock()
+    mock_session = Mock()
+    mock_session.__enter__ = Mock(return_value=mock_session)
+    mock_session.__exit__ = Mock(return_value=None)
+    mock_session.query.return_value.filter_by.return_value.first.return_value = None
+    mock_repo.session.return_value = mock_session
+
+    with patch("tradingagents_us.dataflows.sector_map.PolygonClient", return_value=mock_client), \
+         patch("tradingagents_us.dataflows.sector_map._get_repo", return_value=mock_repo):
+        assert sector_for("ZZZZ") is None
+
     ok, _ = check_limits(
         ticker="ZZZZ",
         sector=None,

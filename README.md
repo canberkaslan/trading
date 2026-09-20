@@ -71,8 +71,13 @@ cd infra/envs/dev
 terraform init -backend-config=../../backend.hcl
 terraform plan -var-file=dev.tfvars
 
-# Mobile
-cd mobile/app && pnpm install && pnpm start
+# Mobile (local dev - iOS simulator / Android emulator / Web)
+cd mobile/app && npm install && npm start
+
+# Mobile deployment
+# - Android: EAS Build → Play Internal Track (ready)
+# - iOS: Awaiting Apple Developer Program ($99/yr) for TestFlight
+#   See docs/USAGE_MOBILE.md section 5 for setup steps
 ```
 
 ## License

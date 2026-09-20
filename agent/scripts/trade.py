@@ -327,7 +327,8 @@ def main() -> int:
     # "non-actionable rating=X", writes a row with risk_approved=False, and the
     # run completes successfully. Missing entry/stop is only a failure for
     # actionable ratings (Buy/Overweight).
-    if decision.rating in ("Buy", "Overweight") and not (decision.entry_price and decision.stop_loss):
+    actionable = decision.rating in ("Buy", "Overweight")
+    if actionable and not (decision.entry_price and decision.stop_loss):
         log.warning("decision missing entry/stop — cannot size; aborting before risk layer")
         return 1
 

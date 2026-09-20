@@ -195,7 +195,9 @@ def test_buy_without_entry_stop_exits_one(mock_dependencies, monkeypatch, capsys
     assert exit_code == 1, "Buy without entry/stop should exit 1 (malformed)"
 
     # submit_order should NOT have been called (aborted before risk layer)
-    assert not mock_dependencies["submit"].called, "submit_order should not be called for malformed Buy"
+    assert not mock_dependencies["submit"].called, (
+        "submit_order should not be called for malformed Buy"
+    )
 
 
 def test_buy_with_entry_stop_proceeds(mock_dependencies, monkeypatch, capsys):

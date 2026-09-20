@@ -221,6 +221,7 @@ def test_unmapped_sectors_are_not_bucketed_together() -> None:
     """Two unrelated names whose sector is unknown must not accumulate into one
     bucket — that would invent concentration and reject on it."""
     from unittest.mock import Mock, patch
+
     from tradingagents_us.dataflows.sector_map import sector_for
 
     # Mock Polygon to return no SIC code for ZZZZ

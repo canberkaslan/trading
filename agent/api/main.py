@@ -19,6 +19,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -46,6 +47,8 @@ from .routes import (
 from .routes import (
     eval as eval_routes,
 )
+
+log = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Trading API",
@@ -112,7 +115,6 @@ async def whoami(user: str = Depends(require_token)) -> dict[str, object]:
 @app.delete("/v1/me", include_in_schema=True, tags=["auth"])
 async def delete_account(
     user: str = Depends(require_token),
-    repo: TradeLogRepository = Depends(get_repo),
 ) -> dict[str, str]:
     """Delete the authenticated user's account data.
 

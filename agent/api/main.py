@@ -28,6 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 
 from tradingagents_us.log_redaction import install as install_log_redaction
+from tradingagents_us.storage import TradeLogRepository
 
 from .deps import get_alpaca, get_repo, is_admin, require_token
 from .routes import (
@@ -115,7 +116,8 @@ async def whoami(user: str = Depends(require_token)) -> dict[str, object]:
 @app.delete("/v1/me", include_in_schema=True, tags=["auth"])
 async def delete_account(
     user: str = Depends(require_token),
-) -> dict[str, str]:
+    repo: TradeLogRepository = Depends(get_repo),
+) -> dict[str, object]:
     """Delete the authenticated user's account data.
 
     Removes all user-associated data from the backend database. The caller is
@@ -125,17 +127,9 @@ async def delete_account(
     The mobile app calls Firebase deleteUser() AFTER this endpoint succeeds, so
     the Firebase account remains valid if this operation fails.
     """
-    # Delete user-specific data from device_tokens and any other user tables.
-    # The repository does not yet have a delete_user_data method, so this is a
-    # placeholder that satisfies the API contract — the actual deletion will be
-    # implemented when the schema migration adds the user_id foreign key to the
-    # relevant tables.
-    #
-    # For now, return success: the mobile flow deletes from Firebase, and the
-    # backend has no user-scoped data to remove (device tokens are stored but
-    # not yet keyed by uid in the schema).
-    log.info("Account deletion requested for user %s", user)
-    return {"status": "deleted", "uid": user}
+    deleted_rows = repo.delete_user_data(user)
+    log.info("Account deletion for user %s removed %s", user, deleted_rows)
+    return {"status": "deleted", "uid": user, "deleted_rows": deleted_rows}
 
 
 @app.get("/", include_in_schema=False)

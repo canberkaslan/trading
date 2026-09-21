@@ -11,16 +11,20 @@ import { HTTPError } from 'ky';
 import { useApproveOrder, usePendingOrders, useRejectOrder, usePortfolio, useReadiness } from '@/api/hooks';
 import { api } from '@/api/endpoints';
 import { useTheme } from '@/theme/useTheme';
+import { useShape, type Shape } from '@/theme/shape';
 import { authenticate } from '@/auth/biometric';
+import { Card } from '@/components/Card';
 import { Sheet } from '@/components/Sheet';
+import { StatCell } from '@/components/StatCell';
 import { Tag } from '@/components/Tag';
 import { toast } from '@/stores/toast';
-import { ratingChip, modelBadge } from '@/theme/rating';
+import { ratingVariant, modelBadge } from '@/theme/rating';
 import { formatUsd, formatPct, relativeAgeTr, parseUtc } from '@/utils/format';
 import { rejectionReasonTr } from '@/utils/orders';
+import { topWeightTone } from '@/utils/concentration';
 import { MIN_TOUCH_TARGET, hitSlopFor, orderActionLabel } from '@/utils/a11y';
 import type { AgentDecision, OrderListItem } from '@/api/types';
-import { font, TABULAR, TYPE } from '@/theme/type';
+import { font, TYPE } from '@/theme/type';
 
 /**
  * The approval flow, as one state machine.
@@ -42,7 +46,7 @@ type Flow =
   | { step: 'rejecting' };
 
 /** Lucide `scan-face` — the handoff's mark for "this asks for the device lock". */
-function ScanFace({ color, size = 16 }: { color: string; size?: number }) {
+function ScanFace({ color, size = 18 }: { color: string; size?: number }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M3 7V5a2 2 0 0 1 2-2h2" />
@@ -52,6 +56,16 @@ function ScanFace({ color, size = 16 }: { color: string; size?: number }) {
       <Path d="M8 14s1.5 2 4 2 4-2 4-2" />
       <Path d="M9 9h.01" />
       <Path d="M15 9h.01" />
+    </Svg>
+  );
+}
+
+/** Lucide `line-chart` — the prototype's square button beside the ticker. */
+function LineChart({ color, size = 18 }: { color: string; size?: number }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M3 3v18h18" />
+      <Path d="M7 14l4-5 4 3 5-7" />
     </Svg>
   );
 }
@@ -118,9 +132,10 @@ async function approveFailure(e: unknown): Promise<Flow> {
 }
 
 export default function ApproveOrderScreen() {
-  const theme = useTheme();
-  const styles = useMemo(() => makeStyles(theme), [theme]);
-  const { t } = useTranslation();
+  const t = useTheme();
+  const sh = useShape();
+  const styles = useMemo(() => makeStyles(t, sh), [t, sh]);
+  const { t: tr } = useTranslation();
   const { orderId } = useLocalSearchParams<{ orderId: string }>();
   const router = useRouter();
   const {
@@ -177,9 +192,9 @@ export default function ApproveOrderScreen() {
   // "not in pending list" during that race falsely tells the user the order is gone.
   if (!order && ordersLoading) {
     return (
-      <SafeAreaView style={styles.container} edges={['top']}>
+      <SafeAreaView style={styles.screen} edges={['top']}>
         <View style={styles.center}>
-          <ActivityIndicator color={theme.textPrimary} />
+          <ActivityIndicator color={t.textPrimary} />
           <Text style={styles.muted}>Emir yükleniyor…</Text>
         </View>
       </SafeAreaView>
@@ -203,7 +218,7 @@ export default function ApproveOrderScreen() {
    */
   if (!order && ordersFailed) {
     return (
-      <SafeAreaView style={styles.container} edges={['top']}>
+      <SafeAreaView style={styles.screen} edges={['top']}>
         <ErrorState
           title="Bekleyen emirler okunamadı"
           detail={ordersError}
@@ -213,19 +228,25 @@ export default function ApproveOrderScreen() {
     );
   }
 
+  /* The prototype's `approveGone` slot: a dashed card, never a filled one — an
+     order that is no longer there should read as an absence. */
   if (!order) {
     return (
-      <SafeAreaView style={styles.container} edges={['top']}>
+      <SafeAreaView style={styles.screen} edges={['top']}>
         <View style={styles.center}>
-          <Text style={styles.muted}>Bu emir artık bekleyen listesinde değil.</Text>
-          <Pressable
-            onPress={() => router.back()}
-            style={styles.btnCompact}
-            accessibilityRole="button"
-            accessibilityLabel="Geri dön"
-          >
-            <Text style={styles.btnSecondaryText}>Geri</Text>
-          </Pressable>
+          <Card tone="dashed" style={styles.gone}>
+            <Text style={styles.goneText}>
+              Bu emir artık bekleyen listesinde değil — onaylanmış, reddedilmiş ya da dolmuş olabilir.
+            </Text>
+            <Pressable
+              onPress={() => router.back()}
+              style={({ pressed }) => [styles.btnCompact, pressed && styles.pressed]}
+              accessibilityRole="button"
+              accessibilityLabel="Emirler listesine dön"
+            >
+              <Text style={styles.btnSecondaryText}>Emirlere dön</Text>
+            </Pressable>
+          </Card>
         </View>
       </SafeAreaView>
     );
@@ -233,14 +254,24 @@ export default function ApproveOrderScreen() {
 
   const target = order;
   const label = `${target.side} ${target.quantity} ${target.ticker} onayla`;
-  const sideColor = target.side === 'BUY' ? theme.up : theme.downText ?? theme.down;
-  const chip = decision ? ratingChip(theme, decision.rating) : null;
+  const buy = target.side === 'BUY';
+  const sideColor = buy ? t.up : t.downText ?? t.down;
 
   const notional = decision?.entry_price != null ? decision.entry_price * target.quantity : null;
   const equity = portfolio?.total_equity_usd ?? null;
   const weight = notional != null && equity != null && equity > 0 ? notional / equity : null;
   const submitted = parseUtc(target.submitted_at_utc);
   const age = submitted ? relativeAgeTr(Date.now() - submitted.getTime()) : '—';
+
+  /*
+   * The single-name cap is not this screen's rule to invent: `topWeightTone`
+   * already owns "is this weight over the 10% cap", and the Risk screen reads
+   * the same helper. All the design does here is colour the cell it applies to,
+   * so the figure and the judgement cannot drift apart.
+   */
+  const weightTone = weight != null ? topWeightTone(weight * 100) : null;
+  const weightColor =
+    weightTone === 'down' ? t.downText ?? t.down : weightTone === 'warning' ? t.warning : undefined;
 
   /**
    * What the broker will actually be left holding behind this order.
@@ -259,11 +290,17 @@ export default function ApproveOrderScreen() {
    * will be sent and says nothing when nothing will be attached.
    */
   const legs: string[] = [];
-  if (target.side === 'BUY') {
+  if (buy) {
     if (target.stop_loss > 0) legs.push('stop');
     if (decision?.price_target != null) legs.push('kâr al');
   }
   const legsLabel = legs.length === 2 ? 'bracket' : legs.length === 1 ? `broker'da ${legs[0]}` : null;
+  const legsNote =
+    legs.length === 2
+      ? 'Stop ve kâr al bacakları broker tarafında kalır.'
+      : legs.length === 1
+        ? `${legs[0] === 'stop' ? 'Stop' : 'Kâr al'} bacağı broker tarafında kalır.`
+        : 'Bracket bacağı eklenmez.';
 
   /** Step 1: the sheet that explains what the device lock is about to be for. */
   const askForAuth = () => setFlow({ step: 'auth' });
@@ -275,12 +312,12 @@ export default function ApproveOrderScreen() {
    */
   const runApproval = async () => {
     setFlow({ step: 'verifying' });
-    const { success, mode } = await authenticate(label);
+    const { success, mode: authMode } = await authenticate(label);
     if (!success) {
       setFlow({
         step: 'authFailed',
         message:
-          mode === 'none'
+          authMode === 'none'
             ? 'Cihazınızda ekran kilidi (Face/Touch ID veya şifre) tanımlı değil. Emir onayı için lütfen bir cihaz kilidi kurun.'
             : 'Kimlik doğrulama olmadan emir onaylanamaz.',
       });
@@ -306,16 +343,34 @@ export default function ApproveOrderScreen() {
   };
 
   const busy = flow.step === 'verifying' || flow.step === 'rejecting';
+  /*
+   * Both buttons were already refused for a non-admin, and both still drew
+   * themselves at full strength — an ink-filled "Doğrula ve onayla" that does
+   * nothing when tapped. A control that looks live and is not teaches the
+   * operator to distrust the screen, which on an approval screen is the whole
+   * product. The gate is unchanged; only its appearance now tells the truth,
+   * and a line under the pair says which of the two reasons applies.
+   */
+  const blocked = !isAdmin;
+  const disabled = busy || blocked;
   const mode = readiness?.trading_mode;
   const isLive = mode === 'live';
 
+  /* The three figures the decision turns on, repeated inside the sheet so the
+     operator is not asked to remember what they tapped. */
+  const sheetSummary = [
+    { label: 'Tutar', value: formatUsd(notional) },
+    { label: 'Stop', value: formatUsd(target.stop_loss) },
+    { label: 'Portföy %', value: formatPct(weight), color: weightColor },
+  ];
+
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      <ScrollView contentContainerStyle={styles.scroll}>
+    <SafeAreaView style={styles.screen} edges={['top']}>
+      <ScrollView contentContainerStyle={styles.content}>
         <Pressable
           onPress={() => router.back()}
           style={styles.back}
-          hitSlop={hitSlopFor(18)}
+          hitSlop={hitSlopFor(24)}
           accessibilityRole="button"
           accessibilityLabel="Emirler listesine dön"
         >
@@ -325,37 +380,56 @@ export default function ApproveOrderScreen() {
         <View style={styles.modeRow}>
           <Tag
             label={mode == null ? 'MOD ?' : isLive ? 'LIVE — GERÇEK PARA' : 'PAPER'}
-            variant={isLive ? 'accent' : 'outline'}
+            variant={mode == null ? 'outlineMuted' : isLive ? 'down' : 'neutral'}
+            caps
           />
         </View>
 
+        {/* The prototype's header: ticker + rating on the left, the chart
+            button pushed to the right edge by `margin-left:auto`. */}
         <View style={styles.titleRow}>
-          {/* 40px per the handoff: the ticker is the first thing to resolve on
-              a screen that commits real money. */}
-          <Text style={styles.title}>{target.ticker}</Text>
-          {decision && chip ? (
-            <View style={[styles.ratingChip, { backgroundColor: chip.background, borderColor: chip.borderColor ?? 'transparent' }]}>
-              <Text style={[styles.ratingLabel, { color: chip.color }]}>{decision.rating}</Text>
+          <View style={styles.titleBlock}>
+            <View style={styles.tickerLine}>
+              <Text style={styles.ticker} accessibilityRole="header">
+                {target.ticker}
+              </Text>
+              {decision ? (
+                <Tag label={decision.rating} variant={ratingVariant(decision.rating)} size="sm" caps />
+              ) : null}
             </View>
-          ) : null}
+            <Text style={styles.subtitle}>
+              <Text style={[styles.subtitleStrong, { color: sideColor }]}>
+                {target.side} {target.quantity} lot
+              </Text>
+              {` — ${target.order_type}${legsLabel ? ` · ${legsLabel}` : ''}`}
+            </Text>
+          </View>
+          <Pressable
+            onPress={() => router.push(`/trade/${target.ticker}` as never)}
+            style={({ pressed }) => [styles.iconBtn, pressed && styles.pressed]}
+            accessibilityRole="button"
+            accessibilityLabel={`${target.ticker} grafiğini ve analizlerini aç`}
+          >
+            <LineChart color={t.textPrimary} />
+          </Pressable>
         </View>
-        <Text style={styles.subtitle}>
-          <Text style={[styles.subtitleStrong, { color: sideColor }]}>
-            {target.side} {target.quantity} lot
-          </Text>
-          {` — ${target.order_type}${legsLabel ? ` · ${legsLabel}` : ''}`}
-        </Text>
 
-        <Text style={styles.disclaimer}>{t('disclaimer.short')}</Text>
+        <Text style={styles.disclaimer}>{tr('disclaimer.short')}</Text>
 
-        {/* The 2px-ruled stat grid: everything the order commits to, in one
-            block. Rules rather than a card — the system has no cards. */}
-        <View style={styles.grid}>
+        {/* Everything the order commits to, in one card. Three-up, as the
+            prototype grids it. */}
+        <Card style={styles.grid}>
           {/* No null guards: `formatUsd`/`formatPct` own what a missing figure
               looks like, and every cell in the grid must miss the same way. */}
-          <Stat label="Tutar" value={formatUsd(notional)} />
-          <Stat label="Portföy %" value={formatPct(weight)} />
-          <Stat label="Stop" value={formatUsd(target.stop_loss)} />
+          <StatCell size="sm" style={styles.cell} label="Tutar" value={formatUsd(notional)} />
+          <StatCell
+            size="sm"
+            style={styles.cell}
+            label="Portföy %"
+            value={formatPct(weight)}
+            valueColor={weightColor}
+          />
+          <StatCell size="sm" style={styles.cell} label="Stop" value={formatUsd(target.stop_loss)} />
           {/* `take_profit` is dead on the wire: it exists in the schema and the
               DB row, and nothing ever writes it — the pipeline never sets it, so
               this cell rendered an em dash on every order while the take-profit
@@ -363,39 +437,54 @@ export default function ApproveOrderScreen() {
               (executor.py:301, `config.take_profit_price or decision.price_target`).
               An approval screen must show the number that will be placed, so
               this cell reads that field and says whose it is. */}
-          <Stat label="Kâr al (broker)" value={formatUsd(decision?.price_target)} />
-          <Stat label="Giriş" value={formatUsd(decision?.entry_price)} />
-          <Stat label="Hedef" value={formatUsd(decision?.price_target)} />
-          <Stat label="Vade" value={decision?.time_horizon ?? '—'} />
-          <Stat label="Süre" value={age} />
-        </View>
+          <StatCell size="sm" style={styles.cell} label="Kâr al (broker)" value={formatUsd(decision?.price_target)} />
+          <StatCell size="sm" style={styles.cell} label="Giriş" value={formatUsd(decision?.entry_price)} />
+          <StatCell size="sm" style={styles.cell} label="Hedef" value={formatUsd(decision?.price_target)} />
+          <StatCell size="sm" style={styles.cell} label="Vade" value={decision?.time_horizon ?? '—'} />
+          <StatCell size="sm" style={styles.cell} label="Süre" value={age} />
+        </Card>
 
         <View style={styles.actions}>
           <Pressable
-            disabled={busy || !isAdmin}
-            style={[styles.btn, styles.btnSecondary, busy && styles.btnDisabled]}
+            disabled={disabled}
+            style={({ pressed }) => [
+              styles.btn,
+              styles.btnSecondary,
+              pressed && !disabled && styles.pressed,
+              disabled && styles.btnSecondaryDisabled,
+            ]}
             onPress={() => setFlow({ step: 'rejectConfirm' })}
             accessibilityRole="button"
             accessibilityLabel={orderActionLabel(target, 'reject')}
-            accessibilityState={{ disabled: busy }}
+            accessibilityState={{ disabled }}
           >
-            <Text style={styles.btnSecondaryText}>Reddet</Text>
+            <Text style={[styles.btnSecondaryText, disabled && styles.btnTextDisabled]}>Reddet</Text>
           </Pressable>
           <Pressable
-            disabled={busy || !isAdmin}
-            style={[styles.btn, styles.btnPrimary, busy && styles.btnDisabled]}
+            disabled={disabled}
+            style={({ pressed }) => [
+              styles.btn,
+              styles.btnPrimary,
+              styles.btnPrimaryWide,
+              pressed && !disabled && styles.btnPrimaryPressed,
+              disabled && styles.btnPrimaryDisabled,
+            ]}
             onPress={askForAuth}
             accessibilityRole="button"
             accessibilityLabel={orderActionLabel(target, 'approve')}
             accessibilityHint="Cihaz kilidi ile doğrulama ister"
-            accessibilityState={{ disabled: busy, busy }}
+            accessibilityState={{ disabled, busy }}
           >
-            <Text style={styles.btnPrimaryText}>Doğrula ve onayla</Text>
-            <ScanFace color={theme.background} />
+            <Text style={[styles.btnPrimaryText, disabled && styles.btnPrimaryTextDisabled]}>
+              Doğrula ve onayla
+            </Text>
+            <ScanFace color={disabled ? t.ink3 ?? t.textMuted : t.inkInv ?? t.background} />
           </Pressable>
         </View>
         <Text style={styles.helper}>
-          {age} onaya düştü · cihaz kilidi ile doğrulama ister
+          {blocked
+            ? 'Bu hesapta emir onaylama yetkisi yok — onay ve red yöneticiye açıktır.'
+            : `${age} onaya düştü · cihaz kilidi ile doğrulama ister · ${legsNote}`}
         </Text>
 
         <Text style={styles.kicker}>Portföy yöneticisi gerekçesi</Text>
@@ -411,7 +500,12 @@ export default function ApproveOrderScreen() {
           <View style={styles.council}>
             <Text style={styles.councilLabel}>Konsey</Text>
             {decision.reasoning.map((r, i) => (
-              <Tag key={`${r.agent}-${i}`} label={`${r.agent} · ${modelBadge(theme, r.model).label}`} variant="neutral" />
+              <Tag
+                key={`${r.agent}-${i}`}
+                label={`${r.agent} · ${modelBadge(t, r.model).label}`}
+                variant="neutral"
+                size="sm"
+              />
             ))}
           </View>
         ) : null}
@@ -419,7 +513,7 @@ export default function ApproveOrderScreen() {
         {decision ? (
           <Pressable
             onPress={() => router.push(`/trade/${decision.ticker}` as never)}
-            hitSlop={hitSlopFor(20)}
+            hitSlop={hitSlopFor(24)}
             style={styles.detailLink}
             accessibilityRole="button"
             accessibilityLabel={`${decision.ticker} için tüm ajan analizleri`}
@@ -428,8 +522,8 @@ export default function ApproveOrderScreen() {
           </Pressable>
         ) : null}
 
-        <Text style={styles.disclaimer}>{t('disclaimer.short')}</Text>
-        <Text style={styles.helper}>Reddedilen emir bugün yeniden önerilmez.</Text>
+        <Text style={styles.disclaimer}>{tr('disclaimer.short')}</Text>
+        <Text style={styles.footNote}>Reddedilen emir bugün yeniden önerilmez.</Text>
       </ScrollView>
 
       {/* Step 1 + 2: the ask, then the same sheet in its busy state. */}
@@ -437,6 +531,7 @@ export default function ApproveOrderScreen() {
         visible={flow.step === 'auth' || flow.step === 'verifying'}
         title="Cihaz kilidi ile doğrula"
         message={`${label} — Face ID / parmak izi / şifre olmadan emir onaylanamaz.`}
+        summary={sheetSummary}
         busy={flow.step === 'verifying'}
         busyLabel="Doğrulanıyor…"
         onDismiss={flow.step === 'auth' ? () => setFlow({ step: 'idle' }) : undefined}
@@ -483,6 +578,7 @@ export default function ApproveOrderScreen() {
         visible={flow.step === 'rejectConfirm' || flow.step === 'rejecting'}
         title="Emri reddet?"
         message={`${label} — emir gönderilmeyecek; günlük koşu bugün yeniden önermez.`}
+        summary={sheetSummary}
         busy={flow.step === 'rejecting'}
         busyLabel="Reddediliyor…"
         onDismiss={flow.step === 'rejectConfirm' ? () => setFlow({ step: 'idle' }) : undefined}
@@ -495,89 +591,102 @@ export default function ApproveOrderScreen() {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
-  const theme = useTheme();
-  const statStyles = useMemo(() => makeStatStyles(theme), [theme]);
-  return (
-    <View style={statStyles.stat}>
-      <Text style={statStyles.label}>{label}</Text>
-      <Text style={statStyles.value}>{value}</Text>
-    </View>
-  );
-}
-
-const makeStatStyles = (t: Palette) =>
-  StyleSheet.create({
-    // Thirds, so the eight cells fall into 3 / 3 / 2. A percentage width plus
-    // padding rather than a gap: gaps and percentages together overflow the row
-    // by the gap on Android.
-    stat: { width: '33.33%', paddingRight: 12, marginBottom: 12 },
-    label: { color: t.textSecondary, ...TYPE.helper },
-    value: { color: t.textPrimary, fontSize: 16, ...font(800), marginTop: 2, ...TABULAR },
-  });
-
 type Palette = ReturnType<typeof useTheme>;
 
-const makeStyles = (t: Palette) =>
+/** The prototype's 52px commit buttons — above the 44pt floor either way. */
+const ACTION_HEIGHT = 52;
+
+const makeStyles = (t: Palette, sh: Shape) =>
   StyleSheet.create({
-    container: { flex: 1, backgroundColor: t.background },
-    scroll: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 32 },
-    center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 16 },
-    back: { marginBottom: 12, minHeight: 24, justifyContent: 'center' },
-    backText: { color: t.accent700 ?? t.accent, fontSize: 14, ...font(600) },
-    modeRow: { marginBottom: 12 },
-    titleRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    title: { color: t.textPrimary, fontSize: 40, ...font(800), letterSpacing: -0.5 },
-    ratingChip: { paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1 },
-    ratingLabel: { fontSize: 11, letterSpacing: 0.22, ...font(600) },
-    subtitle: { color: t.textSecondary, ...TYPE.body, marginTop: 2 },
+    screen: { flex: 1, backgroundColor: t.background },
+    content: { paddingHorizontal: sh.space[3], paddingTop: sh.space[2], paddingBottom: sh.space[5] },
+    center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: sh.space[4] },
+
+    gone: { alignItems: 'center', paddingVertical: sh.space[4], gap: sh.space[3] },
+    goneText: { ...TYPE.body, color: t.ink2 ?? t.textSecondary, textAlign: 'center', lineHeight: 19 },
+
+    back: { marginBottom: sh.space[1], minHeight: 24, justifyContent: 'center' },
+    backText: { ...TYPE.body, ...font(600), color: t.brand ?? t.accent },
+    modeRow: { flexDirection: 'row', marginBottom: sh.space[2] },
+
+    titleRow: { flexDirection: 'row', alignItems: 'center', gap: sh.space[2] },
+    titleBlock: { flex: 1, minWidth: 0 },
+    tickerLine: { flexDirection: 'row', alignItems: 'center', gap: sh.space[1], flexWrap: 'wrap' },
+    /* 34px, as the prototype sizes it: the ticker is the first thing to resolve
+       on a screen that commits real money. */
+    ticker: { ...font(800), fontSize: 34, letterSpacing: -1, color: t.textPrimary },
+    subtitle: { ...TYPE.body, color: t.ink2 ?? t.textSecondary, marginTop: 2 },
     subtitleStrong: { ...TYPE.body, ...font(800) },
-    // A ruled block, not a filled card — the 2px rules do the separating.
-    grid: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      marginTop: 16,
-      paddingTop: 14,
-      // The cells carry their own 12px bottom margin, so the block's own bottom
-      // padding is short by that much.
-      paddingBottom: 2,
-      borderTopWidth: 2,
-      borderBottomWidth: 2,
-      borderColor: t.divider,
+    iconBtn: {
+      width: MIN_TOUCH_TARGET,
+      height: MIN_TOUCH_TARGET,
+      borderRadius: sh.radiusSmall,
+      borderWidth: sh.hairline,
+      borderColor: t.line ?? t.divider,
+      backgroundColor: t.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
-    muted: { color: t.textSecondary, ...TYPE.body, marginTop: 4 },
-    helper: { color: t.textSecondary, ...TYPE.helper, marginTop: 8 },
-    err: { color: t.accent700 ?? t.danger, ...TYPE.body },
-    actions: { flexDirection: 'row', gap: 12, marginTop: 16 },
+
+    /* Three-up. A percentage width plus padding rather than a `gap`: gaps and
+       percentages together overflow the row by the gap on Android. */
+    grid: { flexDirection: 'row', flexWrap: 'wrap', marginTop: sh.space[2] },
+    cell: { width: '33.33%', paddingRight: sh.space[1], marginBottom: sh.space[2] },
+
+    actions: { flexDirection: 'row', gap: sh.space[2], marginTop: sh.space[2] },
     btn: {
       flex: 1,
       flexDirection: 'row',
-      gap: 8,
-      paddingHorizontal: 12,
+      gap: sh.space[1],
+      paddingHorizontal: sh.space[2],
       alignItems: 'center',
       justifyContent: 'center',
-      minHeight: 48,
+      minHeight: ACTION_HEIGHT,
+      borderRadius: sh.radius,
     },
+    /* The prototype weights the pair 1 : 2 — the committing action is the wide
+       one, and Reddet is deliberately not its equal. */
+    btnPrimaryWide: { flex: 2 },
+    // Ink fill for the committing action. Not the accent: under every palette
+    // in this app the accent means loss or warning, so an approve button in it
+    // would read as danger.
+    btnPrimary: { backgroundColor: t.textPrimary },
+    btnPrimaryPressed: { opacity: 0.86 },
+    btnPrimaryText: { ...TYPE.bodyStrong, fontSize: 15, ...font(800), color: t.inkInv ?? t.background },
+    /*
+     * A disabled control must not merely be dimmer — on a dark ground a 45%
+     * ink slab still reads as a filled button. So the fill drops out entirely
+     * and the button falls back to a rule, which is the shape the system
+     * already uses for "not the action".
+     */
+    btnPrimaryDisabled: { backgroundColor: t.surface, borderWidth: sh.hairline, borderColor: t.line ?? t.divider },
+    btnPrimaryTextDisabled: { color: t.ink3 ?? t.textMuted },
+    btnSecondary: { backgroundColor: t.surface, borderWidth: sh.hairline, borderColor: t.line2 ?? t.divider },
+    btnSecondaryDisabled: { borderColor: t.line ?? t.divider },
+    btnSecondaryText: { ...TYPE.bodyStrong, fontSize: 15, ...font(800), color: t.textPrimary },
+    btnTextDisabled: { color: t.ink3 ?? t.textMuted },
     btnCompact: {
-      paddingHorizontal: 24,
-      borderWidth: 1,
-      borderColor: t.textPrimary,
+      paddingHorizontal: sh.space[3],
+      borderRadius: sh.radius,
+      borderWidth: sh.hairline,
+      borderColor: t.line2 ?? t.divider,
       justifyContent: 'center',
       alignItems: 'center',
       minHeight: MIN_TOUCH_TARGET,
     },
-    btnDisabled: { opacity: 0.45 },
-    // Ink fill for the committing action. In Modernist the accent is reserved
-    // for loss and for warnings — an approve button in it would read as danger.
-    btnPrimary: { backgroundColor: t.textPrimary },
-    btnPrimaryText: { color: t.background, fontSize: 14, ...font(800) },
-    btnSecondary: { backgroundColor: 'transparent', borderWidth: 1, borderColor: t.textPrimary },
-    btnSecondaryText: { color: t.textPrimary, fontSize: 14, ...font(600) },
-    kicker: { color: t.accent700 ?? t.accent, ...TYPE.kicker, marginTop: 24, marginBottom: 8 },
-    body: { color: t.textPrimary, ...TYPE.body, lineHeight: 21 },
-    council: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 20 },
-    councilLabel: { color: t.textSecondary, ...TYPE.helper },
-    detailLink: { marginTop: 12, minHeight: 24, justifyContent: 'center', alignSelf: 'flex-start' },
-    detailLinkText: { color: t.accent700 ?? t.accent, fontSize: 14, ...font(600) },
-    disclaimer: { color: t.textSecondary, ...TYPE.helper, marginTop: 24, lineHeight: 16 },
+    pressed: { borderColor: t.brand ?? t.accent },
+
+    kicker: { ...TYPE.kicker, color: t.brand ?? t.accent, marginTop: sh.space[4], marginBottom: sh.space[1] },
+    body: { ...TYPE.body, color: t.textPrimary, lineHeight: 21 },
+    muted: { ...TYPE.body, color: t.ink2 ?? t.textSecondary, marginTop: sh.space[0] },
+    helper: { ...TYPE.helper, color: t.ink3 ?? t.textMuted, marginTop: sh.space[1], textAlign: 'center', lineHeight: 16 },
+    err: { ...TYPE.body, color: t.downText ?? t.danger },
+
+    council: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: sh.space[0] + 2, marginTop: sh.space[2] },
+    councilLabel: { ...TYPE.helper, color: t.ink3 ?? t.textMuted },
+    detailLink: { marginTop: sh.space[2], minHeight: 24, justifyContent: 'center', alignSelf: 'flex-start' },
+    detailLinkText: { ...TYPE.body, ...font(600), color: t.brand ?? t.accent },
+
+    disclaimer: { ...TYPE.helper, color: t.ink3 ?? t.textMuted, marginTop: sh.space[3], lineHeight: 16 },
+    footNote: { ...TYPE.helper, color: t.ink3 ?? t.textMuted, marginTop: sh.space[0], lineHeight: 16 },
   });

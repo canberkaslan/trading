@@ -18,8 +18,10 @@ import Svg, { Path } from 'react-native-svg';
 import { useDecisions, usePendingOrders, usePortfolio, usePrices } from '@/api/hooks';
 import { ErrorState } from '@/components/ErrorState';
 import type { AgentDecision, Bar, OrderListItem, Position } from '@/api/types';
+import { Card } from '@/components/Card';
 import { Tag } from '@/components/Tag';
 import { useTheme } from '@/theme/useTheme';
+import { useShape, type Shape } from '@/theme/shape';
 import { ratingVariant } from '@/theme/rating';
 import { font, TABULAR, TYPE } from '@/theme/type';
 import { formatOrderDate } from '@/utils/orders';
@@ -30,7 +32,7 @@ import { toast } from '@/stores/toast';
 import { useWatchStore, WATCH_CAP } from '@/stores/watchlist';
 
 /**
- * Screen 6 — İzleme listesi.
+ * Screen 6 — İzleme listesi, in Aurora.
  *
  * A name on this list is not a position and not an order: it is a name the
  * operator wants the daily run to look at. So the row's job is to answer, at a
@@ -44,10 +46,20 @@ import { useWatchStore, WATCH_CAP } from '@/stores/watchlist';
  * the backend has no watchlist resource, so it lives in SecureStore
  * (`@/stores/watchlist`) and ships over-the-air.
  *
+ * What the Aurora port changed is only the drawing. The Modernist version was a
+ * ruled table: a 2px section rule, then hairline-separated rows on the page
+ * ground. The prototype's watchlist is a STACK OF CARDS — each name is its own
+ * `--surface` rectangle with its own actions, because each name is an
+ * independent decision and the three buttons under it act on that name alone.
+ * Rows sharing one ruled block read as a table you scan; cards read as a set of
+ * things you act on, which is what this screen is. Behaviour, hooks, helpers,
+ * labels and tone rules are untouched.
+ *
  * The three row actions keep the prototype's 36px ghost-button height and reach
- * the 44pt mobile minimum through `hitSlopFor` rather than by growing: six rows
- * of 44px controls would push the list off the screen, and the tap target is
- * what actually has to be 44 — a mis-tap here removes the wrong name.
+ * the 44pt mobile minimum through `hitSlopFor` rather than by growing: three
+ * rows of 44px controls per card would push the list off the screen, and the
+ * tap target is what actually has to be 44 — a mis-tap here removes the wrong
+ * name.
  */
 
 /**
@@ -59,6 +71,16 @@ const PRICE_DAYS = 5;
 
 /** One request covers every row; 50 decisions is several runs' worth. */
 const DECISION_LIMIT = 50;
+
+/**
+ * The floating tab bar's height plus air. Stated here rather than imported from
+ * `_layout.tsx` because a route module's exports are the router's namespace,
+ * not a place to hang shared constants.
+ */
+const TAB_BAR_CLEARANCE = 72;
+
+/** The prototype's ghost-button height; `hitSlopFor` takes it to 44. */
+const GHOST_H = 36;
 
 /**
  * Today's move, as a fraction, from the last two closes.
@@ -78,7 +100,7 @@ function dailyChange(bars: Bar[] | undefined): number | null {
 
 function XIcon({ color }: { color: string }) {
   return (
-    <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round">
+    <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round">
       <Path d="M18 6 6 18" />
       <Path d="m6 6 12 12" />
     </Svg>
@@ -87,7 +109,8 @@ function XIcon({ color }: { color: string }) {
 
 export default function WatchlistScreen() {
   const t = useTheme();
-  const styles = useMemo(() => makeStyles(t), [t]);
+  const sh = useShape();
+  const styles = useMemo(() => makeStyles(t, sh), [t, sh]);
   const router = useRouter();
 
   const tickers = useWatchStore((s) => s.tickers);
@@ -193,39 +216,37 @@ export default function WatchlistScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.screen} edges={['top']}>
       <ScrollView
-        contentContainerStyle={styles.scroll}
+        contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
         refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={t.textPrimary}
-            colors={[t.textPrimary]}
-          />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={t.textSecondary} />
         }
       >
-        <View>
-          <Text style={styles.h2}>İzleme listesi</Text>
-          {/* NOT "Günlük koşu evrenine eklenir", which is what the prototype says.
-              The daily run's universe is US_UNIVERSE, fixed server-side in
-              bulk_loader.py, and no endpoint accepts a watchlist — the list
-              never leaves the device. The handoff's fidelity mandate covers
-              colour, type, spacing and interaction; it does not license a
-              money screen to promise a behaviour the backend does not have. */}
-          <Text style={styles.subtitle}>
-            Bu cihazda tutulur · {tickers.length} sembol · günlük koşu evrenini değiştirmez
-          </Text>
-        </View>
+        {/* The prototype's h1 with the count as a lighter span beside it: the
+            count is data and it changes, so baking it into the heading string
+            would make "İzleme listesi 0" read as a different screen from
+            "İzleme listesi 7". */}
+        <Text style={styles.title} accessibilityRole="header">
+          İzleme listesi
+          {hydrated ? <Text style={styles.titleCount}>{`  ${tickers.length}`}</Text> : null}
+        </Text>
+        {/* NOT "Günlük koşu evrenine eklenir", which is what the prototype says.
+            The daily run's universe is US_UNIVERSE, fixed server-side in
+            bulk_loader.py, and no endpoint accepts a watchlist — the list
+            never leaves the device. The handoff's fidelity mandate covers
+            colour, type, spacing and interaction; it does not license a
+            money screen to promise a behaviour the backend does not have. */}
+        <Text style={styles.subtitle}>Bu cihazda tutulur · günlük koşu evrenini değiştirmez</Text>
 
         <View style={styles.addRow}>
           <TextInput
             style={styles.input}
             value={input}
             onChangeText={setInput}
-            placeholder="Sembol ekle — TSLA"
-            placeholderTextColor={t.textSecondary}
+            placeholder="Sembol ekle · NVDA"
+            placeholderTextColor={t.ink3 ?? t.textMuted}
             autoCapitalize="characters"
             autoCorrect={false}
             maxLength={6}
@@ -234,32 +255,37 @@ export default function WatchlistScreen() {
             accessibilityLabel="İzleme listesine eklenecek sembol"
           />
           <Pressable
-            style={styles.addBtn}
+            style={({ pressed }) => [styles.addBtn, pressed && styles.addBtnPressed]}
             onPress={onAdd}
             accessibilityRole="button"
             accessibilityLabel="Sembolü izleme listesine ekle"
           >
-            <Text style={styles.addBtnText}>Ekle</Text>
+            <Text style={styles.addBtnText}>+ Ekle</Text>
           </Pressable>
         </View>
+
+        {serverDown ? (
+          <ErrorState
+            title="Sunucu verileri okunamadı"
+            detail={serverError}
+            onRetry={() => {
+              void portfolio.refetch();
+              void decisions.refetch();
+              void pending.refetch();
+            }}
+          />
+        ) : null}
 
         {!hydrated ? (
           <ActivityIndicator color={t.textPrimary} style={styles.spinner} />
         ) : tickers.length === 0 ? (
-          <Text style={styles.empty}>Liste boş. Bir sembol ekle — günlük koşu onu da analiz eder.</Text>
+          <Card tone="dashed" style={styles.slot}>
+            <Text style={styles.slotText}>
+              Liste boş. Bir sembol ekle ya da grafikten “İzle”ye dokun.
+            </Text>
+          </Card>
         ) : (
           <View style={styles.list}>
-            {serverDown ? (
-              <ErrorState
-                title="Sunucu verileri okunamadı"
-                detail={serverError}
-                onRetry={() => {
-                  void portfolio.refetch();
-                  void decisions.refetch();
-                  void pending.refetch();
-                }}
-              />
-            ) : null}
             {tickers.map((ticker) => (
               <WatchRow
                 key={ticker}
@@ -282,9 +308,9 @@ export default function WatchlistScreen() {
 }
 
 /**
- * One name. Its own component because the price query is per-ticker: a hook
- * cannot be called in a loop, and one component per row is also what keeps a
- * slow quote from holding up the rest of the list.
+ * One name, one card. Its own component because the price query is per-ticker:
+ * a hook cannot be called in a loop, and one component per row is also what
+ * keeps a slow quote from holding up the rest of the list.
  */
 function WatchRow({
   ticker,
@@ -308,7 +334,8 @@ function WatchRow({
   onRemove: () => void;
 }) {
   const t = useTheme();
-  const styles = useMemo(() => makeStyles(t), [t]);
+  const sh = useShape();
+  const styles = useMemo(() => makeStyles(t, sh), [t, sh]);
   const { data } = usePrices(ticker, PRICE_DAYS);
 
   const change = dailyChange(data?.bars);
@@ -319,73 +346,84 @@ function WatchRow({
   // and the position table use, so "Pozisyon · 8.40%" means one thing app-wide.
   const weight = position && equity > 0 ? (position.quantity * position.current_price) / equity : null;
 
+  /*
+   * The prototype's precedence is on the POSITION, not on the weight: a held
+   * name says "Pozisyon" even in the moment before the snapshot lands, rather
+   * than dropping to the pending order's label and reading as merely proposed.
+   * The weight joins the label only once equity is known — an unknown share is
+   * left unsaid, not shown as 0.00%.
+   */
+  const status = position
+    ? weight != null
+      ? `Pozisyon · ${formatPct(weight)}`
+      : 'Pozisyon'
+    : pending
+      ? 'Onay bekliyor'
+      : '—';
+
   return (
-    <View style={styles.row}>
-      <View style={styles.rowTop}>
-        <Text style={styles.ticker}>{ticker}</Text>
+    <Card style={styles.card}>
+      <View style={styles.cardTop}>
+        <Text style={styles.ticker} numberOfLines={1}>
+          {ticker}
+        </Text>
+        <View style={styles.quote}>
+          <Text style={styles.last} numberOfLines={1}>
+            {formatUsd(data?.last)}
+          </Text>
+          <Text style={[styles.change, { color: changeColor }]} numberOfLines={1}>
+            {formatPct(change, { signed: true })}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.meta}>
         {decision ? (
-          <Tag label={decision.rating} variant={ratingVariant(decision.rating)} />
+          <Tag label={decision.rating} variant={ratingVariant(decision.rating)} size="sm" caps />
         ) : (
-          <Tag label="—" variant="neutral" />
+          <Tag label="—" variant="neutral" size="sm" />
         )}
-        <Text style={styles.last}>{formatUsd(data?.last)}</Text>
-        <Text style={[styles.change, { color: changeColor }]}>
-          {formatPct(change, { signed: true })}
+        <Text style={styles.date} numberOfLines={1}>
+          {decision ? formatOrderDate(decision.timestamp_utc) : serverDown ? '—' : 'karar yok'}
+        </Text>
+        <Text style={styles.status} numberOfLines={1}>
+          {status}
         </Text>
       </View>
 
-      <View style={styles.rowBottom}>
-        <View style={styles.meta}>
-          <Text style={styles.date} numberOfLines={1}>
-            {decision ? formatOrderDate(decision.timestamp_utc) : serverDown ? '—' : 'karar yok'}
-          </Text>
-          {/* The prototype's precedence is on the POSITION, not on the weight:
-              a held name says "Pozisyon" even in the moment before the snapshot
-              lands, rather than dropping to the pending order's label and
-              reading as merely proposed. The weight joins the label only once
-              equity is known — an unknown share is left unsaid, not shown as
-              0.00%. */}
-          {position ? (
-            <Tag
-              label={weight != null ? `Pozisyon · ${formatPct(weight)}` : 'Pozisyon'}
-              variant="neutral"
-            />
-          ) : pending ? (
-            <Tag label="Onay bekliyor" variant="outline" />
-          ) : null}
-        </View>
-
-        <View style={styles.actions}>
-          <Pressable
-            style={styles.ghost}
-            hitSlop={hitSlopFor(GHOST_H)}
-            onPress={onChart}
-            accessibilityRole="button"
-            accessibilityLabel={`${ticker} grafiğini aç`}
-          >
-            <Text style={styles.ghostText}>Grafik</Text>
-          </Pressable>
-          <Pressable
-            style={styles.ghost}
-            hitSlop={hitSlopFor(GHOST_H)}
-            onPress={onAnalyze}
-            accessibilityRole="button"
-            accessibilityLabel={`${ticker} analiz et`}
-          >
-            <Text style={styles.ghostText}>Analiz</Text>
-          </Pressable>
-          <Pressable
-            style={styles.ghost}
-            hitSlop={hitSlopFor(GHOST_H)}
-            onPress={onRemove}
-            accessibilityRole="button"
-            accessibilityLabel={`${ticker} sembolünü izleme listesinden çıkar`}
-          >
-            <XIcon color={t.textSecondary} />
-          </Pressable>
-        </View>
+      <View style={styles.actions}>
+        <Pressable
+          style={({ pressed }) => [styles.ghost, styles.ghostWide, pressed && styles.ghostPressed]}
+          hitSlop={hitSlopFor(GHOST_H)}
+          onPress={onChart}
+          accessibilityRole="button"
+          accessibilityLabel={`${ticker} grafiğini aç`}
+        >
+          <Text style={styles.ghostText}>Grafik</Text>
+        </Pressable>
+        <Pressable
+          style={({ pressed }) => [styles.ghost, styles.ghostWide, pressed && styles.ghostPressed]}
+          hitSlop={hitSlopFor(GHOST_H)}
+          onPress={onAnalyze}
+          accessibilityRole="button"
+          accessibilityLabel={`${ticker} analiz et`}
+        >
+          <Text style={styles.ghostText}>Analiz et</Text>
+        </Pressable>
+        {/* The prototype's remove button only turns rose on hover. A phone has
+            no hover, so the same intent lands on press — the destructive colour
+            appears at the moment of the touch, not before it. */}
+        <Pressable
+          style={({ pressed }) => [styles.ghost, styles.ghostIcon, pressed && styles.removePressed]}
+          hitSlop={hitSlopFor(GHOST_H)}
+          onPress={onRemove}
+          accessibilityRole="button"
+          accessibilityLabel={`${ticker} sembolünü izleme listesinden çıkar`}
+        >
+          <XIcon color={t.ink3 ?? t.textMuted} />
+        </Pressable>
       </View>
-    </View>
+    </Card>
   );
 }
 
@@ -394,8 +432,9 @@ type Palette = ReturnType<typeof useTheme>;
 /**
  * Tone → colour, palette-dependent because Modernist's P&L is the accounting
  * one: a gain is ink, a loss is accent-700 (the base accent is a fill colour,
- * too weak at 13px), flat is secondary. `pnlTone` decides WHICH tone; this only
- * paints it — the same split portfolio.tsx and charts.tsx use.
+ * too weak at 13px), flat is secondary. Under Aurora `downText` is deliberately
+ * the same value as `down`. `pnlTone` decides WHICH tone; this only paints it —
+ * the same split portfolio.tsx and charts.tsx use.
  */
 const pnlToneColors = (t: Palette): Record<Tone, string> => ({
   up: t.up,
@@ -403,71 +442,78 @@ const pnlToneColors = (t: Palette): Record<Tone, string> => ({
   neutral: t.textSecondary,
 });
 
-/**
- * The rating's chip, in the Tag component's vocabulary.
- *
- * `ratingChip` stays the single source of truth for what a rating looks like —
- * this only asks which of Tag's four variants paints those exact colours, so a
- * retune of the rating buckets moves this with it. A rating `ratingChip` does
- * not recognise returns colours no variant matches, which is precisely when it
- * should outline: visibly not one of the five.
- */
-
-/** The prototype's ghost-button height; `hitSlopFor` takes it to 44. */
-const GHOST_H = 36;
-
-const makeStyles = (t: Palette) =>
+const makeStyles = (t: Palette, sh: Shape) =>
   StyleSheet.create({
-    container: { flex: 1, backgroundColor: t.background },
-    scroll: { paddingTop: 20, paddingHorizontal: 16, paddingBottom: 24, gap: 14 },
+    screen: { flex: 1, backgroundColor: t.background },
+    content: {
+      paddingHorizontal: sh.space[3],
+      paddingTop: sh.space[1],
+      paddingBottom: TAB_BAR_CLEARANCE,
+    },
 
-    h2: { color: t.textPrimary, ...TYPE.h2 },
-    subtitle: { color: t.textSecondary, marginTop: 4, ...TYPE.helper },
+    title: { ...TYPE.h2, fontSize: 26, letterSpacing: -0.52, color: t.textPrimary },
+    titleCount: { ...font(600), ...TABULAR, color: t.ink3 ?? t.textMuted },
+    subtitle: { ...TYPE.helper, color: t.ink2 ?? t.textSecondary, marginTop: sh.space[0] },
 
-    addRow: { flexDirection: 'row', gap: 8 },
+    addRow: { flexDirection: 'row', gap: sh.space[1], marginTop: sh.space[2] },
     input: {
       flex: 1,
-      minHeight: MIN_TOUCH_TARGET,
+      minHeight: MIN_TOUCH_TARGET + 4,
       backgroundColor: t.surface,
       color: t.textPrimary,
-      borderWidth: 1,
-      borderColor: t.divider,
-      paddingHorizontal: 12,
-      fontSize: 15,
-      letterSpacing: 1.5,
+      borderWidth: sh.hairline,
+      borderColor: t.line2 ?? t.divider,
+      borderRadius: sh.radius,
+      paddingHorizontal: sh.space[2],
+      fontSize: 14,
+      letterSpacing: 0.56,
       ...font(600),
     },
-    // .btn-primary — the accent fill, ground-coloured label.
+    // The prototype's primary button: the ink fill, ground-coloured label.
     addBtn: {
-      minHeight: MIN_TOUCH_TARGET,
-      paddingHorizontal: 20,
-      backgroundColor: t.accent,
+      minHeight: MIN_TOUCH_TARGET + 4,
+      paddingHorizontal: sh.space[3],
+      backgroundColor: t.textPrimary,
+      borderRadius: sh.radius,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    addBtnText: { color: t.background, fontSize: 14, ...font(800) },
+    addBtnPressed: { opacity: 0.82 },
+    addBtnText: { color: t.inkInv ?? t.background, fontSize: 14, ...font(600) },
 
-    spinner: { marginTop: 24 },
-    empty: { color: t.textSecondary, ...TYPE.body },
+    spinner: { marginTop: sh.space[4] },
 
-    // A section rule opens the list; each row closes with a 1px one.
-    list: { borderTopWidth: 2, borderTopColor: t.divider },
-    row: { paddingVertical: 12, gap: 6, borderBottomWidth: 1, borderBottomColor: t.divider },
+    slot: { marginTop: sh.space[2], paddingVertical: sh.space[4], alignItems: 'center' },
+    slotText: { ...TYPE.body, color: t.ink2 ?? t.textSecondary, textAlign: 'center' },
 
-    rowTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    ticker: { color: t.textPrimary, fontSize: 16, ...font(800) },
-    // Pushed right by the ticker/tag pair; the change keeps a fixed column so
-    // the figures stay aligned down the list.
-    last: { color: t.textPrimary, marginLeft: 'auto', fontSize: 13, ...font(600), ...TABULAR },
-    change: { width: 62, textAlign: 'right', fontSize: 13, ...font(600), ...TABULAR },
+    // A stack of cards, not a ruled table: each name is an independent thing
+    // with its own actions.
+    list: { gap: sh.space[1], marginTop: sh.space[2] },
+    card: { gap: sh.space[1] },
 
-    rowBottom: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    meta: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 },
-    date: { color: t.textSecondary, flexShrink: 1, ...TYPE.helper, ...TABULAR },
+    cardTop: { flexDirection: 'row', alignItems: 'center', gap: sh.space[2] },
+    ticker: { flex: 1, minWidth: 0, color: t.textPrimary, fontSize: 16, ...font(800) },
+    quote: { alignItems: 'flex-end' },
+    last: { color: t.textPrimary, fontSize: 14, ...font(600), ...TABULAR },
+    change: { fontSize: 12, ...font(600), ...TABULAR },
 
-    actions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    // .btn-ghost — accent text, no fill. accent-700 rather than the base
-    // accent: this is 11px type, and the base accent is a 3.6:1 fill colour.
-    ghost: { height: GHOST_H, paddingHorizontal: 2, alignItems: 'center', justifyContent: 'center' },
-    ghostText: { color: t.accent700 ?? t.accent, fontSize: 11, ...font(600) },
+    meta: { flexDirection: 'row', alignItems: 'center', gap: sh.space[1] },
+    date: { color: t.ink3 ?? t.textMuted, flexShrink: 1, ...TYPE.helper, fontSize: 12, ...TABULAR },
+    status: { marginLeft: 'auto', color: t.ink2 ?? t.textSecondary, fontSize: 12, ...font(400) },
+
+    actions: { flexDirection: 'row', alignItems: 'center', gap: sh.space[1] },
+    // The prototype's ghost button: one rule, no fill, ink label.
+    ghost: {
+      height: GHOST_H,
+      borderRadius: sh.radiusSmall,
+      borderWidth: sh.hairline,
+      borderColor: t.line2 ?? t.divider,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    ghostWide: { flex: 1 },
+    ghostIcon: { width: GHOST_H, borderColor: t.line ?? t.divider },
+    ghostPressed: { backgroundColor: t.surface2 ?? t.surfaceElevated },
+    removePressed: { borderColor: t.down },
+    ghostText: { color: t.textPrimary, fontSize: 12, ...font(600) },
   });

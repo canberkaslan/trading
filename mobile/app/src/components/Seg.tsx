@@ -15,6 +15,7 @@ import { View, Text, Pressable, StyleSheet, type StyleProp, type ViewStyle } fro
 import { useMemo } from 'react';
 
 import { useTheme } from '@/theme/useTheme';
+import { useShape, type Shape } from '@/theme/shape';
 import { font } from '@/theme/type';
 import { MIN_TOUCH_TARGET } from '@/utils/a11y';
 
@@ -44,7 +45,8 @@ export function Seg<T extends string>({
   style?: StyleProp<ViewStyle>;
 }) {
   const t = useTheme();
-  const styles = useMemo(() => makeStyles(t), [t]);
+  const sh = useShape();
+  const styles = useMemo(() => makeStyles(t, sh), [t, sh]);
 
   return (
     <View style={[styles.seg, block && styles.segBlock, style]}>
@@ -80,9 +82,21 @@ export function Seg<T extends string>({
 
 type Palette = ReturnType<typeof useTheme>;
 
-const makeStyles = (t: Palette) =>
+const makeStyles = (t: Palette, sh: Shape) =>
   StyleSheet.create({
-    seg: { flexDirection: 'row', alignSelf: 'flex-start' },
+    /*
+     * The strip owns the radius and clips to it, so the selected option's fill
+     * takes the rounded end without every option needing a corner of its own.
+     * Under Modernist `radiusPill` is 0 and this is a no-op; under Aurora it is
+     * what makes the control a pill rather than a rectangle with round ends
+     * drawn on the wrong children.
+     */
+    seg: {
+      flexDirection: 'row',
+      alignSelf: 'flex-start',
+      borderRadius: sh.radiusPill,
+      overflow: 'hidden',
+    },
     /*
      * `block` used to set flex:1 on the options while the container kept
      * alignSelf:'flex-start', so the row never grew — the options divided an
@@ -94,8 +108,8 @@ const makeStyles = (t: Palette) =>
     opt: {
       paddingHorizontal: 14,
       paddingVertical: 8,
-      borderWidth: 1,
-      borderColor: t.divider,
+      borderWidth: sh.hairline,
+      borderColor: t.line2 ?? t.divider,
       // Collapse the shared edge so the strip reads as one control.
       marginRight: -1,
       minHeight: MIN_TOUCH_TARGET,

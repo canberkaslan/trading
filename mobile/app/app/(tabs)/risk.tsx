@@ -31,6 +31,14 @@
  * this screen could say, so no section reaches its empty state until the query
  * behind it has actually answered: loading, failed and empty are three states,
  * not one.
+ *
+ * ── On the Aurora port ───────────────────────────────────────────────────────
+ * The prototype's RISK section is four cards and a list: a kill-switch
+ * card whose segmented control sits in a `--surface2` pill track, a coverage
+ * card, two meter cards, and the alert list on one card with hairline-separated
+ * rows. Nothing about WHICH rows exist changed — the meters, the empty states
+ * and the three-state loading/failed/empty discipline above are the product and
+ * are untouched. Only the rectangle they are drawn on did.
  */
 
 import { useMemo, useState } from 'react';
@@ -49,23 +57,33 @@ import {
 import type { Concentration, KillSwitchState,
   ConcentrationFlag,
 } from '@/api/types';
+import { Card } from '@/components/Card';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
+import { SectionHeader } from '@/components/SectionHeader';
 import { useIsAdmin } from '@/api/useMe';
 import { isAuthError, isPartialFlatten, PARTIAL_FLATTEN_TR } from '@/utils/apiError';
 import { Seg, type SegOption } from '@/components/Seg';
-import { Sheet } from '@/components/Sheet';
+import { Sheet, type SheetSummaryItem } from '@/components/Sheet';
 import { Tag } from '@/components/Tag';
 import { toast } from '@/stores/toast';
+import { useShape, type Shape } from '@/theme/shape';
 import { font, TABULAR, TYPE } from '@/theme/type';
 import { useTheme } from '@/theme/useTheme';
 import { killSwitchLabel, MIN_TOUCH_TARGET } from '@/utils/a11y';
 import { inertiaNote, topReasons } from '@/utils/actionability';
 import { sectorAllocation, topWeightTone } from '@/utils/concentration';
-import { formatPct, parseUtc } from '@/utils/format';
+import { formatPct, formatUsd, parseUtc } from '@/utils/format';
 import { formatOrderDate, rejectionReasonTr } from '@/utils/orders';
 
 type Palette = ReturnType<typeof useTheme>;
+
+/**
+ * The floating tab bar's height plus air. Stated here rather than imported
+ * from `_layout.tsx` because a route module's exports are the router's
+ * namespace, not a place to hang shared constants.
+ */
+const TAB_BAR_CLEARANCE = 72;
 
 /**
  * The three states, once: chip label and description together, the prototype's
@@ -194,7 +212,9 @@ function Meter({ row, styles, t }: { row: MeterRow; styles: Styles; t: Palette }
               styles.barFill,
               {
                 width: `${Math.min(100, Math.max(0, row.ratio * 100))}%`,
-                backgroundColor: row.breached ? t.accent : t.textPrimary,
+                // The prototype tones the fill with the row: a breached meter
+                // is the danger colour, an in-bounds one is plain ink.
+                backgroundColor: row.breached ? t.down : t.ink2 ?? t.textPrimary,
               },
             ]}
           />
@@ -206,7 +226,8 @@ function Meter({ row, styles, t }: { row: MeterRow; styles: Styles; t: Palette }
 
 export default function RiskScreen() {
   const t = useTheme();
-  const styles = useMemo(() => makeStyles(t), [t]);
+  const sh = useShape();
+  const styles = useMemo(() => makeStyles(t, sh), [t, sh]);
 
   const { data: ks, isError: ksError, error: ksErr } = useKillSwitch();
   const isAdmin = useIsAdmin();
@@ -229,13 +250,15 @@ export default function RiskScreen() {
     [portfolio.data],
   );
 
-  // The selected chip's fill carries the state: ink runs, accent-700 holds,
-  // the accent itself is the one that closes the book.
+  // The selected chip's fill carries the state, as the prototype's `killOpts`
+  // table does: green runs, amber holds, rose is the one that closes the book.
+  // The label flips to the page ground inside `Seg`, so each fill has to be a
+  // colour that ground reads on — all three are.
   const killOptions: SegOption<KillSwitchState>[] = useMemo(() => {
     const fill: Record<KillSwitchState, string> = {
-      RUN: t.textPrimary,
+      RUN: t.up,
       PAUSE_NEW: t.warning,
-      FLATTEN_ALL: t.accent,
+      FLATTEN_ALL: t.down,
     };
     return KILL.map((k) => ({
       value: k.value,
@@ -279,6 +302,31 @@ export default function RiskScreen() {
       },
     });
   };
+
+  /**
+   * The prototype's three-up strip inside the FLATTEN sheet: how many
+   * positions, what they are worth, what the open P&L is. It changes nothing
+   * about how strict the confirmation is — the destructive action still has to
+   * be pressed deliberately — it only tells the operator the size of what they
+   * are about to close. Rendered only from data that actually arrived: with no
+   * snapshot the sheet shows the sentence alone rather than three dashes
+   * implying an empty book.
+   */
+  const flattenSummary = useMemo<SheetSummaryItem[] | undefined>(() => {
+    const snap = portfolio.data;
+    if (!snap) return undefined;
+    const value = snap.positions.reduce((a, p) => a + p.quantity * p.current_price, 0);
+    const openPnl = snap.positions.reduce((a, p) => a + p.unrealized_pnl, 0);
+    return [
+      { label: 'Pozisyon', value: String(snap.positions.length) },
+      { label: 'Değer', value: formatUsd(value) },
+      {
+        label: 'Açık K/Z',
+        value: formatUsd(openPnl, { signed: true }),
+        color: openPnl >= 0 ? t.up : t.downText ?? t.down,
+      },
+    ];
+  }, [portfolio.data, t]);
 
   // ── Devre kesiciler ───────────────────────────────────────────────────────
   // No threshold reaches the wire, so this reports trips, not headroom.
@@ -480,10 +528,12 @@ export default function RiskScreen() {
   };
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: t.background }]} edges={['top']}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <ScrollView contentContainerStyle={styles.scroll}>
         <View style={styles.header}>
-          <Text style={styles.h2}>Risk & uyarılar</Text>
+          <Text style={styles.h2} accessibilityRole="header">
+            Risk & uyarılar
+          </Text>
           {/* No count until the sources it counts have answered — "0 açık" on a
               screen that has not loaded reads as an all-clear. A FAILED read
               said the same thing and was not covered: `alertsWaiting` is only
@@ -491,30 +541,37 @@ export default function RiskScreen() {
               risk alerts directly above an error block saying the risk data
               could not be read. Absence of evidence, printed as an all-clear. */}
           {alertsWaiting || alertsFailed ? null : (
-            <Tag label={`${openCount} açık`} variant="accent" />
+            <Tag label={`${openCount} açık`} variant={openCount > 0 ? 'down' : 'neutral'} size="sm" numeric />
           )}
         </View>
 
         {/* ── Kill switch ─────────────────────────────────────────────────── */}
-        <View style={styles.firstBlock}>
-          <Text style={styles.sectionTitle}>Kill switch</Text>
-          <Seg
-            options={killOptions}
-            value={ks?.state}
-            onChange={applyKill}
-            /* Locked until the current state is known, and for anyone the
-               server will refuse. Unauthenticated, `ks` is undefined so no
-               segment reads as selected — and FLATTEN_ALL, which closes the
-               entire book at market, was still tappable. The operator could
-               walk the whole irreversible-confirmation flow and only learn at
-               the end that nothing was sent. Worse, an armed control whose
-               state is unknown invites a tap to "fix" it. The same argument
-               covers a non-administrator: the 403 would arrive after the
-               decision, not before it. */
-            disabled={setKs.isPending || ks == null || !isAdmin}
-            block
-            style={styles.seg}
-          />
+        {/* The prototype leads the card with the SELECTED state's description
+            in section weight, then the control, then the qualifier — the state
+            is the headline, the switch is how you change it. */}
+        <Card>
+          <Text style={styles.killDesc}>
+            {killEntry(ks?.state)?.desc ?? 'Kill switch'}
+          </Text>
+          <View style={styles.segTrack}>
+            <Seg
+              options={killOptions}
+              value={ks?.state}
+              onChange={applyKill}
+              /* Locked until the current state is known, and for anyone the
+                 server will refuse. Unauthenticated, `ks` is undefined so no
+                 segment reads as selected — and FLATTEN_ALL, which closes the
+                 entire book at market, was still tappable. The operator could
+                 walk the whole irreversible-confirmation flow and only learn at
+                 the end that nothing was sent. Worse, an armed control whose
+                 state is unknown invites a tap to "fix" it. The same argument
+                 covers a non-administrator: the 403 would arrive after the
+                 decision, not before it. */
+              disabled={setKs.isPending || ks == null || !isAdmin}
+              block
+              style={styles.seg}
+            />
+          </View>
           <Text style={styles.helper}>
             {ks?.state
               ? `${killEntry(ks.state)?.desc ?? ks.state} · timer'ı SSH olmadan durdurur.`
@@ -526,10 +583,10 @@ export default function RiskScreen() {
                   : 'Durum okunamadı — sunucuya ulaşılamıyor.'
                 : 'Durum yükleniyor…'}
           </Text>
-        </View>
+        </Card>
 
         {allDown ? (
-          <View style={styles.gutterReset}>
+          <View style={styles.stateBlock}>
             <ErrorState
               title="Risk verileri okunamıyor"
               detail={portfolio.error}
@@ -551,12 +608,28 @@ export default function RiskScreen() {
               cannot answer it: Position.stop_loss is a placeholder zero — the
               protective leg is an ORDER, not a property of the position.
             */}
-            <View style={styles.block}>
-              <Text style={styles.sectionTitle}>Koruyucu stoplar</Text>
+            <Card style={styles.card}>
+              <View style={styles.cardHead}>
+                <Text style={styles.cardTitle}>Koruyucu stoplar</Text>
+                {coverage.data && coverage.data.total_qty > 0 ? (
+                  <Text
+                    style={[
+                      styles.cardHeadValue,
+                      {
+                        color:
+                          coverage.data.naked_pct > 0 ? t.downText ?? t.down : t.textPrimary,
+                      },
+                    ]}
+                  >
+                    {`Korumasız ${formatPct(coverage.data.naked_pct / 100)} · ${coverage.data.naked_qty.toFixed(0)}/${coverage.data.total_qty.toFixed(0)} lot`}
+                  </Text>
+                ) : null}
+              </View>
+
               {coverage.isLoading ? (
                 <Text style={styles.muted}>Yükleniyor…</Text>
               ) : coverage.isError || !coverage.data ? (
-                <View style={styles.gutterReset}>
+                <View style={styles.stateBlock}>
                   {/* Never render "0% çıplak" on a failed read: that says the
                       book is safe because nothing was checked. */}
                   <ErrorState
@@ -569,35 +642,25 @@ export default function RiskScreen() {
                 <Text style={styles.helper}>Açık pozisyon yok — korunacak bir şey yok.</Text>
               ) : (
                 <>
-                  <View style={[styles.meterHead, styles.meter]}>
-                    <Text style={styles.meterName}>Korumasız</Text>
-                    <Text
-                      style={[
-                        styles.meterNow,
-                        {
-                          color:
-                            coverage.data.naked_pct > 0
-                              ? t.downText ?? t.down
-                              : t.textPrimary,
-                        },
-                      ]}
-                    >
-                      {formatPct(coverage.data.naked_pct / 100)} ·{' '}
-                      {coverage.data.naked_qty.toFixed(0)}/{coverage.data.total_qty.toFixed(0)} lot
-                    </Text>
-                  </View>
                   {coverage.data.indeterminate_qty > 0 ? (
                     <Text style={styles.helper}>
                       {coverage.data.indeterminate_qty.toFixed(0)} lot belirsiz durumda —
                       korumalı da sayılmıyor, korumasız da.
                     </Text>
                   ) : null}
+                  {/* The prototype's naked rows sit on `--downSoft`: the one
+                      place on this screen where a row is itself the warning. */}
                   {coverage.data.symbols
                     .filter((sym) => sym.naked_qty > 0)
                     .map((sym) => (
-                      <View key={sym.symbol} style={styles.meterHead}>
-                        <Text style={styles.meterName}>{sym.symbol}</Text>
-                        <Text style={styles.meterNow}>
+                      <View
+                        key={sym.symbol}
+                        style={styles.nakedRow}
+                        accessibilityRole="text"
+                        accessibilityLabel={`${sym.symbol}, ${sym.naked_qty.toFixed(0)} lot stopsuz`}
+                      >
+                        <Text style={styles.nakedTicker}>{sym.symbol}</Text>
+                        <Text style={styles.nakedText} numberOfLines={2}>
                           {sym.naked_qty.toFixed(0)} lot stopsuz
                           {sym.protected_qty > 0 ? ` · ${sym.protected_qty.toFixed(0)} korumalı` : ''}
                         </Text>
@@ -611,11 +674,11 @@ export default function RiskScreen() {
                   ) : null}
                 </>
               )}
-            </View>
+            </Card>
 
             {/* ── Devre kesiciler ───────────────────────────────────────── */}
-            <View style={styles.block}>
-              <Text style={styles.sectionTitle}>Devre kesiciler</Text>
+            <Card style={styles.card}>
+              <Text style={styles.cardTitle}>Devre kesiciler</Text>
               <Text style={styles.helper}>
                 {flow.data
                   ? `Son ${flow.data.window_days} günde tetiklenen kesiciler. Eşik değerleri API'de yok — burada kaç kez durdurduğu var.`
@@ -640,7 +703,7 @@ export default function RiskScreen() {
               {flow.isLoading ? (
                 <Text style={styles.muted}>Yükleniyor…</Text>
               ) : flow.isError ? (
-                <View style={styles.gutterReset}>
+                <View style={styles.stateBlock}>
                   <ErrorState
                     title="Emir akışı okunamadı"
                     detail={flow.error}
@@ -648,7 +711,7 @@ export default function RiskScreen() {
                   />
                 </View>
               ) : breakerTrips.length === 0 ? (
-                <View style={styles.gutterReset}>
+                <View style={styles.stateBlock}>
                   <EmptyState
                     title="Devre kesici tetiklenmedi"
                     hint="Bu pencerede hiçbir emir drawdown, volatilite, API hatası ya da kill switch yüzünden durdurulmadı."
@@ -671,7 +734,7 @@ export default function RiskScreen() {
                           styles.barFill,
                           {
                             width: `${Math.min(100, Math.max(0, r.share * 100))}%`,
-                            backgroundColor: t.accent,
+                            backgroundColor: t.down,
                           },
                         ]}
                       />
@@ -679,15 +742,15 @@ export default function RiskScreen() {
                   </View>
                 ))
               )}
-            </View>
+            </Card>
 
             {/* ── Portföy limitleri ─────────────────────────────────────── */}
-            <View style={styles.block}>
-              <Text style={styles.sectionTitle}>Portföy limitleri</Text>
+            <Card style={styles.card}>
+              <Text style={styles.cardTitle}>Portföy limitleri</Text>
               {limitsWaiting ? (
                 <Text style={styles.muted}>Yükleniyor…</Text>
               ) : limitsFailed ? (
-                <View style={styles.gutterReset}>
+                <View style={styles.stateBlock}>
                   <ErrorState
                     title="Portföy verisi okunamadı"
                     detail={firstError(concentration, portfolio)}
@@ -695,7 +758,7 @@ export default function RiskScreen() {
                   />
                 </View>
               ) : limitRows.length === 0 ? (
-                <View style={styles.gutterReset}>
+                <View style={styles.stateBlock}>
                   <EmptyState
                     title="Açık pozisyon yok"
                     hint="Pozisyon açıldığında ağırlıklar ve aşılan limitler burada görünür."
@@ -713,43 +776,56 @@ export default function RiskScreen() {
                   ))}
                 </>
               )}
-            </View>
+            </Card>
 
             {/* ── Uyarılar ──────────────────────────────────────────────── */}
-            <View style={styles.block}>
-              <Text style={styles.sectionTitle}>Uyarılar</Text>
-              {alerts.length === 0 && alertsWaiting ? (
-                <Text style={styles.muted}>Yükleniyor…</Text>
-              ) : alertsFailed ? (
-                <View style={styles.gutterReset}>
-                  <ErrorState
-                    title="Uyarılar okunamadı"
-                    detail={firstError(flow, concentration, orders)}
-                    onRetry={retryAlerts}
-                  />
-                </View>
-              ) : alerts.length === 0 ? (
-                <View style={styles.gutterReset}>
-                  <EmptyState
-                    title="Açık uyarı yok"
-                    hint="Bir limit aşıldığında ya da risk katmanı bir emri reddettiğinde buraya düşer."
-                  />
-                </View>
-              ) : (
-                alerts.map((a) => (
-                  <View key={a.key} style={styles.alertRow}>
+            <SectionHeader
+              title="Uyarılar"
+              count={alertsWaiting || alertsFailed ? undefined : alerts.length}
+            />
+            {alerts.length === 0 && alertsWaiting ? (
+              <Card tone="dashed" style={styles.slot}>
+                <Text style={styles.slotText}>Yükleniyor…</Text>
+              </Card>
+            ) : alertsFailed ? (
+              <View style={styles.stateBlock}>
+                <ErrorState
+                  title="Uyarılar okunamadı"
+                  detail={firstError(flow, concentration, orders)}
+                  onRetry={retryAlerts}
+                />
+              </View>
+            ) : alerts.length === 0 ? (
+              <View style={styles.stateBlock}>
+                <EmptyState
+                  title="Açık uyarı yok"
+                  hint="Bir limit aşıldığında ya da risk katmanı bir emri reddettiğinde buraya düşer."
+                />
+              </View>
+            ) : (
+              /* One card, hairline-separated rows — the prototype's `padding:4px
+                 14px` list. `padded={false}` because each row draws its own. */
+              <Card padded={false} style={styles.alertCard}>
+                {alerts.map((a, i) => (
+                  <View
+                    key={a.key}
+                    style={[styles.alertRow, i === alerts.length - 1 && styles.alertRowLast]}
+                    accessibilityRole="text"
+                    accessibilityLabel={`${a.when}, ${a.open ? 'açık' : 'kapandı'}. ${a.text}`}
+                  >
                     <View style={styles.alertHead}>
                       <Text style={styles.alertWhen}>{a.when}</Text>
                       <Tag
                         label={a.open ? 'açık' : 'kapandı'}
-                        variant={a.open ? 'accent' : 'neutral'}
+                        variant={a.open ? 'down' : 'neutral'}
+                        size="sm"
                       />
                     </View>
                     <Text style={styles.alertText}>{a.text}</Text>
                   </View>
-                ))
-              )}
-            </View>
+                ))}
+              </Card>
+            )}
           </>
         )}
       </ScrollView>
@@ -758,6 +834,7 @@ export default function RiskScreen() {
         visible={flattenOpen}
         title="Tüm pozisyonları kapat?"
         message="FLATTEN_ALL tüm açık pozisyonları piyasa fiyatından kapatır ve yeni girişi durdurur. Geri alınamaz."
+        summary={flattenSummary}
         busy={setKs.isPending}
         busyLabel="Gönderiliyor…"
         onDismiss={() => setFlattenOpen(false)}
@@ -777,49 +854,112 @@ export default function RiskScreen() {
 
 type Styles = ReturnType<typeof makeStyles>;
 
-const makeStyles = (t: Palette) =>
+const makeStyles = (t: Palette, sh: Shape) =>
   StyleSheet.create({
-    container: { flex: 1 },
-    scroll: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 24 },
+    container: { flex: 1, backgroundColor: t.background },
+    scroll: { paddingHorizontal: sh.space[3], paddingBottom: TAB_BAR_CLEARANCE },
 
     header: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      gap: 12,
-      marginBottom: 16,
+      gap: sh.space[2],
+      paddingTop: sh.space[1],
+      marginBottom: sh.space[2],
     },
     // Every text style goes through the shared scale, which is what carries
     // `font()` — a bare fontSize renders the system face on Android, because
-    // Archivo's three weights are three separate families.
-    h2: { color: t.textPrimary, ...TYPE.h2, flexShrink: 1 },
+    // the ramp's three weights are three separate families.
+    h2: { color: t.textPrimary, ...TYPE.h2, fontSize: 26, letterSpacing: -0.5, flexShrink: 1 },
 
-    // The kill switch sits directly under the h2, so it takes no rule of its
-    // own; every section after it opens with the 2px section rule.
-    firstBlock: { gap: 8 },
-    block: { borderTopWidth: 2, borderTopColor: t.divider, paddingTop: 12, marginTop: 16, gap: 8 },
-    sectionTitle: { color: t.textPrimary, ...TYPE.section },
-    helper: { color: t.textSecondary, ...TYPE.helper, lineHeight: 16 },
-    muted: { color: t.textSecondary, ...TYPE.body },
+    card: { marginTop: sh.space[2] },
+    cardHead: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      justifyContent: 'space-between',
+      gap: sh.space[1],
+      marginBottom: sh.space[0],
+    },
+    cardTitle: { color: t.textPrimary, ...TYPE.section, flexShrink: 1 },
+    cardHeadValue: { ...TYPE.bodyStrong, ...TABULAR, textAlign: 'right' },
+
+    killDesc: { color: t.textPrimary, ...TYPE.section },
+    /*
+     * The prototype seats the segmented control in a `--surface2` track with
+     * 4px of padding, which is what makes the selected pill read as sitting IN
+     * the control rather than floating on the card. Under Modernist
+     * `radiusPill` is 0 and the track is a plain rectangle, which is correct
+     * there too.
+     */
+    segTrack: {
+      backgroundColor: t.surface2 ?? t.surfaceElevated,
+      borderRadius: sh.radiusPill,
+      padding: sh.space[0] / 2,
+      marginTop: sh.space[1],
+      marginBottom: sh.space[1],
+    },
     seg: { alignSelf: 'stretch', minHeight: MIN_TOUCH_TARGET },
 
-    // EmptyState / ErrorState carry their own 16px gutter because every other
-    // screen renders them at the ScrollView root. This screen pads its content
-    // container instead, so the margin is cancelled rather than doubled.
-    gutterReset: { marginHorizontal: -16 },
+    helper: { color: t.ink2 ?? t.textSecondary, ...TYPE.helper, fontSize: 12, lineHeight: 17 },
+    muted: { color: t.ink2 ?? t.textSecondary, ...TYPE.body },
 
-    meter: { paddingVertical: 8, gap: 4 },
-    meterHead: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
+    /*
+     * EmptyState / ErrorState carry their own 16px gutter because every other
+     * screen renders them at the ScrollView root. Inside a card that reads as
+     * an indent on both sides, so it is cancelled rather than doubled.
+     */
+    stateBlock: { marginHorizontal: -sh.space[3] },
+
+    slot: { marginTop: sh.space[1], paddingVertical: sh.space[4], alignItems: 'center' },
+    slotText: { ...TYPE.body, color: t.ink2 ?? t.textSecondary, textAlign: 'center' },
+
+    meter: { paddingVertical: sh.space[0] + 2, gap: sh.space[0] },
+    meterHead: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: sh.space[2],
+    },
     meterName: { color: t.textPrimary, ...TYPE.body, flexShrink: 1 },
     meterValue: { textAlign: 'right' },
     meterNow: { ...TYPE.body, ...font(800), ...TABULAR },
-    meterLimit: { color: t.textSecondary, ...TYPE.body, ...TABULAR },
+    meterLimit: { color: t.ink3 ?? t.textMuted, ...TYPE.body, ...TABULAR },
 
-    barTrack: { height: 4, backgroundColor: t.neutral200 ?? t.surface, overflow: 'hidden' },
-    barFill: { height: 4 },
+    barTrack: {
+      height: 4,
+      borderRadius: sh.radiusPill,
+      backgroundColor: t.surface2 ?? t.neutral200 ?? t.surfaceElevated,
+      overflow: 'hidden',
+    },
+    barFill: { height: 4, borderRadius: sh.radiusPill },
 
-    alertRow: { paddingVertical: 10, gap: 4, borderBottomWidth: 1, borderBottomColor: t.divider },
-    alertHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-    alertWhen: { color: t.textSecondary, ...TYPE.helper },
+    nakedRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: sh.space[1] + 2,
+      paddingHorizontal: sh.space[2],
+      paddingVertical: sh.space[1],
+      borderRadius: sh.radiusSmall,
+      backgroundColor: t.downSoft ?? t.surfaceElevated,
+      marginTop: sh.space[0] + 2,
+    },
+    nakedTicker: { color: t.textPrimary, ...TYPE.bodyStrong },
+    nakedText: { color: t.ink2 ?? t.textSecondary, ...TYPE.helper, fontSize: 12, flex: 1 },
+
+    alertCard: { paddingHorizontal: sh.space[3] },
+    alertRow: {
+      paddingVertical: sh.space[1] + 3,
+      gap: sh.space[0],
+      borderBottomWidth: sh.hairline,
+      borderBottomColor: t.line ?? t.divider,
+    },
+    alertRowLast: { borderBottomWidth: 0 },
+    alertHead: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: sh.space[1],
+    },
+    alertWhen: { color: t.ink3 ?? t.textMuted, ...TYPE.helper, ...TABULAR },
     alertText: { color: t.textPrimary, ...TYPE.body, lineHeight: 19 },
   });

@@ -27,5 +27,9 @@ export default function Index() {
   if (isFirebaseConfigured() && currentUser() === null) {
     return <Redirect href="/(auth)/login" />;
   }
-  return <Redirect href="/(tabs)/portfolio" />;
+  // Bugün, not Portföy. The prototype opens on it and it is the only screen
+  // that answers "what needs me right now" — pending approvals, today's move,
+  // the run's state — rather than reporting a balance. Portföy is one tap away
+  // and is still the first item in the bar.
+  return <Redirect href="/(tabs)" />;
 }

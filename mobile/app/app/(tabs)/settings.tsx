@@ -1,26 +1,28 @@
 /**
- * Screen 9 — Ayarlar.
+ * Screen 9 — Ayarlar, in Aurora.
  *
- * Section order is the handoff's: Hesap & mod · Eval scorecard · Risk & uyarılar
- * · Emir gönderimi · Strateji · Bildirimler · Görünüm · Sistem, each opened by a
- * 2px rule.
+ * The prototype's SETTINGS screen is a stack of titled card groups: an 11px
+ * uppercase kicker, then one rounded `--surface` card whose rows are separated
+ * by `--line` hairlines. That is the only structural change here — the 2px
+ * section rules became cards, and every figure, every label and every rule
+ * below is the one that was already shipping.
  *
- * Two things this screen deliberately refuses to do.
+ * Three things this screen deliberately refuses to do, unchanged from before.
  *
  * First, the kill switch is gone. It used to live here, three taps deep behind
  * a scroll, next to the font picker — the one control that stops the book, in
  * the same list as "Koyu tema". It now has its own screen with the circuit
  * breakers and the portfolio limits it actually belongs to, and this screen
- * keeps only a link to it.
+ * keeps only a link to it. The prototype draws that link exactly this way.
  *
  * Second, every control here that cannot really write is drawn as a read-only
  * state, not a switch. `refuse_outside_hours` and `use_bracket` are fields of
  * the backend's `ExecutionConfig`; sizing method and the single-name cap are
  * `SizingMethod` / `PortfolioLimits`. `src/api/endpoints.ts` has no route that
  * writes any of them and no route that reads them either, so a live-looking
- * toggle would be a lie twice over: it would neither send the change nor be
- * showing the server's current answer. They render in the handoff's toggle
- * shape, marked with their source, and the section says so in words.
+ * toggle would be a lie twice over. They render in the prototype's toggle
+ * shape at 55% opacity — which is how the prototype itself marks `ro` — and
+ * the section says so in words.
  *
  * The toggle's 150ms knob is the only animation the system has, and the one
  * switch that earns it — push permission — is the one that genuinely writes
@@ -34,6 +36,11 @@
  * A settings screen is where an operator goes to check what the machine is
  * configured to do, so a plausible-looking wrong number is worse here than a
  * blank.
+ *
+ * What is new: the theme picker offers all three palettes. `useSetTheme` has
+ * always accepted `aurora`, and nothing exposed it — so the app shipped in a
+ * palette the reader could not get back to once they picked one of the other
+ * two.
  */
 
 import {
@@ -46,13 +53,14 @@ import {
   AppState,
   Linking,
   TextInput,
+  type StyleProp,
+  type ViewStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import Constants from 'expo-constants';
-import Svg, { Path } from 'react-native-svg';
 
 import { api } from '@/api/endpoints';
 import {
@@ -74,12 +82,16 @@ import { signOut as firebaseSignOut, deleteAccount as firebaseDeleteAccount } fr
 import { useApiTokenStore } from '@/stores/apiToken';
 import { toast } from '@/stores/toast';
 import { useTheme, useThemeName, useSetTheme } from '@/theme/useTheme';
+import { useShape, type Shape } from '@/theme/shape';
 import { setLanguage, type Language } from '@/i18n';
 import type { ThemeName } from '@/theme/colors';
 import type { TradingMode } from '@/api/types';
 import { unreadCount } from '@/utils/inbox';
 import { MIN_TOUCH_TARGET, hitSlopFor } from '@/utils/a11y';
 import { relativeAgeTr, parseUtc } from '@/utils/format';
+import { Card } from '@/components/Card';
+import { DataRow } from '@/components/DataRow';
+import { StatCell } from '@/components/StatCell';
 import { Tag } from '@/components/Tag';
 import { Seg } from '@/components/Seg';
 import { Sheet } from '@/components/Sheet';
@@ -87,15 +99,29 @@ import { font, TABULAR, TYPE } from '@/theme/type';
 
 type Palette = ReturnType<typeof useTheme>;
 
-/** The handoff's switch: 40×22 track, 16px square knob, 3px inset. */
-const TOGGLE_W = 40;
-const TOGGLE_H = 22;
-const KNOB = 16;
-const KNOB_PAD = 3;
+/**
+ * The floating tab bar's height plus air. Stated here rather than imported
+ * from `_layout.tsx` because a route module's exports are the router's
+ * namespace, not a place to hang shared constants.
+ */
+const TAB_BAR_CLEARANCE = 72;
+
+/**
+ * The prototype's switch: a 51×31 pill track with a 27px knob inset by 2 —
+ * the iOS geometry it uses on iOS. The Modernist shape makes the track square
+ * (`radiusPill` is 0 there), which is the same switch under a different
+ * system rather than a different control.
+ */
+const TOGGLE_W = 51;
+const TOGGLE_H = 31;
+const KNOB = 27;
+const KNOB_PAD = 2;
 const KNOB_OFF_X = KNOB_PAD;
 const KNOB_ON_X = TOGGLE_W - KNOB - KNOB_PAD;
 /** The only transition in the system. */
 const TOGGLE_MS = 150;
+/** How the prototype marks a switch it will not let you move (`opacity` on `ro`). */
+const READ_ONLY_OPACITY = 0.55;
 
 /** The app's own backend base URL — the one endpoint this screen can honestly print. */
 const API_URL = (Constants.expoConfig?.extra?.apiUrl ?? 'http://localhost:8000') as string;
@@ -125,10 +151,10 @@ const fixed = (n: number, digits: number): string =>
   `${n < 0 ? MINUS : ''}${Math.abs(n).toFixed(digits)}`;
 
 const permissionCopy = (t: Palette): Record<PushPermission, { text: string; color: string }> => ({
-  granted: { text: '● açık', color: t.textPrimary },
-  denied: { text: '● kapalı (cihaz ayarları)', color: t.accent700 ?? t.down },
+  granted: { text: '● açık', color: t.up },
+  denied: { text: '● kapalı (cihaz ayarları)', color: t.downText },
   undetermined: { text: '● izin verilmedi', color: t.warning },
-  unsupported: { text: '● bu cihazda çalışmaz', color: t.textSecondary },
+  unsupported: { text: '● bu cihazda çalışmaz', color: t.ink2 ?? t.textSecondary },
 });
 
 /** What the push row says under its label, per OS permission state. */
@@ -139,34 +165,21 @@ const PUSH_DESC: Record<PushPermission, string> = {
   unsupported: 'Bu cihaz push desteklemiyor (simülatörde çalışmaz).',
 };
 
-function Chevron({ color }: { color: string }) {
+/**
+ * The group title: 11px uppercase, tertiary ink, indented four points so it
+ * hangs off the card's left edge rather than lining up with it. `right` is the
+ * verdict / permission state the prototype parks on the same line.
+ */
+function GroupTitle({ title, right }: { title: string; right?: React.ReactNode }) {
+  const t = useTheme();
+  const sh = useShape();
+  const styles = useMemo(() => makeStyles(t, sh), [t, sh]);
   return (
-    <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <Path d="m9 18 6-6-6-6" />
-    </Svg>
-  );
-}
-
-/** A section, opened by the 2px rule. `first` sits directly under the title. */
-function Section({
-  title,
-  right,
-  first,
-  children,
-}: {
-  title: string;
-  right?: React.ReactNode;
-  first?: boolean;
-  children: React.ReactNode;
-}) {
-  const styles = makeStyles(useTheme());
-  return (
-    <View style={[styles.section, first && styles.sectionFirst]}>
-      <View style={styles.sectionHead}>
-        <Text style={styles.sectionTitle}>{title}</Text>
-        {right}
-      </View>
-      {children}
+    <View style={styles.groupTitleRow}>
+      <Text style={styles.groupTitle} accessibilityRole="header">
+        {title}
+      </Text>
+      {right}
     </View>
   );
 }
@@ -189,7 +202,8 @@ function Toggle({
   accessibilityHint?: string;
 }) {
   const t = useTheme();
-  const styles = useMemo(() => makeStyles(t), [t]);
+  const sh = useShape();
+  const styles = useMemo(() => makeStyles(t, sh), [t, sh]);
   const x = useRef(new Animated.Value(on ? KNOB_ON_X : KNOB_OFF_X)).current;
 
   useEffect(() => {
@@ -201,9 +215,24 @@ function Toggle({
   }, [on, x]);
 
   const track = (
-    <View style={[styles.track, { backgroundColor: on ? t.textPrimary : t.neutral400 ?? t.textMuted }]}>
+    <View
+      style={[
+        styles.track,
+        // On: the brand fill the prototype uses. Off: the heavier hairline,
+        // which is the only thing in either palette that reads as an empty
+        // groove on both a light and a dark ground.
+        { backgroundColor: on ? t.brand ?? t.textPrimary : t.line2 ?? t.divider },
+        readOnly && styles.trackReadOnly,
+      ]}
+    >
       <Animated.View
-        style={[styles.knob, { backgroundColor: t.background, transform: [{ translateX: x }] }]}
+        style={[
+          styles.knob,
+          // The prototype's knob is `--inkInv`: the ground, not the ink. Under
+          // Aurora that is dark-on-indigo, which is what the design's own
+          // tokens produce on a dark system.
+          { backgroundColor: on ? t.background : t.ink2 ?? t.textSecondary, transform: [{ translateX: x }] },
+        ]}
       />
     </View>
   );
@@ -244,6 +273,7 @@ function ToggleRow({
   readOnly,
   onPress,
   hint,
+  first,
 }: {
   label: string;
   desc: string;
@@ -253,14 +283,18 @@ function ToggleRow({
   readOnly?: boolean;
   onPress?: () => void;
   hint?: string;
+  /** The first row in a card draws no hairline above it. */
+  first?: boolean;
 }) {
-  const styles = makeStyles(useTheme());
+  const t = useTheme();
+  const sh = useShape();
+  const styles = useMemo(() => makeStyles(t, sh), [t, sh]);
   return (
-    <View style={styles.toggleRow}>
+    <View style={[styles.toggleRow, !first && styles.toggleRowRuled]}>
       <View style={styles.toggleText}>
         <Text style={styles.toggleLabel}>{label}</Text>
         <Text style={styles.toggleDesc}>{desc}</Text>
-        {source ? <Tag label={source} variant="neutral" style={styles.sourceTag} /> : null}
+        {source ? <Tag label={source} variant="neutral" size="sm" style={styles.sourceTag} /> : null}
       </View>
       <Toggle
         on={on}
@@ -273,35 +307,12 @@ function ToggleRow({
   );
 }
 
-/** One cell of the small label/value grid used by Strateji and Sistem. */
-function Field({ label, value, color }: { label: string; value: string; color?: string }) {
-  const t = useTheme();
-  const styles = makeStyles(t);
-  return (
-    <View style={styles.field}>
-      <Text style={styles.fieldLabel}>{label}</Text>
-      <Text style={[styles.fieldValue, color ? { color } : null]}>{value}</Text>
-    </View>
-  );
-}
-
-function EvalStat({ label, value, gate, color }: { label: string; value: string; gate: string; color?: string }) {
-  const styles = makeStyles(useTheme());
-  return (
-    <View style={styles.evalStat}>
-      <Text style={styles.evalStatLabel}>{label}</Text>
-      <Text style={[styles.evalStatValue, color ? { color } : null]}>{value}</Text>
-      <Text style={styles.evalStatGate}>{gate}</Text>
-    </View>
-  );
-}
-
 function GateRow({ name, passed, detail }: { name: string; passed: boolean | null; detail: string }) {
   const t = useTheme();
-  const styles = makeStyles(t);
+  const sh = useShape();
+  const styles = useMemo(() => makeStyles(t, sh), [t, sh]);
   const icon = passed === null ? '○' : passed ? '✓' : '✗';
-  // Small red type is accent-700, never the base accent.
-  const color = passed === null ? t.textSecondary : passed ? t.textPrimary : t.accent700 ?? t.accent;
+  const color = passed === null ? t.ink3 ?? t.textMuted : passed ? t.up : t.downText;
   return (
     <View style={styles.gateRow}>
       <Text style={[styles.gateIcon, { color }]}>{icon}</Text>
@@ -311,17 +322,37 @@ function GateRow({ name, passed, detail }: { name: string; passed: boolean | nul
   );
 }
 
-function SecondaryButton({ label, onPress, hint }: { label: string; onPress: () => void; hint?: string }) {
-  const styles = makeStyles(useTheme());
+/** The prototype's outlined 44pt button. `danger` drops the outline and reds the label. */
+function SecondaryButton({
+  label,
+  onPress,
+  hint,
+  danger,
+  style,
+}: {
+  label: string;
+  onPress: () => void;
+  hint?: string;
+  danger?: boolean;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const t = useTheme();
+  const sh = useShape();
+  const styles = useMemo(() => makeStyles(t, sh), [t, sh]);
   return (
     <Pressable
-      style={styles.buttonSecondary}
+      style={({ pressed }) => [
+        styles.buttonSecondary,
+        danger && styles.buttonDanger,
+        pressed && styles.buttonPressed,
+        style,
+      ]}
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityHint={hint}
     >
-      <Text style={styles.buttonSecondaryText}>{label}</Text>
+      <Text style={[styles.buttonSecondaryText, danger && styles.buttonDangerText]}>{label}</Text>
     </Pressable>
   );
 }
@@ -329,7 +360,8 @@ function SecondaryButton({ label, onPress, hint }: { label: string; onPress: () 
 export default function SettingsScreen() {
   const router = useRouter();
   const theme = useTheme();
-  const styles = useMemo(() => makeStyles(theme), [theme]);
+  const sh = useShape();
+  const styles = useMemo(() => makeStyles(theme, sh), [theme, sh]);
   const themeName = useThemeName();
   const setTheme = useSetTheme();
   const { t: tr, i18n } = useTranslation();
@@ -379,8 +411,8 @@ export default function SettingsScreen() {
   const isLive = mode === 'live';
 
   const VERDICT_COLOR: Record<string, string> = {
-    GO: theme.textPrimary,
-    'NO-GO': theme.accent,
+    GO: theme.up,
+    'NO-GO': theme.downText,
     'TOO EARLY': theme.warning,
   };
 
@@ -521,15 +553,40 @@ export default function SettingsScreen() {
     evalData?.gates?.find((g) => g.name === name)?.passed ?? null;
   const sharpeFail = gatePassed('Sharpe') === false;
   const ddFail = gatePassed('Max drawdown') === false;
-  const failColor = theme.accent700 ?? theme.accent;
+  const failColor = theme.downText;
+
+  const systemFields: { label: string; value: string; color?: string }[] = [
+    {
+      label: 'Backend',
+      value: healthError ? '● offline' : health?.status === 'ok' ? '● online' : '…',
+      color: healthError ? theme.downText : theme.up,
+    },
+    {
+      label: 'Broker · DB',
+      value: readiness
+        ? `Alpaca ${readiness.alpaca ? '✓' : '✗'} · DB ${readiness.db ? '✓' : '✗'}`
+        : '…',
+      color: readiness && (!readiness.alpaca || !readiness.db) ? theme.downText : undefined,
+    },
+    { label: 'Son ajan kararı', value: lastRun },
+    { label: 'Uygulama sürümü', value: APP_VERSION },
+  ];
+
+  const strategyFields = [
+    { label: 'Risk / işlem', value: '%0.5 equity' },
+    { label: 'Stop', value: 'Ajan kararında gelir' },
+    { label: 'Evren', value: 'SPY + 10 isim' },
+    { label: 'Koşu', value: 'Hafta içi 22:30 UTC' },
+  ];
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <ScrollView contentContainerStyle={styles.scroll}>
+      <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.heading}>{tr('tabs.settings')}</Text>
 
         {/* ── Hesap & mod ───────────────────────────────────────── */}
-        <Section title="Hesap & mod" first>
+        <GroupTitle title="Hesap & mod" />
+        <Card>
           <View style={styles.modeRow}>
             {/* Tri-state, matching StatusBanner: PAPER is a claim about where
                 real money goes, and `mode` is null whenever readiness AND health
@@ -539,12 +596,14 @@ export default function SettingsScreen() {
             <Tag
               label={mode == null ? 'MOD ?' : isLive ? 'LIVE — GERÇEK PARA' : 'PAPER'}
               variant="outline"
+              caps
             />
             <Text style={styles.modeAccount}>{isLive ? 'Alpaca LIVE hesabı' : 'Alpaca paper hesabı'}</Text>
           </View>
+
           <View style={styles.kvList}>
             <View style={styles.kvRow}>
-              <Text style={styles.kvKey}>Uygulama API'si</Text>
+              <Text style={styles.kvKey}>Uygulama API&apos;si</Text>
               <Text style={styles.kvValue} numberOfLines={1}>{API_URL}</Text>
             </View>
             <View style={styles.kvRow}>
@@ -554,30 +613,36 @@ export default function SettingsScreen() {
               </Text>
             </View>
           </View>
+
           <Text style={styles.note}>
             Broker ucu sunucudaki ALPACA_BASE_URL ile belirlenir; yukarıdaki mod oradan okunur.
-            Live'a geçiş: canlı hesap + KYC + live key + secrets.env. Uygulamadan yapılamaz.
+            Live&apos;a geçiş: canlı hesap + KYC + live key + secrets.env. Uygulamadan yapılamaz.
           </Text>
+
           {/* The bearer lives in the device keystore, not in the bundle: Expo
               republishes app.config's `extra` verbatim in the OTA manifest,
               which anyone can fetch unauthenticated. A token that gates order
               approval and the kill switch does not belong there. Cost is one
               setup step per phone. */}
-          <Text style={styles.kvKey}>Sunucu token'ı</Text>
+          <Text style={styles.fieldLabel}>Sunucu token&apos;ı</Text>
           <View style={styles.tokenRow}>
             <TextInput
               style={styles.tokenInput}
               value={tokenDraft}
               onChangeText={setTokenDraft}
               placeholder={hasToken ? '•••••••• kayıtlı' : 'secrets.env içindeki DEV_API_TOKEN'}
-              placeholderTextColor={theme.textSecondary}
+              placeholderTextColor={theme.ink3 ?? theme.textMuted}
               autoCapitalize="none"
               autoCorrect={false}
               secureTextEntry
               accessibilityLabel="Sunucu token'ı"
             />
             <Pressable
-              style={[styles.tokenSave, !tokenDraft.trim() && styles.tokenSaveOff]}
+              style={({ pressed }) => [
+                styles.tokenSave,
+                !tokenDraft.trim() && styles.tokenSaveOff,
+                pressed && styles.buttonPressed,
+              ]}
               onPress={saveToken}
               disabled={!tokenDraft.trim()}
               accessibilityRole="button"
@@ -591,59 +656,20 @@ export default function SettingsScreen() {
               ? 'Bu cihazda kayıtlı. Sunucuda token değişirse yenisini buraya gir.'
               : 'Token olmadan portföy, emirler ve ajan ekranları 401 döner. Sunucudaki secrets.env içinde DEV_API_TOKEN olarak duruyor.'}
           </Text>
-
-          <View style={styles.legalLinks}>
-            <Pressable
-              onPress={() => void Linking.openURL(PRIVACY_URL)}
-              accessibilityRole="link"
-              accessibilityLabel="Gizlilik Politikası"
-              style={styles.legalLink}
-            >
-              <Text style={styles.legalLinkText}>Gizlilik Politikası</Text>
-            </Pressable>
-            <Text style={styles.legalSep}>·</Text>
-            <Pressable
-              onPress={() => void Linking.openURL(TERMS_URL)}
-              accessibilityRole="link"
-              accessibilityLabel="Kullanım Koşulları"
-              style={styles.legalLink}
-            >
-              <Text style={styles.legalLinkText}>Kullanım Koşulları</Text>
-            </Pressable>
-            <Text style={styles.legalSep}>·</Text>
-            <Pressable
-              onPress={() => void Linking.openURL(SUPPORT_URL)}
-              accessibilityRole="link"
-              accessibilityLabel="Destek"
-              style={styles.legalLink}
-            >
-              <Text style={styles.legalLinkText}>Destek</Text>
-            </Pressable>
-          </View>
-
-          <SecondaryButton
-            label="Çıkış yap"
-            onPress={() => setSignOutOpen(true)}
-            hint="Oturumu kapatır ve giriş ekranına döner"
-          />
-          <SecondaryButton
-            label="Hesabı sil"
-            onPress={() => setDeleteAccountOpen(true)}
-            hint="Hesabınızı ve tüm verilerinizi kalıcı olarak siler"
-          />
-        </Section>
+        </Card>
 
         {/* ── Eval scorecard ────────────────────────────────────── */}
-        <Section
+        <GroupTitle
           title="Eval scorecard"
           right={
             evalData ? (
-              <Text style={[styles.verdict, { color: VERDICT_COLOR[evalData.verdict] ?? theme.textSecondary }]}>
+              <Text style={[styles.verdict, { color: VERDICT_COLOR[evalData.verdict] ?? theme.ink2 ?? theme.textSecondary }]}>
                 {evalData.verdict}
               </Text>
             ) : null
           }
-        >
+        />
+        <Card>
           {evalLoading ? (
             <Text style={styles.muted}>hesaplanıyor…</Text>
           ) : !evalData ? (
@@ -654,7 +680,7 @@ export default function SettingsScreen() {
                 <Text
                   style={[
                     styles.trend,
-                    { color: VERDICT_COLOR[evalData.provisional_verdict] ?? theme.textSecondary },
+                    { color: VERDICT_COLOR[evalData.provisional_verdict] ?? theme.ink2 ?? theme.textSecondary },
                   ]}
                 >
                   eğilim: {evalData.provisional_verdict}
@@ -662,30 +688,50 @@ export default function SettingsScreen() {
               ) : null}
 
               <View style={styles.evalGrid}>
-                <EvalStat
+                <StatCell
+                  style={styles.evalCell}
+                  size="sm"
                   label="Sharpe"
                   value={fixed(evalData.sharpe, 2)}
-                  gate={`> ${evalData.gate_sharpe}`}
-                  color={sharpeFail ? failColor : undefined}
+                  hint={`> ${evalData.gate_sharpe}`}
+                  valueColor={sharpeFail ? failColor : undefined}
                 />
-                <EvalStat label="Sortino" value={fixed(evalData.sortino, 2)} gate="downside" />
-                <EvalStat
+                <StatCell
+                  style={styles.evalCell}
+                  size="sm"
+                  label="Sortino"
+                  value={fixed(evalData.sortino, 2)}
+                  hint="downside"
+                />
+                <StatCell
+                  style={styles.evalCell}
+                  size="sm"
                   label="Max DD"
                   value={`${fixed(evalData.max_dd_pct, 1)}%`}
-                  gate={`< ${evalData.gate_max_dd_pct}%`}
-                  color={ddFail ? failColor : undefined}
+                  hint={`< ${evalData.gate_max_dd_pct}%`}
+                  valueColor={ddFail ? failColor : undefined}
                 />
-                <EvalStat label="Calmar" value={fixed(evalData.calmar, 2)} gate="getiri/DD" />
-                <EvalStat
+                <StatCell
+                  style={styles.evalCell}
+                  size="sm"
+                  label="Calmar"
+                  value={fixed(evalData.calmar, 2)}
+                  hint="getiri/DD"
+                />
+                <StatCell
+                  style={styles.evalCell}
+                  size="sm"
                   label="Getiri"
-                  value={`${evalData.total_return_pct >= 0 ? '+' : '−'}${Math.abs(evalData.total_return_pct).toFixed(1)}%`}
-                  gate={`${evalData.days}g`}
+                  value={`${evalData.total_return_pct >= 0 ? '+' : MINUS}${Math.abs(evalData.total_return_pct).toFixed(1)}%`}
+                  hint={`${evalData.days}g`}
                 />
                 {evalData.spy_return_pct != null ? (
-                  <EvalStat
+                  <StatCell
+                    style={styles.evalCell}
+                    size="sm"
                     label="α vs SPY"
-                    value={`${evalData.total_return_pct - evalData.spy_return_pct >= 0 ? '+' : '−'}${Math.abs(evalData.total_return_pct - evalData.spy_return_pct).toFixed(1)}%`}
-                    gate={`SPY ${evalData.spy_return_pct >= 0 ? '+' : '−'}${Math.abs(evalData.spy_return_pct).toFixed(1)}%`}
+                    value={`${evalData.total_return_pct - evalData.spy_return_pct >= 0 ? '+' : MINUS}${Math.abs(evalData.total_return_pct - evalData.spy_return_pct).toFixed(1)}%`}
+                    hint={`SPY ${evalData.spy_return_pct >= 0 ? '+' : MINUS}${Math.abs(evalData.spy_return_pct).toFixed(1)}%`}
                   />
                 ) : null}
               </View>
@@ -724,31 +770,25 @@ export default function SettingsScreen() {
               {inertiaNote(flow) ? <Text style={styles.flowCaveat}>⚠︎ {inertiaNote(flow)}</Text> : null}
             </>
           )}
-        </Section>
+        </Card>
 
         {/* ── Risk: the kill switch's new home ──────────────────── */}
-        <Section title="Risk & uyarılar">
-          <Pressable
-            style={styles.linkRow}
+        <GroupTitle title="Risk & uyarılar" />
+        <Card padded={false} clip>
+          <DataRow
+            title="Kill switch ve limitler"
+            subtitle="RUN / PAUSE / FLATTEN, devre kesiciler ve portföy limitleri Risk ekranında."
             onPress={() => router.push('/(tabs)/risk' as never)}
-            accessibilityRole="link"
             accessibilityLabel="Risk ve uyarılar ekranını aç"
             accessibilityHint="Kill switch, devre kesiciler ve portföy limitleri"
-          >
-            <View style={styles.linkText}>
-              <Text style={styles.linkLabel}>Kill switch ve limitler</Text>
-              <Text style={styles.linkHint}>
-                RUN / PAUSE / FLATTEN, devre kesiciler ve portföy limitleri Risk ekranında.
-              </Text>
-            </View>
-            <Chevron color={theme.textSecondary} />
-          </Pressable>
-        </Section>
+          />
+        </Card>
 
         {/* ── Emir gönderimi ────────────────────────────────────── */}
-        <Section title="Emir gönderimi">
-          <Text style={styles.note}>
-            Bu üç ayar sunucudaki ExecutionConfig'ten gelir. Uygulama bunları yazamaz; API bir okuma
+        <GroupTitle title="Emir gönderimi" />
+        <Card>
+          <Text style={styles.noteFirst}>
+            Bu üç ayar sunucudaki ExecutionConfig&apos;ten gelir. Uygulama bunları yazamaz; API bir okuma
             ucu da sunmadığı için gösterilenler dağıtımdaki varsayılanlar ve moddan türetilen
             davranıştır.
           </Text>
@@ -762,16 +802,20 @@ export default function SettingsScreen() {
               readOnly
             />
           ))}
-        </Section>
+        </Card>
 
         {/* ── Strateji ──────────────────────────────────────────── */}
-        <Section title="Strateji">
-          <Text style={styles.note}>
+        <GroupTitle title="Strateji" />
+        <Card>
+          <Text style={styles.noteFirst}>
             Boyutlama yöntemi ve tek isim tavanı sunucudaki risk yapılandırmasıdır
             (SizingMethod / PortfolioLimits) — uygulamadan değiştirilemez.
           </Text>
 
-          <Text style={styles.fieldLabel}>Boyutlama yöntemi</Text>
+          <View style={styles.labelWithTag}>
+            <Text style={styles.fieldLabel}>Boyutlama yöntemi</Text>
+            <Tag label="salt okunur" variant="neutral" size="sm" />
+          </View>
           {/* SizingMethod has four members but the sizer wires two: 'atr' sizes
               off the real entry→stop distance, 'llm_pct' off the decision's
               suggested size. 'kelly' and 'vol_tgt' return 0 shares — naming one
@@ -785,15 +829,14 @@ export default function SettingsScreen() {
             onChange={() => {}}
             disabled
             block
-            style={styles.sizingSeg}
+            style={styles.seg}
           />
 
           <View style={styles.capRow}>
             <Text style={styles.capLabel}>Tek isim tavanı</Text>
             <View style={styles.capBox}>
-              <Text style={styles.capValue}>{SINGLE_NAME_CAP_PCT}</Text>
+              <Text style={styles.capValue}>{SINGLE_NAME_CAP_PCT}%</Text>
             </View>
-            <Text style={styles.capSuffix}>%</Text>
           </View>
           {topWeight != null ? (
             <Text style={[styles.capNow, { color: capToneColor }]}>
@@ -814,23 +857,24 @@ export default function SettingsScreen() {
             code anywhere produces.
           */}
           <View style={styles.grid}>
-            <Field label="Risk / işlem" value="%0.5 equity" />
-            <Field label="Stop" value="Ajan kararında gelir" />
-            <Field label="Evren" value="SPY + 10 isim" />
-            <Field label="Koşu" value="Hafta içi 22:30 UTC" />
+            {strategyFields.map((f) => (
+              <StatCell key={f.label} style={styles.gridCell} size="sm" label={f.label} value={f.value} />
+            ))}
           </View>
-        </Section>
+        </Card>
 
         {/* ── Bildirimler ───────────────────────────────────────── */}
-        <Section
+        <GroupTitle
           title="Bildirimler"
           right={
             <Text style={[styles.permission, { color: PERMISSION_COPY[permission ?? 'undetermined'].color }]}>
               {permission ? PERMISSION_COPY[permission].text : '…'}
             </Text>
           }
-        >
+        />
+        <Card>
           <ToggleRow
+            first
             label="Push bildirimleri"
             desc={pushBusy ? 'Kaydediliyor…' : PUSH_DESC[permission ?? 'undetermined']}
             on={pushOn}
@@ -859,21 +903,29 @@ export default function SettingsScreen() {
             on
             readOnly
           />
-          <View>
-            <SecondaryButton label="Test bildirimi gönder" onPress={() => void handleTestPush()} />
+          <View style={styles.buttonPair}>
             <SecondaryButton
-              label={`Bildirim geçmişi (${inbox.length}${unreadCount(inbox) > 0 ? ` · ${unreadCount(inbox)} okunmamış` : ''})`}
+              label="Test bildirimi"
+              onPress={() => void handleTestPush()}
+              hint="Bu cihaza bir test bildirimi gönderir"
+              style={styles.buttonHalf}
+            />
+            <SecondaryButton
+              label={`Geçmiş (${inbox.length}${unreadCount(inbox) > 0 ? ` · ${unreadCount(inbox)}` : ''})`}
               onPress={() => router.push('/notifications' as never)}
+              hint="Bildirim geçmişini açar"
+              style={styles.buttonHalf}
             />
           </View>
-        </Section>
+        </Card>
 
         {/* ── Görünüm ───────────────────────────────────────────── */}
         {/* Language and palette were both settable only by the device: the app
             followed the phone's locale and opened in whichever palette the
             build defaulted to. Both are reader choices, and both persist. */}
-        <Section title="Görünüm">
-          <Text style={styles.fieldLabel}>Dil / Language</Text>
+        <GroupTitle title="Görünüm" />
+        <Card>
+          <Text style={styles.fieldLabelFirst}>Dil / Language</Text>
           <Seg
             options={[
               { value: 'tr', label: 'Türkçe' },
@@ -882,43 +934,87 @@ export default function SettingsScreen() {
             value={lang}
             onChange={(next) => void setLanguage(next)}
             block
-            style={styles.appearanceSeg}
+            style={styles.seg}
           />
 
+          {/* Three palettes ship; until now only two were reachable, so a
+              reader who left Aurora could not come back to it. */}
           <Text style={styles.fieldLabel}>Tema</Text>
           <Seg
             options={[
+              { value: 'aurora', label: 'Aurora', accessibilityLabel: 'Aurora teması' },
               { value: 'modernist', label: 'Açık', accessibilityLabel: 'Açık tema' },
               { value: 'dark', label: 'Koyu', accessibilityLabel: 'Koyu tema' },
             ]}
             value={themeName}
             onChange={(next: ThemeName) => setTheme(next)}
             block
-            style={styles.appearanceSeg}
+            style={styles.seg}
           />
-        </Section>
+          <Text style={styles.note}>
+            Seçim bu cihazda saklanır. Henüz taşınmamış ekranlar koyu paletle çizilir.
+          </Text>
+        </Card>
 
         {/* ── Sistem ────────────────────────────────────────────── */}
-        <Section title="Sistem">
-          <View style={styles.grid}>
-            <Field
-              label="Backend"
-              value={healthError ? '● offline' : health?.status === 'ok' ? '● online' : '…'}
-              color={healthError ? theme.accent700 ?? theme.accent : theme.textPrimary}
-            />
-            <Field
-              label="Broker · DB"
-              value={
-                readiness
-                  ? `Alpaca ${readiness.alpaca ? '✓' : '✗'} · DB ${readiness.db ? '✓' : '✗'}`
-                  : '…'
-              }
-              color={readiness && (!readiness.alpaca || !readiness.db) ? theme.accent700 ?? theme.accent : undefined}
-            />
-            <Field label="Son ajan kararı" value={lastRun} />
-            <Field label="Uygulama sürümü" value={APP_VERSION} />
+        <GroupTitle title="Sistem" />
+        <Card>
+          <View style={styles.gridFirst}>
+            {systemFields.map((f) => (
+              <StatCell
+                key={f.label}
+                style={styles.gridCell}
+                size="sm"
+                label={f.label}
+                value={f.value}
+                valueColor={f.color}
+              />
+            ))}
           </View>
-        </Section>
+        </Card>
+
+        <View style={styles.footerButtons}>
+          <SecondaryButton
+            label="Çıkış yap"
+            onPress={() => setSignOutOpen(true)}
+            hint="Oturumu kapatır ve giriş ekranına döner"
+          />
+          <SecondaryButton
+            label="Hesabı sil"
+            onPress={() => setDeleteAccountOpen(true)}
+            hint="Hesabınızı ve tüm verilerinizi kalıcı olarak siler"
+            danger
+          />
+        </View>
+
+        <View style={styles.legalLinks}>
+          <Pressable
+            onPress={() => void Linking.openURL(PRIVACY_URL)}
+            accessibilityRole="link"
+            accessibilityLabel="Gizlilik Politikası"
+            style={styles.legalLink}
+          >
+            <Text style={styles.legalLinkText}>Gizlilik Politikası</Text>
+          </Pressable>
+          <Text style={styles.legalSep}>·</Text>
+          <Pressable
+            onPress={() => void Linking.openURL(TERMS_URL)}
+            accessibilityRole="link"
+            accessibilityLabel="Kullanım Koşulları"
+            style={styles.legalLink}
+          >
+            <Text style={styles.legalLinkText}>Kullanım Koşulları</Text>
+          </Pressable>
+          <Text style={styles.legalSep}>·</Text>
+          <Pressable
+            onPress={() => void Linking.openURL(SUPPORT_URL)}
+            accessibilityRole="link"
+            accessibilityLabel="Destek"
+            style={styles.legalLink}
+          >
+            <Text style={styles.legalLinkText}>Destek</Text>
+          </Pressable>
+        </View>
 
         <Text style={styles.disclaimer}>{tr('disclaimer.short')}</Text>
       </ScrollView>
@@ -948,167 +1044,189 @@ export default function SettingsScreen() {
   );
 }
 
-const makeStyles = (t: Palette) =>
+const makeStyles = (t: Palette, sh: Shape) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: t.background },
-    scroll: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 24 },
-    heading: { color: t.textPrimary, ...TYPE.h2 },
+    content: {
+      paddingHorizontal: sh.space[3],
+      paddingTop: sh.space[1],
+      paddingBottom: TAB_BAR_CLEARANCE,
+    },
+    heading: { color: t.textPrimary, letterSpacing: -0.5, paddingBottom: sh.space[1], ...TYPE.h2 },
 
-    // Sections are opened by the 2px rule; the first one sits under the title.
-    section: { marginTop: 16, paddingTop: 12, borderTopWidth: 2, borderTopColor: t.divider },
-    sectionFirst: { borderTopWidth: 0, paddingTop: 0 },
-    sectionHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
-    sectionTitle: { color: t.textPrimary, ...TYPE.section },
+    // The group title: kicker ink, hung off the card's left edge.
+    groupTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      justifyContent: 'space-between',
+      gap: sh.space[1],
+      marginTop: sh.space[3] + 2,
+      marginBottom: sh.space[1],
+      paddingHorizontal: sh.space[0],
+    },
+    groupTitle: { color: t.ink3 ?? t.textMuted, flexShrink: 1, ...TYPE.kicker },
 
-    note: { color: t.textSecondary, marginTop: 8, lineHeight: 16, ...TYPE.helper },
-    muted: { color: t.textSecondary, marginTop: 8, lineHeight: 18, ...TYPE.body },
+    note: { color: t.ink2 ?? t.textSecondary, marginTop: sh.space[1], lineHeight: 16, ...TYPE.helper },
+    noteFirst: { color: t.ink3 ?? t.textMuted, lineHeight: 16, ...TYPE.helper },
+    muted: { color: t.ink2 ?? t.textSecondary, lineHeight: 18, ...TYPE.body },
 
     // Hesap & mod
-    tokenRow: { flexDirection: 'row', marginTop: 6 },
+    modeRow: { flexDirection: 'row', alignItems: 'center', gap: sh.space[1] + 2, flexWrap: 'wrap' },
+    modeAccount: { color: t.textPrimary, flexShrink: 1, ...TYPE.bodyStrong },
+    kvList: { marginTop: sh.space[2], gap: sh.space[1] },
+    kvRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: sh.space[2] },
+    kvKey: { color: t.ink2 ?? t.textSecondary, ...TYPE.helper, fontSize: 12 },
+    kvValue: { color: t.textPrimary, flexShrink: 1, fontSize: 12, ...font(600), ...TABULAR },
+
+    fieldLabel: { color: t.ink2 ?? t.textSecondary, marginTop: sh.space[2] + 2, ...TYPE.helper, fontSize: 12 },
+    fieldLabelFirst: { color: t.ink2 ?? t.textSecondary, ...TYPE.helper, fontSize: 12 },
+    labelWithTag: { flexDirection: 'row', alignItems: 'center', gap: sh.space[1] },
+
+    tokenRow: { flexDirection: 'row', gap: sh.space[1], marginTop: sh.space[1] - 2 },
     tokenInput: {
       flex: 1,
-      backgroundColor: t.surfaceElevated,
+      minHeight: MIN_TOUCH_TARGET,
+      backgroundColor: t.paper ?? t.background,
       color: t.textPrimary,
-      borderWidth: 1,
-      borderColor: t.textPrimary,
-      paddingHorizontal: 12,
-      paddingVertical: 10,
+      borderWidth: sh.hairline,
+      borderColor: t.line2 ?? t.divider,
+      borderRadius: sh.radiusSmall,
+      paddingHorizontal: sh.space[2],
+      paddingVertical: sh.space[1] + 2,
       ...TYPE.body,
     },
     tokenSave: {
       backgroundColor: t.textPrimary,
-      paddingHorizontal: 18,
+      borderRadius: sh.radiusSmall,
+      paddingHorizontal: sh.space[3],
       alignItems: 'center',
       justifyContent: 'center',
       minHeight: MIN_TOUCH_TARGET,
-      marginLeft: -1,
     },
     tokenSaveOff: { opacity: 0.45 },
     tokenSaveLabel: { color: t.background, ...TYPE.body, ...font(800) },
-    modeRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 },
-    modeAccount: { color: t.textPrimary, flexShrink: 1, ...TYPE.bodyStrong },
-    kvList: { marginTop: 10, borderTopWidth: 1, borderTopColor: t.divider },
-    kvRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 12,
-      paddingVertical: 8,
-      borderBottomWidth: 1,
-      borderBottomColor: t.divider,
-    },
-    kvKey: { color: t.textSecondary, ...TYPE.helper },
-    kvValue: { color: t.textPrimary, flexShrink: 1, ...TYPE.helper, ...font(600), ...TABULAR },
 
     // Eval
-    verdict: { fontSize: 18, letterSpacing: 0.5, ...font(800) },
-    trend: { marginTop: 6, ...TYPE.helper, ...font(800) },
-    evalGrid: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 10 },
-    evalStat: { width: '33.33%', paddingRight: 8, marginBottom: 12 },
-    evalStatLabel: { color: t.textSecondary, fontSize: 11, ...font(400) },
-    evalStatValue: { color: t.textPrimary, fontSize: 16, marginTop: 1, ...font(800), ...TABULAR },
-    // The one style on this screen that named no family: without font() the
-    // caption drops off Archivo onto the Android system face, beside a value
-    // that stays on it.
-    evalStatGate: { color: t.textSecondary, fontSize: 10, marginTop: 1, ...font(400) },
-    countdown: { color: t.textSecondary, ...TYPE.helper, ...font(600) },
-    gateList: { marginTop: 10, paddingTop: 10, gap: 4, borderTopWidth: 1, borderTopColor: t.divider },
-    gateRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    verdict: { fontSize: 15, letterSpacing: 0.5, ...font(800) },
+    trend: { marginBottom: sh.space[1], ...TYPE.helper, ...font(800) },
+    evalGrid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: sh.space[2], marginBottom: sh.space[2] },
+    evalCell: { width: '33.33%', paddingRight: sh.space[1] },
+    countdown: { color: t.ink2 ?? t.textSecondary, ...TYPE.helper, ...font(600) },
+    gateList: {
+      marginTop: sh.space[2],
+      paddingTop: sh.space[2],
+      gap: sh.space[0],
+      borderTopWidth: sh.hairline,
+      borderTopColor: t.line ?? t.divider,
+    },
+    gateRow: { flexDirection: 'row', alignItems: 'center', gap: sh.space[1] + 2 },
     gateIcon: { width: 14, textAlign: 'center', ...TYPE.body, ...font(800) },
     gateName: { color: t.textPrimary, flex: 1, ...TYPE.body },
-    gateDetail: { color: t.textSecondary, ...TYPE.helper, ...TABULAR },
-    evalReason: { color: t.warning, marginTop: 10, lineHeight: 16, ...TYPE.helper },
-    flowCaveat: { color: t.accent700 ?? t.accent, marginTop: 10, lineHeight: 16, ...TYPE.helper },
-
-    // Risk link
-    linkRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 12,
-      paddingVertical: 12,
-      minHeight: MIN_TOUCH_TARGET,
-    },
-    linkText: { flex: 1, gap: 2 },
-    linkLabel: { color: t.textPrimary, ...TYPE.bodyStrong },
-    linkHint: { color: t.textSecondary, lineHeight: 16, ...TYPE.helper },
+    gateDetail: { color: t.ink2 ?? t.textSecondary, ...TYPE.helper, ...TABULAR },
+    evalReason: { color: t.warning, marginTop: sh.space[2], lineHeight: 16, ...TYPE.helper },
+    flowCaveat: { color: t.downText, marginTop: sh.space[2], lineHeight: 16, ...TYPE.helper },
 
     // Toggles
     toggleRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 14,
-      paddingVertical: 12,
-      minHeight: MIN_TOUCH_TARGET,
-      borderBottomWidth: 1,
-      borderBottomColor: t.divider,
+      gap: sh.space[2] + 2,
+      paddingVertical: sh.space[2],
+      minHeight: 56,
     },
+    toggleRowRuled: { borderTopWidth: sh.hairline, borderTopColor: t.line ?? t.divider },
     toggleText: { flex: 1 },
     toggleLabel: { color: t.textPrimary, ...TYPE.bodyStrong },
-    toggleDesc: { color: t.textSecondary, marginTop: 2, lineHeight: 16, ...TYPE.helper },
-    sourceTag: { marginTop: 6 },
-    track: { width: TOGGLE_W, height: TOGGLE_H, justifyContent: 'center' },
-    knob: { width: KNOB, height: KNOB, position: 'absolute', left: 0 },
+    toggleDesc: { color: t.ink2 ?? t.textSecondary, marginTop: 2, lineHeight: 16, ...TYPE.helper },
+    sourceTag: { marginTop: sh.space[1] - 2 },
+    track: {
+      width: TOGGLE_W,
+      height: TOGGLE_H,
+      borderRadius: sh.radiusPill,
+      justifyContent: 'center',
+    },
+    trackReadOnly: { opacity: READ_ONLY_OPACITY },
+    knob: {
+      width: KNOB,
+      height: KNOB,
+      borderRadius: sh.radiusPill,
+      position: 'absolute',
+      left: 0,
+    },
 
     // Strateji
-    sizingSeg: { marginTop: 6 },
-    capRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 14 },
-    capLabel: { color: t.textPrimary, flex: 1, ...TYPE.body },
+    seg: { marginTop: sh.space[1] },
+    capRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: sh.space[1],
+      marginTop: sh.space[2] + 2,
+    },
+    capLabel: { color: t.textPrimary, flexShrink: 1, ...TYPE.body },
     capBox: {
-      minWidth: 64,
-      minHeight: 40,
-      paddingHorizontal: 12,
-      alignItems: 'flex-start',
-      justifyContent: 'center',
-      borderWidth: 1,
-      borderColor: t.divider,
-      backgroundColor: t.surface,
+      paddingHorizontal: sh.space[2],
+      paddingVertical: sh.space[0] + 2,
+      borderWidth: sh.hairline,
+      borderColor: t.line ?? t.divider,
+      borderRadius: sh.radiusSmall,
+      backgroundColor: t.paper ?? t.background,
     },
     capValue: { color: t.textPrimary, ...TYPE.body, ...font(800), ...TABULAR },
-    capSuffix: { color: t.textPrimary, ...TYPE.body },
-    capNow: { marginTop: 6, ...TYPE.helper, ...font(600), ...TABULAR },
+    capNow: { marginTop: sh.space[1] - 2, ...TYPE.helper, ...font(600), ...TABULAR },
 
-    // Label/value grid (Strateji fixed values, Sistem)
-    grid: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 14 },
-    field: { width: '50%', paddingRight: 8, marginBottom: 10 },
-    fieldLabel: { color: t.textSecondary, marginTop: 10, ...TYPE.helper },
-    fieldValue: { color: t.textPrimary, marginTop: 2, fontSize: 12, ...font(800) },
+    // Label/value grids (Strateji constants, Sistem)
+    grid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: sh.space[2], marginTop: sh.space[2] + 2 },
+    gridFirst: { flexDirection: 'row', flexWrap: 'wrap', rowGap: sh.space[2] },
+    gridCell: { width: '50%', paddingRight: sh.space[1] },
 
     // Bildirimler
     permission: { fontSize: 12, ...font(600) },
-
-    appearanceSeg: { marginTop: 6 },
+    buttonPair: {
+      flexDirection: 'row',
+      gap: sh.space[1],
+      paddingTop: sh.space[2],
+      borderTopWidth: sh.hairline,
+      borderTopColor: t.line ?? t.divider,
+    },
+    buttonHalf: { flex: 1, marginTop: 0 },
 
     buttonSecondary: {
-      marginTop: 12,
-      paddingHorizontal: 14,
+      marginTop: sh.space[1],
+      paddingHorizontal: sh.space[2],
       alignItems: 'center',
       justifyContent: 'center',
       minHeight: MIN_TOUCH_TARGET,
-      borderWidth: 1,
-      borderColor: t.textPrimary,
-      backgroundColor: 'transparent',
+      borderWidth: sh.hairline,
+      borderColor: t.line2 ?? t.divider,
+      borderRadius: sh.radius,
+      backgroundColor: t.surface,
       alignSelf: 'stretch',
     },
-    buttonSecondaryText: { color: t.textPrimary, fontSize: 14, ...font(800) },
+    buttonPressed: { opacity: 0.7 },
+    buttonDanger: { backgroundColor: 'transparent', borderColor: 'transparent' },
+    buttonSecondaryText: { color: t.textPrimary, fontSize: 13, ...font(800) },
+    buttonDangerText: { color: t.downText },
+
+    footerButtons: { marginTop: sh.space[3], gap: sh.space[1] },
 
     legalLinks: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
       flexWrap: 'wrap',
-      gap: 8,
-      marginTop: 12,
-      marginBottom: 6,
+      gap: sh.space[1],
+      marginTop: sh.space[2],
     },
     legalLink: { minHeight: MIN_TOUCH_TARGET, justifyContent: 'center' },
-    legalLinkText: { color: t.accent, ...TYPE.helper, textDecorationLine: 'underline' },
-    legalSep: { color: t.textSecondary, ...TYPE.helper },
+    legalLinkText: { color: t.ink2 ?? t.textSecondary, ...TYPE.helper, textDecorationLine: 'underline' },
+    legalSep: { color: t.ink3 ?? t.textMuted, ...TYPE.helper },
 
     disclaimer: {
-      color: t.textSecondary,
-      paddingVertical: 24,
+      color: t.ink3 ?? t.textMuted,
+      paddingTop: sh.space[2],
       textAlign: 'center',
-      fontStyle: 'italic',
+      lineHeight: 16,
       ...TYPE.helper,
     },
   });

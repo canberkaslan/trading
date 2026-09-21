@@ -1,11 +1,12 @@
-import { useMemo } from 'react';
-import { View, Text, StyleSheet, useWindowDimensions } from 'react-native';
-import Svg, { Path, Circle } from 'react-native-svg';
+import { useCallback, useMemo, useState } from 'react';
+import { View, Text, StyleSheet, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
+import Svg, { Path, Circle, Line } from 'react-native-svg';
 
 import type { EquityHistory, PriceSeries } from '@/api/types';
 import { useTheme } from '@/theme/useTheme';
+import { useShape, type Shape } from '@/theme/shape';
 import { formatUsd, formatPct } from '@/utils/format';
-import { font, TABULAR } from '@/theme/type';
+import { font, TABULAR, TYPE } from '@/theme/type';
 import {
   worstDrawdown,
   ddIntensity,
@@ -15,24 +16,45 @@ import {
   combinedScale,
 } from '@/utils/equity';
 
-const CHART_H = 220;
-const RIBBON_H = 8;
+/** The prototype draws the curve in a 360×150 box; this is that, in points. */
+const CHART_H = 180;
+const RIBBON_H = 6;
 /** Room for the curve's own stroke so a peak or trough is not clipped. */
-const PAD = 3;
+const PAD = 4;
+/** Page padding (12) + card padding (12), both sides. Only a first-frame guess. */
+const CHROME_W = 48;
 
 /**
- * Home equity curve — drawn with plain RN Views (no native chart lib) so it
+ * Home equity curve — drawn with `react-native-svg` (no native chart lib) so it
  * ships OTA on any installed build, mirroring the Charts-tab price chart.
- * Bars are tinted by cumulative return sign; the worst drawdown is annotated
- * below. An optional SPY series (`spy`) is rebased onto the portfolio's start
- * equity and overlaid as dotted markers, with an α (excess-return) chip in the
- * header. Read-only, off the trading path.
+ * An optional SPY series (`spy`) is rebased onto the portfolio's start equity
+ * and overlaid, with an α (excess-return) chip in the header. The worst
+ * drawdown is annotated below by a tinted ribbon. Read-only, off the trading
+ * path.
+ *
+ * Aurora restyle, not a rewrite: the curve moves from body ink to the brand
+ * indigo with the prototype's `--brandSoft` area under it, SPY drops to `ink3`,
+ * and the zero-line the prototype dashes across the middle is drawn. On a
+ * palette with no `brand` (Modernist, dark) every one of those falls back to
+ * what it drew before — the ink curve, no area fill — so the chart is still
+ * correct under all three.
+ *
+ * The width is MEASURED rather than derived from the window: the chart used to
+ * assume it sat 24pt inside the screen, which stopped being true the moment it
+ * moved inside a Card.
  */
 export function EquityChart({ history, spy }: { history: EquityHistory; spy?: PriceSeries }) {
   const theme = useTheme();
-  const styles = useMemo(() => makeStyles(theme), [theme]);
+  const sh = useShape();
+  const styles = useMemo(() => makeStyles(theme, sh), [theme, sh]);
   const { width } = useWindowDimensions();
-  const chartW = width - 48;
+  const [boxW, setBoxW] = useState<number | null>(null);
+  const onLayout = useCallback((e: LayoutChangeEvent) => {
+    const w = Math.round(e.nativeEvent.layout.width);
+    if (w > 0) setBoxW((prev) => (prev === w ? prev : w));
+  }, []);
+  const chartW = boxW ?? Math.max(width - CHROME_W, 1);
+
   const pts = history.points;
   // Memoized for the same reason as the paths below: a fresh array each render
   // would defeat every memo downstream of it.
@@ -40,16 +62,19 @@ export function EquityChart({ history, spy }: { history: EquityHistory; spy?: Pr
   const scale = combinedScale(pts, spyPts);
   const slot = pts.length ? chartW / pts.length : chartW;
   const up = history.total_return_pct >= 0;
-  // The equity line is drawn in body ink (see the Path below), so the only
-  // thing the direction still colours is the % figure beside it — which is
+  // The equity line is drawn in the brand colour (see the Path below), so the
+  // only thing the direction still colours is the % figure beside it — which is
   // 15px text and therefore takes the legible loss colour, not the fill.
   const returnColor = up ? theme.up : theme.downText ?? theme.down;
   const maxDd = worstDrawdown(pts);
   const alpha = alphaPct(history.total_return_pct, spyReturnPct(spyPts));
 
-  // Paths are derived from the same `combinedScale` the bars used, so the
-  // curve and the drawdown ribbon below it stay on one vertical scale.
-  const { equityPath, spyPath, endPoint } = useMemo(() => {
+  const curveColor = theme.brand ?? theme.textPrimary;
+  const spyColor = theme.ink3 ?? theme.neutral500 ?? theme.textSecondary;
+
+  // Paths are derived from the same `combinedScale` the ribbon uses, so the
+  // curve and the drawdown strip below it stay on one vertical scale.
+  const { equityPath, equityArea, spyPath, endPoint } = useMemo(() => {
     const usable = CHART_H - PAD * 2;
     const x = (i: number) => (pts.length > 1 ? (i / (pts.length - 1)) * chartW : chartW / 2);
     const y = (v: number) => PAD + (1 - (v - scale.min) / scale.span) * usable;
@@ -65,8 +90,12 @@ export function EquityChart({ history, spy }: { history: EquityHistory; spy?: Pr
       .filter((p): p is { v: number; i: number } => p.v != null);
 
     const last = eq[eq.length - 1];
+    const eqLine = eq.length ? line(eq) : '';
     return {
-      equityPath: eq.length ? line(eq) : '',
+      equityPath: eqLine,
+      // The prototype's filled area under the curve. Closed along the bottom
+      // edge of the box, so it reads as a volume rather than a second stroke.
+      equityArea: eq.length > 1 ? `M0,${CHART_H}L${eqLine.slice(1)}L${chartW.toFixed(1)},${CHART_H}Z` : '',
       spyPath: spyByIndex.length > 1 ? line(spyByIndex) : '',
       endPoint: last ? { x: x(last.i), y: y(last.v) } : null,
     };
@@ -75,7 +104,7 @@ export function EquityChart({ history, spy }: { history: EquityHistory; spy?: Pr
   if (!pts.length) return null;
 
   return (
-    <View style={styles.wrap}>
+    <View style={styles.wrap} onLayout={onLayout}>
       <View style={styles.headerRow}>
         <Text style={styles.label}>{history.days} gün</Text>
         <View style={styles.headerRight}>
@@ -94,26 +123,41 @@ export function EquityChart({ history, spy }: { history: EquityHistory; spy?: Pr
 
       <View style={[styles.chartBox, { width: chartW, height: CHART_H }]}>
         <Svg width={chartW} height={CHART_H}>
+          {/* The prototype's dashed mid-rule — a fixed reference the curve is
+              read against, so a flat stretch still has something to be flat
+              against. */}
+          <Line
+            x1={0}
+            y1={CHART_H / 2}
+            x2={chartW}
+            y2={CHART_H / 2}
+            stroke={theme.line ?? theme.divider}
+            strokeWidth={1}
+            strokeDasharray="3 4"
+          />
+          {equityArea && theme.brandSoft ? (
+            <Path d={equityArea} fill={theme.brandSoft} opacity={0.7} />
+          ) : null}
           {/* SPY first so the portfolio curve reads on top of it. */}
-          {spyPath ? <Path d={spyPath} fill="none" stroke={theme.neutral500 ?? theme.textSecondary} strokeWidth={1.5} /> : null}
+          {spyPath ? <Path d={spyPath} fill="none" stroke={spyColor} strokeWidth={1.4} /> : null}
           <Path
             d={equityPath}
             fill="none"
-            stroke={theme.textPrimary}
-            strokeWidth={2.2}
+            stroke={curveColor}
+            strokeWidth={2}
             strokeLinejoin="round"
             strokeLinecap="round"
           />
           {/* The end of the curve, so the latest value has a fixed anchor. */}
-          {endPoint ? <Circle cx={endPoint.x} cy={endPoint.y} r={3} fill={theme.textPrimary} /> : null}
+          {endPoint ? <Circle cx={endPoint.x} cy={endPoint.y} r={3} fill={curveColor} /> : null}
         </Svg>
       </View>
 
       {spyPts.length ? (
         <View style={styles.legendRow}>
-          <View style={[styles.legendDot, { backgroundColor: theme.textPrimary }]} />
+          <View style={[styles.legendDash, { backgroundColor: curveColor }]} />
           <Text style={styles.legendText}>Portföy</Text>
-          <View style={[styles.legendDot, { backgroundColor: theme.neutral500 ?? theme.textSecondary, marginLeft: 12 }]} />
+          <View style={[styles.legendDash, { backgroundColor: spyColor, marginLeft: 12 }]} />
           <Text style={styles.legendText}>SPY</Text>
         </View>
       ) : null}
@@ -136,36 +180,41 @@ export function EquityChart({ history, spy }: { history: EquityHistory; spy?: Pr
 
       <View style={styles.footRow}>
         <Text style={styles.muted}>{formatUsd(history.start_equity)}</Text>
-        <Text style={styles.muted}>
-          Max DD {formatPct(maxDd / 100)}
-        </Text>
+        <Text style={styles.muted}>Maks. düşüş {formatPct(maxDd / 100)}</Text>
         <Text style={styles.muted}>{formatUsd(history.end_equity)}</Text>
       </View>
     </View>
   );
 }
 
-const makeStyles = (t: ReturnType<typeof useTheme>) =>
+type Palette = ReturnType<typeof useTheme>;
+
+const makeStyles = (t: Palette, sh: Shape) =>
   StyleSheet.create({
-  wrap: { paddingHorizontal: 24, marginTop: 8 },
-  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  label: { color: t.textSecondary, fontSize: 13, ...font(600) },
-  return: { fontSize: 15, ...font(800), ...TABULAR },
-  // Square, like every other chip in the system — this was the one pill left.
-  alphaChip: { borderWidth: 1, paddingHorizontal: 8, paddingVertical: 2 },
-  alphaText: { fontSize: 12, ...font(800), ...TABULAR },
-  legendRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
-  legendDot: { width: 8, height: 8, marginRight: 4 },
-  legendText: { color: t.textSecondary, fontSize: 11 },
-  chartBox: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    height: CHART_H,
-    borderBottomWidth: 1,
-    borderBottomColor: t.divider,
-  },
-  ribbon: { flexDirection: 'row', marginTop: 3, overflow: 'hidden' },
-  footRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 },
-  muted: { color: t.textSecondary, fontSize: 12 },
-});
+    wrap: { marginTop: sh.space[1] },
+    headerRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: sh.space[1],
+    },
+    headerRight: { flexDirection: 'row', alignItems: 'center', gap: sh.space[1] },
+    label: { ...TYPE.helper, fontSize: 12, ...font(600), color: t.ink2 ?? t.textSecondary },
+    return: { fontSize: 15, ...font(800), ...TABULAR },
+    // Pill under Aurora, square under Modernist — `radiusPill` decides, not this
+    // file. It was the one chip in the system still drawing its own shape.
+    alphaChip: {
+      borderWidth: sh.hairline,
+      borderRadius: sh.radiusPill,
+      paddingHorizontal: sh.space[1],
+      paddingVertical: 2,
+    },
+    alphaText: { fontSize: 12, ...font(800), ...TABULAR },
+    legendRow: { flexDirection: 'row', alignItems: 'center', marginTop: sh.space[1] },
+    legendDash: { width: 14, height: 2, marginRight: 6, borderRadius: sh.radiusSmall },
+    legendText: { ...TYPE.helper, color: t.ink2 ?? t.textSecondary },
+    chartBox: { flexDirection: 'row', alignItems: 'flex-end', height: CHART_H },
+    ribbon: { flexDirection: 'row', marginTop: 3, overflow: 'hidden', borderRadius: sh.radiusSmall },
+    footRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: sh.space[1] },
+    muted: { ...TYPE.helper, ...TABULAR, color: t.ink3 ?? t.textMuted },
+  });

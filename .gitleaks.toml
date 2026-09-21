@@ -1,0 +1,51 @@
+# gitleaks configuration
+#
+# Every default rule stays on. The one allowance below exists because the
+# `secrets` job had started failing on every pull request for a finding that is
+# not a secret, and a gate that is always red is a gate nobody reads — the same
+# way the ruff gate was ignored until it was repaired.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = """
+The Firebase Web API key in mobile/app/eas.json.
+
+gitleaks flags it as `gcp-api-key` because it is shaped like one: `AIza` plus
+35 characters. It is not a credential. A Firebase Web API key identifies the
+project to Google's endpoints and is designed to ship inside the client — it is
+in every web bundle and every APK this repo produces, and it authorises nothing
+on its own. Access is decided by the Firebase ID token the backend verifies
+(agent/api/deps.py), not by this string.
+
+Removing it is not an option that leaves the app working: an eas.json profile
+without it produces a build where `isFirebaseConfigured()` is false, and the
+login screen used to fall through to a local check when that happened. That is
+the hole #20 closed, and dropping the key to quiet a scanner would reopen it.
+
+Scope: matched on the LINE, not on the secret, so only this field name is
+exempt. An `AIza...` string anywhere else in the repository — including
+elsewhere in this same file — still fails the job.
+
+Not covered by this, and worth doing separately: the key is public, the
+repository is public, and a public Firebase Web API key should carry HTTP
+referrer / app restrictions in the Firebase console so quota cannot be spent by
+someone else. The allowlist is about the scanner; the restriction is about the
+key.
+"""
+regexTarget = "line"
+regexes = [
+  # The Firebase Web API key, reasoned about above.
+  '''"EXPO_PUBLIC_FIREBASE_API_KEY"\s*:\s*"AIza[0-9A-Za-z_\-]{35}"''',
+
+  # `sent_key == "..."` in agent/tests/test_execution.py. The `generic-api-key`
+  # rule fires on the variable name, not on the value: sent_key is the
+  # idempotency key submit_order() hands Alpaca as client_order_id, and the
+  # assertion pins that it is derived deterministically from the decision. It
+  # is a computed identifier in a test, never a credential. Two commits from
+  # 2026-07-13 carry it, so it fails the weekly full-history scan rather than
+  # any pull request — which is exactly the kind of finding that gets scrolled
+  # past until the whole job is ignored.
+  '''sent_key\s*==\s*"''',
+]

@@ -179,16 +179,90 @@ export interface Palette {
   accent800?: string;
 }
 
+/**
+ * Aurora — the dark system from `TreaderUI` (Trader.dc.html).
+ *
+ * Where `modernist` is flat, light and square, this one is layered, dark and
+ * rounded: four grounds instead of three, an indigo brand rather than a red
+ * accent, and conventional green/rose P&L instead of the accounting palette.
+ * Shape is not a colour, so the radii and the spacing live in `shape.ts`; a
+ * palette that carried them would not satisfy the `Palette` contract.
+ *
+ * Every token below clears AA on every ground it is drawn on — measured, not
+ * assumed: the weakest pair is brand on surface2 at 5.05:1. That is why this
+ * palette needs none of the fill-vs-text splits `modernist` carries.
+ */
+export const aurora = {
+  background: '#0f0f11',
+  surface: '#1c1c1f',
+  surfaceElevated: '#26262a',
+
+  textPrimary: '#f4f4f5',
+  textSecondary: '#a1a1aa',
+  // 6.86:1 on the page ground, 5.40:1 on the highest surface. Dimmer than
+  // textSecondary and still AA everywhere, so unlike the other two palettes
+  // this one has no "muted is not for text" caveat.
+  textMuted: '#9a9aa3',
+
+  // Conventional P&L. The accounting variant is `modernist`'s, not this one's.
+  up: '#34d399',
+  down: '#fb7185',
+  upCB: '#60a5fa',
+  downCB: '#fb923c',
+
+  // `down` reads at 5.60:1 even on surfaceElevated, so the fill and the text
+  // are the same value here. No `downText` split is needed; the key stays so
+  // the shape matches, and it is deliberately the same colour.
+  downText: '#fb7185',
+
+  accent: '#818cf8',
+  // Rose, deepened for a fill that carries light text.
+  dangerDeep: '#be123c',
+  warning: '#fbbf24',
+  danger: '#fb7185',
+
+  // The LIVE strip is the one full-bleed fill in the system that carries text,
+  // and it is where a rose palette runs out of room. rose-600 puts textPrimary
+  // at 4.27:1 — the same near-miss `dark` had on its LIVE chip and `modernist`
+  // had on its strip, found here by the contrast guard rather than in review.
+  // rose-700 clears at 5.72:1 and is still unmistakably the danger colour.
+  // A deliberate step off the prototype's ramp: this strip's entire job is to
+  // be read, and it says the account is trading real money.
+  liveStrip: '#be123c',
+
+  divider: 'rgba(244,244,245,0.08)',
+  shadowColor: '#000000',
+
+  // Prototype tokens that have no `Palette` slot. Named as the design names
+  // them so a screen ported from Trader.dc.html can be read against it.
+  paper: '#111113',
+  surface2: '#26262a',
+  ink: '#f4f4f5',
+  ink2: '#a1a1aa',
+  ink3: '#9a9aa3',
+  inkInv: '#111113',
+  line: 'rgba(244,244,245,0.08)',
+  line2: 'rgba(244,244,245,0.18)',
+  brand: '#818cf8',
+  brandSoft: '#26264a',
+  upSoft: '#0f2e25',
+  downSoft: '#3b1a22',
+  warnSoft: '#3a2d10',
+  scrim: 'rgba(0,0,0,0.6)',
+} as const;
+
 // Compile-time proof that neither palette has drifted out of the shape.
 const _darkSatisfies: Palette = dark;
 const _modernistSatisfies: Palette = modernist;
+const _auroraSatisfies: Palette = aurora;
 void _darkSatisfies;
 void _modernistSatisfies;
+void _auroraSatisfies;
 
 /** The palette screens import today. */
 export const colors = dark;
 
 export type Colors = typeof dark;
-export type ThemeName = 'dark' | 'modernist';
+export type ThemeName = 'dark' | 'modernist' | 'aurora';
 
-export const themes = { dark, modernist } as const;
+export const themes = { dark, modernist, aurora } as const;

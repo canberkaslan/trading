@@ -5,11 +5,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 
 from tradingagents_us.schemas import AgentDecision, AgentReasoning, OrderUpdate, TradeOrder
 from tradingagents_us.storage import TradeLogRepository
 from tradingagents_us.storage.device_tokens import list_tokens_for, upsert_token
+from tradingagents_us.storage.models import KillSwitchEventRow
 from tradingagents_us.storage.repository import row_to_decision
 
 
@@ -95,7 +96,7 @@ def test_delete_user_data_removes_only_that_users_device_tokens(
 
     deleted = repo.delete_user_data("uid-a")
 
-    assert deleted == {"device_tokens": 1}
+    assert deleted == {"device_tokens": 1, "kill_switch_events_actor_anonymized": 0}
     with repo.session() as s:
         assert list_tokens_for(s, "uid-a") == []
         assert list_tokens_for(s, "uid-b") == ["tok-b"]
@@ -104,4 +105,20 @@ def test_delete_user_data_removes_only_that_users_device_tokens(
 def test_delete_user_data_is_defined_when_nothing_to_delete(
     repo: TradeLogRepository,
 ) -> None:
-    assert repo.delete_user_data("nobody-registered") == {"device_tokens": 0}
+    assert repo.delete_user_data("nobody-registered") == {
+        "device_tokens": 0,
+        "kill_switch_events_actor_anonymized": 0,
+    }
+
+
+def test_delete_user_data_anonymizes_kill_switch_actor(repo: TradeLogRepository) -> None:
+    repo.append_kill_event(state="PAUSE_NEW", actor="uid-a", source="api")
+    repo.append_kill_event(state="RUN", actor="uid-a", source="api")
+    repo.append_kill_event(state="FLATTEN_ALL", actor="uid-b", source="api")
+
+    deleted = repo.delete_user_data("uid-a")
+
+    assert deleted == {"device_tokens": 0, "kill_switch_events_actor_anonymized": 2}
+    with repo.session() as s:
+        actors = set(s.execute(select(KillSwitchEventRow.actor)).scalars().all())
+        assert actors == {"deleted-user", "uid-b"}

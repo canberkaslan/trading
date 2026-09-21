@@ -14,9 +14,11 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from tradingagents_us.storage import TradeLogRepository
 from tradingagents_us.storage.device_tokens import list_tokens_for, upsert_token
+from tradingagents_us.storage.models import KillSwitchEventRow
 
 
 @pytest.fixture()
@@ -63,7 +65,10 @@ def test_deletes_the_callers_device_tokens(
     body = r.json()
     assert body["status"] == "deleted"
     assert body["uid"] == "dev-user"
-    assert body["deleted_rows"] == {"device_tokens": 1}
+    assert body["deleted_rows"] == {
+        "device_tokens": 1,
+        "kill_switch_events_actor_anonymized": 0,
+    }
 
     with repo.session() as s:
         assert list_tokens_for(s, "dev-user") == []
@@ -76,4 +81,29 @@ def test_defined_behaviour_when_the_caller_has_no_data(client: TestClient) -> No
     assert r.status_code == 200
     body = r.json()
     assert body["status"] == "deleted"
-    assert body["deleted_rows"] == {"device_tokens": 0}
+    assert body["deleted_rows"] == {
+        "device_tokens": 0,
+        "kill_switch_events_actor_anonymized": 0,
+    }
+
+
+def test_anonymizes_the_callers_kill_switch_actor_without_deleting_the_event(
+    client: TestClient, repo: TradeLogRepository
+) -> None:
+    repo.append_kill_event(state="PAUSE_NEW", actor="dev-user", source="api")
+    repo.append_kill_event(state="FLATTEN_ALL", actor="someone-else", source="api")
+
+    r = client.delete("/v1/me", headers=_auth())
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["deleted_rows"] == {
+        "device_tokens": 0,
+        "kill_switch_events_actor_anonymized": 1,
+    }
+
+    with repo.session() as s:
+        rows = s.execute(select(KillSwitchEventRow)).scalars().all()
+        assert len(rows) == 2, "the audit trail itself must survive"
+        actors = {row.actor for row in rows}
+        assert actors == {"deleted-user", "someone-else"}

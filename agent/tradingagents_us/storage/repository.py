@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, func, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -29,6 +29,12 @@ from .models import (
 
 if TYPE_CHECKING:  # avoids a storage → execution import at runtime
     from ..execution.reconcile import ClosedTrade
+
+
+#: Placeholder written into kill_switch_events.actor for a deleted uid. The
+#: event itself (state/source/timestamp) stays for the shared audit trail;
+#: only the identifying actor value is scrubbed.
+_DELETED_ACTOR = "deleted-user"
 
 
 def make_engine(database_url: str | None = None) -> Engine:
@@ -190,14 +196,21 @@ class TradeLogRepository:
             ))
 
     def delete_user_data(self, uid: str) -> dict[str, int]:
-        """Erase everything this schema keys by uid — App Store 5.1.1(v).
+        """Erase what this schema keys by uid — App Store 5.1.1(v).
 
-        `device_tokens` is the only table with a per-user column: decisions,
-        orders and kill-switch events belong to the shared household book, not
-        to one uid, so deleting them on a single user's request would destroy
-        data the other users on the account still rely on. Returns the number
-        of rows removed per table, so a caller can tell "deleted" from
-        "nothing was there to delete" instead of taking the word on faith.
+        `device_tokens` is the only table owned outright by one uid, so those
+        rows are deleted. `kill_switch_events` is an append-only audit trail
+        shared by the whole household book — the state history itself (who
+        paused/flattened the book and when) must survive a single member's
+        account deletion for the others still using it — but `actor` on rows
+        this uid produced is still that uid's personal data, so it is
+        overwritten with a fixed placeholder rather than left identifying them.
+        `agent_decisions`/`trade_orders` carry no per-user column at all, so
+        there is nothing of this uid's to remove from them.
+
+        Returns the number of rows affected per table, so a caller can tell
+        "deleted"/"anonymized" from "nothing was there to touch" instead of
+        taking the word on faith.
         """
         with self.session() as s:
             tokens = s.execute(
@@ -205,7 +218,15 @@ class TradeLogRepository:
             ).scalars().all()
             for row in tokens:
                 s.delete(row)
-            return {"device_tokens": len(tokens)}
+            result = s.execute(
+                update(KillSwitchEventRow)
+                .where(KillSwitchEventRow.actor == uid)
+                .values(actor=_DELETED_ACTOR)
+            )
+            return {
+                "device_tokens": len(tokens),
+                "kill_switch_events_actor_anonymized": result.rowcount,
+            }
 
     def upsert_closed_trades(
         self,

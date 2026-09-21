@@ -17,6 +17,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..schemas import AgentDecision, AgentReasoning, OrderUpdate, TradeOrder
+from .device_tokens import DeviceTokenRow
 from .models import (
     AgentDecisionRow,
     Base,
@@ -187,6 +188,24 @@ class TradeLogRepository:
                 state=state, actor=actor, source=source, detail=detail,
                 timestamp_utc=datetime.now(UTC),
             ))
+
+    def delete_user_data(self, uid: str) -> dict[str, int]:
+        """Erase everything this schema keys by uid — App Store 5.1.1(v).
+
+        `device_tokens` is the only table with a per-user column: decisions,
+        orders and kill-switch events belong to the shared household book, not
+        to one uid, so deleting them on a single user's request would destroy
+        data the other users on the account still rely on. Returns the number
+        of rows removed per table, so a caller can tell "deleted" from
+        "nothing was there to delete" instead of taking the word on faith.
+        """
+        with self.session() as s:
+            tokens = s.execute(
+                select(DeviceTokenRow).where(DeviceTokenRow.user_id == uid)
+            ).scalars().all()
+            for row in tokens:
+                s.delete(row)
+            return {"device_tokens": len(tokens)}
 
     def upsert_closed_trades(
         self,

@@ -9,6 +9,7 @@ from sqlalchemy import create_engine
 
 from tradingagents_us.schemas import AgentDecision, AgentReasoning, OrderUpdate, TradeOrder
 from tradingagents_us.storage import TradeLogRepository
+from tradingagents_us.storage.device_tokens import list_tokens_for, upsert_token
 from tradingagents_us.storage.repository import row_to_decision
 
 
@@ -83,3 +84,24 @@ def test_list_filters_by_ticker(repo: TradeLogRepository) -> None:
     repo.save_decision(_decision("dec-aapl-2", "AAPL"))
     aapl_only = repo.list_recent_decisions(ticker="AAPL")
     assert {d.decision_id for d in aapl_only} == {"dec-aapl-1", "dec-aapl-2"}
+
+
+def test_delete_user_data_removes_only_that_users_device_tokens(
+    repo: TradeLogRepository,
+) -> None:
+    with repo.session() as s:
+        upsert_token(s, token="tok-a", user_id="uid-a", platform="ios", ts=datetime.now(UTC))
+        upsert_token(s, token="tok-b", user_id="uid-b", platform="android", ts=datetime.now(UTC))
+
+    deleted = repo.delete_user_data("uid-a")
+
+    assert deleted == {"device_tokens": 1}
+    with repo.session() as s:
+        assert list_tokens_for(s, "uid-a") == []
+        assert list_tokens_for(s, "uid-b") == ["tok-b"]
+
+
+def test_delete_user_data_is_defined_when_nothing_to_delete(
+    repo: TradeLogRepository,
+) -> None:
+    assert repo.delete_user_data("nobody-registered") == {"device_tokens": 0}

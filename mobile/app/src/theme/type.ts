@@ -1,5 +1,5 @@
 /**
- * Archivo, and the type scale that goes with it.
+ * The type ramp, and which family renders it.
  *
  * Two things this module exists to prevent.
  *
@@ -19,11 +19,47 @@
 
 import type { TextStyle } from 'react-native';
 
-export const FONT_FAMILIES = {
-  400: 'Archivo_400Regular',
-  600: 'Archivo_600SemiBold',
-  800: 'Archivo_800ExtraBold',
-} as const;
+import type { ThemeName } from './colors';
+/** The active palette's name, readable outside React. */
+function currentThemeName(): ThemeName {
+  // Imported lazily through the store's own getter so `type.ts` does not
+  // depend on React having rendered.
+  return themeNameGetter();
+}
+
+let themeNameGetter: () => ThemeName = () => 'modernist';
+
+/** Wired once at startup by the theme store; see useTheme.ts. */
+export function bindThemeName(getter: () => ThemeName): void {
+  themeNameGetter = getter;
+}
+
+
+/**
+ * One ramp, two families. Modernist is Archivo; Aurora is Plus Jakarta Sans.
+ * `dark` predates both handoffs and keeps Archivo so migrating a screen is a
+ * palette change and not also a typeface change.
+ */
+const RAMPS = {
+  modernist: {
+    400: 'Archivo_400Regular',
+    600: 'Archivo_600SemiBold',
+    800: 'Archivo_800ExtraBold',
+  },
+  dark: {
+    400: 'Archivo_400Regular',
+    600: 'Archivo_600SemiBold',
+    800: 'Archivo_800ExtraBold',
+  },
+  aurora: {
+    400: 'PlusJakartaSans_400Regular',
+    600: 'PlusJakartaSans_600SemiBold',
+    800: 'PlusJakartaSans_800ExtraBold',
+  },
+} as const satisfies Record<ThemeName, Record<400 | 600 | 800, string>>;
+
+/** Kept as a named export: the Modernist ramp is what `dark` also uses. */
+export const FONT_FAMILIES = RAMPS.modernist;
 
 export type RampWeight = keyof typeof FONT_FAMILIES;
 
@@ -41,7 +77,15 @@ function snap(weight: number): RampWeight {
  */
 export function font(weight: number): Pick<TextStyle, 'fontFamily' | 'fontWeight'> {
   const w = snap(weight);
-  return { fontFamily: FONT_FAMILIES[w], fontWeight: String(w) as TextStyle['fontWeight'] };
+  // Read at CALL time, not at module load. Every call site is inside a
+  // `makeStyles(t)` factory that already re-runs under `useMemo` when the
+  // palette changes, so resolving here is what makes the family follow it.
+  // Freezing the family at import is the bug this replaced: the palette
+  // switched and the typeface did not.
+  return {
+    fontFamily: RAMPS[currentThemeName()][w],
+    fontWeight: String(w) as TextStyle['fontWeight'],
+  };
 }
 
 /**
@@ -56,13 +100,26 @@ export const TABULAR = { fontVariant: ['tabular-nums'] } as const satisfies Text
  * hero 44 · h2 24 · section 15 · body 13 · helper 11 · kicker 11 uppercase.
  * Sizes only where the design fixes them; colour stays with the screen.
  */
-export const TYPE = {
-  hero: { fontSize: 44, letterSpacing: -1, ...font(800), ...TABULAR },
-  h2: { fontSize: 24, ...font(800) },
-  section: { fontSize: 15, ...font(800) },
-  body: { fontSize: 13, ...font(400) },
-  bodyStrong: { fontSize: 13, ...font(600) },
-  helper: { fontSize: 11, ...font(400) },
+/**
+ * The scale, verbatim from the handoffs. A getter per entry rather than a
+ * plain object: `TYPE.body` is read inside style factories at render, so the
+ * family resolves against the palette that is actually active. A frozen object
+ * would bake in whichever one happened to be selected when the module loaded.
+ */
+const SCALE = {
+  hero: () => ({ fontSize: 44, letterSpacing: -1, ...font(800), ...TABULAR }),
+  h2: () => ({ fontSize: 24, ...font(800) }),
+  section: () => ({ fontSize: 15, ...font(800) }),
+  body: () => ({ fontSize: 13, ...font(400) }),
+  bodyStrong: () => ({ fontSize: 13, ...font(600) }),
+  helper: () => ({ fontSize: 11, ...font(400) }),
   /** 11px uppercase, .1em tracking. The colour is accent-700 wherever it is used. */
-  kicker: { fontSize: 11, letterSpacing: 1.1, textTransform: 'uppercase', ...font(600) },
-} as const satisfies Record<string, TextStyle>;
+  kicker: () => ({ fontSize: 11, letterSpacing: 1.1, textTransform: 'uppercase', ...font(600) }),
+} satisfies Record<string, () => TextStyle>;
+
+export const TYPE = new Proxy({} as Record<keyof typeof SCALE, TextStyle>, {
+  get: (_t, key: string) => SCALE[key as keyof typeof SCALE]?.(),
+  has: (_t, key: string) => key in SCALE,
+  ownKeys: () => Reflect.ownKeys(SCALE),
+  getOwnPropertyDescriptor: () => ({ enumerable: true, configurable: true }),
+});

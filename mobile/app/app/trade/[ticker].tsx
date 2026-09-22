@@ -1,63 +1,77 @@
 /**
- * Karar detayı — one decision, in full.
+ * Karar detayı — one decision, in full, in Aurora.
  *
  * Reached by tapping a row on Ajanlar (or "Tam detay →" from Sor / Emirler).
  * Read-only by design: approving or rejecting happens on Emirler, where the
  * order — not the decision — lives.
  *
- * What changed against the handoff:
+ * What the Aurora port changed, and what it deliberately did not.
  *
- *  - The stat block is the six-cell ruled grid the design specifies (Giriş,
- *    Stop, Kâr al, Hedef, Vade, Boyut) between two 2px rules, not four figures
- *    in a row with Vade and Boyut trailing underneath as prose. Six cells on a
- *    three-column grid is the same shape the order detail uses, so the numbers
- *    a trader compares sit in the same places on both screens.
- *  - The council row was missing entirely.
- *  - The screen padding is the mobile 20 / 16 the system uses everywhere else;
- *    this one was on 24 all round.
+ * Changed — the DRAWING only. The six figures that were two 2px rules with
+ * bare cells between them are now the prototype's ruled card: one `Card` with
+ * a three-column grid of `StatCell`s, the same cell the Bugün hero and the
+ * approve sheet use, so a number sits in the same shape wherever it appears.
+ * Agent analyses and the debate move onto cards as well; the PM output becomes
+ * the one inverted slab on the screen, which is how the prototype marks the
+ * sentence that actually decided something. Headings go through
+ * `SectionHeader`, chips through `Tag`, radius/spacing through `useShape`.
  *
- * Every figure goes through `@/utils/format`, every token/latency through
- * `@/utils/decision`, and the rating and model marks through `@/theme/rating`.
- * Nothing here re-states a rule one of those already encodes.
+ * Not changed — the RULES. Every figure still goes through `@/utils/format`,
+ * every token/latency through `@/utils/decision`, the council chips through
+ * `councilChips`, and the rating/model marks through `@/theme/rating`. The
+ * error branch is still separate from the empty branch: "Karar bulunamadı." is
+ * an assertion that the council never rated this ticker, and a refused read
+ * must not be allowed to manufacture it.
+ *
+ * Two affordances the prototype has and this screen did not: the chart button
+ * beside the ticker and "Yeniden analiz et" under the PM output. Both are pure
+ * navigation to routes that already take `?ticker=` (`/(tabs)/charts`,
+ * `/(tabs)/ask`) — no new rule, no new request shape.
  */
 
 import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import Svg, { Path } from 'react-native-svg';
 
 import { useMemo } from 'react';
 
 import { useDecision, useDecisions } from '@/api/hooks';
 import { ErrorState } from '@/components/ErrorState';
-import { useTheme } from '@/theme/useTheme';
-import { ratingChip, modelBadge } from '@/theme/rating';
+import { Card } from '@/components/Card';
+import { SectionHeader } from '@/components/SectionHeader';
+import { StatCell } from '@/components/StatCell';
 import { Tag } from '@/components/Tag';
+import { useTheme } from '@/theme/useTheme';
+import { useShape, type Shape } from '@/theme/shape';
+import { ratingVariant, modelBadge } from '@/theme/rating';
 import { formatUsd, formatPct } from '@/utils/format';
-import { formatTokens, formatLatency, debateEntries, debateRoleLabel,
+import {
+  formatTokens,
+  formatLatency,
+  debateEntries,
+  debateRoleLabel,
   councilChips,
 } from '@/utils/decision';
 import { formatOrderDate } from '@/utils/orders';
 import { MIN_TOUCH_TARGET } from '@/utils/a11y';
-import { font, TABULAR } from '@/theme/type';
+import { TYPE, TABULAR, font } from '@/theme/type';
 
 type Palette = ReturnType<typeof useTheme>;
 
 /**
- * Which models ruled on this name, and how many agents each carried.
- *
- * The prototype chips a per-model VOTE here off a `council: {votes, chair,
- * confidence}` block. `AgentDecision` carries no such field — the council is
- * opt-in, off by default, and only the chair's rating reaches the wire — so
- * these chips report participation, labelled "ajan", and never imply a second
- * opinion the backend did not send. Same derivation as the Ajanlar list, which
- * is why it wants to live in `src/utils/decision.ts` rather than in two route
- * files (see `needs`).
+ * The floating tab bar's clearance. Stated here rather than imported from the
+ * shell: a route module's exports are the router's namespace, not a place to
+ * hang shared constants. Same number the Bugün screen uses.
  */
+const TAB_BAR_CLEARANCE = 72;
+
 export default function DecisionDetailScreen() {
-  const { t } = useTranslation();
-  const theme = useTheme();
-  const styles = useMemo(() => makeStyles(theme), [theme]);
+  const { t: tr } = useTranslation();
+  const t = useTheme();
+  const sh = useShape();
+  const styles = useMemo(() => makeStyles(t, sh), [t, sh]);
   const { ticker } = useLocalSearchParams<{ ticker: string }>();
   const router = useRouter();
   const { data, isLoading, isError, error, refetch } = useDecisions({ ticker, limit: 1 });
@@ -88,14 +102,14 @@ export default function DecisionDetailScreen() {
       ]
     : [];
 
-  const chip = decision ? ratingChip(theme, decision.rating) : null;
+  const shown = decision?.ticker ?? ticker;
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      <ScrollView contentContainerStyle={styles.scroll}>
+    <SafeAreaView style={styles.screen} edges={['top']}>
+      <ScrollView contentContainerStyle={styles.content}>
         <Pressable
           onPress={() => router.back()}
-          style={styles.back}
+          style={({ pressed }) => [styles.back, pressed && styles.backPressed]}
           accessibilityRole="button"
           accessibilityLabel="Ajanlar listesine dön"
         >
@@ -109,206 +123,277 @@ export default function DecisionDetailScreen() {
              not allowed to see. A failed read and an empty result must not
              share a branch here. */
           <>
-            <Text style={styles.title}>{ticker}</Text>
+            <Text style={styles.title} accessibilityRole="header">
+              {ticker}
+            </Text>
             <ErrorState
               title="Karar okunamadı"
               detail={error}
               onRetry={() => void refetch()}
             />
           </>
-        ) : isLoading || !decision || !chip ? (
+        ) : isLoading || !decision ? (
           <>
-            <Text style={styles.title}>{ticker}</Text>
-            <Text style={styles.muted}>{isLoading ? 'Yükleniyor…' : 'Karar bulunamadı.'}</Text>
+            <Text style={styles.title} accessibilityRole="header">
+              {ticker}
+            </Text>
+            <Card tone="dashed" style={styles.slot}>
+              <Text style={styles.slotText}>
+                {isLoading ? 'Yükleniyor…' : 'Karar bulunamadı.'}
+              </Text>
+            </Card>
           </>
         ) : (
           <>
             <View style={styles.titleRow}>
-              <Text style={styles.title}>{decision.ticker}</Text>
+              <Text style={styles.title} accessibilityRole="header">
+                {shown}
+              </Text>
               {/* The rating used to render as plain body ink here, so the one
                   screen that shows the FULL reasoning was also the one that
-                  dropped the buy/hold/sell encoding. Same chip as everywhere. */}
-              {/* `ratingChip` returns `background`, not `backgroundColor` —
-                  a CSS name, because the web prototype it was ported from
-                  writes CSS. Spreading it straight into a View style dropped
-                  the fill on native (RN ignores the unknown key), and a Buy
-                  chip draws its text in `t.background`, so the rating rendered
-                  as ground-on-ground: invisible. Mapped explicitly, the way
-                  orders.tsx and approve/[orderId].tsx already do it. */}
-              <View
-                style={[
-                  styles.ratingChip,
-                  { backgroundColor: chip.background, borderColor: chip.borderColor ?? 'transparent' },
-                ]}
+                  dropped the buy/hold/sell encoding. Same chip as everywhere —
+                  and via `Tag`, so the fill/ink pairing lives in one place
+                  rather than being mapped by hand on five screens. */}
+              <Tag label={decision.rating} variant={ratingVariant(decision.rating)} caps />
+              <Pressable
+                onPress={() => router.push(`/(tabs)/charts?ticker=${shown}` as never)}
+                style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
+                accessibilityRole="button"
+                accessibilityLabel={`${shown} grafiğini aç`}
               >
-                <Text style={[styles.ratingText, { color: chip.color }]}>{decision.rating}</Text>
-              </View>
+                <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+                  <Path
+                    d="M3 3v18h18"
+                    stroke={t.textPrimary}
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <Path
+                    d="M7 14l4-5 4 3 5-7"
+                    stroke={t.textPrimary}
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </Svg>
+              </Pressable>
             </View>
 
             <Text style={styles.timestamp}>{formatOrderDate(decision.timestamp_utc)}</Text>
 
-            <View style={styles.grid}>
-              {cells.map(([label, value]) => (
-                <View key={label} style={styles.cell}>
-                  <Text style={styles.cellLabel}>{label}</Text>
-                  <Text style={styles.cellValue}>{value}</Text>
-                </View>
-              ))}
-            </View>
+            {/* The prototype's ruled six-up, now a card: three columns, so cell
+                four sits under cell one whatever the label lengths. Percentage
+                widths rather than flex, for the same reason. */}
+            <Card style={styles.gridCard}>
+              <View style={styles.grid}>
+                {cells.map(([label, value]) => (
+                  <View key={label} style={styles.cell}>
+                    <StatCell label={label} value={value} size="sm" />
+                  </View>
+                ))}
+              </View>
+            </Card>
 
             <View style={styles.council}>
               <Text style={styles.councilLabel}>Konsey</Text>
-              {councilChips(decision.reasoning, (m) => modelBadge(theme, m).label).map((label) => (
-                <Tag key={label} label={label} variant="neutral" />
+              {councilChips(decision.reasoning, (m) => modelBadge(t, m).label).map((label) => (
+                <Tag key={label} label={label} variant="neutral" size="sm" numeric />
               ))}
             </View>
 
             {decision.reasoning?.length ? (
               <>
-                <View style={styles.sectionHead}>
-                  <Text style={styles.section}>Ajan analizleri</Text>
-                  <Text style={styles.sectionMeta}>~{formatTokens(totalTokens)} token</Text>
-                </View>
-                {decision.reasoning.map((r, i) => {
-                  const badge = modelBadge(theme, r.model);
-                  return (
-                    <View key={`${decision.decision_id}-${i}`} style={styles.agentCard}>
-                      <View style={styles.agentHead}>
-                        <Text style={styles.agentName}>{r.agent}</Text>
-                        <Text style={[styles.badge, { color: badge.color, borderColor: badge.color }]}>
-                          {badge.label}
+                <SectionHeader
+                  title="Ajan analizleri"
+                  count={`~${formatTokens(totalTokens)} token`}
+                />
+                <Card padded={false} style={styles.listCard}>
+                  {decision.reasoning.map((r, i) => {
+                    const badge = modelBadge(t, r.model);
+                    const last = i === decision.reasoning.length - 1;
+                    return (
+                      <View
+                        key={`${decision.decision_id}-${i}`}
+                        style={[styles.agentRow, last && styles.rowLast]}
+                      >
+                        <View style={styles.agentHead}>
+                          <Text style={styles.agentName}>{r.agent}</Text>
+                          {/* Outlined, so the model reads as metadata rather
+                              than as a second rating. */}
+                          <View style={[styles.badge, { borderColor: badge.color }]}>
+                            <Text style={[styles.badgeText, { color: badge.color }]}>
+                              {badge.label}
+                            </Text>
+                          </View>
+                        </View>
+                        <Text style={styles.agentBody}>{r.summary}</Text>
+                        <Text style={styles.agentMeta}>
+                          {formatTokens(r.tokens_in)}↓ / {formatTokens(r.tokens_out)}↑ token ·{' '}
+                          {formatLatency(r.latency_ms)}
                         </Text>
                       </View>
-                      <Text style={styles.agentBody}>{r.summary}</Text>
-                      <Text style={styles.agentMeta}>
-                        {formatTokens(r.tokens_in)}↓ / {formatTokens(r.tokens_out)}↑ token ·{' '}
-                        {formatLatency(r.latency_ms)}
-                      </Text>
-                    </View>
-                  );
-                })}
+                    );
+                  })}
+                </Card>
               </>
             ) : null}
 
             {debate.length ? (
               <>
-                <View style={styles.sectionHead}>
-                  <Text style={styles.section}>Tartışma</Text>
+                <SectionHeader title="Tartışma" />
+                <View style={styles.debateList}>
+                  {debate.map((entry) => (
+                    <Card key={entry.role}>
+                      <Text style={styles.debateRole}>{debateRoleLabel(entry.role)}</Text>
+                      <Text style={styles.body}>{entry.text}</Text>
+                    </Card>
+                  ))}
                 </View>
-                {debate.map((entry) => (
-                  <View key={entry.role} style={styles.debateCard}>
-                    <Text style={styles.debateRole}>{debateRoleLabel(entry.role)}</Text>
-                    <Text style={styles.body}>{entry.text}</Text>
-                  </View>
-                ))}
               </>
             ) : null}
 
-            <View style={styles.sectionHead}>
-              <Text style={styles.section}>Portföy yöneticisi çıktısı</Text>
+            <SectionHeader title="Portföy yöneticisi çıktısı" />
+            {/* The one inverted slab on the screen. The prototype fills it with
+                `--ink` and writes on it in `--inkInv`, which under Aurora is a
+                light card with dark text on a dark page: the sentence that
+                actually decided something, and the only one drawn that way. */}
+            <View style={styles.pm}>
+              <Text style={styles.pmText}>
+                {decision.final_decision_text_tr ??
+                  decision.final_decision_text ??
+                  '(PM metni yok)'}
+              </Text>
             </View>
-            <Text style={styles.body}>
-              {decision.final_decision_text_tr ??
-                decision.final_decision_text ??
-                '(PM metni yok)'}
-            </Text>
+
+            <Pressable
+              onPress={() => router.push(`/(tabs)/ask?ticker=${shown}` as never)}
+              style={({ pressed }) => [styles.askButton, pressed && styles.askPressed]}
+              accessibilityRole="button"
+              accessibilityLabel={`${shown} için yeniden analiz çalıştır`}
+            >
+              <Text style={styles.askLabel}>Yeniden analiz et</Text>
+            </Pressable>
 
             <Text style={styles.note}>
-              Onay/red, emir bekleyen listeye düştüğünde Emirler'den yapılır.
+              Onay / red, emir bekleyen listeye düştüğünde Emirler&apos;den yapılır.
             </Text>
           </>
         )}
 
-        <Text style={styles.disclaimer}>{t('disclaimer.short')}</Text>
+        <Text style={styles.disclaimer}>{tr('disclaimer.short')}</Text>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-const makeStyles = (t: Palette) =>
+const makeStyles = (t: Palette, sh: Shape) =>
   StyleSheet.create({
-    container: { flex: 1, backgroundColor: t.background },
-    scroll: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 24 },
+    screen: { flex: 1, backgroundColor: t.background },
+    content: { paddingHorizontal: sh.space[3], paddingBottom: TAB_BAR_CLEARANCE },
 
     // 44pt, per the handoff — the back button on a money screen is a real target.
-    back: { alignSelf: 'flex-start', minHeight: MIN_TOUCH_TARGET, justifyContent: 'center' },
-    backText: { color: t.textPrimary, fontSize: 13, ...font(800) },
-
-    titleRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-    // 34px, the size the mobile prototype gives this heading — between h2 and
-    // the hero figure, because the ticker IS the screen here.
-    title: { color: t.textPrimary, fontSize: 34, ...font(800) },
-    ratingChip: { paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: 'transparent' },
-    ratingText: { fontSize: 13, ...font(800), letterSpacing: 0.4 },
-    timestamp: { color: t.textSecondary, fontSize: 11, marginTop: 4, ...font(400) },
-
-    // The six-cell grid, ruled top and bottom at 2px. Percentage widths rather
-    // than flex, so cell four sits under cell one whatever the label lengths.
-    grid: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      rowGap: 12,
-      marginTop: 14,
-      paddingVertical: 14,
-      borderTopWidth: 2,
-      borderBottomWidth: 2,
-      borderColor: t.divider,
+    back: {
+      alignSelf: 'flex-start',
+      minHeight: MIN_TOUCH_TARGET,
+      justifyContent: 'center',
+      paddingRight: sh.space[1],
     },
-    cell: { width: '33.333%', paddingRight: 8 },
-    cellLabel: { color: t.textSecondary, fontSize: 11, ...font(400) },
-    cellValue: { color: t.textPrimary, fontSize: 15, marginTop: 2, ...font(800), ...TABULAR },
+    backPressed: { opacity: 0.6 },
+    backText: { ...TYPE.body, ...font(600), color: t.ink2 ?? t.textSecondary },
+
+    titleRow: { flexDirection: 'row', alignItems: 'center', gap: sh.space[2] },
+    // 34px, the size the prototype gives this heading — between h2 and the hero
+    // figure, because the ticker IS the screen here.
+    title: { ...TYPE.h2, fontSize: 34, letterSpacing: -1, color: t.textPrimary },
+    // 40px in the prototype; 44 here, because it is a real tap target.
+    iconButton: {
+      marginLeft: 'auto',
+      width: MIN_TOUCH_TARGET,
+      height: MIN_TOUCH_TARGET,
+      borderRadius: sh.radius,
+      borderWidth: sh.hairline,
+      borderColor: t.line ?? t.divider,
+      backgroundColor: t.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    iconButtonPressed: { borderColor: t.brand ?? t.accent },
+    timestamp: { ...TYPE.helper, color: t.ink3 ?? t.textMuted, marginTop: 2 },
+
+    gridCard: { marginTop: sh.space[2], paddingVertical: sh.space[2] },
+    grid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: sh.space[2] },
+    cell: { width: '33.333%', paddingRight: sh.space[1] },
 
     council: {
       flexDirection: 'row',
       flexWrap: 'wrap',
       alignItems: 'center',
-      gap: 6,
-      marginTop: 14,
+      gap: sh.space[0] + 2,
+      marginTop: sh.space[2],
     },
-    councilLabel: { color: t.textSecondary, fontSize: 11, ...font(400) },
+    councilLabel: { ...TYPE.helper, color: t.ink3 ?? t.textMuted },
 
-    // The rule belongs to the ROW, not to the label: inside a row a Text sizes
-    // to its content, so an underline on the label stops at the last letter
-    // while every other section rule on the screen spans the column.
-    sectionHead: {
-      flexDirection: 'row',
-      alignItems: 'baseline',
-      justifyContent: 'space-between',
-      marginTop: 24,
-      marginBottom: 8,
-      borderBottomWidth: 2,
-      borderBottomColor: t.divider,
-      paddingBottom: 6,
+    listCard: { paddingHorizontal: sh.space[3] },
+    agentRow: {
+      paddingVertical: sh.space[2],
+      gap: sh.space[0] + 2,
+      borderBottomWidth: sh.hairline,
+      borderBottomColor: t.line ?? t.divider,
     },
-    section: { color: t.textPrimary, fontSize: 15, ...font(800) },
-    sectionMeta: { color: t.textSecondary, fontSize: 11, ...TABULAR, ...font(400) },
-
-    agentCard: { paddingVertical: 12, gap: 6, borderBottomWidth: 1, borderBottomColor: t.divider },
-    agentHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    agentName: { color: t.textPrimary, fontSize: 13, ...font(800) },
-    // Model tag: outlined, so it reads as metadata rather than as a rating.
+    rowLast: { borderBottomWidth: 0 },
+    agentHead: { flexDirection: 'row', alignItems: 'center', gap: sh.space[1], flexWrap: 'wrap' },
+    agentName: { ...TYPE.bodyStrong, ...font(800), color: t.textPrimary },
     badge: {
-      fontSize: 10,
-      ...font(800),
-      borderWidth: 1,
-      paddingHorizontal: 6,
+      borderWidth: sh.hairline,
+      borderRadius: sh.radiusPill,
+      paddingHorizontal: 7,
       paddingVertical: 1,
-      overflow: 'hidden',
     },
-    agentBody: { color: t.textSecondary, fontSize: 13, lineHeight: 19, ...font(400) },
-    agentMeta: { color: t.textSecondary, fontSize: 11, ...TABULAR, ...font(400) },
+    badgeText: { fontSize: 10, ...font(800) },
+    agentBody: { ...TYPE.body, lineHeight: 20, color: t.ink2 ?? t.textSecondary },
+    agentMeta: { ...TYPE.helper, ...TABULAR, color: t.ink3 ?? t.textMuted },
 
-    debateCard: { paddingVertical: 12, gap: 4, borderBottomWidth: 1, borderBottomColor: t.divider },
-    debateRole: { color: t.textPrimary, fontSize: 13, ...font(800) },
-    body: { color: t.textSecondary, fontSize: 13, lineHeight: 20, ...font(400) },
+    debateList: { gap: sh.space[1] },
+    // 11px uppercase kicker, as the prototype stamps the role.
+    debateRole: { ...TYPE.kicker, color: t.ink3 ?? t.textMuted, marginBottom: sh.space[0] },
+    body: { ...TYPE.body, lineHeight: 20, color: t.textPrimary },
 
-    muted: { color: t.textSecondary, fontSize: 13, marginTop: 8, ...font(400) },
-    note: { color: t.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 16, ...font(400) },
+    pm: {
+      backgroundColor: t.ink ?? t.textPrimary,
+      borderRadius: sh.radius,
+      paddingHorizontal: sh.space[3],
+      paddingVertical: sh.space[2] + 4,
+    },
+    pmText: { ...TYPE.body, lineHeight: 21, color: t.inkInv ?? t.background },
+
+    askButton: {
+      marginTop: sh.space[2],
+      minHeight: MIN_TOUCH_TARGET,
+      borderRadius: sh.radius,
+      borderWidth: sh.hairline,
+      borderColor: t.line2 ?? t.divider,
+      backgroundColor: t.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    askPressed: { borderColor: t.brand ?? t.accent },
+    askLabel: { ...TYPE.bodyStrong, ...font(800), color: t.textPrimary },
+
+    slot: { marginTop: sh.space[2], paddingVertical: sh.space[4], alignItems: 'center' },
+    slotText: { ...TYPE.body, color: t.ink2 ?? t.textSecondary, textAlign: 'center' },
+
+    note: {
+      ...TYPE.helper,
+      lineHeight: 16,
+      color: t.ink3 ?? t.textMuted,
+      marginTop: sh.space[3],
+    },
     disclaimer: {
-      color: t.textSecondary,
-      fontSize: 11,
-      paddingVertical: 20,
+      ...TYPE.helper,
+      lineHeight: 16,
+      color: t.ink3 ?? t.textMuted,
       textAlign: 'center',
-      ...font(400),
+      marginTop: sh.space[3],
     },
   });

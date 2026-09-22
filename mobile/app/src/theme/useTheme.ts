@@ -14,6 +14,7 @@ import { create } from 'zustand';
 import * as SecureStore from '@/utils/storage';
 
 import { type Colors, type ThemeName, themes } from './colors';
+import { bindThemeName } from './type';
 
 const STORAGE_KEY = 'theme_v1';
 
@@ -23,10 +24,11 @@ interface ThemeState {
 }
 
 const useThemeStore = create<ThemeState>((set) => ({
-  // Modernist is the design the handoff specifies, so it is what the migrated
-  // screens open in. Flipping this back to 'dark' should leave every migrated
-  // screen coherent — if it does not, a hard-coded colour has crept in.
-  name: 'modernist',
+  // Aurora is the current design. Flipping this to 'modernist' or 'dark'
+  // should leave every migrated screen coherent — if it does not, a hard-coded
+  // colour or radius has crept in, which is the whole reason the palette and
+  // the shape are read rather than written.
+  name: 'aurora',
   setTheme: (name) => {
     set({ name });
     // Write-behind, same as the inbox store — SecureStore is the only storage
@@ -36,6 +38,11 @@ const useThemeStore = create<ThemeState>((set) => ({
     void SecureStore.setItemAsync(STORAGE_KEY, name).catch(() => {});
   },
 }));
+
+// `font()` in type.ts resolves the family at call time and needs the active
+// name without going through React. Bound here, next to the store, so there is
+// one source of truth for what "active" means.
+bindThemeName(() => useThemeStore.getState().name);
 
 /** The active palette. */
 export function useTheme(): Colors & Record<string, string> {
@@ -63,7 +70,9 @@ export function getTheme(): Colors & Record<string, string> {
 export async function hydrateTheme(): Promise<void> {
   try {
     const saved = await SecureStore.getItemAsync(STORAGE_KEY);
-    if (saved === 'dark' || saved === 'modernist') useThemeStore.setState({ name: saved });
+    if (saved === 'dark' || saved === 'modernist' || saved === 'aurora') {
+      useThemeStore.setState({ name: saved });
+    }
   } catch {
     // Keep the default.
   }

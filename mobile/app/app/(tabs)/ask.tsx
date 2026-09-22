@@ -3,10 +3,10 @@
  *
  * The screen used to be a single input with one result card underneath, so the
  * second question erased the answer to the first. The handoff specifies a chat:
- * the questions asked stay on screen as right-aligned surface boxes, each answer
- * opens with the PM kicker, and the composer lives at the bottom under a 2px
- * rule. Nothing about the request changes — `useStartAnalysis` fires the job and
- * `useAnalysisJob` polls it exactly as before; the terminal state is appended to
+ * the questions asked stay on screen as right-aligned ink pills, each answer
+ * opens with the PM kicker on its own card, and the composer lives at the
+ * bottom under the section rule. Nothing about the request changes —
+ * `useStartAnalysis` fires the job and `useAnalysisJob` polls it as before; the terminal state is appended to
  * the stream instead of replacing the one card the screen could hold.
  *
  * State is the handoff's `chat{messages,input,busy,status}`. `busy`/`status` are
@@ -27,6 +27,7 @@ import {
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Svg, { Path } from 'react-native-svg';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { HTTPError } from 'ky';
@@ -40,9 +41,13 @@ import {
   type MoverUniverse,
 } from '@/api/useTickerSearch';
 import { ErrorState } from '@/components/ErrorState';
+import { Card } from '@/components/Card';
+import { DataRow } from '@/components/DataRow';
+import { StatCell } from '@/components/StatCell';
 import { statusLine } from '@/utils/askStatus';
 import type { AgentDecision, } from '@/api/types';
 import { useTheme } from '@/theme/useTheme';
+import { useShape, type Shape } from '@/theme/shape';
 import { ratingChip, modelBadge } from '@/theme/rating';
 import { font, TABULAR, TYPE } from '@/theme/type';
 import { formatPct, formatUsd } from '@/utils/format';
@@ -106,9 +111,12 @@ function pmModel(decision: AgentDecision | null | undefined): string | null {
 }
 
 export default function AskScreen() {
-  const { t } = useTranslation();
-  const theme = useTheme();
-  const styles = useMemo(() => makeStyles(theme), [theme]);
+  // `t` is the palette everywhere in this file, as in every other Aurora
+  // screen; the translator takes the short name instead.
+  const { t: tr } = useTranslation();
+  const t = useTheme();
+  const sh = useShape();
+  const styles = useMemo(() => makeStyles(t, sh), [t, sh]);
   const router = useRouter();
   const params = useLocalSearchParams<{ ticker?: string }>();
 
@@ -277,10 +285,10 @@ export default function AskScreen() {
   const isEmpty = chat.messages.length === 0 && !chat.busy;
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.screen} edges={['top']}>
       {/*
         No `keyboardVerticalOffset`: the tab bar is a flex SIBLING of the
-        screen (bottom-tabs renders it below the scene container, not over it),
+        screen (the shell renders it below the scene container, not over it),
         so this view's frame already ends at the bar's top edge and the padding
         RN computes — keyboard height minus that gap — is exactly right. A
         positive offset is ADDED to that padding, so passing the bar's height
@@ -291,7 +299,9 @@ export default function AskScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <View style={styles.header}>
-          <Text style={styles.heading}>Sor</Text>
+          <Text style={styles.heading} accessibilityRole="header">
+            Sor
+          </Text>
           <Text style={styles.subheading}>
             Bir hisse gir — 7 ajanlı pipeline analiz eder. Sadece analiz, emir göndermez.
           </Text>
@@ -306,11 +316,12 @@ export default function AskScreen() {
         >
           {isEmpty ? (
             <>
+              <Text style={styles.emptyKicker}>Sık kullanılanlar</Text>
               <View style={styles.chips}>
                 {CHIPS.map((c) => (
                   <Pressable
                     key={c}
-                    style={styles.chip}
+                    style={({ pressed }) => [styles.chip, pressed && styles.chipPressed]}
                     onPress={() => runAnalysis(c)}
                     accessibilityRole="button"
                     accessibilityLabel={`${c} analiz et`}
@@ -323,116 +334,156 @@ export default function AskScreen() {
               {/* The board, not a list of names. The first version showed
                   sixty symbols and their company names, which answers "which
                   stocks exist" rather than "what moved today" — the question
-                  every market screen answers and the one that was asked. */}
-              <View style={styles.browseBlock}>
-                <View style={styles.browseHead}>
-                  <Text style={styles.browseTitle}>Piyasa</Text>
-                  <Pressable
-                    onPress={() => setBrowseOpen((v) => !v)}
-                    style={styles.browseToggle}
-                    accessibilityRole="button"
-                    accessibilityLabel={browseOpen ? 'Piyasa tablosunu kapat' : 'Piyasa tablosunu aç'}
-                    accessibilityState={{ expanded: browseOpen }}
+                  every market screen answers and the one that was asked.
+                  Aurora draws the entry as the prototype's market card: the
+                  brand-tinted glyph, the two-line label, a caret that turns. */}
+              <Pressable
+                onPress={() => setBrowseOpen((v) => !v)}
+                style={({ pressed }) => [
+                  styles.marketCard,
+                  pressed && styles.marketCardPressed,
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel={browseOpen ? 'Piyasa tablosunu kapat' : 'Piyasa tablosunu aç'}
+                accessibilityState={{ expanded: browseOpen }}
+              >
+                <View style={styles.marketIcon}>
+                  <Svg
+                    width={20}
+                    height={20}
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke={t.brand ?? t.accent}
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
                   >
-                    <Text style={styles.browseToggleText}>
-                      {browseOpen ? 'Kapat' : 'Tabloyu aç →'}
-                    </Text>
-                  </Pressable>
+                    <Path d="M22 7 13.5 15.5 8.5 10.5 2 17" />
+                    <Path d="M16 7h6v6" />
+                  </Svg>
                 </View>
+                <View style={styles.marketText}>
+                  <Text style={styles.marketTitle}>Piyasa tahtası</Text>
+                  <Text style={styles.marketSub} numberOfLines={1}>
+                    Yükselenler, düşenler ve en çok işlem görenler
+                  </Text>
+                </View>
+                <View style={browseOpen ? styles.caretOpen : undefined}>
+                  <Svg
+                    width={16}
+                    height={16}
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke={t.ink3 ?? t.textMuted}
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <Path d="m9 18 6-6-6-6" />
+                  </Svg>
+                </View>
+              </Pressable>
 
-                {browseOpen ? (
-                  <>
-                    <View style={styles.moverTabs}>
-                      {(
-                        [
-                          ['volume', 'En çok işlem'],
-                          ['gainers', 'Yükselenler'],
-                          ['losers', 'Düşenler'],
-                        ] as const
-                      ).map(([key, label]) => (
-                        <Pressable
-                          key={key}
-                          style={[styles.moverTab, sort === key && styles.moverTabOn]}
-                          onPress={() => setSort(key)}
-                          accessibilityRole="button"
-                          accessibilityLabel={label}
-                          accessibilityState={{ selected: sort === key }}
-                        >
-                          <Text style={[styles.moverTabText, sort === key && styles.moverTabTextOn]}>
-                            {label}
-                          </Text>
-                        </Pressable>
-                      ))}
-                      {/* Defaults ON. Unfiltered, the gainers board is penny
-                          stocks — a real session had an $8 name at +179% — and
-                          a screen whose top row is that is one the operator
-                          learns to ignore. */}
+              {browseOpen ? (
+                <View style={styles.board}>
+                  <View style={styles.moverTabs}>
+                    {(
+                      [
+                        ['volume', 'En çok işlem'],
+                        ['gainers', 'Yükselenler'],
+                        ['losers', 'Düşenler'],
+                      ] as const
+                    ).map(([key, label]) => (
                       <Pressable
-                        style={[styles.moverTab, universe === 'sp500' && styles.moverTabOn]}
-                        onPress={() => setUniverse((u) => (u === 'sp500' ? 'all' : 'sp500'))}
+                        key={key}
+                        style={[styles.moverTab, sort === key && styles.moverTabOn]}
+                        onPress={() => setSort(key)}
                         accessibilityRole="button"
-                        accessibilityLabel="Sadece S&P 500"
-                        accessibilityState={{ selected: universe === 'sp500' }}
+                        accessibilityLabel={label}
+                        accessibilityState={{ selected: sort === key }}
                       >
-                        <Text
-                          style={[
-                            styles.moverTabText,
-                            universe === 'sp500' && styles.moverTabTextOn,
-                          ]}
-                        >
-                          S&P 500
+                        <Text style={[styles.moverTabText, sort === key && styles.moverTabTextOn]}>
+                          {label}
                         </Text>
                       </Pressable>
-                    </View>
+                    ))}
+                    {/* Defaults ON. Unfiltered, the gainers board is penny
+                        stocks — a real session had an $8 name at +179% — and
+                        a screen whose top row is that is one the operator
+                        learns to ignore. */}
+                    <Pressable
+                      style={[styles.moverTab, universe === 'sp500' && styles.moverTabOn]}
+                      onPress={() => setUniverse((u) => (u === 'sp500' ? 'all' : 'sp500'))}
+                      accessibilityRole="button"
+                      accessibilityLabel="Sadece S&P 500"
+                      accessibilityState={{ selected: universe === 'sp500' }}
+                    >
+                      <Text
+                        style={[
+                          styles.moverTabText,
+                          universe === 'sp500' && styles.moverTabTextOn,
+                        ]}
+                      >
+                        S&P 500
+                      </Text>
+                    </Pressable>
+                  </View>
 
-                    {moversError ? (
-                      <ErrorState
-                        title="Piyasa verisi alınamadı"
-                        detail={moversError}
-                        onRetry={() => void refetchMovers()}
-                      />
-                    ) : moversLoading ? (
-                      <Text style={styles.browseHint}>Yükleniyor…</Text>
-                    ) : (
-                      (movers ?? []).map((m) => (
-                        <Pressable
+                  {moversError ? (
+                    <ErrorState
+                      title="Piyasa verisi alınamadı"
+                      detail={moversError}
+                      onRetry={() => void refetchMovers()}
+                    />
+                  ) : moversLoading ? (
+                    <Text style={styles.hint}>Yükleniyor…</Text>
+                  ) : (movers ?? []).length === 0 ? (
+                    <Text style={styles.hint}>Gösterilecek hareket yok.</Text>
+                  ) : (
+                    <Card padded={false} clip>
+                      {(movers ?? []).map((m, i, arr) => (
+                        <DataRow
                           key={m.ticker}
-                          style={styles.moverRow}
+                          title={m.ticker}
+                          subtitle={m.name}
+                          divider={i < arr.length - 1}
                           onPress={() => runAnalysis(m.ticker)}
-                          accessibilityRole="button"
                           accessibilityLabel={`${m.ticker}, ${m.name}, ${m.change_pct.toFixed(2)} yüzde`}
                           accessibilityHint="Bu sembolü analiz eder"
-                        >
-                          <View style={styles.moverLeft}>
-                            <Text style={styles.moverTicker}>{m.ticker}</Text>
-                            <Text style={styles.moverName} numberOfLines={1}>
-                              {m.name}
-                            </Text>
-                          </View>
-                          <View style={styles.moverRight}>
-                            <Text style={styles.moverPrice}>{formatUsd(m.price)}</Text>
-                            <Text
-                              style={[
-                                styles.moverChange,
-                                {
-                                  color:
-                                    m.change_pct > 0
-                                      ? theme.up
-                                      : m.change_pct < 0
-                                        ? (theme.downText ?? theme.down)
-                                        : theme.textSecondary,
-                                },
-                              ]}
-                            >
-                              {formatPct(m.change_pct / 100, { signed: true })}
-                            </Text>
-                          </View>
-                        </Pressable>
-                      ))
-                    )}
-                  </>
-                ) : null}
-              </View>
+                          trailing={
+                            <View style={styles.moverRight}>
+                              <Text style={styles.moverPrice}>{formatUsd(m.price)}</Text>
+                              <Text
+                                style={[
+                                  styles.moverChange,
+                                  {
+                                    color:
+                                      m.change_pct > 0
+                                        ? t.up
+                                        : m.change_pct < 0
+                                          ? (t.downText ?? t.down)
+                                          : (t.ink2 ?? t.textSecondary),
+                                  },
+                                ]}
+                              >
+                                {formatPct(m.change_pct / 100, { signed: true })}
+                              </Text>
+                            </View>
+                          }
+                        />
+                      ))}
+                    </Card>
+                  )}
+                </View>
+              ) : null}
+
+              {/* What a question costs, said before it is asked. */}
+              <Card tone="recessed">
+                <Text style={styles.noteText}>
+                  Bir analiz yaklaşık 10 dakika sürer. Ajanların vardığı karar yalnız bilgi
+                  amaçlıdır; emir üretmez.
+                </Text>
+              </Card>
             </>
           ) : null}
 
@@ -444,55 +495,54 @@ export default function AskScreen() {
                 </View>
               </View>
             ) : m.failed ? (
-              <Text key={m.id} style={styles.errorLine}>
-                {m.text}
-              </Text>
+              <Card key={m.id} tone="outline">
+                <Text style={styles.errorLine}>{m.text}</Text>
+              </Card>
             ) : (
               <AgentMessage
                 key={m.id}
                 message={m}
                 styles={styles}
-                theme={theme}
+                theme={t}
                 onOpenDetail={(ticker) => router.push(`/trade/${ticker}` as never)}
               />
             ),
           )}
 
           {chat.busy ? (
-            <View style={styles.running} accessibilityLiveRegion="polite">
-              <BlinkSquare />
-              <Text style={styles.runningText}>{chat.status}</Text>
-            </View>
+            <Card>
+              <View style={styles.running} accessibilityLiveRegion="polite">
+                <BlinkSquare />
+                <Text style={styles.runningText}>{chat.status}</Text>
+              </View>
+            </Card>
           ) : null}
         </ScrollView>
 
-        {/* 2px rule, then the composer — the one control the screen always shows. */}
+        {/* The rule, then the composer — the one control the screen always shows. */}
         <View style={styles.composer}>
           {/* Matches from the whole US listing. Analysing any stock always
               worked; finding one did not, because this was a bare text box and
               the operator had to know the symbol already. Shown above the
               input so a tap lands where the thumb already is. */}
           {suggestions.length > 0 && !chat.busy ? (
-            <View style={styles.suggestions}>
-              {suggestions.map((hit) => (
-                <Pressable
+            <Card padded={false} clip style={styles.suggestions}>
+              {suggestions.map((hit, i) => (
+                <DataRow
                   key={hit.ticker}
-                  style={styles.suggestion}
+                  title={hit.ticker}
+                  subtitle={hit.name}
+                  chevron={false}
+                  divider={i < suggestions.length - 1}
                   onPress={() => {
                     setChat((c) => ({ ...c, input: hit.ticker }));
                     void runAnalysis(hit.ticker);
                   }}
-                  accessibilityRole="button"
                   accessibilityLabel={`${hit.ticker}, ${hit.name}`}
                   accessibilityHint="Bu sembolü analiz eder"
-                >
-                  <Text style={styles.suggestionTicker}>{hit.ticker}</Text>
-                  <Text style={styles.suggestionName} numberOfLines={1}>
-                    {hit.name}
-                  </Text>
-                </Pressable>
+                />
               ))}
-            </View>
+            </Card>
           ) : null}
           <View style={styles.inputRow}>
             <TextInput
@@ -500,7 +550,7 @@ export default function AskScreen() {
               value={chat.input}
               onChangeText={(v) => setChat((c) => ({ ...c, input: v }))}
               placeholder="AAPL veya Apple"
-              placeholderTextColor={theme.textSecondary}
+              placeholderTextColor={t.ink3 ?? t.textSecondary}
               autoCapitalize="characters"
               // Name search needs more than six characters of room.
               autoCorrect={false}
@@ -519,9 +569,22 @@ export default function AskScreen() {
               accessibilityState={{ disabled: chat.busy, busy: chat.busy }}
             >
               <Text style={styles.btnText}>Analiz et</Text>
+              <Svg
+                width={16}
+                height={16}
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke={t.inkInv ?? t.background}
+                strokeWidth={2.2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <Path d="M5 12h14" />
+                <Path d="m12 5 7 7-7 7" />
+              </Svg>
             </Pressable>
           </View>
-          <Text style={styles.disclaimer}>{t('disclaimer.short')}</Text>
+          <Text style={styles.disclaimer}>{tr('disclaimer.short')}</Text>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -532,8 +595,8 @@ type Palette = ReturnType<typeof useTheme>;
 type Styles = ReturnType<typeof makeStyles>;
 
 /**
- * One answer: the PM byline, the decision strip between two 2px rules, the
- * paragraph, and the way back to the full record.
+ * One answer: the PM byline, the decision strip on its raised ground, the
+ * paragraph, and the way back to the full record — the prototype's agent card.
  */
 function AgentMessage({
   message,
@@ -551,218 +614,269 @@ function AgentMessage({
   const badge = model ? modelBadge(theme, model) : null;
   const chip = decision ? ratingChip(theme, decision.rating) : null;
 
-  const { t } = useTranslation();
+  const { t: tr } = useTranslation();
 
   return (
-    <View style={styles.agentBlock}>
-      <Text style={styles.kicker}>
-        PORTFOLIO MANAGER
-        {badge ? (
-          <Text style={{ color: badge.color }}>{` · ${badge.label.toUpperCase()}`}</Text>
-        ) : null}
-      </Text>
+    <Card>
+      <View style={styles.agentBlock}>
+        <Text style={styles.kicker}>
+          PORTFOLIO MANAGER
+          {badge ? (
+            <Text style={{ color: badge.color }}>{` · ${badge.label.toUpperCase()}`}</Text>
+          ) : null}
+        </Text>
 
-      {decision && chip ? (
-        <>
-          <Text style={styles.disclaimer}>{t('disclaimer.short')}</Text>
-          <View style={styles.strip}>
+        {decision && chip ? (
+          <>
             <View style={styles.stripHead}>
               <Text style={styles.stripTicker}>{decision.ticker}</Text>
               <View
                 style={[
                   styles.ratingTag,
-                  { backgroundColor: chip.background, borderColor: chip.borderColor ?? 'transparent' },
+                  {
+                    backgroundColor: chip.background,
+                    borderColor: chip.borderColor ?? 'transparent',
+                  },
                 ]}
               >
                 <Text style={[styles.ratingText, { color: chip.color }]}>{decision.rating}</Text>
               </View>
             </View>
-            <View style={styles.stripGrid}>
-              <StripField label="Giriş" value={formatUsd(decision.entry_price)} styles={styles} />
-              <StripField label="Stop" value={formatUsd(decision.stop_loss)} styles={styles} />
-              <StripField label="Hedef" value={formatUsd(decision.price_target)} styles={styles} />
-              <StripField label="Vade" value={decision.time_horizon ?? '—'} styles={styles} />
-            </View>
-          </View>
-        </>
-      ) : null}
+            {/* The four figures that make the verdict actionable, on the
+                prototype's raised ground rather than between two rules —
+                Aurora bands by surface, Modernist banded by rule. */}
+            <Card tone="raised" style={styles.strip}>
+              <View style={styles.stripGrid}>
+                <StatCell
+                  size="sm"
+                  label="Giriş"
+                  value={formatUsd(decision.entry_price)}
+                  style={styles.stripCell}
+                />
+                <StatCell
+                  size="sm"
+                  label="Stop"
+                  value={formatUsd(decision.stop_loss)}
+                  style={styles.stripCell}
+                />
+                <StatCell
+                  size="sm"
+                  label="Hedef"
+                  value={formatUsd(decision.price_target)}
+                  style={styles.stripCell}
+                />
+                <StatCell
+                  size="sm"
+                  label="Vade"
+                  value={decision.time_horizon ?? '—'}
+                  style={styles.stripCell}
+                />
+              </View>
+            </Card>
+            <Text style={styles.disclaimer}>{tr('disclaimer.short')}</Text>
+          </>
+        ) : null}
 
-      <Text style={styles.pmText}>{message.text}</Text>
+        <Text style={styles.pmText}>{message.text}</Text>
 
-      {decision ? (
-        <Pressable
-          onPress={() => onOpenDetail(decision.ticker)}
-          hitSlop={hitSlopFor(LINK_HEIGHT)}
-          style={styles.detailLink}
-          accessibilityRole="link"
-          accessibilityLabel={`${decision.ticker} kararının tam detayı`}
-        >
-          <Text style={styles.detailLinkText}>Tam karar detayı →</Text>
-        </Pressable>
-      ) : null}
-    </View>
+        {decision ? (
+          <Pressable
+            onPress={() => onOpenDetail(decision.ticker)}
+            hitSlop={hitSlopFor(LINK_HEIGHT)}
+            style={styles.detailLink}
+            accessibilityRole="link"
+            accessibilityLabel={`${decision.ticker} kararının tam detayı`}
+          >
+            <Text style={styles.detailLinkText}>Tam karar detayı →</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    </Card>
   );
 }
 
-function StripField({
-  label,
-  value,
-  styles,
-}: {
-  label: string;
-  value: string;
-  styles: Styles;
-}) {
-  return (
-    <View style={styles.stripField}>
-      <Text style={styles.stripLabel}>{label}</Text>
-      <Text style={styles.stripValue} numberOfLines={1}>
-        {value}
-      </Text>
-    </View>
-  );
-}
-
-const makeStyles = (t: Palette) =>
+const makeStyles = (t: Palette, sh: Shape) =>
   StyleSheet.create({
-    container: { flex: 1, backgroundColor: t.background },
+    screen: { flex: 1, backgroundColor: t.background },
     flex: { flex: 1 },
 
-    header: { paddingTop: 20, paddingHorizontal: 16 },
-    heading: { color: t.textPrimary, ...TYPE.h2 },
-    subheading: { color: t.textSecondary, ...TYPE.body, marginTop: 4 },
+    header: { paddingTop: sh.space[2], paddingHorizontal: sh.space[3] },
+    heading: { ...TYPE.h2, fontSize: 26, letterSpacing: -0.52, color: t.textPrimary },
+    subheading: { ...TYPE.body, color: t.ink2 ?? t.textSecondary, marginTop: sh.space[0] },
 
-    stream: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 16, gap: 16 },
-
-    // The question, kept on screen: a surface box hugging the right edge.
-    userRow: { alignItems: 'flex-end' },
-    userBubble: { backgroundColor: t.surface, paddingHorizontal: 12, paddingVertical: 8 },
-    userText: { color: t.textPrimary, fontSize: 13, ...font(800), letterSpacing: 0.52 },
-
-    agentBlock: { gap: 10 },
-    kicker: { color: t.accent700 ?? t.accent, ...TYPE.kicker },
-
-    // The decision, banded between two section rules — the only 2px in a message.
-    strip: {
-      borderTopWidth: 2,
-      borderBottomWidth: 2,
-      borderColor: t.divider,
-      paddingVertical: 10,
+    stream: {
+      paddingHorizontal: sh.space[3],
+      paddingTop: sh.space[3],
+      paddingBottom: sh.space[3],
+      gap: sh.space[3],
     },
-    stripHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    stripTicker: { color: t.textPrimary, fontSize: 18, ...font(800) },
-    // `.tag` metrics; the colours come from ratingChip so the buy/hold/sell
-    // encoding stays in one place.
-    ratingTag: { paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1, alignSelf: 'flex-start' },
-    ratingText: { fontSize: 11, letterSpacing: 0.22, ...font(600) },
-    stripGrid: { flexDirection: 'row', gap: 8, marginTop: 8 },
-    stripField: { flex: 1 },
-    stripLabel: { color: t.textSecondary, ...TYPE.helper },
-    stripValue: { color: t.textPrimary, fontSize: 13, ...font(800), ...TABULAR, marginTop: 2 },
 
-    pmText: { color: t.textPrimary, ...TYPE.body, lineHeight: 20 },
-    detailLink: { alignSelf: 'flex-start' },
-    detailLinkText: { color: t.accent700 ?? t.accent, fontSize: 13, ...font(600) },
+    emptyKicker: { ...TYPE.kicker, color: t.ink3 ?? t.textMuted },
 
-    errorLine: { color: t.accent700 ?? t.danger, ...TYPE.body, lineHeight: 20 },
-
-    running: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    runningText: { color: t.textSecondary, ...TYPE.body, flexShrink: 1 },
-
-    chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    chips: { flexDirection: 'row', flexWrap: 'wrap', gap: sh.space[1] },
     chip: {
-      paddingHorizontal: 18,
-      borderWidth: 1,
-      borderColor: t.divider,
+      paddingHorizontal: sh.space[3],
+      borderRadius: sh.radiusPill,
+      borderWidth: sh.hairline,
+      borderColor: t.line2 ?? t.divider,
+      backgroundColor: t.surface,
       minHeight: MIN_TOUCH_TARGET,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    chipText: { color: t.textPrimary, fontSize: 14, ...font(800), letterSpacing: 0.5 },
+    // The prototype's hover is `border-color:--ink`; a phone has no hover, so
+    // the same intent lands on press.
+    chipPressed: { borderColor: t.brand ?? t.accent },
+    chipText: { color: t.textPrimary, fontSize: 13, ...font(800), letterSpacing: 0.5 },
 
-    browseBlock: { marginTop: 24, borderTopWidth: 2, borderTopColor: t.divider, paddingTop: 12 },
-    browseHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    browseTitle: { color: t.textPrimary, fontSize: 15, ...font(800) },
-    browseToggle: { minHeight: MIN_TOUCH_TARGET, justifyContent: 'center', paddingLeft: 8 },
-    browseToggleText: { color: t.accent700 ?? t.accent, fontSize: 12, ...font(600) },
-    browseHint: { color: t.textSecondary, fontSize: 12, marginTop: 6, marginBottom: 6 },
+    marketCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: sh.space[2],
+      backgroundColor: t.surface,
+      borderRadius: sh.radius,
+      borderWidth: sh.hairline,
+      borderColor: t.line ?? t.divider,
+      paddingHorizontal: sh.space[3],
+      paddingVertical: sh.space[2],
+    },
+    marketCardPressed: { borderColor: t.line2 ?? t.textSecondary },
+    marketIcon: {
+      width: 40,
+      height: 40,
+      borderRadius: sh.radiusSmall,
+      backgroundColor: t.brandSoft ?? t.surfaceElevated,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    marketText: { flex: 1, minWidth: 0 },
+    marketTitle: { ...TYPE.section, color: t.textPrimary },
+    marketSub: { ...TYPE.helper, fontSize: 12, color: t.ink2 ?? t.textSecondary, marginTop: 2 },
+    caretOpen: { transform: [{ rotate: '90deg' }] },
+
+    board: { gap: sh.space[1] },
     // Selector chips, not a Seg: four independent choices where one is a
     // toggle, so a segmented control would imply they are mutually exclusive.
-    moverTabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10, marginBottom: 4 },
+    moverTabs: { flexDirection: 'row', flexWrap: 'wrap', gap: sh.space[0] + 2 },
     moverTab: {
-      borderWidth: 1,
-      borderColor: t.divider,
-      paddingHorizontal: 10,
+      borderRadius: sh.radiusPill,
+      borderWidth: sh.hairline,
+      borderColor: t.line2 ?? t.divider,
+      paddingHorizontal: sh.space[2],
       minHeight: MIN_TOUCH_TARGET,
       justifyContent: 'center',
     },
-    moverTabOn: { borderColor: t.textPrimary, backgroundColor: t.surfaceElevated },
-    moverTabText: { color: t.textSecondary, fontSize: 12, ...font(600) },
-    moverTabTextOn: { color: t.textPrimary, ...font(800) },
-
-    moverRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 10,
-      paddingVertical: 10,
-      minHeight: MIN_TOUCH_TARGET,
-      borderBottomWidth: 1,
-      borderBottomColor: t.divider,
+    moverTabOn: {
+      backgroundColor: t.ink ?? t.textPrimary,
+      borderColor: t.ink ?? t.textPrimary,
     },
-    moverLeft: { flex: 1 },
+    moverTabText: { color: t.ink2 ?? t.textSecondary, fontSize: 12, ...font(600) },
+    moverTabTextOn: { color: t.inkInv ?? t.background, ...font(800) },
+
     moverRight: { alignItems: 'flex-end' },
-    moverTicker: { color: t.textPrimary, fontSize: 14, ...font(800) },
-    moverName: { color: t.textSecondary, fontSize: 11, marginTop: 1 },
     // Tabular so the decimal points line up down the column; a price list
     // that jitters is harder to scan than one that does not.
-    moverPrice: { color: t.textPrimary, fontSize: 13, ...font(600), ...TABULAR },
-    moverChange: { fontSize: 12, ...font(800), ...TABULAR, marginTop: 1 },
+    moverPrice: { color: t.textPrimary, fontSize: 14, ...font(600), ...TABULAR },
+    moverChange: { fontSize: 12, ...font(800), ...TABULAR, marginTop: 2 },
 
-    suggestions: { borderTopWidth: 1, borderTopColor: t.divider },
-    suggestion: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 10,
-      paddingVertical: 10,
-      paddingHorizontal: 16,
-      minHeight: MIN_TOUCH_TARGET,
-      borderBottomWidth: 1,
-      borderBottomColor: t.divider,
+    hint: { ...TYPE.body, color: t.ink2 ?? t.textSecondary },
+    noteText: {
+      ...TYPE.helper,
+      fontSize: 12,
+      color: t.ink2 ?? t.textSecondary,
+      lineHeight: 18,
     },
-    suggestionTicker: { color: t.textPrimary, fontSize: 14, ...font(800), minWidth: 62 },
-    suggestionName: { color: t.textSecondary, fontSize: 12, flex: 1 },
+
+    // The question, kept on screen: an ink pill hugging the right edge.
+    userRow: { alignItems: 'flex-end' },
+    userBubble: {
+      backgroundColor: t.ink ?? t.textPrimary,
+      borderRadius: sh.radiusPill,
+      paddingHorizontal: sh.space[2] + 2,
+      paddingVertical: sh.space[1],
+      maxWidth: '85%',
+    },
+    userText: {
+      color: t.inkInv ?? t.background,
+      fontSize: 13,
+      ...font(800),
+      letterSpacing: 0.52,
+    },
+
+    agentBlock: { gap: sh.space[1] },
+    kicker: { ...TYPE.kicker, color: t.brand ?? t.accent },
+
+    stripHead: { flexDirection: 'row', alignItems: 'center', gap: sh.space[1] },
+    stripTicker: { color: t.textPrimary, fontSize: 20, letterSpacing: -0.2, ...font(800) },
+    // `.tag` metrics; the colours come from ratingChip so the buy/hold/sell
+    // encoding stays in one place, and the radius from `shape` so the chip is
+    // square under Modernist and a pill under Aurora.
+    ratingTag: {
+      paddingHorizontal: 10,
+      paddingVertical: 3,
+      borderRadius: sh.radiusPill,
+      borderWidth: sh.hairline,
+      alignSelf: 'flex-start',
+    },
+    ratingText: { fontSize: 11, letterSpacing: 0.22, ...font(600) },
+    strip: { marginTop: sh.space[0] },
+    stripGrid: { flexDirection: 'row', gap: sh.space[1] },
+    stripCell: { flex: 1 },
+
+    pmText: { ...TYPE.body, color: t.textPrimary, lineHeight: 20 },
+    detailLink: { alignSelf: 'flex-start' },
+    detailLinkText: { color: t.brand ?? t.accent, fontSize: 13, ...font(800) },
+
+    errorLine: { ...TYPE.body, color: t.danger, lineHeight: 20 },
+
+    running: { flexDirection: 'row', alignItems: 'center', gap: sh.space[1] },
+    runningText: { ...TYPE.body, color: t.ink2 ?? t.textSecondary, flexShrink: 1 },
+
+    suggestions: {
+      marginBottom: sh.space[1],
+      // The prototype floats this list over the page with a drop shadow; it is
+      // the same elevation the shell's bar and the Bugün hero use.
+      shadowColor: t.shadowColor,
+      shadowOpacity: 0.28,
+      shadowRadius: 30,
+      shadowOffset: { width: 0, height: 10 },
+      elevation: 10,
+    },
 
     composer: {
-      borderTopWidth: 2,
-      borderTopColor: t.divider,
-      paddingHorizontal: 16,
-      paddingTop: 12,
-      paddingBottom: 12,
+      borderTopWidth: sh.hairline,
+      borderTopColor: t.line ?? t.divider,
+      backgroundColor: t.background,
+      paddingHorizontal: sh.space[3],
+      paddingTop: sh.space[2],
+      paddingBottom: sh.space[2],
     },
-    // Square field + square ink button, borders collapsed onto one baseline.
-    inputRow: { flexDirection: 'row' },
+    inputRow: { flexDirection: 'row', gap: sh.space[1] },
     input: {
       flex: 1,
-      backgroundColor: t.surfaceElevated,
+      minHeight: 52,
+      borderRadius: sh.radius,
+      borderWidth: sh.hairline,
+      borderColor: t.line2 ?? t.divider,
+      backgroundColor: t.surface,
       color: t.textPrimary,
-      borderWidth: 1,
-      borderColor: t.textPrimary,
-      paddingHorizontal: 14,
-      minHeight: 48,
-      fontSize: 16,
+      paddingHorizontal: sh.space[3],
+      fontSize: 15,
       ...font(800),
-      letterSpacing: 1.28,
+      letterSpacing: 0.6,
     },
     btn: {
-      backgroundColor: t.textPrimary,
-      paddingHorizontal: 20,
-      justifyContent: 'center',
+      flexDirection: 'row',
       alignItems: 'center',
-      minHeight: 48,
-      marginLeft: -1,
+      justifyContent: 'center',
+      gap: sh.space[1],
+      minHeight: 52,
+      paddingHorizontal: sh.space[3],
+      borderRadius: sh.radius,
+      backgroundColor: t.ink ?? t.textPrimary,
     },
     btnDisabled: { opacity: 0.45 },
-    btnText: { color: t.background, fontSize: 15, ...font(800), letterSpacing: 0.5 },
+    btnText: { color: t.inkInv ?? t.background, fontSize: 14, ...font(800) },
 
-    disclaimer: { color: t.textSecondary, ...TYPE.helper, marginTop: 8 },
+    disclaimer: { ...TYPE.helper, color: t.ink3 ?? t.textMuted, marginTop: sh.space[0] },
   });

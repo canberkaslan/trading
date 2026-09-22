@@ -4,7 +4,7 @@ import { readFileSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 
 import { contrastRatio, luminance, meetsAA } from './contrast';
-import { colors, modernist } from '../theme/colors';
+import { aurora, colors, modernist } from '../theme/colors';
 
 /** Every .tsx the app actually ships, so the guard sees screens and not just tokens. */
 function tsxFiles(): string[] {
@@ -198,5 +198,49 @@ describe('dark palette loss figures', () => {
       expect(meetsAA(colors.downText, bg)).toBe(true);
     }
     expect(meetsAA(colors.down, colors.surfaceElevated)).toBe(false);
+  });
+});
+
+describe('aurora palette', () => {
+  const grounds = [aurora.background, aurora.surface, aurora.surfaceElevated];
+
+  it('clears AA for every text token on every ground', () => {
+    for (const bg of grounds) {
+      expect(meetsAA(aurora.textPrimary, bg)).toBe(true);
+      expect(meetsAA(aurora.textSecondary, bg)).toBe(true);
+      // The claim this palette is documented with: unlike modernist, `muted`
+      // here is legible everywhere, so there is no "not for text" caveat.
+      expect(meetsAA(aurora.textMuted, bg)).toBe(true);
+    }
+  });
+
+  it('clears AA for the signal colours on every ground', () => {
+    for (const bg of grounds) {
+      expect(meetsAA(aurora.up, bg)).toBe(true);
+      expect(meetsAA(aurora.down, bg)).toBe(true);
+      expect(meetsAA(aurora.warning, bg)).toBe(true);
+      expect(meetsAA(aurora.accent, bg)).toBe(true);
+    }
+  });
+
+  it('needs no fill-vs-text split for loss figures', () => {
+    // modernist carries `downText` because its accent is a 3.6:1 fill. Here the
+    // two are deliberately one value, and this pins the reason: it is legible.
+    expect(aurora.downText).toBe(aurora.down);
+    expect(meetsAA(aurora.down, aurora.surfaceElevated)).toBe(true);
+  });
+
+  it('keeps the LIVE strip and the brand fill readable', () => {
+    expect(meetsAA(aurora.textPrimary, aurora.liveStrip)).toBe(true);
+    expect(meetsAA(aurora.inkInv, aurora.brand)).toBe(true);
+  });
+
+  it('keeps the colourblind pair distinct from the default one', () => {
+    expect(aurora.upCB).not.toBe(aurora.up);
+    expect(aurora.downCB).not.toBe(aurora.down);
+    for (const bg of grounds) {
+      expect(meetsAA(aurora.upCB, bg)).toBe(true);
+      expect(meetsAA(aurora.downCB, bg)).toBe(true);
+    }
   });
 });

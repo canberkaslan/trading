@@ -1,9 +1,10 @@
 /**
- * Screen 11 — Giriş.
+ * Screen 11 — Giriş. Aurora.
  *
- * The one screen that carries a full accent fill: the banner panel above the
- * form. Everything below it is the ordinary flat system — square corners, ink
- * on ground, no shadow.
+ * The prototype makes this screen a poster on top of a form: a full-bleed dark
+ * slab with a brand glow bleeding off the top-right corner, and below it the
+ * ordinary rounded system — surface inputs on the page ground, an ink button,
+ * an outlined one under it.
  *
  * Two things this screen is deliberately NOT.
  *
@@ -41,12 +42,13 @@ import { StatusBar } from 'expo-status-bar';
 import { useMemo, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
-import Svg, { Path } from 'react-native-svg';
+import Svg, { Path, Defs, RadialGradient, Stop, Circle } from 'react-native-svg';
 
 import { useReadiness } from '@/api/hooks';
 import { authenticate } from '@/auth/biometric';
 import { Tag, type TagVariant } from '@/components/Tag';
 import { useTheme } from '@/theme/useTheme';
+import { useShape, type Shape } from '@/theme/shape';
 import { font, TYPE } from '@/theme/type';
 import { MIN_TOUCH_TARGET } from '@/utils/a11y';
 
@@ -64,10 +66,16 @@ import { MIN_TOUCH_TARGET } from '@/utils/a11y';
  * `agent/scripts/eval_report.py`, and "beat SPY" is the fourth scorecard row —
  * a flag rather than a hard gate, exactly as the `go_live_gates` lesson this
  * app ships already explains.
+ *
+ * Two lines, not three: the prototype breaks it once (`loginBanner1` /
+ * `loginBanner2`), and where the break falls is typography.
  */
-const BANNER_LINES = ['Gerçek para,', "dört gate'in", 'ardında.'] as const;
+const BANNER_LINES = ['Gerçek para,', "dört gate'in ardında."] as const;
 const GATE_LINE = "≥ 10 işlem günü · Sharpe > 1.0 · MaxDD < 15% · SPY'yi geç";
 const DEVICE_UNLOCK = 'Cihaz kilidi ile aç';
+
+/** The wordmark beside the brand mark, as the prototype sets it. */
+const WORDMARK = 'Trader';
 
 /**
  * The affirmation appended to the disclaimer. The sentence itself is NOT
@@ -84,6 +92,10 @@ const MIN_PASSWORD = 4;
 /** The banner's own top padding, on top of whatever the notch costs. */
 const BANNER_TOP = 28;
 
+/** The prototype's control height: 50 for inputs, 52 for the two buttons. */
+const INPUT_HEIGHT = 50;
+const BUTTON_HEIGHT = 52;
+
 /**
  * `canSignIn` in `trader-core.js` is `email.includes('@') && password.length >= 4
  * && ack`. Only the e-mail test is tightened here: `includes('@')` accepts "@",
@@ -98,7 +110,7 @@ function isValidEmail(value: string): boolean {
 }
 
 /** Lucide `scan-face` — the system's mark for "this asks for the device lock". */
-function ScanFace({ color, size = 16 }: { color: string; size?: number }) {
+function ScanFace({ color, size = 18 }: { color: string; size?: number }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M3 7V5a2 2 0 0 1 2-2h2" />
@@ -112,12 +124,22 @@ function ScanFace({ color, size = 16 }: { color: string; size?: number }) {
   );
 }
 
+/** Lucide `check`, stroke 3 — the tick inside the acknowledgement box. */
+function Check({ color, size = 14 }: { color: string; size?: number }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={3} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M20 6 9 17l-5-5" />
+    </Svg>
+  );
+}
+
 export default function LoginScreen() {
   const router = useRouter();
   const { t, i18n } = useTranslation();
   const theme = useTheme();
+  const sh = useShape();
   const insets = useSafeAreaInsets();
-  const styles = useMemo(() => makeStyles(theme), [theme]);
+  const styles = useMemo(() => makeStyles(theme, sh), [theme, sh]);
 
   const ackText =
     t('disclaimer.short') + (i18n.language?.startsWith('tr') ? ACK_SUFFIX.tr : ACK_SUFFIX.en);
@@ -141,7 +163,14 @@ export default function LoginScreen() {
   const { data: readiness, isError: readinessFailed } = useReadiness();
   const mode = readiness?.trading_mode;
   const modeLabel = mode === 'live' ? 'LIVE — GERÇEK PARA' : mode === 'paper' ? 'PAPER' : 'MOD ?';
-  const modeVariant: TagVariant = mode === 'live' ? 'accent' : mode === 'paper' ? 'outline' : 'neutral';
+  /*
+   * The prototype tints the chip rather than filling it: rose-300 on LIVE,
+   * indigo-200 otherwise. Aurora already owns both as soft-ground variants, so
+   * the chip borrows them instead of naming two literals — and on a palette
+   * with no soft grounds `Tag` falls back to `surface`, where the meaning
+   * survives in the text colour alone.
+   */
+  const modeVariant: TagVariant = mode === 'live' ? 'down' : mode === 'paper' ? 'brand' : 'outlineMuted';
   // The unknown branch has to say which unknown it is. `useReadiness` does not
   // retry, so a failed poll sits at `undefined` forever — reporting that as
   // "waiting for the backend" would describe a stage the app is not in.
@@ -243,7 +272,8 @@ export default function LoginScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['bottom']}>
       {/* The banner runs under the status bar, so the clock and the carrier
-          sit on accent-700 rather than on the page ground. */}
+          sit on the slab rather than on the page ground. Aurora is dark
+          throughout, so light content is right either way. */}
       <StatusBar style="light" />
       <KeyboardAvoidingView
         style={styles.flex}
@@ -255,24 +285,48 @@ export default function LoginScreen() {
           keyboardDismissMode="on-drag"
         >
           {/*
-           * The one full accent fill in the system. Two deliberate notes.
+           * The poster. The prototype draws `#18181b` on a LIGHT page — a slab
+           * darker than everything around it. Aurora's page ground is already
+           * the darkest thing in the system, so the slab inverts direction and
+           * becomes the elevated surface: still the one full-bleed rectangle
+           * that is not the page, which is the property that made it a poster.
+           * Same decision the Bugün hero made, for the same reason.
            *
-           * Fill is accent-700, not the base accent: the base puts the page
-           * ground at 3.76:1 on top, which is the exact failure `liveStrip` was
-           * added to colors.ts to fix and which contrast.test.ts pins. The
-           * headline would survive it (34px/800 is large text) — the gate line
-           * under it would not, and that line is the actual promise the screen
-           * is making. accent-700 clears 6.41:1 for both.
-           *
-           * Type here is bespoke, not the mobile scale: 34px display and a 12px
+           * Type here is bespoke, not the mobile scale: 36px display and a 12px
            * support line, straight from the prototype. It is the only block in
            * the app allowed to set its own sizes, and it earns that by being
            * the only block that is a poster rather than an interface.
            */}
           <View style={[styles.banner, { paddingTop: insets.top + BANNER_TOP }]}>
-            {/* Read as one sentence, not three fragments — the line breaks
-                are typography, not structure. */}
-            <View accessible accessibilityLabel={BANNER_LINES.join(' ')}>
+            {/* The prototype's radial glow bleeding off the top-right corner.
+                RN has no gradient primitive and `expo-linear-gradient` is not a
+                dependency, so it is drawn with react-native-svg — the same way
+                the Bugün hero draws its own. */}
+            <Svg style={styles.glow} width="100%" height="100%" pointerEvents="none">
+              <Defs>
+                <RadialGradient id="loginGlow" cx="50%" cy="50%" r="50%">
+                  <Stop offset="0%" stopColor={theme.brand ?? theme.accent} stopOpacity={0.55} />
+                  <Stop offset="70%" stopColor={theme.brand ?? theme.accent} stopOpacity={0} />
+                </RadialGradient>
+              </Defs>
+              <Circle cx="82%" cy={50} r={130} fill="url(#loginGlow)" />
+            </Svg>
+
+            {/* The brand row lives INSIDE the slab here, unlike the Modernist
+                port: Aurora's mode chip has soft-ground variants that read on
+                an elevated surface, which is the thing that had forced the row
+                down onto the page ground before. */}
+            <View style={styles.brand}>
+              <View style={styles.brandMark}>
+                <Text style={styles.brandMarkText}>T</Text>
+              </View>
+              <Text style={styles.wordmark}>{WORDMARK}</Text>
+              <Tag label={modeLabel} variant={modeVariant} caps />
+            </View>
+
+            {/* Read as one sentence, not two fragments — the line break is
+                typography, not structure. */}
+            <View style={styles.headline} accessible accessibilityLabel={BANNER_LINES.join(' ')}>
               {BANNER_LINES.map((line) => (
                 <Text key={line} style={styles.bannerLine}>
                   {line}
@@ -283,12 +337,6 @@ export default function LoginScreen() {
           </View>
 
           <View style={styles.form}>
-            <View style={styles.brand}>
-              <View style={styles.brandSquare} />
-              <Text style={styles.brandName}>TRADER</Text>
-              <Tag label={modeLabel} variant={modeVariant} />
-            </View>
-
             <Text style={styles.h2} accessibilityRole="header">
               {signInLabel}
             </Text>
@@ -306,7 +354,7 @@ export default function LoginScreen() {
                 keyboardType="email-address"
                 textContentType="emailAddress"
                 placeholder="ad@ornek.com"
-                placeholderTextColor={theme.textSecondary}
+                placeholderTextColor={theme.ink3 ?? theme.textMuted}
                 returnKeyType="next"
                 onSubmitEditing={() => passwordRef.current?.focus()}
                 submitBehavior="submit"
@@ -328,7 +376,7 @@ export default function LoginScreen() {
                 autoComplete="current-password"
                 textContentType="password"
                 placeholder="••••••••"
-                placeholderTextColor={theme.textSecondary}
+                placeholderTextColor={theme.ink3 ?? theme.textMuted}
                 returnKeyType="go"
                 onSubmitEditing={signIn}
                 style={[styles.input, focused === 'password' && styles.inputFocused]}
@@ -336,8 +384,9 @@ export default function LoginScreen() {
               />
             </View>
 
-            {/* 18px square, 2px ink border, ink fill when ticked. The whole row
-                is the target so the box itself never has to be hit. */}
+            {/* 22px rounded box, 2px ink border, ink fill and an inverted tick
+                when ticked. The whole row is the target so the box itself never
+                has to be hit. */}
             <Pressable
               onPress={() => setAck((v) => !v)}
               style={styles.ackRow}
@@ -345,7 +394,9 @@ export default function LoginScreen() {
               accessibilityState={{ checked: ack }}
               accessibilityLabel={ackText}
             >
-              <View style={[styles.ackBox, ack && styles.ackBoxChecked]} />
+              <View style={[styles.ackBox, ack && styles.ackBoxChecked]}>
+                {ack ? <Check color={theme.inkInv ?? theme.background} /> : null}
+              </View>
               <Text style={styles.ackText}>{ackText}</Text>
             </Pressable>
 
@@ -355,7 +406,11 @@ export default function LoginScreen() {
               // working. Without this the form looks inert for a second or two
               // and the natural response is to tap again.
               disabled={!canSignIn || busy}
-              style={[styles.primaryBtn, (!canSignIn || busy) && styles.btnDisabled]}
+              style={({ pressed }) => [
+                styles.primaryBtn,
+                pressed && styles.pressed,
+                (!canSignIn || busy) && styles.btnDisabled,
+              ]}
               accessibilityRole="button"
               accessibilityLabel={signInLabel}
               accessibilityState={{ disabled: !canSignIn || busy, busy }}
@@ -377,7 +432,11 @@ export default function LoginScreen() {
             <Pressable
               onPress={() => void deviceSignIn()}
               disabled={deviceBusy}
-              style={[styles.secondaryBtn, deviceBusy && styles.btnDisabled]}
+              style={({ pressed }) => [
+                styles.secondaryBtn,
+                pressed && styles.secondaryPressed,
+                deviceBusy && styles.btnDisabled,
+              ]}
               accessibilityRole="button"
               accessibilityLabel={DEVICE_UNLOCK}
               accessibilityHint="Face ID, parmak izi veya cihaz şifresi ile giriş yapar"
@@ -412,7 +471,7 @@ export default function LoginScreen() {
 
 type Palette = ReturnType<typeof useTheme>;
 
-const makeStyles = (t: Palette) =>
+const makeStyles = (t: Palette, sh: Shape) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: t.background },
     flex: { flex: 1 },
@@ -424,81 +483,122 @@ const makeStyles = (t: Palette) =>
     // the status strip uses on every tab — safe-area inset as padding, so the
     // fill goes under the bar and the text does not.
     banner: {
-      backgroundColor: t.accent700 ?? t.accent,
-      paddingHorizontal: 16,
-      paddingBottom: 24,
+      backgroundColor: t.surfaceElevated,
+      borderBottomWidth: sh.hairline,
+      borderBottomColor: t.line ?? t.divider,
+      paddingHorizontal: sh.space[4],
+      paddingBottom: sh.space[4] + sh.space[0],
+      overflow: 'hidden',
     },
+    glow: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
+
+    brand: { flexDirection: 'row', alignItems: 'center', gap: sh.space[1] },
+    // The prototype's 30px disc: ink fill, ground letter. Under Modernist
+    // `radiusPill` is 0 and the mark becomes the square that system specifies,
+    // which is the point of reading the radius rather than writing one.
+    brandMark: {
+      width: 30,
+      height: 30,
+      borderRadius: sh.radiusPill,
+      backgroundColor: t.textPrimary,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    brandMarkText: { color: t.inkInv ?? t.background, fontSize: 13, ...font(800) },
+    wordmark: { color: t.textPrimary, fontSize: 16, ...font(600) },
+
+    headline: { marginTop: sh.space[4] + sh.space[0] },
     bannerLine: {
-      color: t.background,
-      fontSize: 34,
-      lineHeight: 35,
-      letterSpacing: -0.68,
+      color: t.textPrimary,
+      fontSize: 36,
+      lineHeight: 38,
+      letterSpacing: -1.08,
       ...font(800),
     },
-    gateLine: { color: t.background, fontSize: 12, lineHeight: 18, marginTop: 14, ...font(400) },
-
-    // 20 top / 16 horizontal, the mobile screen padding.
-    form: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 24, gap: 14 },
-
-    brand: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    // On the page ground the mark is the accent square the system specifies;
-    // inside the banner it would have had to invert, and the mode chip has no
-    // legible variant on an accent fill — so the brand row sits here, as it
-    // does on the web console, rather than inside the panel.
-    brandSquare: { width: 12, height: 12, backgroundColor: t.accent },
-    brandName: { color: t.textPrimary, fontSize: 14, letterSpacing: 0.84, ...font(800) },
-
-    h2: { color: t.textPrimary, ...TYPE.h2 },
-
-    field: { gap: 5 },
-    label: { color: t.textSecondary, ...TYPE.helper, ...font(600) },
-    input: {
-      backgroundColor: t.surfaceElevated,
-      color: t.textPrimary,
-      borderWidth: 1,
-      borderColor: t.textPrimary,
-      paddingHorizontal: 12,
-      minHeight: 48,
-      fontSize: 16,
+    gateLine: {
+      color: t.ink2 ?? t.textSecondary,
+      fontSize: 12,
+      lineHeight: 18,
+      marginTop: sh.space[2] + 2,
       ...font(400),
     },
-    // `.input:focus-visible` — the accent is the caret and focus colour, and it
-    // is the only state change on the form.
-    inputFocused: { borderColor: t.accent },
+
+    // 20 top / 20 horizontal, the prototype's own form padding.
+    form: {
+      paddingHorizontal: sh.space[3] + sh.space[0],
+      paddingTop: sh.space[3] + sh.space[0],
+      paddingBottom: sh.space[4],
+      gap: sh.space[2],
+    },
+
+    h2: { color: t.textPrimary, ...TYPE.h2, letterSpacing: -0.48 },
+
+    field: { gap: sh.space[0] + 2 },
+    label: { color: t.ink2 ?? t.textSecondary, fontSize: 12, ...font(400) },
+    input: {
+      backgroundColor: t.surface,
+      color: t.textPrimary,
+      borderWidth: sh.hairline,
+      borderColor: t.line2 ?? t.divider,
+      borderRadius: sh.radius,
+      paddingHorizontal: sh.space[2] + 2,
+      minHeight: INPUT_HEIGHT,
+      fontSize: 15,
+      ...font(400),
+    },
+    // `style-focus="border-color:var(--brand)"` — the brand is the caret and
+    // focus colour, and it is the only state change on the form.
+    inputFocused: { borderColor: t.brand ?? t.accent },
 
     ackRow: {
       flexDirection: 'row',
       alignItems: 'flex-start',
-      gap: 12,
-      paddingVertical: 4,
+      gap: sh.space[2],
+      paddingVertical: sh.space[0],
       minHeight: MIN_TOUCH_TARGET,
     },
-    ackBox: { width: 18, height: 18, borderWidth: 2, borderColor: t.textPrimary, marginTop: 2 },
-    ackBoxChecked: { backgroundColor: t.textPrimary },
-    ackText: { flex: 1, color: t.textPrimary, ...TYPE.body, lineHeight: 19 },
-
-    // Ink fill, not the accent: the accent is the banner and, everywhere else
-    // in this palette, a loss or a warning. A red sign-in button would read as
-    // a danger action.
-    primaryBtn: {
-      backgroundColor: t.textPrimary,
-      minHeight: 48,
+    ackBox: {
+      width: 22,
+      height: 22,
+      borderWidth: 2,
+      borderColor: t.textPrimary,
+      borderRadius: sh.radiusSmall,
+      marginTop: 1,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    primaryBtnText: { color: t.background, fontSize: 15, letterSpacing: 0.5, ...font(800) },
+    ackBoxChecked: { backgroundColor: t.textPrimary },
+    ackText: { flex: 1, color: t.textPrimary, ...TYPE.body, lineHeight: 20 },
+
+    // Ink fill, not the brand: the brand is the glow and the focus ring, and a
+    // solid indigo button here would compete with the poster above it. The
+    // prototype makes the same call — `background:var(--ink)`.
+    primaryBtn: {
+      backgroundColor: t.textPrimary,
+      borderRadius: sh.radius,
+      minHeight: BUTTON_HEIGHT,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    primaryBtnText: { color: t.inkInv ?? t.background, fontSize: 15, ...font(600) },
     secondaryBtn: {
       flexDirection: 'row',
-      gap: 8,
-      borderWidth: 1,
-      borderColor: t.textPrimary,
-      minHeight: 48,
+      gap: sh.space[1] + 2,
+      backgroundColor: t.surface,
+      borderWidth: sh.hairline,
+      borderColor: t.line2 ?? t.divider,
+      borderRadius: sh.radius,
+      minHeight: BUTTON_HEIGHT,
       alignItems: 'center',
       justifyContent: 'center',
     },
     secondaryBtnText: { color: t.textPrimary, fontSize: 14, ...font(600) },
+    // A phone has no hover, so the prototype's hover lands on press: the ink
+    // button dims, the outlined one brightens its edge.
+    pressed: { opacity: 0.82 },
+    secondaryPressed: { borderColor: t.brand ?? t.accent },
     btnDisabled: { opacity: 0.45 },
 
-    errorLine: { color: t.accent700 ?? t.danger, ...TYPE.body, lineHeight: 19 },
-    account: { color: t.textSecondary, ...TYPE.helper, lineHeight: 16 },
+    errorLine: { color: t.downText ?? t.danger, ...TYPE.body, lineHeight: 20 },
+    account: { color: t.ink3 ?? t.textMuted, ...TYPE.helper, lineHeight: 16 },
   });

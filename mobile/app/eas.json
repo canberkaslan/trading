@@ -74,7 +74,7 @@
       "ios": {
         "appleId": "canberkaslan@gmail.com",
         "ascAppId": "REPLACE_AFTER_APP_STORE_CONNECT_CREATE",
-        "appleTeamId": "REPLACE_AFTER_DEV_PROGRAM"
+        "appleTeamId": "3WWCFVUZ9Y"
       },
       "android": {
         "serviceAccountKeyPath": "./google-service-account.json",
@@ -85,7 +85,7 @@
       "ios": {
         "appleId": "canberkaslan@gmail.com",
         "ascAppId": "REPLACE_AFTER_APP_STORE_CONNECT_CREATE",
-        "appleTeamId": "REPLACE_AFTER_DEV_PROGRAM"
+        "appleTeamId": "3WWCFVUZ9Y"
       },
       "android": {
         "serviceAccountKeyPath": "./google-service-account.json",
@@ -96,7 +96,7 @@
       "ios": {
         "appleId": "canberkaslan@gmail.com",
         "ascAppId": "REPLACE_AFTER_APP_STORE_CONNECT_CREATE",
-        "appleTeamId": "REPLACE_AFTER_DEV_PROGRAM"
+        "appleTeamId": "3WWCFVUZ9Y"
       },
       "android": {
         "serviceAccountKeyPath": "./google-service-account.json",

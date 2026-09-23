@@ -27,7 +27,11 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
 
   ios: {
-    bundleIdentifier: 'co.canberkaslan.trading',
+    // Cortex's Apple team (3WWCFVUZ9Y) publishes under eu.fusapp.*, and this
+    // app ships under that team. A bundle identifier cannot be changed once
+    // App Store Connect has a record for it, so it moves now, before the first
+    // submission, rather than never.
+    bundleIdentifier: 'eu.fusapp.trader',
     supportsTablet: false,
     buildNumber: '1',
     infoPlist: {

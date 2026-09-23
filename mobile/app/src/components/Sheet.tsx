@@ -120,7 +120,17 @@ export function Sheet({
                   style={[
                     styles.btn,
                     a.primary && { backgroundColor: t.textPrimary, borderColor: t.textPrimary },
-                    a.destructive && { backgroundColor: t.accent, borderColor: t.accent },
+                    // The danger token, not the accent. Under Modernist those
+                    // were the same red so `accent` read correctly; under
+                    // Aurora the accent is indigo, which painted every
+                    // destructive confirmation — FLATTEN_ALL, reject, cancel —
+                    // in the same colour as a neutral primary action. The port
+                    // made this remap in risk.tsx and orders.tsx and missed the
+                    // shared component both of them open.
+                    a.destructive && {
+                      backgroundColor: t.dangerDeep ?? t.danger,
+                      borderColor: t.dangerDeep ?? t.danger,
+                    },
                     a.disabled && styles.btnDisabled,
                   ]}
                   accessibilityRole="button"
@@ -128,7 +138,20 @@ export function Sheet({
                   accessibilityHint={a.accessibilityHint}
                   accessibilityState={{ disabled: !!a.disabled }}
                 >
-                  <Text style={[styles.btnLabel, (a.primary || a.destructive) && { color: t.background }]}>
+                  {/*
+                    Two different inversions. `primary` is filled with
+                    textPrimary, so the label takes the page ground. A
+                    destructive fill is rose-700, where the ground is only
+                    2.4:1 — textPrimary is the pairing the palette validates at
+                    5.72:1 and the one the LIVE strip already uses.
+                  */}
+                  <Text
+                    style={[
+                      styles.btnLabel,
+                      a.primary && { color: t.background },
+                      a.destructive && { color: t.textPrimary },
+                    ]}
+                  >
                     {a.label}
                   </Text>
                 </Pressable>

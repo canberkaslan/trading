@@ -61,6 +61,15 @@ export interface CardProps {
   accessibilityLabel?: string;
   accessibilityHint?: string;
   accessibilityRole?: 'button' | 'summary' | 'none';
+  /**
+   * Pass `false` when the card CONTAINS its own buttons.
+   *
+   * React Native's Pressable is `accessible` by default, which makes the whole
+   * card one element and hides every control inside it from VoiceOver and
+   * TalkBack. A card that is merely selectable can stay accessible; a card that
+   * wraps Onayla / Reddet must not, or those buttons cannot be reached at all.
+   */
+  accessible?: boolean;
 }
 
 export function Card({
@@ -73,6 +82,7 @@ export function Card({
   accessibilityLabel,
   accessibilityHint,
   accessibilityRole,
+  accessible,
 }: CardProps) {
   const t = useTheme();
   const sh = useShape();
@@ -96,6 +106,7 @@ export function Card({
     <Pressable
       onPress={onPress}
       style={({ pressed }) => [skin, pressed && styles.pressed]}
+      accessible={accessible}
       accessibilityRole={accessibilityRole ?? 'button'}
       accessibilityLabel={accessibilityLabel}
       accessibilityHint={accessibilityHint}

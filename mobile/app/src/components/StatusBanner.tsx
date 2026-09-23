@@ -129,7 +129,9 @@ export function StatusBanner() {
           <View style={[styles.mark, { backgroundColor: markBg }]}>
             <Text style={[styles.markText, { color: markFg }]}>T</Text>
           </View>
-          <Text style={[styles.wordmark, { color: stripFg }]}>Trader</Text>
+          <Text numberOfLines={1} style={[styles.wordmark, { color: stripFg }]}>
+            Trader
+          </Text>
         </Pressable>
 
         <View
@@ -182,13 +184,26 @@ const makeStyles = (_t: Palette, sh: Shape) =>
   StyleSheet.create({
     strip: { paddingHorizontal: sh.space[3], paddingBottom: sh.space[1], borderBottomWidth: sh.hairline },
     row: { flexDirection: 'row', alignItems: 'center', gap: sh.space[1], minHeight: 40 },
-    brand: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 40 },
+    // flexShrink on all three fixed children, and NOT on `status`.
+    //
+    // React Native defaults flexShrink to 0, and `spacer` has flexBasis 0 — its
+    // shrink weight is flexShrink x flexBasis, so it gives nothing back. That
+    // made the health line the only child that could yield, and the port had
+    // just put an ~88pt brand block in front of it. In LIVE, where the chip
+    // reads "LIVE — GERÇEK PARA", a 375pt device left it about 24pt: "backend
+    // offline — veriler güncel değil" ellipsized after five characters, in the
+    // one mode where an operator acts on it.
+    //
+    // The brand is the thing that can afford to lose width; the health line is
+    // the thing that cannot.
+    brand: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 40, flexShrink: 1 },
     mark: { width: 28, height: 28, borderRadius: sh.radiusPill, alignItems: 'center', justifyContent: 'center' },
     markText: { fontSize: 13, ...font(800) },
     wordmark: { fontSize: 15, ...font(800), letterSpacing: -0.15 },
     modeChip: {
       flexDirection: 'row',
       alignItems: 'center',
+      flexShrink: 1,
       gap: 5,
       borderWidth: sh.hairline,
       borderRadius: sh.radiusPill,
@@ -197,9 +212,9 @@ const makeStyles = (_t: Palette, sh: Shape) =>
     },
     modeText: { fontSize: 10, ...font(800), letterSpacing: 0.9 },
     spacer: { flex: 1 },
-    status: { flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 1 },
+    status: { flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 0 },
     dot: { width: 7, height: 7, borderRadius: sh.radiusPill },
-    statusText: { fontSize: 11, ...font(600), ...TABULAR, flexShrink: 1 },
+    statusText: { fontSize: 11, ...font(600), ...TABULAR },
     bell: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', marginRight: -10 },
     badge: {
       position: 'absolute',

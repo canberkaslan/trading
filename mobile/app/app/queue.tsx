@@ -35,7 +35,13 @@ import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { HTTPError } from 'ky';
 
-import { usePendingOrders, useDecisions, useApproveOrder, useRejectOrder } from '@/api/hooks';
+import {
+  usePendingOrders,
+  useDecisions,
+  useApproveOrder,
+  useRejectOrder,
+  useReadiness,
+} from '@/api/hooks';
 import { useIsAdmin } from '@/api/useMe';
 import type { AgentDecision, OrderListItem } from '@/api/types';
 import { useTheme } from '@/theme/useTheme';
@@ -153,6 +159,10 @@ export default function QueueScreen() {
   const { t: tr } = useTranslation();
 
   const pending = usePendingOrders();
+  // This screen submits real orders. approve/[orderId] shows the mode beside
+  // the ticker; the queue was approving the same orders with nothing on screen
+  // saying whether the money is real.
+  const { data: readiness } = useReadiness();
   // Only to borrow the rating chip, the entry price and the PM sentence; the
   // orders themselves are authoritative for everything else.
   const decisions = useDecisions({ limit: 60 });
@@ -361,9 +371,23 @@ export default function QueueScreen() {
         </Pressable>
 
         <View style={styles.head}>
-          <Text style={styles.title} accessibilityRole="header">
-            Onay kuyruğu <Text style={styles.titleCount}>{rows.length}</Text>
-          </Text>
+          <View style={styles.titleRow}>
+            <Text style={styles.title} accessibilityRole="header">
+              Onay kuyruğu <Text style={styles.titleCount}>{rows.length}</Text>
+            </Text>
+            <Tag
+              label={
+                readiness?.trading_mode == null
+                  ? 'MOD ?'
+                  : readiness.trading_mode === 'live'
+                    ? 'LIVE — GERÇEK PARA'
+                    : 'PAPER'
+              }
+              variant={readiness?.trading_mode === 'live' ? 'down' : 'neutral'}
+              size="sm"
+              caps
+            />
+          </View>
           <Text style={styles.sub}>
             {IS_WEB
               ? 'Klavye: J / K gez · A onayla · R reddet · ↵ aç · Esc çık'
@@ -388,12 +412,23 @@ export default function QueueScreen() {
                   key={o.order_id}
                   onPress={() => setIndex(i)}
                   style={[styles.row, selected && styles.rowSelected]}
-                  accessibilityLabel={`${o.ticker}, ${o.side === 'BUY' ? 'al' : 'sat'} ${o.quantity} lot${
-                    selected ? ', seçili' : ''
-                  }`}
-                  accessibilityHint="Seç; aşağıdaki düğmeler bu emri onaylar, reddeder ya da açar"
+                  // The card holds Onayla / Reddet / Incele. A Pressable is
+                  // accessible by default, which would make the whole card one
+                  // element and put those three buttons out of reach of
+                  // VoiceOver and TalkBack entirely — and the keyboard path
+                  // below is web-only, so there would be no way to approve an
+                  // order on a device. The row's own label moves inside, onto
+                  // an element that is not a button.
+                  accessible={false}
                 >
-                  <View style={styles.rowHead}>
+                  <View
+                    accessible
+                    accessibilityLabel={`${o.ticker}, ${o.side === 'BUY' ? 'al' : 'sat'} ${o.quantity} lot${
+                      selected ? ', seçili' : ''
+                    }`}
+                    accessibilityHint="Emri seçer; onay ve red düğmeleri ayrıca okunur"
+                    style={styles.rowHead}
+                  >
                     <Text style={styles.ticker}>{o.ticker}</Text>
                     {d ? <Tag label={d.rating} variant={ratingVariant(d.rating)} size="sm" caps /> : null}
                     <Text
@@ -620,6 +655,7 @@ const makeStyles = (t: Palette, sh: Shape) =>
     back: { marginTop: sh.space[1], minHeight: 24, justifyContent: 'center', alignSelf: 'flex-start' },
     backText: { ...TYPE.bodyStrong, color: t.brand ?? t.accent },
 
+    titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
     head: { paddingTop: sh.space[1], paddingBottom: sh.space[2] },
     title: { ...TYPE.h2, fontSize: 26, letterSpacing: -0.5, color: t.textPrimary },
     titleCount: { ...font(600), color: t.ink3 ?? t.textMuted, ...TABULAR },

@@ -66,14 +66,15 @@
         "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "fusapp-trader.firebaseapp.com",
         "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "fusapp-trader",
         "EXPO_PUBLIC_FIREBASE_APP_ID": "1:944060102826:web:cfaa8aa5212cad63db78d3"
-      }
+      },
+      "credentialsSource": "local"
     }
   },
   "submit": {
     "preview": {
       "ios": {
         "appleId": "canberkaslan@gmail.com",
-        "ascAppId": "REPLACE_AFTER_APP_STORE_CONNECT_CREATE",
+        "ascAppId": "6815420768",
         "appleTeamId": "3WWCFVUZ9Y"
       },
       "android": {
@@ -84,7 +85,7 @@
     "paper": {
       "ios": {
         "appleId": "canberkaslan@gmail.com",
-        "ascAppId": "REPLACE_AFTER_APP_STORE_CONNECT_CREATE",
+        "ascAppId": "6815420768",
         "appleTeamId": "3WWCFVUZ9Y"
       },
       "android": {
@@ -95,7 +96,7 @@
     "production": {
       "ios": {
         "appleId": "canberkaslan@gmail.com",
-        "ascAppId": "REPLACE_AFTER_APP_STORE_CONNECT_CREATE",
+        "ascAppId": "6815420768",
         "appleTeamId": "3WWCFVUZ9Y"
       },
       "android": {

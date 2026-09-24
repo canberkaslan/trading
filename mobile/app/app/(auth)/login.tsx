@@ -24,7 +24,9 @@ import {
   currentUser,
   isConfigured as isFirebaseConfigured,
   signIn as firebaseSignIn,
+  signUp as firebaseSignUp,
 } from '@/auth/firebase';
+import { isInviteCodeValid, signUpEnabled } from '@/auth/inviteCode';
 import { useAuthStore } from '@/stores/auth';
 import { signInErrorTr } from '@/auth/signInError';
 import {
@@ -147,7 +149,13 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [ack, setAck] = useState(false);
-  const [focused, setFocused] = useState<'email' | 'password' | null>(null);
+  const [focused, setFocused] = useState<'email' | 'password' | 'invite' | null>(null);
+  // Kayit akisi yalnizca bir davet kodu YAPILANDIRILMISSA var olur; kodsuz
+  // uretilmis bir build'de sekme hic cizilmez ve ekran bugunku gibi davranir.
+  const signUpAvailable = signUpEnabled();
+  const [authMode, setAuthMode] = useState<'signIn' | 'signUp'>('signIn');
+  const [invite, setInvite] = useState('');
+  const isSignUp = signUpAvailable && authMode === 'signUp';
   const [deviceBusy, setDeviceBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -184,7 +192,8 @@ export default function LoginScreen() {
           : 'Hesap modu bilinmiyor — backend bağlantısı bekleniyor.';
 
   const emailOk = isValidEmail(email);
-  const canSignIn = emailOk && password.length >= MIN_PASSWORD && ack;
+  const inviteOk = !isSignUp || isInviteCodeValid(invite);
+  const canSignIn = emailOk && password.length >= MIN_PASSWORD && ack && inviteOk;
 
   const enter = () => router.replace('/(tabs)/portfolio');
 
@@ -202,9 +211,19 @@ export default function LoginScreen() {
       return;
     }
 
+    // Kapi burada BIR KEZ DAHA yoklaniyor. `canSignIn` dugmeyi devre disi
+    // birakiyor ama klavyedeki "git" tusu de bu fonksiyonu cagiriyor; tek
+    // savunmanin gorsel bir devre disi birakma olmasi yeterli degil.
+    if (isSignUp && !isInviteCodeValid(invite)) {
+      setAuthError('Davet kodu geçersiz.');
+      return;
+    }
+
     setBusy(true);
     try {
-      const user = await firebaseSignIn(email, password);
+      const user = isSignUp
+        ? await firebaseSignUp(email, password)
+        : await firebaseSignIn(email, password);
       // The uid is what will separate one family member's actions from
       // another's; the email is only for display.
       authSignIn(user.uid, user.email ?? email.trim());
@@ -267,7 +286,7 @@ export default function LoginScreen() {
     }
   };
 
-  const signInLabel = t('auth.signIn');
+  const signInLabel = isSignUp ? 'Hesap oluştur' : t('auth.signIn');
 
   return (
     <SafeAreaView style={styles.container} edges={['bottom']}>
@@ -384,6 +403,28 @@ export default function LoginScreen() {
               />
             </View>
 
+            {isSignUp ? (
+              <View style={styles.field}>
+                <Text style={styles.label}>Davet kodu</Text>
+                <TextInput
+                  value={invite}
+                  onChangeText={setInvite}
+                  onFocus={() => setFocused('invite')}
+                  onBlur={() => setFocused(null)}
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                  autoComplete="off"
+                  placeholder="DAVET-KODU"
+                  placeholderTextColor={theme.ink3 ?? theme.textMuted}
+                  returnKeyType="go"
+                  onSubmitEditing={signIn}
+                  style={[styles.input, focused === 'invite' && styles.inputFocused]}
+                  accessibilityLabel="Davet kodu"
+                  accessibilityHint="Hesap açmak için size verilen kodu girin"
+                />
+              </View>
+            ) : null}
+
             {/* 22px rounded box, 2px ink border, ink fill and an inverted tick
                 when ticked. The whole row is the target so the box itself never
                 has to be hit. */}
@@ -421,7 +462,9 @@ export default function LoginScreen() {
                     ? 'Geçerli bir e-posta girin'
                     : password.length < MIN_PASSWORD
                       ? 'Şifrenizi girin'
-                      : 'Yasal metni onaylayın'
+                      : !ack
+                        ? 'Yasal metni onaylayın'
+                        : 'Davet kodunu girin'
               }
             >
               <Text style={styles.primaryBtnText}>
@@ -459,6 +502,28 @@ export default function LoginScreen() {
               >
                 {authError}
               </Text>
+            ) : null}
+
+            {signUpAvailable ? (
+              <Pressable
+                onPress={() => {
+                  // Mod degisince hata ve kod temizlenir: onceki moddan kalan
+                  // bir hata mesaji yeni modu anlatmiyor.
+                  setAuthMode((m) => (m === 'signIn' ? 'signUp' : 'signIn'));
+                  setAuthError(null);
+                  setInvite('');
+                }}
+                disabled={busy}
+                style={styles.modeSwitch}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  isSignUp ? 'Girişe dön' : 'Davet kodu ile hesap oluştur'
+                }
+              >
+                <Text style={styles.modeSwitchText}>
+                  {isSignUp ? 'Hesabım var — giriş yap' : 'Davet kodum var — hesap oluştur'}
+                </Text>
+              </Pressable>
             ) : null}
 
             <Text style={styles.account}>{accountLine}</Text>
@@ -600,5 +665,15 @@ const makeStyles = (t: Palette, sh: Shape) =>
     btnDisabled: { opacity: 0.45 },
 
     errorLine: { color: t.downText ?? t.danger, ...TYPE.body, lineHeight: 20 },
-    account: { color: t.ink3 ?? t.textMuted, ...TYPE.helper, lineHeight: 16 },
+    modeSwitch: {
+      minHeight: MIN_TOUCH_TARGET,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    modeSwitchText: {
+      color: t.brand ?? t.textPrimary,
+      ...TYPE.bodyStrong,
+      textDecorationLine: 'underline',
+    },
+  account: { color: t.ink3 ?? t.textMuted, ...TYPE.helper, lineHeight: 16 },
   });

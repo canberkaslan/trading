@@ -81,3 +81,26 @@ The change reaches every device on that channel within ~5 minutes. Native code c
 OTA: `eas update:rollback --branch preview` reverts to the previous JS bundle.
 
 Native: re-submit the prior build from TestFlight ("Activate this build") — no rebuild needed.
+
+## Davet kodu (kayit akisi)
+
+Kayit akisi `EXPO_PUBLIC_INVITE_CODE` **tanimliysa** gorunur, aksi halde giris
+ekrani bugunku gibi yalniz giris sunar. Bu fail-closed davranis bilincli:
+unutulmus bir degisken kapiyi acmamali.
+
+Kod EAS ortam degiskeni olarak tutuluyor (repoda DEGIL):
+
+```bash
+eas env:list --environment preview
+eas env:update --name EXPO_PUBLIC_INVITE_CODE --value YENI-KOD --environment preview
+```
+
+Degistirince **yeni bir build gerekir** — `EXPO_PUBLIC_*` degiskenleri Babel
+tarafindan derleme aninda pakete sabit olarak gomulur. Ayni sebeple bu kod bir
+HIZ TUMSEGIDIR, kilit degildir: paketi acan biri okuyabilir. Durdurdugu sey
+TestFlight/APK linkinin elden ele dolasmasi.
+
+Gercek yetki sunucuda: emir onaylama `require_admin` istiyor, yani kayit olan
+biri islem yapamaz. Okuyabilir (bekleyen emirler, ajan kararlari, portfoy) --
+kapinin savundugu sey bu. Sunucu tarafli dogrulama istenirse backend'e bir uc
+eklenmeli; o zaman kod pakete hic girmez.

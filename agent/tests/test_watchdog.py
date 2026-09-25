@@ -451,3 +451,52 @@ class TestBackupProbe:
         signal = watchdog.probe_backup("owner/repo", None, NOW)
         assert signal.age_hours == pytest.approx(28.23, abs=0.01)
         assert signal.stale
+
+
+class _Resp:
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    def read(self, _n: int = -1) -> bytes:
+        return self._body
+
+    def __enter__(self) -> _Resp:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+
+class TestReadinessProbe:
+    def _serve(self, monkeypatch: pytest.MonkeyPatch, body: bytes) -> None:
+        monkeypatch.setattr(watchdog.urllib.request, "urlopen", lambda *a, **k: _Resp(body))
+
+    def test_ready_url_sits_next_to_health(self) -> None:
+        assert watchdog.ready_url_for("https://h.example/healthz") == "https://h.example/readyz"
+        assert watchdog.ready_url_for("https://h.example/") == "https://h.example/readyz"
+
+    def test_reads_a_failing_broker(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._serve(monkeypatch, b'{"status":"degraded","alpaca":false,"db":true}')
+        assert watchdog.probe_ready("https://h.example/readyz").broker_ok is False
+
+    def test_reads_a_healthy_broker(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._serve(monkeypatch, b'{"status":"ok","alpaca":true,"db":true}')
+        assert watchdog.probe_ready("https://h.example/readyz").broker_ok is True
+
+    @pytest.mark.parametrize(
+        "body", [b"<html>cloudflare</html>", b'{"status":"ok"}', b'{"alpaca":"false"}', b"[]"]
+    )
+    def test_anything_unreadable_is_unknown_not_down(
+        self, monkeypatch: pytest.MonkeyPatch, body: bytes
+    ) -> None:
+        self._serve(monkeypatch, body)
+        assert watchdog.probe_ready("https://h.example/readyz").broker_ok is None
+
+    def test_http_error_is_unknown(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def boom(*_args: object, **_kwargs: object) -> object:
+            raise urllib.error.HTTPError("u", 503, "x", {}, None)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(watchdog.urllib.request, "urlopen", boom)
+        probe = watchdog.probe_ready("https://h.example/readyz")
+        assert probe.broker_ok is None
+        assert probe.detail == "HTTP 503"

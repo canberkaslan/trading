@@ -54,6 +54,7 @@ from tradingagents_us.monitoring.liveness import (  # noqa: E402
     BackupSignal,
     HealthProbe,
     HostProbe,
+    ReadinessProbe,
     Verdict,
     classify,
     severity,
@@ -98,6 +99,36 @@ def probe_health(url: str) -> HealthProbe:
         return HealthProbe(reached_origin=exc.code < 500, status=exc.code)
     except Exception as exc:  # timeout, DNS, TLS — no status to report at all
         return HealthProbe(reached_origin=False, error=type(exc).__name__)
+
+
+def ready_url_for(health_url: str) -> str:
+    """`/readyz` next to the configured `/healthz`, so one setting covers both."""
+    if health_url.endswith("/healthz"):
+        return health_url[: -len("/healthz")] + "/readyz"
+    return health_url.rstrip("/") + "/readyz"
+
+
+def probe_ready(url: str) -> ReadinessProbe:
+    """Read the `alpaca` bit out of `/readyz`.
+
+    `/readyz` answers 200 whether or not the broker is reachable (the verdict is
+    in the body), so the status code says nothing here. Anything short of a JSON
+    object with a boolean `alpaca` is "unknown", never "down": an older API, a
+    Cloudflare error page or a timeout must not be able to invent a broker
+    outage — the health probe already reports a missing origin.
+    """
+    req = urllib.request.Request(url, headers={"User-Agent": "ai-trader-watchdog/1"})
+    try:
+        with urllib.request.urlopen(req, timeout=PROBE_TIMEOUT_S) as resp:
+            payload = json.loads(resp.read(4096))
+    except urllib.error.HTTPError as exc:
+        return ReadinessProbe(broker_ok=None, detail=f"HTTP {exc.code}")
+    except Exception as exc:  # timeout, DNS, TLS, not JSON
+        return ReadinessProbe(broker_ok=None, detail=type(exc).__name__)
+    alpaca = payload.get("alpaca") if isinstance(payload, dict) else None
+    if not isinstance(alpaca, bool):
+        return ReadinessProbe(broker_ok=None, detail="no `alpaca` field in /readyz")
+    return ReadinessProbe(broker_ok=alpaca)
 
 
 def probe_backup(repo: str, token: str | None, now: datetime) -> BackupSignal:
@@ -410,7 +441,11 @@ def check_once(now: datetime, dry_run: bool = False) -> Verdict:
     health = probe_health(health_url)
     backup = probe_backup(backup_repo, backup_token, now)
     host = probe_host(host_spec)
-    verdict = classify(health, backup, host)
+    # Only worth asking when the origin answered: through a dead tunnel /readyz
+    # would just repeat the health probe's error as a second, noisier line.
+    ready_url = os.environ.get("WATCHDOG_READY_URL") or ready_url_for(health_url)
+    ready = probe_ready(ready_url) if health.reached_origin else ReadinessProbe(broker_ok=None)
+    verdict = classify(health, backup, host, ready)
 
     print(json.dumps({
         "checked_at": now.isoformat(),
@@ -419,6 +454,7 @@ def check_once(now: datetime, dry_run: bool = False) -> Verdict:
         "health": health.describe(),
         "backup": backup.describe(),
         "host": host.describe(),
+        "ready": ready.describe(),
         "reasons": list(verdict.reasons),
     }, indent=2))
 

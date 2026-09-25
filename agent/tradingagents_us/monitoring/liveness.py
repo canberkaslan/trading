@@ -66,6 +66,7 @@ BACKUP_STALE_AFTER_HOURS = BACKUP_INTERVAL_HOURS + BACKUP_GRACE_HOURS
 # new observation is an escalation of an open incident or just more of the same.
 STATE_DARK = "dark"
 STATE_WEDGED = "wedged"
+STATE_BROKER_DOWN = "broker_down"
 STATE_EDGE_DOWN = "edge_down"
 STATE_DEGRADED = "degraded"
 STATE_UP = "up"
@@ -76,7 +77,19 @@ STATE_UP = "up"
 # datacentre console when a shell would have done is how a remedy stops being
 # read. Numbers are spaced so a future state can land between two of these
 # without renumbering the rest.
-_SEVERITY = {STATE_DARK: 40, STATE_WEDGED: 30, STATE_EDGE_DOWN: 20, STATE_DEGRADED: 10, STATE_UP: 0}
+#
+# `broker_down` sits between `wedged` and `edge_down`: every process is up and
+# the page loads, but the broker refuses the box's key, so no order is placed
+# and no stop is re-armed. From 2026-09-14 that was the whole outage — eleven
+# days of a failing daily run behind a /healthz that answered 200 throughout.
+_SEVERITY = {
+    STATE_DARK: 40,
+    STATE_WEDGED: 30,
+    STATE_BROKER_DOWN: 25,
+    STATE_EDGE_DOWN: 20,
+    STATE_DEGRADED: 10,
+    STATE_UP: 0,
+}
 
 
 def severity(state: str) -> int:
@@ -183,6 +196,30 @@ class HostProbe:
 
 
 @dataclass(frozen=True)
+class ReadinessProbe:
+    """What the API's own `/readyz` says about the broker.
+
+    `/healthz` only proves uvicorn is up; it answered 200 for the whole of the
+    2026-09-14 broker outage. `/readyz` asks Alpaca, and its `alpaca` field is
+    the one bit that can tell a running trader from one that is locked out.
+
+    `broker_ok is None` means we could not get a readable answer (older API with
+    no field, a 5xx, a timeout). That is not evidence of anything and must never
+    raise an incident on its own — the health probe already covers "no answer".
+    Only an explicit `alpaca: false` counts. The field is a bare boolean, so
+    quoting it into a public issue leaks nothing about the book.
+    """
+
+    broker_ok: bool | None
+    detail: str | None = None
+
+    def describe(self) -> str:
+        if self.broker_ok is None:
+            return f"unknown ({self.detail or 'not checked'})"
+        return "broker reachable" if self.broker_ok else "broker check failing (`alpaca: false`)"
+
+
+@dataclass(frozen=True)
 class Verdict:
     """What to say, and how loudly."""
 
@@ -276,10 +313,68 @@ def _unreadable_backup(
     )
 
 
+def _origin_answered(
+    health_line: str, backup_line: str, backup: BackupSignal, ready: ReadinessProbe
+) -> Verdict:
+    """The API answered, so the host is up; what is left is whether it can trade."""
+    if ready.broker_ok is False:
+        # Checked before the backup branch because it is the worse news: a
+        # stale backup risks the *next* outage, a refused broker key is one
+        # happening now. The backup line still rides along so neither hides.
+        return Verdict(
+            state=STATE_BROKER_DOWN,
+            headline="Box reachable, but the broker is refusing it",
+            reasons=(
+                health_line,
+                f"Readiness endpoint: {ready.describe()}",
+                backup_line,
+                "The API answers, so the host, tunnel and process are fine — but the "
+                "daily run cannot read the account, place an order or re-arm a stop. "
+                "The open book is unattended while every liveness check looks green.",
+            ),
+            remedy=(
+                "Usually the Alpaca key was revoked or regenerated: create a new paper "
+                "key pair in the Alpaca dashboard, put it in `/opt/ai-trader/secrets.env` "
+                "(ALPACA_API_KEY / ALPACA_API_SECRET), then "
+                "`sudo systemctl restart ai-trader-api.service` and re-check `/readyz`."
+            ),
+        )
+    if backup.stale:
+        # The API answering proves the host is up and networked, so a missed
+        # backup is not an outage — it is a broken timer, a full disk, or an
+        # expired deploy key. Quiet, but it is exactly the failure that makes
+        # the *next* real outage unrecoverable, so it still gets said.
+        return Verdict(
+            state=STATE_DEGRADED,
+            headline="Box reachable, but the off-box backup has stopped",
+            reasons=(
+                health_line,
+                backup_line,
+                "The host is alive, so this is the backup path failing on its own: "
+                "check `ai-trader-backup.timer`, disk space, and the deploy key.",
+            ),
+            remedy=(
+                "ssh agentmesh, then "
+                "`systemctl status ai-trader-backup.timer ai-trader-backup.service` "
+                "and `journalctl -u ai-trader-backup -n 50`."
+            ),
+        )
+    # No host line in this branch or the one above: the API answering is
+    # already proof the machine is up, and a second line saying so is noise
+    # in the only alert somebody reads half-awake.
+    return Verdict(
+        state=STATE_UP,
+        headline="Box reachable",
+        reasons=(health_line, backup_line),
+        remedy="Nothing to do.",
+    )
+
+
 def classify(
     health: HealthProbe,
     backup: BackupSignal,
     host: HostProbe | None = None,
+    ready: ReadinessProbe | None = None,
 ) -> Verdict:
     """Turn the outside signals into one verdict.
 
@@ -294,40 +389,13 @@ def classify(
     already made by the other two. It cannot declare an outage by itself.
     """
     host = host or HostProbe(configured=False)
+    ready = ready or ReadinessProbe(broker_ok=None)
     health_line = f"Health endpoint: {health.describe()}"
     backup_line = f"Last off-box backup: {backup.describe()}"
     host_line = f"Direct TCP probe to the origin: {host.describe()}"
 
     if health.reached_origin:
-        if backup.stale:
-            # The API answering proves the host is up and networked, so a missed
-            # backup is not an outage — it is a broken timer, a full disk, or an
-            # expired deploy key. Quiet, but it is exactly the failure that makes
-            # the *next* real outage unrecoverable, so it still gets said.
-            return Verdict(
-                state=STATE_DEGRADED,
-                headline="Box reachable, but the off-box backup has stopped",
-                reasons=(
-                    health_line,
-                    backup_line,
-                    "The host is alive, so this is the backup path failing on its own: "
-                    "check `ai-trader-backup.timer`, disk space, and the deploy key.",
-                ),
-                remedy=(
-                    "ssh agentmesh, then "
-                    "`systemctl status ai-trader-backup.timer ai-trader-backup.service` "
-                    "and `journalctl -u ai-trader-backup -n 50`."
-                ),
-            )
-        # No host line in this branch or the one above: the API answering is
-        # already proof the machine is up, and a second line saying so is noise
-        # in the only alert somebody reads half-awake.
-        return Verdict(
-            state=STATE_UP,
-            headline="Box reachable",
-            reasons=(health_line, backup_line),
-            remedy="Nothing to do.",
-        )
+        return _origin_answered(health_line, backup_line, backup, ready)
 
     if backup.stale:
         if host.answered:

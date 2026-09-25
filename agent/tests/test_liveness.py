@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from tradingagents_us.monitoring.liveness import (
     BACKUP_STALE_AFTER_HOURS,
+    STATE_BROKER_DOWN,
     STATE_DARK,
     STATE_DEGRADED,
     STATE_EDGE_DOWN,
@@ -19,6 +20,7 @@ from tradingagents_us.monitoring.liveness import (
     BackupSignal,
     HealthProbe,
     HostProbe,
+    ReadinessProbe,
     classify,
     severity,
 )
@@ -256,3 +258,34 @@ class TestIncidentBody:
                 body = classify(probe, backup).body().lower()
                 for forbidden in ("equity", "$", "position", "alpaca", "account"):
                     assert forbidden not in body
+
+
+class TestBrokerReadiness:
+    """/healthz answered 200 for all eleven days the broker refused the box's key
+    (2026-09-14 onward). Only /readyz's `alpaca` bit could have said so."""
+
+    _ok = HealthProbe(reached_origin=True, status=200)
+
+    def test_broker_refusing_the_key_is_an_incident(self) -> None:
+        verdict = classify(self._ok, _fresh(), _host_absent(), ReadinessProbe(broker_ok=False))
+        assert verdict.state == STATE_BROKER_DOWN
+        assert verdict.is_incident
+        assert "secrets.env" in verdict.remedy
+
+    def test_broker_down_outranks_a_stale_backup(self) -> None:
+        verdict = classify(self._ok, _stale(), _host_absent(), ReadinessProbe(broker_ok=False))
+        assert verdict.state == STATE_BROKER_DOWN
+        assert any("backup" in r for r in verdict.reasons)
+
+    def test_unknown_readiness_changes_nothing(self) -> None:
+        unknown = ReadinessProbe(broker_ok=None, detail="HTTP 404")
+        assert classify(self._ok, _fresh(), None, unknown).state == STATE_UP
+        assert classify(self._ok, _stale(), None, unknown).state == STATE_DEGRADED
+
+    def test_readiness_cannot_speak_for_a_missing_origin(self) -> None:
+        dead = HealthProbe(reached_origin=False, status=530)
+        verdict = classify(dead, _stale(), _host_silent(), ReadinessProbe(broker_ok=False))
+        assert verdict.state == STATE_DARK
+
+    def test_severity_sits_between_wedged_and_edge_down(self) -> None:
+        assert severity(STATE_EDGE_DOWN) < severity(STATE_BROKER_DOWN) < severity(STATE_WEDGED)

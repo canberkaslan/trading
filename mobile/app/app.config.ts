@@ -12,11 +12,6 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   orientation: 'portrait',
   userInterfaceStyle: 'automatic',
   icon: './assets/icon.png',
-  splash: {
-    image: './assets/splash.png',
-    resizeMode: 'contain',
-    backgroundColor: '#0a0a0a',
-  },
 
   // OTA updates — JS-only fixes ship instantly via `eas update --channel
   // preview`, no 30-min rebuild. runtimeVersion ties a build to compatible
@@ -76,6 +71,22 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
 
   plugins: [
     'expo-router',
+    [
+      // SDK 54 removed the top-level `splash` key: native splash screens are
+      // now exclusively this plugin's business. A 1:1 port of the config that
+      // used to live there — `enableFullScreenImage_legacy` is what preserves
+      // the old geometry, because the new plugin otherwise centres the image
+      // at `imageWidth` (default 100pt) instead of scaling our 1024² asset to
+      // fit the screen, which would have silently shrunk the splash to a
+      // thumbnail.
+      'expo-splash-screen',
+      {
+        image: './assets/splash.png',
+        resizeMode: 'contain',
+        backgroundColor: '#0a0a0a',
+        enableFullScreenImage_legacy: true,
+      },
+    ],
     'expo-font',
     'expo-secure-store',
     'expo-local-authentication',

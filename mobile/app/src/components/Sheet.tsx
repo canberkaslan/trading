@@ -175,7 +175,7 @@ const makeStyles = (t: Palette, sh: Shape) =>
      * hard-coded here before, only now it follows the palette instead of
      * staying Modernist-brown under a dark theme.
      */
-    scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: t.scrim ?? t.shadowColor },
+    scrim: { ...StyleSheet.absoluteFill, backgroundColor: t.scrim ?? t.shadowColor },
     scrimFallback: { opacity: 0.45 },
     dock: { flex: 1, justifyContent: 'flex-end' },
     sheet: {

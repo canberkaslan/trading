@@ -127,3 +127,41 @@ def test_benchmark_on_by_default(client: TestClient, monkeypatch: pytest.MonkeyP
     assert seen["benchmark"] is True
     assert b["gates"][-1]["name"] == "Beats SPY"
     assert b["gates"][-1]["passed"] is True
+
+
+def _raise_http(status: int):
+    def _f(period: str, benchmark: bool) -> Scorecard:
+        import httpx
+
+        req = httpx.Request("GET", "https://paper-api.alpaca.markets/v2/account/portfolio/history")
+        raise httpx.HTTPStatusError("x", request=req, response=httpx.Response(status, request=req))
+
+    return _f
+
+
+@pytest.mark.parametrize(
+    ("status", "reason"),
+    [(401, "broker_auth_refused"), (403, "broker_auth_refused"), (500, "broker_error")],
+)
+def test_broker_http_error_is_named_503(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, status: int, reason: str
+) -> None:
+    monkeypatch.setattr("api.routes.eval.build_scorecard", _raise_http(status))
+    r = client.get("/v1/eval")
+    assert r.status_code == 503
+    assert r.json()["detail"] == f"{reason}: alpaca answered {status}"
+
+
+def test_broker_unreachable_is_503_and_not_cached(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import httpx
+
+    def _down(period: str, benchmark: bool) -> Scorecard:
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr("api.routes.eval.build_scorecard", _down)
+    assert client.get("/v1/eval").json()["detail"] == "broker_unreachable"
+    # the failure must not be cached: once the broker answers, so do we
+    monkeypatch.setattr("api.routes.eval.build_scorecard", lambda period, benchmark: _sc())
+    assert client.get("/v1/eval").status_code == 200

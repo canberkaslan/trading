@@ -10,6 +10,7 @@ from __future__ import annotations
 import time
 from threading import Lock
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
@@ -103,6 +104,17 @@ async def get_eval(
         result = _build(period, benchmark)
     except SystemExit as exc:  # build_scorecard raises this when too little history
         raise HTTPException(409, str(exc)) from exc
+    except httpx.HTTPStatusError as exc:
+        # The scorecard is built from the broker's equity history. When the
+        # broker refuses us this surfaced as a bare 500 traceback, which reads
+        # as "our code is broken" — for twelve days in Sept 2026 it was a
+        # revoked paper key. Name the dependency and the status instead; 503
+        # because nothing about the request is wrong and a retry may succeed.
+        status = exc.response.status_code
+        reason = "broker_auth_refused" if status in (401, 403) else "broker_error"
+        raise HTTPException(503, f"{reason}: alpaca answered {status}") from exc
+    except httpx.TransportError as exc:
+        raise HTTPException(503, "broker_unreachable") from exc
     with _lock:
         _cache[key] = (now, result)
     return result

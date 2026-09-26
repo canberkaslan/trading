@@ -39,6 +39,29 @@ regexes = [
   # The Firebase Web API key, reasoned about above.
   '''"EXPO_PUBLIC_FIREBASE_API_KEY"\s*:\s*"AIza[0-9A-Za-z_\-]{35}"''',
 
+  # `ascApiKeyIssuerId` in mobile/app/eas.json, three times — once per submit
+  # profile. The `generic-api-key` rule fires on entropy plus the word "Key" in
+  # the field name; the value is a UUID.
+  #
+  # An App Store Connect Issuer ID identifies the Apple team, one per account.
+  # It is shown in plain text on Users and Access -> Integrations to everyone
+  # with access to the team, and it authorises nothing: every request to the
+  # App Store Connect API carries a JWT signed by the API key's PRIVATE half,
+  # the .p8. That file is the credential, it is gitignored (along with *.p12,
+  # *.mobileprovision and ios-creds/), and `git log --all --diff-filter=A`
+  # confirms no .p8, .p12, .mobileprovision, keystore, service-account or
+  # credentials.json has ever been added to this repository in any commit.
+  #
+  # Scope: matched on the LINE and on this field name only. A bare UUID
+  # anywhere else, including elsewhere in this same file, still fails the job.
+  #
+  # Worth doing separately, and not what this entry claims to solve: this
+  # repository is public, and while the issuer id is not a secret it is still
+  # free reconnaissance about which Apple team publishes the app. Moving it and
+  # ascApiKeyId into EAS environment variables would take them out of the
+  # public tree entirely and make this allowance unnecessary.
+  '''"ascApiKeyIssuerId"\s*:\s*"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"''',
+
   # `sent_key == "..."` in agent/tests/test_execution.py. The `generic-api-key`
   # rule fires on the variable name, not on the value: sent_key is the
   # idempotency key submit_order() hands Alpaca as client_order_id, and the

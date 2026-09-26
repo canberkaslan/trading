@@ -72,6 +72,30 @@ module.exports = [
       // this rule has never been applied to they are behavioural changes, not
       // cleanups. Kept visible as a warning rather than silenced or forced.
       'react-hooks/exhaustive-deps': 'warn',
+
+      /*
+       * React Compiler readiness, arriving with the SDK 57 upgrade.
+       *
+       * eslint-plugin-react-hooks v6 (pulled in by eslint-config-expo@57) adds
+       * three rules that police what render is allowed to do: no reading or
+       * writing refs during render (`refs`), no impure calls during render
+       * (`purity` — `Date.now()` behind a relative-age label trips it), and no
+       * synchronous setState inside an effect (`set-state-in-effect`). They
+       * flag 16 sites here, every one of them deliberate and load-bearing:
+       * `approve/[orderId].tsx` keeps the last order it saw in a ref so an
+       * in-flight approval cannot blank out the confirmation sheet, and the
+       * age labels read the clock during render precisely so they advance.
+       *
+       * None of these is a defect today, because React Compiler is not enabled
+       * in this project — they are hazards only once it is. Rewriting all 16 in
+       * the same change as a five-major SDK jump would put behavioural edits
+       * and a platform upgrade in one commit and leave nothing bisectable when
+       * something regresses, so they stay visible as warnings and get their own
+       * card. Promote these to 'error' in the change that turns the compiler on.
+       */
+      'react-hooks/refs': 'warn',
+      'react-hooks/purity': 'warn',
+      'react-hooks/set-state-in-effect': 'warn',
     },
   },
 ];

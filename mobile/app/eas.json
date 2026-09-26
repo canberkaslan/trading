@@ -55,7 +55,8 @@
       "channel": "production",
       "autoIncrement": true,
       "ios": {
-        "resourceClass": "m-medium"
+        "resourceClass": "m-medium",
+        "image": "latest"
       },
       "android": {
         "buildType": "app-bundle"
@@ -66,15 +67,18 @@
         "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "fusapp-trader.firebaseapp.com",
         "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "fusapp-trader",
         "EXPO_PUBLIC_FIREBASE_APP_ID": "1:944060102826:web:cfaa8aa5212cad63db78d3"
-      }
+      },
+      "credentialsSource": "local"
     }
   },
   "submit": {
     "preview": {
       "ios": {
-        "appleId": "canberkaslan@gmail.com",
-        "ascAppId": "REPLACE_AFTER_APP_STORE_CONNECT_CREATE",
-        "appleTeamId": "REPLACE_AFTER_DEV_PROGRAM"
+        "ascAppId": "6815420768",
+        "appleTeamId": "3WWCFVUZ9Y",
+        "ascApiKeyPath": "./ios-creds/AuthKey_MJMS426XW7.p8",
+        "ascApiKeyId": "MJMS426XW7",
+        "ascApiKeyIssuerId": "30a1fde0-ebaf-4fb3-bd4e-ae6e85a8a0f0"
       },
       "android": {
         "serviceAccountKeyPath": "./google-service-account.json",
@@ -83,9 +87,11 @@
     },
     "paper": {
       "ios": {
-        "appleId": "canberkaslan@gmail.com",
-        "ascAppId": "REPLACE_AFTER_APP_STORE_CONNECT_CREATE",
-        "appleTeamId": "REPLACE_AFTER_DEV_PROGRAM"
+        "ascAppId": "6815420768",
+        "appleTeamId": "3WWCFVUZ9Y",
+        "ascApiKeyPath": "./ios-creds/AuthKey_MJMS426XW7.p8",
+        "ascApiKeyId": "MJMS426XW7",
+        "ascApiKeyIssuerId": "30a1fde0-ebaf-4fb3-bd4e-ae6e85a8a0f0"
       },
       "android": {
         "serviceAccountKeyPath": "./google-service-account.json",
@@ -94,9 +100,11 @@
     },
     "production": {
       "ios": {
-        "appleId": "canberkaslan@gmail.com",
-        "ascAppId": "REPLACE_AFTER_APP_STORE_CONNECT_CREATE",
-        "appleTeamId": "REPLACE_AFTER_DEV_PROGRAM"
+        "ascAppId": "6815420768",
+        "appleTeamId": "3WWCFVUZ9Y",
+        "ascApiKeyPath": "./ios-creds/AuthKey_MJMS426XW7.p8",
+        "ascApiKeyId": "MJMS426XW7",
+        "ascApiKeyIssuerId": "30a1fde0-ebaf-4fb3-bd4e-ae6e85a8a0f0"
       },
       "android": {
         "serviceAccountKeyPath": "./google-service-account.json",

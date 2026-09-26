@@ -12,22 +12,34 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   orientation: 'portrait',
   userInterfaceStyle: 'automatic',
   icon: './assets/icon.png',
-  splash: {
-    image: './assets/splash.png',
-    resizeMode: 'contain',
-    backgroundColor: '#0a0a0a',
-  },
 
   // OTA updates — JS-only fixes ship instantly via `eas update --channel
-  // preview`, no 30-min rebuild. runtimeVersion ties a build to compatible
-  // JS bundles; bump it only on native changes.
-  runtimeVersion: { policy: 'appVersion' },
+  // preview`, no 30-min rebuild. runtimeVersion is what keeps a JS bundle from
+  // reaching a binary it cannot run.
+  //
+  // This was `policy: 'appVersion'`, and the SDK 57 upgrade is exactly the
+  // event that makes that unsafe. `version` is still 0.1.0, so an SDK 52 build
+  // and an SDK 57 build would both claim runtimeVersion "0.1.0" — and the next
+  // `eas update` would serve a bundle compiled against RN 0.86 and React 19 to
+  // the installed APK whose native side is RN 0.76. That is not a degraded
+  // experience, it is a launch crash, and because OTA has already replaced the
+  // bundle the app stays broken until a store update reaches the device.
+  //
+  // `fingerprint` derives the version from the native layer itself, so an SDK
+  // jump changes it without anyone remembering to. Installs on the old binary
+  // simply stop matching and keep the working bundle they have, which is the
+  // right failure: no update beats a poisoned one.
+  runtimeVersion: { policy: 'fingerprint' },
   updates: {
     url: 'https://u.expo.dev/8a169dfd-9bed-479b-87b1-238e6630ab31',
   },
 
   ios: {
-    bundleIdentifier: 'co.canberkaslan.trading',
+    // Cortex's Apple team (3WWCFVUZ9Y) publishes under eu.fusapp.*, and this
+    // app ships under that team. A bundle identifier cannot be changed once
+    // App Store Connect has a record for it, so it moves now, before the first
+    // submission, rather than never.
+    bundleIdentifier: 'eu.fusapp.trader',
     supportsTablet: false,
     buildNumber: '1',
     infoPlist: {
@@ -72,6 +84,22 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
 
   plugins: [
     'expo-router',
+    [
+      // SDK 54 removed the top-level `splash` key: native splash screens are
+      // now exclusively this plugin's business. A 1:1 port of the config that
+      // used to live there — `enableFullScreenImage_legacy` is what preserves
+      // the old geometry, because the new plugin otherwise centres the image
+      // at `imageWidth` (default 100pt) instead of scaling our 1024² asset to
+      // fit the screen, which would have silently shrunk the splash to a
+      // thumbnail.
+      'expo-splash-screen',
+      {
+        image: './assets/splash.png',
+        resizeMode: 'contain',
+        backgroundColor: '#0a0a0a',
+        enableFullScreenImage_legacy: true,
+      },
+    ],
     'expo-font',
     'expo-secure-store',
     'expo-local-authentication',

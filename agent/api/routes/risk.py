@@ -17,7 +17,7 @@ Read-only: it submits nothing and touches no decision path.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from tradingagents_us.dataflows.alpaca_broker import AlpacaClient
@@ -28,6 +28,7 @@ from tradingagents_us.risk.stop_coverage import (
     flatten_orders,
 )
 
+from ..broker_errors import broker_http_exception
 from ..deps import get_alpaca, require_token
 
 router = APIRouter()
@@ -80,7 +81,7 @@ def stop_coverage(_: None = Depends(require_token), alpaca: AlpacaClient = Depen
         positions = alpaca.list_positions()
         orders = flatten_orders(alpaca.list_orders(status="all", limit=500, nested=True))
     except Exception as e:
-        raise HTTPException(502, f"alpaca_error: {e}") from e
+        raise broker_http_exception(e) from e
     finally:
         alpaca.close()
 

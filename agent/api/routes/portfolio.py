@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from scripts.eval_report import _equity_series
@@ -21,6 +21,7 @@ from tradingagents_us.risk.concentration import (
 )
 from tradingagents_us.schemas import PortfolioSnapshot, Position
 
+from ..broker_errors import broker_http_exception
 from ..deps import get_alpaca, require_token
 
 router = APIRouter()
@@ -114,7 +115,7 @@ async def get_snapshot(
         except Exception:
             intraday = {}
     except Exception as e:
-        raise HTTPException(502, f"alpaca_error: {e}") from e
+        raise broker_http_exception(e) from e
     finally:
         alpaca.close()
 
@@ -170,7 +171,7 @@ async def get_history(
     try:
         history = alpaca.portfolio_history(period=period, timeframe="1D")
     except Exception as e:
-        raise HTTPException(502, f"alpaca_error: {e}") from e
+        raise broker_http_exception(e) from e
     finally:
         alpaca.close()
 
@@ -232,7 +233,7 @@ async def get_concentration(
         acct = alpaca.account()
         positions_raw = alpaca.list_positions()
     except Exception as e:
-        raise HTTPException(502, f"alpaca_error: {e}") from e
+        raise broker_http_exception(e) from e
     finally:
         alpaca.close()
 

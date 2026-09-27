@@ -60,8 +60,12 @@ On `agentmesh:/opt/ai-trader/secrets.env`:
 
 - [ ] `ai-trader-preflight.timer` green (validates Alpaca + Polygon + FRED reachable).
 - [ ] Kill-switch reachable from mobile Settings (stops the timer without SSH).
-- [ ] `HEALTHCHECK_URL` dead-man ping wired to a healthchecks.io URL (env-gated,
-      still pending) so a silent box death pages you.
+- [ ] `HEALTHCHECK_URL` dead-man ping wired to a healthchecks.io URL so a run
+      that stops happening pages you (success ping, `/fail` on a failed run).
+      Preflight reports it as a failure every run until it is set.
+- [ ] `OPS_ALERT_GITHUB_TOKEN` set (fine-grained PAT, Issues read/write on the
+      alert repo only) so box alerts also land as GitHub issues and do not
+      depend on the mobile app. Preflight reports it as a failure until set.
 - [ ] Off-box backup timer (`ai-trader-backup.timer`, 02:15 UTC) confirmed green.
 - [ ] Alerting sane after the 2026-07-09 fixes: a Hold/no-trade day no longer
       false-fails the unit; only real broker/API errors page.

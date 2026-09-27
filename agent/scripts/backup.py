@@ -85,28 +85,12 @@ def _tar_gz_dir(dir_path: Path) -> bytes:
 
 def _alert(body: str) -> None:
     try:
-        from sqlalchemy import create_engine
+        from tradingagents_us.notifications.ops_channel import send_ops_alert
 
-        from tradingagents_us.notifications import send_expo_push
-        from tradingagents_us.notifications.sender import PushMessage
-        from tradingagents_us.storage import TradeLogRepository
-        from tradingagents_us.storage.device_tokens import list_all_tokens
-
-        url = os.environ.get("TRADE_LOG_DB_URL", "sqlite:///./local.db")
-        repo = TradeLogRepository(engine=create_engine(url, future=True))
-        with repo.session() as s:
-            tokens = list_all_tokens(s)
-        send_expo_push([
-            PushMessage(
-                to=t,
-                title="⚠️ Backup FAILED",
-                body=body[:200],
-                data={"type": "ops_alert", "kind": "backup"},
-            )
-            for t in tokens
-        ])
+        delivery = send_ops_alert("⚠️ Backup FAILED", body, kind="backup")
+        print(f"backup: alert {delivery.describe()}", file=sys.stderr)
     except Exception as exc:
-        print(f"backup: alert push failed: {exc}", file=sys.stderr)
+        print(f"backup: alert failed: {exc}", file=sys.stderr)
 
 
 def _push_git(git_dir: Path, stamp: str, artifacts: list[tuple[str, bytes]]) -> list[str]:

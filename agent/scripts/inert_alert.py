@@ -98,43 +98,20 @@ def _as_reasons(raw: object) -> list[str]:
 
 
 def _send(title: str, body: str, kind: str) -> tuple[bool, str]:
-    """Push to every registered device. Returns (delivered, detail).
+    """Send through the ops channel (push + GitHub issue). Returns (delivered, detail).
 
-    `delivered` gates the state write, so every not-actually-sent case — no
-    devices, PUSH_DISABLED, an Expo error that `send_expo_push` swallows into
-    its return value — has to report False. Recording an undelivered alert as
-    reported is the one bug that turns this script into silence.
+    `delivered` gates the state write, so it is True only when some channel
+    actually accepted the alert: no devices, PUSH_DISABLED, an Expo error and an
+    unconfigured or failing GitHub half all count as not sent. Recording an
+    undelivered alert as reported is the one bug that turns this script into
+    silence.
     """
-    from sqlalchemy import create_engine
+    from tradingagents_us.notifications.ops_channel import send_ops_alert
 
-    from tradingagents_us.notifications import send_expo_push
-    from tradingagents_us.notifications.sender import PushMessage
-    from tradingagents_us.storage import TradeLogRepository
-    from tradingagents_us.storage.device_tokens import list_all_tokens
-
-    url = os.environ.get("TRADE_LOG_DB_URL", "sqlite:///./local.db")
-    repo = TradeLogRepository(engine=create_engine(url, future=True))
-    with repo.session() as s:
-        tokens = list_all_tokens(s)
-    if not tokens:
-        return False, "no registered devices"
-
-    resp = send_expo_push(
-        [
-            PushMessage(
-                to=t,
-                title=title,
-                body=body[:200],
-                data={"type": "ops_alert", "kind": kind},
-            )
-            for t in tokens
-        ]
-    )
-    if resp.get("disabled"):
-        return False, "PUSH_DISABLED=1"
-    if resp.get("error"):
-        return False, f"expo error: {resp['error']}"
-    return True, f"sent to {len(tokens)} device(s)"
+    # One thread for the whole story, freeze through recovery. The policy's own
+    # kind stays in the text a reader sees.
+    delivery = send_ops_alert(title, f"[{kind}] {body}", kind="order_flow")
+    return delivery.delivered, delivery.describe()
 
 
 def main(argv: list[str] | None = None) -> int:

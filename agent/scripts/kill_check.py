@@ -53,20 +53,12 @@ def _audit(state: str, detail: str) -> None:
 
 
 def _notify(title: str, body: str) -> None:
+    """Push + GitHub issue: a partial flatten can leave positions unprotected."""
     try:
-        from tradingagents_us.notifications import send_expo_push
-        from tradingagents_us.notifications.sender import PushMessage
-        from tradingagents_us.storage.device_tokens import list_all_tokens
+        from tradingagents_us.notifications.ops_channel import send_ops_alert
 
-        with _repo().session() as s:
-            tokens = list_all_tokens(s)
-        send_expo_push([
-            PushMessage(
-                to=t, title=title, body=body[:200],
-                data={"type": "ops_alert", "kind": "kill_switch"},
-            )
-            for t in tokens
-        ])
+        delivery = send_ops_alert(title, body, kind="kill_switch")
+        print(f"kill_check: alert {delivery.describe()}", file=sys.stderr)
     except Exception as exc:
         print(f"kill_check: notify failed: {exc}", file=sys.stderr)
 

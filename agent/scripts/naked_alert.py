@@ -1,17 +1,28 @@
 #!/usr/bin/env python3
-"""Push an alert when the book loses its protective stops — daily_run.sh tail.
+"""Check that every held share has a protective stop — daily_run.sh tail.
 
 `risk.stop_coverage` could compute this from the day it was written and nothing
 ever called it. The first run of the position pass found 75.5% of held shares
 naked, on an account whose go-live checklist assumes every entry ships a
 bracket. Nobody was told, because nothing was asking.
 
-Read-only against the broker: it submits nothing and touches no decision path.
-Best-effort like `inert_alert` — exits 0 on every failure, because a broken
-alerter must never fail the daily run it is appended to.
+It then ran with `|| true` and always exited 0, so a naked book was a line in a
+log nobody reads. The exit code is now the signal, and daily_run.sh turns it
+into an ops alert on every run the book is naked:
 
-    python -m scripts.naked_alert            # send if warranted
-    python -m scripts.naked_alert --dry-run  # print the decision, send nothing
+    0  covered (or holding nothing, or a deliberate FLATTEN_ALL in progress)
+    3  shares are held with no protective stop; the `NAKED:` line says which
+    1  the check itself could not run, so coverage is unknown
+
+The caller owns the page about a naked book, so this script never sends one
+itself; sending it here too would page twice on the same run. It announces
+only the all-clear, once, on the first covered run after a naked one, since
+nothing else would ever say so.
+
+Read-only against the broker: it submits nothing and touches no decision path.
+
+    python -m scripts.naked_alert            # check; announce a recovery
+    python -m scripts.naked_alert --dry-run  # check only, send and record nothing
 """
 
 from __future__ import annotations
@@ -19,7 +30,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -34,6 +44,7 @@ from tradingagents_us.notifications.naked_alert import (  # noqa: E402
     NakedAlertState,
     decide,
 )
+from tradingagents_us.notifications.ops_channel import send_ops_alert  # noqa: E402
 from tradingagents_us.risk.kill_switch import (  # noqa: E402
     FileKillSwitchReader,
     default_kill_switch_path,
@@ -44,6 +55,15 @@ from tradingagents_us.risk.stop_coverage import (  # noqa: E402
     coverage,
     flatten_orders,
 )
+
+EXIT_COVERED = 0
+EXIT_CHECK_FAILED = 1
+#: Distinct from 1 (the check could not run) and 2 (argparse), so the caller can
+#: tell "the book is exposed" apart from "we do not know".
+EXIT_NAKED = 3
+
+#: Enough names to act on without the line wrapping off a lock screen.
+_NAMED_SYMBOLS = 6
 
 
 def state_path() -> Path:
@@ -101,47 +121,87 @@ def collect_facts() -> CoverageFacts:
     )
 
 
-def main() -> int:
+def has_naked_exposure(facts: CoverageFacts, kill_switch: str) -> bool:
+    """Any held share without a stop, outside a deliberate flatten.
+
+    No threshold. The daily run reaches this check after the close and after
+    the position pass has back-filled stops, so there is no in-flight partial
+    fill to excuse: a share still naked here is one the back-fill did not cover.
+    """
+    return facts.total_qty > 0 and facts.naked_qty > 0 and kill_switch != "FLATTEN_ALL"
+
+
+def naked_summary(facts: CoverageFacts) -> str:
+    names = ", ".join(facts.naked_symbols[:_NAMED_SYMBOLS])
+    extra = len(facts.naked_symbols) - _NAMED_SYMBOLS
+    more = f" +{extra} more" if extra > 0 else ""
+    caveat = (
+        f"; {facts.indeterminate_qty:.0f} more indeterminate" if facts.indeterminate_qty > 0 else ""
+    )
+    return (
+        f"{facts.naked_qty:.0f} of {facts.total_qty:.0f} shares "
+        f"({facts.naked_pct:.1f}%) have no protective stop"
+        f"{': ' + names + more if names else ''}{caveat}"
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--dry-run", action="store_true", help="print the decision, send nothing")
-    args = ap.parse_args()
+    ap.add_argument("--dry-run", action="store_true", help="check only; send and record nothing")
+    args = ap.parse_args(argv)
 
     try:
         facts = collect_facts()
         ks = FileKillSwitchReader(
             os.environ.get("KILL_SWITCH_FILE", default_kill_switch_path())
         ).read()
-        path = state_path()
-        alert = decide(facts, load_state(path), kill_switch=ks)
+    except Exception as exc:  # noqa: BLE001 — reported through the exit code
+        print(f"naked_alert: stop-coverage check failed, coverage unknown: {exc}")
+        return EXIT_CHECK_FAILED
 
-        print(
-            f"stop coverage: {facts.naked_qty:.0f}/{facts.total_qty:.0f} naked "
-            f"({facts.naked_pct:.1f}%), indeterminate {facts.indeterminate_qty:.0f}, ks={ks}"
-        )
-        if alert is None:
-            print("no alert warranted")
-            return 0
+    print(
+        f"stop coverage: {facts.naked_qty:.0f}/{facts.total_qty:.0f} naked "
+        f"({facts.naked_pct:.1f}%), indeterminate {facts.indeterminate_qty:.0f}, ks={ks}"
+    )
+    path = state_path()
 
-        print(f"ALERT [{alert.kind}] {alert.title} — {alert.body}")
-        if args.dry_run:
-            return 0
+    if has_naked_exposure(facts, ks):
+        if not args.dry_run:
+            # Remembered so the first covered run afterwards announces the
+            # recovery. The page about the exposure itself is the caller's.
+            _write_state(
+                path,
+                NakedAlertState(
+                    last_kind="naked",
+                    last_naked_pct=facts.naked_pct,
+                    last_run_date=facts.run_date,
+                ),
+            )
+        print(f"NAKED: {naked_summary(facts)}")
+        return EXIT_NAKED
 
-        subprocess.run(
-            [
-                sys.executable, "-m", "scripts.notify_ops",
-                "--title", alert.title, "--body", alert.body,
-            ],
-            cwd=str(_AGENT_ROOT),
-            check=False,
-        )
-        # State is written only after the push is attempted. Writing it first
-        # would mean a crashed push permanently suppresses the alert it never
-        # sent — the exposure would then be reported exactly zero times.
-        path.write_text(json.dumps(alert.next_state.as_dict(), indent=2))
-        return 0
-    except Exception as exc:  # noqa: BLE001 — an alerter must never fail the run
-        print(f"naked_alert failed (non-fatal): {exc}")
-        return 0
+    alert = decide(facts, load_state(path), kill_switch=ks)
+    if alert is None or alert.kind != "recovered":
+        print("no alert warranted")
+        return EXIT_COVERED
+
+    print(f"ALERT [{alert.kind}] {alert.title} — {alert.body}")
+    if args.dry_run:
+        return EXIT_COVERED
+    delivery = send_ops_alert(alert.title, alert.body, kind="naked_book")
+    print(f"naked_alert: {delivery.describe()}")
+    # Recorded only once it reached someone. Recording it first would mean a
+    # failed send permanently suppresses the all-clear it never delivered.
+    if delivery.delivered:
+        _write_state(path, alert.next_state)
+    return EXIT_COVERED
+
+
+def _write_state(path: Path, state: NakedAlertState) -> None:
+    try:
+        path.write_text(json.dumps(state.as_dict(), indent=2))
+    except OSError as exc:  # a lost all-clear is not worth failing the check over
+        print(f"naked_alert: could not record state ({exc})")
 
 
 if __name__ == "__main__":

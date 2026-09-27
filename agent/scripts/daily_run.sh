@@ -70,19 +70,56 @@ mkdir -p "$LOG_DIR"
 DATE="$(date -u +%F)"
 RUN_LOG="${LOG_DIR}/daily_${DATE}.log"
 
-# Dead-man's switch ping — call on every HEALTHY outcome (full run, or a
-# deliberate kill-switch skip). A missed ping means the automation itself
-# died, which is exactly what healthchecks.io should page on.
+# Dead-man's switch, healthchecks.io convention: HEALTHCHECK_URL on a healthy
+# outcome (a full run, or a deliberate kill-switch skip), HEALTHCHECK_URL/fail on
+# a failed one. The ping that matters most is the one that never arrives: a run
+# that stops happening sends nothing, and the check pages on the silence. Every
+# alert raised on this box used to reach only the phone app, which is how a
+# refused broker key went unnoticed for nearly two weeks.
+#
+# A ping can never fail the run: a short timeout, two retries, and any error is
+# a log line. The body is shown in the check's log and in its notification.
+HC_PINGED=0
 ping_healthcheck() {
-  if [[ -n "${HEALTHCHECK_URL:-}" ]]; then
-    curl -fsS -m 10 --retry 3 "$HEALTHCHECK_URL" >/dev/null 2>&1 \
-      || echo "  -> healthcheck ping failed (non-fatal)" | tee -a "$RUN_LOG"
+  local outcome="${1:-}" body="${2:-}"
+  HC_PINGED=1
+  if [[ -z "${HEALTHCHECK_URL:-}" ]]; then
+    return 0
   fi
+  local url="${HEALTHCHECK_URL%/}"
+  if [[ "$outcome" == "fail" ]]; then
+    url="${url}/fail"
+  fi
+  if ! curl -fsS -m 10 --retry 2 --data-raw "$body" "$url" >/dev/null 2>&1; then
+    echo "  -> healthcheck ping failed (non-fatal)" | tee -a "$RUN_LOG" || true
+  fi
+}
+
+# A run that dies between the explicit outcomes below (set -e on a failed write,
+# a crash between steps) is a failure none of them saw. Report it now rather
+# than leave the check to notice only when its grace period runs out.
+on_exit() {
+  local rc=$?
+  if [[ "$rc" -ne 0 && "$HC_PINGED" -eq 0 ]]; then
+    ping_healthcheck fail "daily_run.sh exited rc=$rc before reporting an outcome @ ${DATE}"
+  fi
+}
+trap on_exit EXIT
+
+# Ops alert: push AND a GitHub issue (see tradingagents_us/notifications/
+# ops_channel.py). Best-effort; notify_ops always exits 0.
+notify_ops() {
+  PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.notify_ops "$@" 2>&1 \
+    | tee -a "$RUN_LOG" || true
 }
 
 echo "===============================================" | tee -a "$RUN_LOG"
 echo "Daily run $(date -u +%FT%TZ)  universe=[$UNIVERSE]  submit=$SUBMIT" | tee -a "$RUN_LOG"
 echo "===============================================" | tee -a "$RUN_LOG"
+if [[ -z "${HEALTHCHECK_URL:-}" ]]; then
+  echo "WARNING: HEALTHCHECK_URL unset, no dead-man's switch (preflight reports it as a failure)" \
+    | tee -a "$RUN_LOG"
+fi
 
 # Honor the mobile kill switch BEFORE the weekend guard and BEFORE burning
 # LLM tokens: an armed FLATTEN_ALL must execute even on a manual weekend
@@ -108,9 +145,10 @@ if [[ "$kc_rc" -ne 0 ]]; then
         run_snapshot_best_effort
         ping_healthcheck ;;
     *)  echo "kill_check failed (rc=$kc_rc) — failing safe, skipping daily run" | tee -a "$RUN_LOG"
-        PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.notify_ops \
+        notify_ops --kind kill_switch \
           --title "⚠️ kill_check FAILED — daily run skipped" \
-          --body "rc=$kc_rc @ ${DATE}; flatten may be PARTIAL — check positions + logs" 2>&1 | tee -a "$RUN_LOG" || true ;;
+          --body "rc=$kc_rc @ ${DATE}; flatten may be PARTIAL — check positions + logs"
+        ping_healthcheck fail "kill_check failed (rc=$kc_rc) @ ${DATE}; daily run skipped" ;;
   esac
   exit 0
 fi
@@ -192,9 +230,23 @@ PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.inert_alert 2>&1 | tee -a
 echo "" | tee -a "$RUN_LOG"
 # Stop-coverage check. `risk.stop_coverage` could always compute how much of the
 # book is unprotected and nothing ever asked it — the first run of the position
-# pass found 75.5% naked. A daily run that logs clean while the book has no
-# stops behind it is the failure this closes. Always exits 0 (see the script).
-PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.naked_alert 2>&1 | tee -a "$RUN_LOG" || true
+# pass found 75.5% naked. It then ran here behind `|| true` and exited 0 either
+# way, so a naked book was a log line. Exit 3 now means shares are held with no
+# protective stop, any other non-zero that coverage is unknown; both page on
+# every run they persist, and neither stops the rest of this script.
+naked_rc=0
+naked_out="$(PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.naked_alert 2>&1)" || naked_rc=$?
+printf '%s\n' "$naked_out" | tee -a "$RUN_LOG"
+if [[ "$naked_rc" -eq 3 ]]; then
+  naked_detail="$(printf '%s\n' "$naked_out" | sed -n '/^NAKED: /{s/^NAKED: //;p;q;}' || true)"
+  notify_ops --kind naked_book \
+    --title "⚠️ Book has shares with no protective stop" \
+    --body "${naked_detail:-see the stop coverage line in ${RUN_LOG}} @ ${DATE}"
+elif [[ "$naked_rc" -ne 0 ]]; then
+  notify_ops --kind naked_book \
+    --title "⚠️ Stop-coverage check failed (rc=$naked_rc)" \
+    --body "Coverage of the book is unknown @ ${DATE}; see ${RUN_LOG}"
+fi
 
 echo "" | tee -a "$RUN_LOG"
 echo "Daily run complete. $rc_total ticker(s) errored." | tee -a "$RUN_LOG"
@@ -202,13 +254,13 @@ echo "Daily run complete. $rc_total ticker(s) errored." | tee -a "$RUN_LOG"
 if [[ "$rc_total" -gt 0 ]]; then
   # Alert the human (best-effort — notify_ops always exits 0) and exit
   # non-zero so systemd marks the unit failed and OnFailure= fires too.
-  PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.notify_ops \
+  notify_ops --kind daily_run \
     --title "⚠️ Daily run: ${rc_total} ticker(s) failed" \
-    --body "Failed:${failed_tickers} @ ${DATE}" 2>&1 | tee -a "$RUN_LOG" || true
+    --body "Failed:${failed_tickers} @ ${DATE}"
+  ping_healthcheck fail "${rc_total} ticker(s) failed:${failed_tickers} @ ${DATE}"
   exit 1
 fi
 
-# Dead-man's switch: ping only on a fully successful run.
-ping_healthcheck
+ping_healthcheck "" "Daily run complete @ ${DATE}. 0 ticker(s) errored."
 
 exit 0

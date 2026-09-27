@@ -6,11 +6,12 @@ key discovered mid-run costs a full eval trading day out of 10, plus the
 LLM spend — this catches it while there's still time to fix.
 
 Alert-only: it never blocks or gates the daily run. On any hard failure it
-pushes a notification to registered devices and exits 1 (visible in
-systemctl status); on success it exits 0 quietly.
+sends an ops alert (push AND a GitHub issue, see notifications.ops_channel)
+and exits 1 (visible in systemctl status); on success it exits 0 quietly.
 
-Checks: Alpaca (account + paper URL), Anthropic key, Polygon, Finnhub,
-OpenRouter (only when LLM_COUNCIL=1), FRED (warn-only), DB writable, disk.
+Checks: alerting config (HEALTHCHECK_URL, OPS_ALERT_GITHUB_TOKEN), Alpaca
+(account + paper URL), Anthropic key, Polygon, Finnhub, OpenRouter (only when
+LLM_COUNCIL=1), FRED (warn-only), DB writable, disk.
 """
 
 from __future__ import annotations
@@ -174,36 +175,56 @@ def _check_disk(failures: list[Failure], min_free_gb: float = 5.0) -> None:
         failures.append(("disk", f"check failed: {exc}"))
 
 
+def _check_alerting(failures: list[Failure]) -> None:
+    """The two ways a problem on this box reaches a human without the phone.
+
+    Both depend on an account created outside this repo, so a deploy cannot
+    require them, and this is where their absence gets said out loud instead.
+    The broker key was refused for nearly two weeks while this canary found it
+    every evening, because its only way out was a push to an app being rebuilt.
+
+    Neither check pings anything. A preflight ping to HEALTHCHECK_URL would
+    record a daily run that has not happened yet, which defeats the point of it.
+    """
+    from tradingagents_us.notifications.ops_channel import GITHUB_TOKEN_ENV
+
+    hc = os.environ.get("HEALTHCHECK_URL", "").strip()
+    if not hc:
+        failures.append(
+            (
+                "healthcheck",
+                "HEALTHCHECK_URL unset: no dead-man's switch, so a daily run that "
+                "stops happening pages nobody",
+            )
+        )
+    elif not hc.startswith(("https://", "http://")):
+        # Never echo the value: the URL is a credential for reporting success.
+        failures.append(("healthcheck", "HEALTHCHECK_URL is not an http(s) URL"))
+
+    if not os.environ.get(GITHUB_TOKEN_ENV, "").strip():
+        failures.append(
+            (
+                "ops_alert_channel",
+                f"{GITHUB_TOKEN_ENV} unset: box alerts reach only the mobile app",
+            )
+        )
+
+
 def _alert(failures: list[Failure]) -> None:
     body = "; ".join(f"{n}: {msg}" for n, msg in failures)
     print(f"preflight FAILED: {body}", file=sys.stderr)
     try:
-        from sqlalchemy import create_engine
+        from tradingagents_us.notifications.ops_channel import send_ops_alert
 
-        from tradingagents_us.notifications import send_expo_push
-        from tradingagents_us.notifications.sender import PushMessage
-        from tradingagents_us.storage import TradeLogRepository
-        from tradingagents_us.storage.device_tokens import list_all_tokens
-
-        url = os.environ.get("TRADE_LOG_DB_URL", "sqlite:///./local.db")
-        repo = TradeLogRepository(engine=create_engine(url, future=True))
-        with repo.session() as s:
-            tokens = list_all_tokens(s)
-        send_expo_push([
-            PushMessage(
-                to=t,
-                title=f"⚠️ Preflight FAILED ({len(failures)})",
-                body=body[:200],
-                data={"type": "ops_alert", "kind": "preflight"},
-            )
-            for t in tokens
-        ])
+        delivery = send_ops_alert(f"⚠️ Preflight FAILED ({len(failures)})", body, kind="preflight")
+        print(f"preflight: alert {delivery.describe()}", file=sys.stderr)
     except Exception as exc:
-        print(f"preflight: alert push failed: {exc}", file=sys.stderr)
+        print(f"preflight: alert failed: {exc}", file=sys.stderr)
 
 
 def main() -> int:
     failures: list[Failure] = []
+    _check_alerting(failures)
     _check_alpaca(failures)
     _check_anthropic(failures)
     _check_polygon(failures)

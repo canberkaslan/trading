@@ -1,51 +1,43 @@
 #!/usr/bin/env python3
-"""Ops push notification — CLI for daily_run.sh / systemd OnFailure / cron.
+"""Ops alert CLI for daily_run.sh, systemd OnFailure= and cron.
 
-Sends a push to every registered device. Best-effort by design: exits 0
-even when the push fails so an alerting failure never masks (or replaces)
-the original failure's exit code in a shell `||` chain.
+Delivers through `tradingagents_us.notifications.ops_channel`: a push to every
+registered device AND a GitHub issue, so an alert still reaches a human when the
+app is uninstalled, being rebuilt, or has never registered a device. It used to
+push only, and printed "no registered devices" and returned when there were
+none, which is how every box alert could be sent and reach nobody.
 
-    python -m scripts.notify_ops --title "Daily run FAILED" --body "3 tickers errored"
+Best-effort by design: exits 0 even when every channel fails, so an alerting
+failure never masks (or replaces) the original failure's exit code in a shell
+`||` chain.
+
+    python -m scripts.notify_ops --kind daily_run --title "Daily run FAILED" --body "3 tickers"
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description="Push an ops alert to registered devices")
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="Send an ops alert (push + GitHub issue)")
     ap.add_argument("--title", required=True)
     ap.add_argument("--body", default="")
-    args = ap.parse_args()
+    ap.add_argument(
+        "--kind",
+        default="ops",
+        help="groups repeats: every alert of one kind lands on the same open issue",
+    )
+    args = ap.parse_args(argv)
 
     try:
-        from sqlalchemy import create_engine
+        from tradingagents_us.notifications.ops_channel import send_ops_alert
 
-        from tradingagents_us.notifications import send_expo_push
-        from tradingagents_us.notifications.sender import PushMessage
-        from tradingagents_us.storage import TradeLogRepository
-        from tradingagents_us.storage.device_tokens import list_all_tokens
-
-        url = os.environ.get("TRADE_LOG_DB_URL", "sqlite:///./local.db")
-        repo = TradeLogRepository(engine=create_engine(url, future=True))
-        with repo.session() as s:
-            tokens = list_all_tokens(s)
-        if not tokens:
-            print("notify_ops: no registered devices", file=sys.stderr)
-            return 0
-        send_expo_push([
-            PushMessage(
-                to=t,
-                title=args.title,
-                body=args.body[:200],
-                data={"type": "ops_alert"},
-            )
-            for t in tokens
-        ])
-        print(f"notify_ops: sent to {len(tokens)} device(s)")
+        delivery = send_ops_alert(args.title, args.body, kind=args.kind)
+        print(f"notify_ops: {delivery.describe()}")
+        if not delivery.delivered:
+            print("notify_ops: this alert reached NO channel", file=sys.stderr)
     except Exception as exc:  # alerting must never crash the caller
         print(f"notify_ops failed: {exc}", file=sys.stderr)
     return 0

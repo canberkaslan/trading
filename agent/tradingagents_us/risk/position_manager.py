@@ -98,8 +98,11 @@ class ManagedPosition:
     avg_entry_price: float
     current_price: float
     #: Trading bars since entry, counted from the bar series rather than a
-    #: calendar so holidays and halts cannot inflate it.
-    bars_held: int
+    #: calendar so holidays and halts cannot inflate it. None when the series
+    #: for this name is EMPTY: the age is then unknown, and reading it as 0
+    #: made a month-old position look opened today, so it silently never
+    #: time-exited.
+    bars_held: int | None
     #: The live broker-side stop, and the order carrying it. Both None means the
     #: position is UNPROTECTED — reported, and only fixed when explicitly asked.
     current_stop: float | None = None
@@ -157,6 +160,7 @@ Action = RatchetStop | PlaceStop | TimeExit
 #: and this system has already been bitten by a guard that silently did nothing.
 SkipReason = Literal[
     "no_stop_order",
+    "no_bars",
     "insufficient_bars",
     "stop_would_widen",
     "stop_unchanged",
@@ -212,6 +216,21 @@ def average_true_range(bars: Sequence[Bar], period: int = ATR_PERIOD) -> float |
     return atr
 
 
+_NO_BARS_DETAIL = "bar cache holds nothing for a held name: age unknown, time exit not evaluated"
+
+
+def _no_atr(pos: ManagedPosition, bars: Sequence[Bar], config: ManagementConfig) -> Skip:
+    """Why a position has no ATR to set a stop from: no series, or a short one.
+
+    With no bars at all the age was supplied from elsewhere, so the time exit
+    was still evaluated; only the stop logic has nothing to work from.
+    """
+    if not bars:
+        return Skip(pos.ticker, "no_bars", f"no ATR for a stop, age={pos.bars_held}")
+    need = config.atr_period + 1
+    return Skip(pos.ticker, "insufficient_bars", f"have={len(bars)} need={need}")
+
+
 #: The defaults, as a singleton. A dataclass call in a parameter default is
 #: evaluated once at import anyway — naming it says so instead of hiding it.
 DEFAULT_CONFIG = ManagementConfig()
@@ -235,6 +254,14 @@ def plan_actions(
             skips.append(Skip(pos.ticker, "non_positive_price", f"price={pos.current_price}"))
             continue
 
+        if pos.bars_held is None:
+            # A held name with no bars at all: its age cannot be read, so the
+            # time exit cannot be evaluated, and there is no ATR for a stop.
+            # Said out loud because the alternative, an age of 0, looks exactly
+            # like a position opened today and never ages out.
+            skips.append(Skip(pos.ticker, "no_bars", _NO_BARS_DETAIL))
+            continue
+
         pnl_pct = pos.current_price / pos.avg_entry_price - 1.0
 
         # ---- Time exit ----------------------------------------------------
@@ -252,8 +279,7 @@ def plan_actions(
         bars = bars_by_ticker.get(pos.ticker) or []
         atr = average_true_range(bars, config.atr_period)
         if atr is None:
-            need = config.atr_period + 1
-            skips.append(Skip(pos.ticker, "insufficient_bars", f"have={len(bars)} need={need}"))
+            skips.append(_no_atr(pos, bars, config))
             continue
 
         # ---- Back-fill the naked remainder ---------------------------------

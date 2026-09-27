@@ -23,6 +23,7 @@ import httpx
 
 from ..dataflows.alpaca_broker import AlpacaClient
 from ..schemas import AgentDecision, OrderStatus, OrderUpdate, TradeOrder
+from .exit_quality import AGENT_EXIT_CLIENT_ID_PREFIX, EXIT_REASON_CLASSES
 
 log = logging.getLogger(__name__)
 
@@ -367,3 +368,21 @@ def derive_client_order_id(ticker: str, trade_date: date, side: str) -> str:
     lookup short-circuits the resubmit. Alpaca caps client_order_id at 48
     chars; `tr-GOOGL-20260711-BUY` is well inside."""
     return f"tr-{ticker.upper()}-{trade_date.strftime('%Y%m%d')}-{side.upper()}"
+
+
+def derive_exit_client_order_id(ticker: str, trade_date: date, reason: str) -> str:
+    """The id a RULE exit must carry so the ledger books it as that rule.
+
+    `tr-exit-time-XOM-20260927`: same agent prefix and date scheme as
+    `derive_client_order_id`, with the exit reason in place of the side. It is
+    what `exit_quality.classify_exit` reads to file a close as `time_exit`
+    rather than as a flatten from outside the agent.
+
+    An unknown reason raises instead of minting an id the classifier would
+    book as `unknown`: a stamp that does not attribute is not worth sending.
+    """
+    if reason not in EXIT_REASON_CLASSES:
+        raise ValueError(
+            f"unknown exit reason {reason!r}; known: {sorted(EXIT_REASON_CLASSES)}"
+        )
+    return f"{AGENT_EXIT_CLIENT_ID_PREFIX}{reason}-{ticker.upper()}-{trade_date.strftime('%Y%m%d')}"

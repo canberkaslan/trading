@@ -336,6 +336,20 @@ class TestExitAttributionAtWriteTime:
 
         assert got == {"t1": "stop", "t2": "flatten"}
 
+    def test_a_stamped_time_exit_is_stored_as_a_time_exit(self) -> None:
+        # What the ledger stores is what the eval scores. Stored as a flatten
+        # it drops out of the strategy roll-up; as a decision sell it credits a
+        # council verdict that was never given.
+        from scripts.reconcile import attribute_exits
+
+        time_exit = self._order("aged", "market", "tr-exit-time-AAPL-20260803")
+
+        got = attribute_exits(
+            [self._closed("t1", "f1")], [self._fill("f1", "sell", "aged")], [time_exit]
+        )
+
+        assert got == {"t1": "time_exit"}
+
     def test_a_pruned_order_is_absent_rather_than_stored_as_unknown(self) -> None:
         # The seam. `attribute` classifies a missing order as "unknown", and
         # writing that would assert we checked the broker — but this same

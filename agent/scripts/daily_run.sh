@@ -47,7 +47,7 @@ UNIVERSE="${UNIVERSE:-SPY AAPL MSFT NVDA GOOGL AMZN META JPM V XOM UNH}"
 # so it truncates in the order given and says so loudly in the log.
 #
 # Raise it consciously via the env var. Note that the book can only hold about
-# ten positions anyway (portfolio_limits.max_position_pct = 0.10 against a
+# ten positions anyway (a 10% single-name cap, see CAP_FLAGS below, against a
 # cash-only account), so a much larger number buys refusals at full price
 # rather than more positions.
 MAX_TICKERS="${MAX_TICKERS:-20}"
@@ -65,6 +65,24 @@ LOG_DIR="${LOG_DIR:-./logs}"
 # debate) must still complete — this only fires on a genuine hang, where the
 # old behavior was worse (unit-level SIGKILL taking the REMAINING tickers too).
 TICKER_TIMEOUT_S="${TICKER_TIMEOUT_S:-1800}"
+
+# Risk caps. The live values are scripts/trade.py's flag defaults (single name
+# 0.10, sector 0.30, cash utilization 1.0). An env var overrides one only when
+# it is set and non-blank; unset adds nothing to the command line, so a box
+# without them runs trade.py's defaults and cannot drift from them. These names
+# sat in .env for months with nothing reading them, so "tuning" the cap there
+# changed nothing. An array keeps each value exactly one argument; trade.py
+# refuses anything that is not a fraction in (0, 1].
+CAP_FLAGS=()
+if [[ -n "${MAX_POSITION_PCT:-}" ]]; then
+  CAP_FLAGS+=(--max-position-pct "$MAX_POSITION_PCT")
+fi
+if [[ -n "${MAX_SECTOR_PCT:-}" ]]; then
+  CAP_FLAGS+=(--max-sector-pct "$MAX_SECTOR_PCT")
+fi
+if [[ -n "${MAX_CASH_UTILIZATION:-}" ]]; then
+  CAP_FLAGS+=(--max-cash-utilization "$MAX_CASH_UTILIZATION")
+fi
 mkdir -p "$LOG_DIR"
 
 DATE="$(date -u +%F)"
@@ -115,6 +133,7 @@ notify_ops() {
 
 echo "===============================================" | tee -a "$RUN_LOG"
 echo "Daily run $(date -u +%FT%TZ)  universe=[$UNIVERSE]  submit=$SUBMIT" | tee -a "$RUN_LOG"
+echo "Cap overrides: ${CAP_FLAGS[*]:-none, trade.py defaults}" | tee -a "$RUN_LOG"
 echo "===============================================" | tee -a "$RUN_LOG"
 if [[ -z "${HEALTHCHECK_URL:-}" ]]; then
   echo "WARNING: HEALTHCHECK_URL unset, no dead-man's switch (preflight reports it as a failure)" \
@@ -195,8 +214,11 @@ for TICKER in $UNIVERSE; do
   echo "" | tee -a "$RUN_LOG"
   echo "--- $TICKER @ $DATE ---" | tee -a "$RUN_LOG"
   # Fresh decision (no --use-cached). Guards + bracket are on by default.
+  # ${CAP_FLAGS[@]+...}: expands to nothing for an empty array, where a bare
+  # "${CAP_FLAGS[@]}" is an unbound-variable error under set -u on bash < 4.4.
   if timeout -k 30 "$TICKER_TIMEOUT_S" env PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.trade \
-        --ticker "$TICKER" --date "$DATE" $SUBMIT_FLAG 2>&1 | tee -a "$RUN_LOG"; then
+        --ticker "$TICKER" --date "$DATE" $SUBMIT_FLAG ${CAP_FLAGS[@]+"${CAP_FLAGS[@]}"} \
+        2>&1 | tee -a "$RUN_LOG"; then
     echo "  -> $TICKER done" | tee -a "$RUN_LOG"
   else
     rc=$?

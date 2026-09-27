@@ -98,6 +98,7 @@ def run_daily(
     tmp_path: Path,
     healthcheck: str | None = HC,
     precreate_log_dir_as_file: bool = False,
+    dotenv: str | None = None,
     **env_extra: str,
 ) -> Run:
     real_date = shutil.which("date")
@@ -106,6 +107,10 @@ def run_daily(
     (agent / "scripts").mkdir(parents=True)
     script = agent / "scripts" / "daily_run.sh"
     shutil.copy(SCRIPT, script)
+    if dotenv is not None:
+        # The scratch tree's own agent/.env, which the script sources. Only ever
+        # test-written content: the real one could carry keys and an interpreter.
+        (agent / ".env").write_text(dotenv, encoding="utf-8")
 
     stubs = tmp_path / "bin"
     stubs.mkdir()

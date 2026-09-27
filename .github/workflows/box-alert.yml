@@ -1,0 +1,67 @@
+name: box-alert
+
+# Files an alert raised on the trading box as a GitHub issue, authored by
+# github-actions[bot].
+#
+# The box dispatches this workflow (POST .../actions/workflows/box-alert.yml/
+# dispatches, from tradingagents_us/notifications/ops_channel.py) instead of
+# writing the issue itself. The token on the box is the owner's own PAT, and
+# GitHub does not notify you about your own activity, so an issue it filed would
+# reach nobody. Written here with the workflow's GITHUB_TOKEN, it is the bot's
+# issue, and the owner is notified the way the watchdog's incidents notify.
+#
+# If this run fails, GitHub emails whoever dispatched it, which is the owner.
+on:
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: 'Alert kind; one open issue per kind, repeats are comments'
+        type: string
+        required: true
+      title:
+        description: 'Alert title'
+        type: string
+        required: true
+      body:
+        description: 'Alert body, already scrubbed of secrets on the box'
+        type: string
+        required: false
+        default: ''
+      raised_at:
+        description: 'When the box raised it (UTC)'
+        type: string
+        required: false
+        default: ''
+
+# Issues only. The script reads nothing but its own checkout.
+permissions:
+  contents: read
+  issues: write
+
+# Two alerts of one kind racing would each find no thread and open two issues.
+concurrency:
+  group: box-alert-${{ inputs.kind }}
+  cancel-in-progress: false
+
+jobs:
+  file:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # The inputs travel as environment variables and never into the script
+      # text: they are box-supplied strings, and `${{ inputs.* }}` inside `run:`
+      # would be spliced into the shell before it runs.
+      - name: Open or update the alert issue
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ALERT_KIND: ${{ inputs.kind }}
+          ALERT_TITLE: ${{ inputs.title }}
+          ALERT_BODY: ${{ inputs.body }}
+          ALERT_RAISED_AT: ${{ inputs.raised_at }}
+        run: python agent/scripts/box_alert_issue.py

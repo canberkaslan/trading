@@ -10,7 +10,14 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from tests.github_fake import FAKE_GITHUB_TOKEN, FakeGitHub
+from tests.github_fake import (
+    BOT_LOGIN,
+    FAKE_GITHUB_TOKEN,
+    FAKE_WORKFLOW_TOKEN,
+    FakeGitHub,
+    load_workflow,
+    workflow_step,
+)
 from tradingagents_us.notifications import ops_channel
 from tradingagents_us.notifications.ops_channel import (
     ChannelResult,
@@ -38,13 +45,34 @@ class TestGitHubChannel:
         # box answers, and must never close one of these.
         assert issue["labels"] == ["box-alert"]
         assert fake_github.requests[-1][1] == "/repos/canberkaslan/trading/issues"
-        assert fake_github.auth_headers[-1] == f"Bearer {FAKE_GITHUB_TOKEN}"
+
+    def test_the_box_dispatches_and_the_workflow_token_writes_the_issue(
+        self, fake_github: FakeGitHub
+    ) -> None:
+        # GitHub does not notify you about your own activity, and the box's
+        # token is the owner's PAT. An issue it wrote would be the owner's own
+        # issue and nobody would be emailed; the bot's issue notifies.
+        send_ops_alert("Daily run: 11 ticker(s) failed", "Failed: SPY", kind="daily_run")
+
+        calls = list(zip(fake_github.requests, fake_github.auth_headers, strict=True))
+        box = [(m, path) for (m, path, _), auth in calls if auth == f"Bearer {FAKE_GITHUB_TOKEN}"]
+        assert box == [
+            ("POST", "/repos/canberkaslan/trading/actions/workflows/box-alert.yml/dispatches")
+        ]
+        writes = [auth for (m, path, _), auth in calls if m == "POST" and "/issues" in path]
+        assert writes == [f"Bearer {FAKE_WORKFLOW_TOKEN}"]
+        assert fake_github.dispatches[0]["ref"] == "main"
+        assert fake_github.dispatches[0]["inputs"]["kind"] == "daily_run"
 
     def test_a_repeat_is_a_comment_on_the_open_issue_not_a_new_issue(
         self, fake_github: FakeGitHub
     ) -> None:
         fake_github.open_issues = [
-            {"number": 9, "body": "<!-- box-alert-kind:daily_run -->\n\nfirst"},
+            {
+                "number": 9,
+                "body": "<!-- box-alert-kind:daily_run -->\n\nfirst",
+                "user": {"login": BOT_LOGIN},
+            },
         ]
         delivery = send_ops_alert("Daily run: 11 ticker(s) failed", "Failed: SPY", kind="daily_run")
 
@@ -56,19 +84,62 @@ class TestGitHubChannel:
     def test_other_kinds_and_pull_requests_are_not_mistaken_for_the_thread(
         self, fake_github: FakeGitHub
     ) -> None:
+        bot = {"login": BOT_LOGIN}
         fake_github.open_issues = [
-            {"number": 3, "body": "<!-- box-alert-kind:backup -->"},
-            {"number": 4, "body": "<!-- box-alert-kind:naked_book -->", "pull_request": {}},
+            {"number": 3, "body": "<!-- box-alert-kind:backup -->", "user": bot},
+            {
+                "number": 4,
+                "body": "<!-- box-alert-kind:naked_book -->",
+                "pull_request": {},
+                "user": bot,
+            },
         ]
         send_ops_alert("t", "b", kind="naked_book")
         assert len(fake_github.opened) == 1
         assert fake_github.comments == []
+
+    def test_an_issue_a_stranger_opened_with_the_marker_is_not_the_thread(
+        self, fake_github: FakeGitHub
+    ) -> None:
+        # The default repo is public: anyone can open an issue carrying the
+        # marker, and alerts must not start landing on it.
+        fake_github.open_issues = [
+            {
+                "number": 5,
+                "body": "<!-- box-alert-kind:daily_run -->",
+                "user": {"login": "someone-else"},
+            }
+        ]
+        send_ops_alert("t", "b", kind="daily_run")
+        assert len(fake_github.opened) == 1
+        assert fake_github.comments == []
+
+    def test_a_second_alert_of_a_kind_joins_the_issue_the_first_opened(
+        self, fake_github: FakeGitHub
+    ) -> None:
+        send_ops_alert("Preflight FAILED (1)", "alpaca: 401", kind="preflight")
+        send_ops_alert("Preflight FAILED (1)", "alpaca: 401", kind="preflight")
+        assert len(fake_github.opened) == 1
+        assert [path for path, _ in fake_github.comments] == [
+            "/repos/canberkaslan/trading/issues/41/comments"
+        ]
+
+    def test_a_kind_that_is_not_a_plain_token_is_sent_as_ops(
+        self, fake_github: FakeGitHub
+    ) -> None:
+        # The kind goes inside an HTML comment in the issue body.
+        send_ops_alert("t", "b", kind="x --> <b>")
+        assert fake_github.dispatches[0]["inputs"]["kind"] == "ops"
+        assert "<!-- box-alert-kind:ops -->" in str(fake_github.opened[0]["body"])
 
     def test_the_repo_can_be_pointed_somewhere_private(
         self, fake_github: FakeGitHub, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("OPS_ALERT_GITHUB_REPO", "someone/private-ops")
         send_ops_alert("t", "b", kind="ops")
+        assert fake_github.requests[0][1] == (
+            "/repos/someone/private-ops/actions/workflows/box-alert.yml/dispatches"
+        )
         assert fake_github.requests[-1][1] == "/repos/someone/private-ops/issues"
 
     def test_unconfigured_is_reported_by_name_not_silent(
@@ -93,6 +164,34 @@ class TestGitHubChannel:
             fake_github, "handle", lambda request: httpx.Response(401, json={"message": "Bad"})
         )
         assert not send_ops_alert("t", "b").delivered
+
+
+class TestTheWorkflow:
+    """`.github/workflows/box-alert.yml` and the script it runs on the runner."""
+
+    def test_it_writes_issues_with_its_own_token_and_can_do_nothing_else(self) -> None:
+        wf = load_workflow()
+        assert wf["permissions"] == {"contents": "read", "issues": "write"}
+        assert workflow_step()["env"]["GITHUB_TOKEN"] == "${{ secrets.GITHUB_TOKEN }}"
+
+    def test_no_input_is_spliced_into_the_shell(self) -> None:
+        # Box-supplied strings: inside `run:` an expression is substituted into
+        # the script text before the shell parses it.
+        (job,) = load_workflow()["jobs"].values()
+        for step in job["steps"]:
+            assert "${{" not in str(step.get("run", ""))
+
+    def test_a_failed_write_turns_the_run_red(self) -> None:
+        # GitHub emails the dispatcher (the owner) about a failed run: the last
+        # way this alert can still reach anyone.
+        from scripts import box_alert_issue
+
+        def refuse(method: str, url: str, payload: object = None) -> object:
+            raise RuntimeError("HTTP 403")
+
+        env = {"GITHUB_TOKEN": "t", "ALERT_KIND": "daily_run", "ALERT_TITLE": "x"}
+        assert box_alert_issue.main(env, request=refuse) == 1
+        assert box_alert_issue.main({"ALERT_KIND": "daily_run"}) == 1  # no token
 
 
 class TestBothChannels:

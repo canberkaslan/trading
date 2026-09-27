@@ -91,10 +91,17 @@ PYTHON=/opt/ai-trader/agent/.venv/bin/python
 # never happens sends nothing, and healthchecks.io pages on that silence.
 HEALTHCHECK_URL=
 # Box alerts (preflight, failed runs, naked book, kill switch, backup) are also
-# filed as GitHub issues. Fine-grained PAT, Issues read/write on that repo only.
+# filed as GitHub issues. The box dispatches .github/workflows/box-alert.yml and
+# the workflow writes the issue as github-actions[bot]: GitHub does not notify
+# you about issues filed with your own token, so the box must not write them.
+# Fine-grained PAT on the alert repo only, permission Actions: Read and write
+# (that also lets it dispatch the repo's other dispatchable workflows). Mind its
+# expiry: preflight reads the workflow with it and reports a refused or
+# soon-expiring token.
 OPS_ALERT_GITHUB_TOKEN=
 # Defaults to the repo the off-box watchdog files incidents on, which is public.
-# Point it at a private repo to keep book details off a public page.
+# A private repo keeps book details off a public page and narrows what the
+# token can dispatch; it must carry box-alert.yml and scripts/box_alert_issue.py.
 #OPS_ALERT_GITHUB_REPO=canberkaslan/trading
 
 # Local trade-log DB (sqlite on the box)

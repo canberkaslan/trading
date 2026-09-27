@@ -11,22 +11,32 @@ So an alert now goes to two independent places:
 
   * push: every registered device, as before.
   * a GitHub issue, on the channel the off-box watchdog already files its
-    incidents on (`scripts/watchdog.py`). It needs no app, no registered device
-    and no new service, and GitHub mails the repo owner. There is one open issue
-    per alert *kind*, and a recurrence is a comment on it, so a failure that
-    repeats nightly becomes one thread rather than a pile of issues.
+    incidents on (`scripts/watchdog.py`). There is one open issue per alert
+    *kind*, and a recurrence is a comment on it, so a failure that repeats
+    nightly becomes one thread rather than a pile of issues.
+
+The box does not write that issue itself. It dispatches the `box-alert`
+workflow (`.github/workflows/box-alert.yml`), which writes it with the
+workflow's own token, as github-actions[bot] (`scripts/box_alert_issue.py`).
+The author is the point: the box's token is a fine-grained PAT, which on a
+personally owned repo only the owner can mint, and GitHub does not notify you
+about your own activity. An issue filed with it would be the owner's own issue,
+and nobody would be emailed. The watchdog's issues notify because the bot
+writes them; box alerts now take the same path.
 
 The GitHub half needs a credential the box does not ship with:
-`OPS_ALERT_GITHUB_TOKEN`, a fine-grained PAT with Issues read/write on the
-target repo only. Without it that half reports "not configured", and preflight
-names the gap as a failure on every run. Quietly degrading to push-only is the
-failure this module exists to end, so it must not happen silently.
+`OPS_ALERT_GITHUB_TOKEN`, a fine-grained PAT with Actions read/write on the
+alert repo only (dispatching is an Actions write; the issue permission belongs
+to the workflow, not to the box). Actions write covers every dispatchable
+workflow in that repo, so a dedicated private alert repo is the narrow choice.
+Without the token that half reports "not configured", and preflight names the
+gap.
 
 The default repo is public, as the watchdog's incidents are. Text is scrubbed
 before it leaves the box: credential-bearing URL parameters, bearer tokens, URL
 userinfo and the literal value of every secret-looking environment variable.
-Point `OPS_ALERT_GITHUB_REPO` at a private repo to keep book details off a
-public page.
+Point `OPS_ALERT_GITHUB_REPO` at a private repo that carries the same workflow
+and script to keep book details off a public page.
 
 Nothing here raises. An alerter that can crash its caller turns one failure
 into two, and the caller is usually already handling the first.
@@ -50,10 +60,10 @@ GITHUB_REPO_ENV = "OPS_ALERT_GITHUB_REPO"
 DEFAULT_GITHUB_REPO = "canberkaslan/trading"
 GITHUB_API = "https://api.github.com"
 
-#: Deliberately not the watchdog's `watchdog` label. The watchdog closes the
-#: open issue carrying its label once the box answers again, and a box alert
-#: must never be closed by a probe that cannot see what the alert was about.
-ISSUE_LABEL = "box-alert"
+#: The workflow that writes the issue as github-actions[bot], and the branch
+#: it is dispatched on (a dispatched workflow must exist on that ref).
+ALERT_WORKFLOW = "box-alert.yml"
+ALERT_WORKFLOW_REF = "main"
 
 #: An alert is on the failure path of whatever called it. Waiting longer than
 #: this for GitHub delays the caller's own exit for no gain.
@@ -62,10 +72,14 @@ GITHUB_TIMEOUT_S = 10.0
 #: Expo truncates on the device anyway; keep the push readable on a lock screen.
 PUSH_BODY_LIMIT = 200
 
-#: GitHub rejects issue bodies over 65,536 characters.
-GITHUB_BODY_LIMIT = 60_000
+#: Dispatch inputs share a 65,535-character budget; the issue text is capped
+#: well inside it so the title and the rest always fit.
+GITHUB_TITLE_LIMIT = 200
+GITHUB_BODY_LIMIT = 20_000
 
-_KIND_MARKER = "<!-- box-alert-kind:{kind} -->"
+#: Kinds become part of an HTML-comment marker in the issue body. Anything that
+#: is not a plain token is sent as "ops" (the workflow applies the same rule).
+_KIND_PATTERN = re.compile(r"^[a-z0-9_]{1,40}$")
 
 # Environment variables whose values must never be published. HEALTHCHECK_URL
 # is a capability: anyone holding it can report a run that never happened.
@@ -163,56 +177,30 @@ def _github_client(token: str, transport: httpx.BaseTransport | None = None) -> 
     )
 
 
+def _alert_repo() -> str:
+    return os.environ.get(GITHUB_REPO_ENV, "").strip() or DEFAULT_GITHUB_REPO
+
+
 def _send_github(title: str, body: str, kind: str) -> ChannelResult:
+    """Dispatch the box-alert workflow; it writes the issue as github-actions[bot]."""
     token = os.environ.get(GITHUB_TOKEN_ENV, "").strip()
     if not token:
         return ChannelResult("github", False, f"not configured ({GITHUB_TOKEN_ENV} unset)")
-    repo = os.environ.get(GITHUB_REPO_ENV, "").strip() or DEFAULT_GITHUB_REPO
-    safe_title = scrub(title)
-    safe_body = scrub(body)[:GITHUB_BODY_LIMIT]
-    stamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+    repo = _alert_repo()
+    safe_kind = kind if _KIND_PATTERN.match(kind) else "ops"
+    inputs = {
+        "kind": safe_kind,
+        "title": scrub(title)[:GITHUB_TITLE_LIMIT],
+        "body": scrub(body)[:GITHUB_BODY_LIMIT],
+        "raised_at": datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC"),
+    }
     try:
         with _github_client(token) as gh:
-            number = _find_open_issue(gh, repo, kind)
-            if number is None:
-                r = gh.post(
-                    f"/repos/{repo}/issues",
-                    json={
-                        "title": f"Box alert: {safe_title}",
-                        "body": (
-                            f"{_KIND_MARKER.format(kind=kind)}\n\n{safe_body}\n\n"
-                            f"_Raised on the trading box at {stamp} (kind `{kind}`). "
-                            "Repeats of this kind are added below as comments; "
-                            "close the issue once it is dealt with._"
-                        ),
-                        "labels": [ISSUE_LABEL],
-                    },
-                )
-                r.raise_for_status()
-                return ChannelResult("github", True, f"opened {repo}#{r.json()['number']}")
             r = gh.post(
-                f"/repos/{repo}/issues/{number}/comments",
-                json={"body": f"**{safe_title}**\n\n{safe_body}\n\n_{stamp}_"},
+                f"/repos/{repo}/actions/workflows/{ALERT_WORKFLOW}/dispatches",
+                json={"ref": ALERT_WORKFLOW_REF, "inputs": inputs},
             )
             r.raise_for_status()
-            return ChannelResult("github", True, f"commented on {repo}#{number}")
+        return ChannelResult("github", True, f"dispatched {ALERT_WORKFLOW} on {repo} ({safe_kind})")
     except Exception as exc:  # noqa: BLE001 — never fail the caller over the alert
         return ChannelResult("github", False, f"failed: {scrub(str(exc))}")
-
-
-def _find_open_issue(gh: httpx.Client, repo: str, kind: str) -> int | None:
-    """The open issue already carrying this kind, if any.
-
-    Matched on the marker in the body rather than filtered by label: GitHub
-    drops labels silently when the token cannot set them, and dedupe that
-    depended on the label would then open a fresh issue every night.
-    """
-    r = gh.get(f"/repos/{repo}/issues", params={"state": "open", "per_page": 100})
-    r.raise_for_status()
-    marker = _KIND_MARKER.format(kind=kind)
-    for issue in r.json():
-        if not isinstance(issue, dict) or "pull_request" in issue:
-            continue
-        if marker in str(issue.get("body") or ""):
-            return int(issue["number"])
-    return None

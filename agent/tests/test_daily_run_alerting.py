@@ -27,12 +27,15 @@ RUN_DATE = "2026-09-23"  # a Wednesday: the weekend guard must not end the run
 
 pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
 
-# Stand-in interpreter. Records `-m <module> <args...>` one arg per line, prints
-# $FAKE_OUT_<module> and exits $FAKE_RC_<module> (dots in the module become _).
+# Stand-in interpreter. Records `-m <module> <args...>` one arg per line, and
+# the alert-channel env it was started with; prints $FAKE_OUT_<module> and
+# exits $FAKE_RC_<module> (dots in the module become _).
 FAKE_PYTHON = r"""#!/usr/bin/env bash
 mod="$2"
 n=$(ls "$CALLS_DIR" | wc -l | tr -d ' ')
 printf '%s\n' "${@:2}" > "$CALLS_DIR/$(printf '%04d' "$n")"
+printf '%s\n' "OPS_ALERT_GITHUB_TOKEN=${OPS_ALERT_GITHUB_TOKEN:-}" \
+  "OPS_ALERT_GITHUB_REPO=${OPS_ALERT_GITHUB_REPO:-}" > "$ENV_DIR/$(printf '%04d' "$n")"
 key="${mod//./_}"
 out="FAKE_OUT_${key}"
 rc="FAKE_RC_${key}"
@@ -70,6 +73,8 @@ class Run:
     output: str
     calls: list[list[str]]
     pings: list[list[str]]
+    #: The alert-channel env each call in `calls` saw, index for index.
+    envs: list[dict[str, str]]
 
     def modules(self) -> list[str]:
         return [c[0] for c in self.calls]
@@ -123,8 +128,10 @@ def run_daily(
     )
     calls_dir = tmp_path / "calls"
     curl_dir = tmp_path / "curls"
+    env_dir = tmp_path / "envs"
     calls_dir.mkdir()
     curl_dir.mkdir()
+    env_dir.mkdir()
     logs = tmp_path / "logs"
     if precreate_log_dir_as_file:
         # The run log's path is taken by a directory: the first write fails,
@@ -140,6 +147,7 @@ def run_daily(
         "SUBMIT": "0",
         "CALLS_DIR": str(calls_dir),
         "CURL_DIR": str(curl_dir),
+        "ENV_DIR": str(env_dir),
         **env_extra,
     }
     if healthcheck is not None:
@@ -158,7 +166,8 @@ def run_daily(
     def read(d: Path) -> list[list[str]]:
         return [f.read_text(encoding="utf-8").splitlines() for f in sorted(d.iterdir())]
 
-    return Run(proc.returncode, proc.stdout + proc.stderr, read(calls_dir), read(curl_dir))
+    envs = [dict(line.split("=", 1) for line in lines) for lines in read(env_dir)]
+    return Run(proc.returncode, proc.stdout + proc.stderr, read(calls_dir), read(curl_dir), envs)
 
 
 # --- dead-man's switch ------------------------------------------------------
@@ -245,3 +254,54 @@ def test_a_covered_book_pages_nobody(tmp_path: Path) -> None:
     run = run_daily(tmp_path)
     assert run.alerts("naked_book") == []
     assert "scripts.naked_alert" in run.modules()
+
+
+# --- agent/.env against systemd's values ------------------------------------
+#
+# systemd loads secrets.env, then the script sources agent/.env, and a plain
+# `source` overwrites. A blank `HEALTHCHECK_URL=` there (the example shipped one)
+# switched the dead-man's switch and the GitHub half off while preflight, which
+# never reads agent/.env, reported both as configured.
+
+
+def _daily_run_alert_env(run: Run) -> dict[str, str]:
+    (i,) = [
+        n
+        for n, c in enumerate(run.calls)
+        if c[0] == "scripts.notify_ops" and "daily_run" in c
+    ]
+    return run.envs[i]
+
+
+def test_a_blank_alert_key_in_dotenv_cannot_switch_alerting_off(tmp_path: Path) -> None:
+    run = run_daily(
+        tmp_path,
+        dotenv="HEALTHCHECK_URL=\nOPS_ALERT_GITHUB_TOKEN=\nOPS_ALERT_GITHUB_REPO=canberkaslan/trading\n",
+        OPS_ALERT_GITHUB_TOKEN="gh-test-token-not-real",
+        OPS_ALERT_GITHUB_REPO="someone/private-ops",
+        FAKE_RC_scripts_trade="1",
+    )
+    assert run.ping_urls == [f"{HC}/fail"]
+    env = _daily_run_alert_env(run)
+    assert env["OPS_ALERT_GITHUB_TOKEN"] == "gh-test-token-not-real"
+    assert env["OPS_ALERT_GITHUB_REPO"] == "someone/private-ops"
+
+
+def test_the_shipped_example_as_dotenv_leaves_alerting_on(tmp_path: Path) -> None:
+    example = (AGENT / ".env.example").read_text(encoding="utf-8")
+    run = run_daily(tmp_path, dotenv=example, FAKE_RC_scripts_trade="1")
+    assert run.ping_urls == [f"{HC}/fail"]
+
+
+def test_dotenv_still_fills_an_alert_key_the_environment_lacks(tmp_path: Path) -> None:
+    # The manual-run fallback it was for.
+    run = run_daily(tmp_path, healthcheck=None, dotenv=f"HEALTHCHECK_URL={HC}\n")
+    assert run.ping_urls == [HC]
+
+
+def test_every_other_key_keeps_dotenv_precedence(tmp_path: Path) -> None:
+    # Pin, not a fix: which universe, submit flag and keys the run trades with
+    # must not move in a change that only concerns alerting.
+    run = run_daily(tmp_path, dotenv='UNIVERSE="XOM"\nSUBMIT=1\n')
+    trades = [c for c in run.calls if c[0] == "scripts.trade"]
+    assert trades == [["scripts.trade", "--ticker", "XOM", "--date", RUN_DATE, "--submit"]]

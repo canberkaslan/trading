@@ -21,12 +21,32 @@ cd "$(dirname "$0")/.."   # -> agent/
 
 # Load .env if present (systemd also injects via EnvironmentFile, this is the
 # manual-run fallback).
+#
+# A plain `source` overwrites what systemd set. For the alert channels that let a
+# blank `HEALTHCHECK_URL=` in agent/.env (the example used to ship one) switch the
+# dead-man's switch and the GitHub half off, silently, while preflight (which
+# never reads agent/.env) reported both as configured. So for these keys a value
+# the environment already has wins, as trade.py's own loader does for every key.
+# Every other key keeps .env-over-environment: changing that would change the
+# credentials, universe and submit flag the run trades with.
+ALERT_KEYS=(HEALTHCHECK_URL OPS_ALERT_GITHUB_TOKEN OPS_ALERT_GITHUB_REPO)
+_inherited_alerting=()
+for _key in "${ALERT_KEYS[@]}"; do
+  if [[ -n "${!_key:-}" ]]; then
+    _inherited_alerting+=("${_key}=${!_key}")
+  fi
+done
 if [[ -f .env ]]; then
   set -a
   # shellcheck disable=SC1091
   source .env
   set +a
 fi
+# ${arr[@]+...}: an empty array is an unbound-variable error under set -u on
+# bash < 4.4, which is what macOS ships.
+for _kv in ${_inherited_alerting[@]+"${_inherited_alerting[@]}"}; do
+  export "$_kv"
+done
 
 PYTHON="${PYTHON:-./.venv/bin/python}"
 # Default matches the LIVE production universe — a box missing the env var

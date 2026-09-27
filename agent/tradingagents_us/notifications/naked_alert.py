@@ -6,6 +6,12 @@ found 75.5% of held shares naked — 8 of 10 names, on an account whose go-live
 checklist assumes every entry ships a bracket. Nobody was told, because nothing
 was asking.
 
+The naked-book check is now a failure of the daily run, and `daily_run.sh`
+pages on every run an exposure persists. That overrides the rationing below on
+purpose: after the position pass has back-filled stops, a share still naked is
+a broken protection floor, not news. `scripts/naked_alert.py` uses this policy
+only for the one-time all-clear.
+
 The policy mirrors `inert_alert`: pure, and quiet unless there is NEW
 information. A book that is 40% naked today and 40% naked tomorrow is one
 problem, not two, and paging daily about it trains the reader to swipe the

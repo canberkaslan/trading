@@ -240,3 +240,125 @@ def test_buy_with_entry_stop_proceeds(mock_dependencies, monkeypatch, capsys):
 
     # submit_order SHOULD be called
     assert mock_dependencies["submit"].called, "submit_order should be called for well-formed Buy"
+
+
+# --- cap flags reach the sizer ------------------------------------------------
+#
+# Run through main() with the real sizer, and read the order main() hands to
+# submit_order: a flag that parses but is never passed on (the state
+# MAX_POSITION_PCT was in for months, one layer up) has no effect on it.
+#
+# The book: $100k equity, $50k spendable, nothing held. A Buy at 250 with a
+# stop at 240 risks $10/share, so 0.5% risk = 50 shares; the 10% single-name
+# cap ($10k) trims that to 40, which is what today's defaults produce.
+
+
+def _sized_buy(mock_dependencies, monkeypatch, *flags: str):
+    monkeypatch.setattr(
+        sys, "argv", ["trade.py", "--ticker", "TSLA", "--use-cached", "--no-persist", *flags]
+    )
+    buy = AgentDecision(
+        ticker="TSLA",
+        market="US",
+        quote_currency="USD",
+        rating="Buy",
+        entry_price=250.0,
+        stop_loss=240.0,
+        price_target=280.0,
+        time_horizon="3mo",
+        suggested_size_pct=0.05,
+        reasoning=[
+            AgentReasoning(
+                agent="portfolio_manager",
+                model="claude-opus-4-7",
+                summary="caps",
+                tokens_in=0,
+                tokens_out=0,
+                latency_ms=0,
+            )
+        ],
+        final_decision_text="RATING:Buy\nENTRY:250.0\nSTOP:240.0",
+        timestamp_utc=datetime.now(UTC),
+        decision_id="test-caps",
+    )
+    # Quiet the price-anomaly breaker so the only thing sizing the order is caps.
+    with mock.patch("scripts.trade._decision_from_cached", return_value=buy), \
+         mock.patch("scripts.trade._fetch_current_price", return_value=250.0), \
+         mock.patch("scripts.trade.rolling_price_stats", return_value=(250.0, 2.0)):
+        from scripts.trade import main
+        assert main() == 0
+    return mock_dependencies["submit"].call_args_list[-1].args[0]
+
+
+def _gate_utilization(mock_dependencies) -> float:
+    return mock_dependencies["council"].call_args.kwargs["max_cash_utilization"]
+
+
+def test_default_caps_size_exactly_as_before(mock_dependencies, monkeypatch):
+    order = _sized_buy(mock_dependencies, monkeypatch)
+    assert order.risk_approved, order.rejection_reasons
+    assert order.quantity == 40
+    assert _gate_utilization(mock_dependencies) == 1.0
+
+
+def test_max_cash_utilization_flag_reaches_the_sizer_and_the_gate(
+    mock_dependencies, monkeypatch
+):
+    # 10% of $50k spendable = $5k = 20 shares at 250, below the position cap's 40.
+    order = _sized_buy(mock_dependencies, monkeypatch, "--max-cash-utilization", "0.1")
+    assert order.risk_approved, order.rejection_reasons
+    assert order.quantity == 20
+    # The pre-council gate budgets with the same figure the sizer will use, or
+    # it councils names the sizer then cannot afford.
+    assert _gate_utilization(mock_dependencies) == pytest.approx(0.1)
+
+
+def test_max_position_pct_flag_reaches_the_sizer(mock_dependencies, monkeypatch):
+    order = _sized_buy(mock_dependencies, monkeypatch, "--max-position-pct", "0.05")
+    assert order.risk_approved, order.rejection_reasons
+    assert order.quantity == 20
+
+
+def test_max_sector_pct_flag_reaches_the_portfolio_check(mock_dependencies, monkeypatch):
+    # 40 shares = $10k = 10% of equity, over a 5% sector cap.
+    order = _sized_buy(mock_dependencies, monkeypatch, "--max-sector-pct", "0.05")
+    assert not order.risk_approved
+    assert any(
+        r.startswith("sector_pct=") and r.endswith("exceeds 5%") for r in order.rejection_reasons
+    ), order.rejection_reasons
+
+
+@pytest.mark.parametrize(
+    "flag", ["--max-position-pct", "--max-sector-pct", "--max-cash-utilization"]
+)
+@pytest.mark.parametrize("value", ["10", "1.5", "0", "-0.1", "nan", "inf"])
+def test_a_cap_outside_zero_to_one_is_refused_before_the_broker(
+    mock_dependencies, monkeypatch, capsys, flag, value
+):
+    # `--max-position-pct 10` meaning ten percent would be a 1000% cap, and a
+    # cash utilization above 1 spends cash the account does not have. Both used
+    # to be accepted; now the run dies in argparse, before any broker call or
+    # model spend. (daily_run.sh passes none of these flags.)
+    monkeypatch.setattr(
+        sys, "argv", ["trade.py", "--ticker", "TSLA", "--use-cached", "--no-persist", flag, value]
+    )
+    from scripts.trade import main
+
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 2
+    assert "fraction in (0, 1]" in capsys.readouterr().err
+    assert not mock_dependencies["alpaca"].account.called
+
+
+def test_a_cap_of_exactly_one_is_allowed(mock_dependencies, monkeypatch):
+    order = _sized_buy(
+        mock_dependencies,
+        monkeypatch,
+        "--max-position-pct", "1",
+        "--max-sector-pct", "1",
+        "--max-cash-utilization", "1",
+    )
+    # Uncapped by name and sector, so the 0.5% risk budget sizes it: 50 shares.
+    assert order.risk_approved, order.rejection_reasons
+    assert order.quantity == 50

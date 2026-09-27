@@ -6,11 +6,21 @@ key discovered mid-run costs a full eval trading day out of 10, plus the
 LLM spend — this catches it while there's still time to fix.
 
 Alert-only: it never blocks or gates the daily run. On any hard failure it
-pushes a notification to registered devices and exits 1 (visible in
-systemctl status); on success it exits 0 quietly.
+sends an ops alert (push AND a GitHub issue, see notifications.ops_channel)
+and exits 1 (visible in systemctl status); on success it exits 0 quietly.
 
-Checks: Alpaca (account + paper URL), Anthropic key, Polygon, Finnhub,
-OpenRouter (only when LLM_COUNCIL=1), FRED (warn-only), DB writable, disk.
+Hard checks: Alpaca (account + paper URL), Anthropic key, Polygon, Finnhub,
+OpenRouter (only when LLM_COUNCIL=1), DB writable, disk. FRED is warn-only.
+
+Alerting gaps (no HEALTHCHECK_URL; no GitHub alert token, or one GitHub
+refuses or that expires within days) are reported separately and do NOT set
+the exit code. Exit 1 keeps meaning "a key or dependency the run needs is
+broken", so OnFailure and systemctl status stay worth reading on a box that
+has not set the alert accounts up yet. The gaps still reach a human: every run
+records its result (monitoring.alerting_state), /readyz serves it, and the
+off-box watchdog opens an incident, on a path that needs no secret on the box.
+Reporting a dead alert channel through that same channel is how the
+2026-09-14 outage stayed quiet.
 """
 
 from __future__ import annotations
@@ -174,36 +184,75 @@ def _check_disk(failures: list[Failure], min_free_gb: float = 5.0) -> None:
         failures.append(("disk", f"check failed: {exc}"))
 
 
-def _alert(failures: list[Failure]) -> None:
+def _check_alerting(gaps: list[Failure]) -> None:
+    """The two ways a problem on this box reaches a human without the phone.
+
+    Both depend on an account created outside this repo, so a deploy cannot
+    require them. Gaps go into their own list: they are recorded for /readyz
+    and the watchdog and ride along in a hard-failure alert, but they never
+    make preflight fail on their own.
+
+    Neither check sends anything. A preflight ping to HEALTHCHECK_URL would
+    record a daily run that has not happened yet, which defeats the point of
+    it; the GitHub token is exercised with a read of the alert workflow.
+    """
+    from tradingagents_us.notifications.ops_channel import check_github_channel
+
+    hc = os.environ.get("HEALTHCHECK_URL", "").strip()
+    if not hc:
+        gaps.append(
+            (
+                "healthcheck",
+                "HEALTHCHECK_URL unset: no dead-man's switch, so a daily run that "
+                "stops happening pages nobody",
+            )
+        )
+    elif not hc.startswith(("https://", "http://")):
+        # Never echo the value: the URL is a credential for reporting success.
+        gaps.append(("healthcheck", "HEALTHCHECK_URL is not an http(s) URL"))
+
+    check = check_github_channel()
+    if check.ok is False:
+        gaps.append(("ops_alert_channel", check.detail))
+    elif check.ok is None:
+        print(f"preflight: alert channel not checked (soft): {check.detail}", file=sys.stderr)
+
+
+def _alert(failures: list[Failure], gaps: list[Failure]) -> None:
     body = "; ".join(f"{n}: {msg}" for n, msg in failures)
+    if gaps:
+        body += " | alerting gaps: " + "; ".join(f"{n}: {msg}" for n, msg in gaps)
     print(f"preflight FAILED: {body}", file=sys.stderr)
     try:
-        from sqlalchemy import create_engine
+        from tradingagents_us.notifications.ops_channel import send_ops_alert
 
-        from tradingagents_us.notifications import send_expo_push
-        from tradingagents_us.notifications.sender import PushMessage
-        from tradingagents_us.storage import TradeLogRepository
-        from tradingagents_us.storage.device_tokens import list_all_tokens
-
-        url = os.environ.get("TRADE_LOG_DB_URL", "sqlite:///./local.db")
-        repo = TradeLogRepository(engine=create_engine(url, future=True))
-        with repo.session() as s:
-            tokens = list_all_tokens(s)
-        send_expo_push([
-            PushMessage(
-                to=t,
-                title=f"⚠️ Preflight FAILED ({len(failures)})",
-                body=body[:200],
-                data={"type": "ops_alert", "kind": "preflight"},
-            )
-            for t in tokens
-        ])
+        delivery = send_ops_alert(f"⚠️ Preflight FAILED ({len(failures)})", body, kind="preflight")
+        print(f"preflight: alert {delivery.describe()}", file=sys.stderr)
     except Exception as exc:
-        print(f"preflight: alert push failed: {exc}", file=sys.stderr)
+        print(f"preflight: alert failed: {exc}", file=sys.stderr)
+
+
+def _record(failures: list[Failure], gaps: list[Failure]) -> None:
+    """Leave this run's result where /readyz serves it. Never fails preflight."""
+    from datetime import datetime
+
+    from tradingagents_us.monitoring.alerting_state import PreflightRecord, write_preflight
+
+    record = PreflightRecord.from_names(
+        datetime.now(UTC).isoformat(timespec="seconds"),
+        [n for n, _ in failures],
+        [n for n, _ in gaps],
+    )
+    try:
+        write_preflight(record)
+    except Exception as exc:
+        print(f"preflight: could not record the result for /readyz: {exc}", file=sys.stderr)
 
 
 def main() -> int:
     failures: list[Failure] = []
+    gaps: list[Failure] = []
+    _check_alerting(gaps)
     _check_alpaca(failures)
     _check_anthropic(failures)
     _check_polygon(failures)
@@ -213,10 +262,17 @@ def main() -> int:
     _check_db(failures)
     _check_disk(failures)
 
+    _record(failures, gaps)
+    if gaps:
+        print(
+            "preflight: alerting gaps (served on /readyz for the watchdog; not a failure): "
+            + "; ".join(f"{n}: {msg}" for n, msg in gaps),
+            file=sys.stderr,
+        )
     if failures:
-        _alert(failures)
+        _alert(failures, gaps)
         return 1
-    print("preflight OK — all checks passed")
+    print("preflight OK — all dependency checks passed")
     return 0
 
 

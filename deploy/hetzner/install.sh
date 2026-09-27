@@ -79,9 +79,31 @@ TRADINGAGENTS_MAX_RISK_ROUNDS=1
 # EnvironmentFile= and `source` in a shell.)
 UNIVERSE="SPY AAPL MSFT NVDA GOOGL AMZN META JPM V XOM UNH"
 SUBMIT=1
-# Optional dead-man's switch (healthchecks.io ping URL, pinged on success)
-#HEALTHCHECK_URL=
 PYTHON=/opt/ai-trader/agent/.venv/bin/python
+
+# Alerting that does not depend on the phone app. Both need an account, so a
+# blank value never fails an install, a redeploy or preflight's exit code.
+# Instead preflight records each gap, /readyz serves it, and the off-box
+# watchdog keeps an incident open (as github-actions[bot]) until it is filled in.
+#
+# Dead-man's switch: a healthchecks.io check with schedule "30 22 * * 1-5" (UTC)
+# and a grace period of about 7h (the run unit's 6h TimeoutStartSec plus margin).
+# daily_run.sh pings the URL on success and <url>/fail on failure. A run that
+# never happens sends nothing, and healthchecks.io pages on that silence.
+HEALTHCHECK_URL=
+# Box alerts (preflight, failed runs, naked book, kill switch, backup) are also
+# filed as GitHub issues. The box dispatches .github/workflows/box-alert.yml and
+# the workflow writes the issue as github-actions[bot]: GitHub does not notify
+# you about issues filed with your own token, so the box must not write them.
+# Fine-grained PAT on the alert repo only, permission Actions: Read and write
+# (that also lets it dispatch the repo's other dispatchable workflows). Mind its
+# expiry: preflight reads the workflow with it and reports a refused or
+# soon-expiring token.
+OPS_ALERT_GITHUB_TOKEN=
+# Defaults to the repo the off-box watchdog files incidents on, which is public.
+# A private repo keeps book details off a public page and narrows what the
+# token can dispatch; it must carry box-alert.yml and scripts/box_alert_issue.py.
+#OPS_ALERT_GITHUB_REPO=canberkaslan/trading
 
 # Local trade-log DB (sqlite on the box)
 TRADE_LOG_DB_URL=sqlite:////opt/ai-trader/agent/local.db
@@ -117,6 +139,15 @@ EOF
   chmod 600 "${APP_DIR}/backup.env"
 fi
 
+# An existing secrets.env is never rewritten, so a box installed before these
+# settings existed will not have them. Say so here; never fail the install.
+for var in HEALTHCHECK_URL OPS_ALERT_GITHUB_TOKEN; do
+  if ! grep -Eq "^${var}=[\"']?[^\"'[:space:]]" "${APP_DIR}/secrets.env"; then
+    echo "==> WARNING: ${var} is not set in ${APP_DIR}/secrets.env;" \
+      "box alerts reach only the phone, and the watchdog will open an incident"
+  fi
+done
+
 # 5. systemd units ---------------------------------------------------------
 echo "==> installing systemd units"
 for unit in ai-trader.service ai-trader.timer ai-trader-alert.service \
@@ -134,6 +165,7 @@ echo " Install complete."
 echo ""
 echo " NEXT:"
 echo "   1. Fill in secrets:   nano ${APP_DIR}/secrets.env"
+echo "        (incl. HEALTHCHECK_URL + OPS_ALERT_GITHUB_TOKEN: alerts off the phone)"
 echo "   2. Test one ticker:   cd ${AGENT_DIR} && \\"
 echo "        set -a && source ${APP_DIR}/secrets.env && set +a && \\"
 echo "        UNIVERSE='AAPL' SUBMIT=0 bash scripts/daily_run.sh"

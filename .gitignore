@@ -71,6 +71,7 @@ agent/.tradingagents/
 *.db
 *.sqlite
 agent/inert_alert.state.json
+agent/preflight.state.json
 
 # OS
 .DS_Store

@@ -127,9 +127,45 @@ class TestRatchet:
         assert [s.reason for s in skips] == ["insufficient_bars"]
 
     def test_skips_a_ticker_with_no_bars_at_all(self) -> None:
+        # Not "insufficient": none at all is a data gap, not a young series.
         actions, skips = plan_actions([position()], {})
         assert actions == []
-        assert [s.reason for s in skips] == ["insufficient_bars"]
+        assert [s.reason for s in skips] == ["no_bars"]
+
+
+class TestNoBars:
+    """A held name the bar cache knows nothing about.
+
+    Its age is read off the bar series, so an empty cache used to read as
+    bars_held=0: indistinguishable from a position opened today, and a
+    month-old flat position that silently never aged out. It must be reported,
+    and it must never become a time exit that would not fire otherwise.
+    """
+
+    def test_an_unknown_age_is_reported_rather_than_read_as_zero(self) -> None:
+        actions, skips = plan_actions([position(bars_held=None, current_price=100.5)], {})
+
+        assert actions == []
+        assert [(s.ticker, s.reason) for s in skips] == [("AAPL", "no_bars")]
+        assert "age unknown" in skips[0].detail
+
+    def test_an_unknown_age_never_time_exits_even_with_bars_to_hand(self) -> None:
+        # Flat and would be past any window; the age is still unknown, so no
+        # exit and no stop order on a guess either.
+        actions, skips = plan_actions(
+            [position(bars_held=None, current_price=100.5)], {"AAPL": flat_bars(30)}
+        )
+
+        assert actions == []
+        assert [s.reason for s in skips] == ["no_bars"]
+
+    def test_a_known_age_still_time_exits_with_no_bars(self) -> None:
+        # The time exit needs an age and a P&L, not bars. Reporting the gap
+        # must not suppress an exit that fires today.
+        actions, skips = plan_actions([position(bars_held=25, current_price=101.0)], {})
+
+        assert [type(a) for a in actions] == [TimeExit]
+        assert skips == []
 
 
 class TestTimeExit:

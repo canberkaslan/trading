@@ -10,7 +10,9 @@ performance.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+
+import pytest
 
 from tradingagents_us.execution.exit_quality import (
     STRATEGY_CLASSES,
@@ -183,8 +185,76 @@ class TestBuckets:
         b = bucket_by_exit(rows)[0]
         assert (b.trades, b.wins, b.losses, b.win_rate) == (1, 0, 0, 0.0)
 
-    def test_strategy_classes_are_the_three_agent_paths(self) -> None:
-        assert set(STRATEGY_CLASSES) == {"stop", "take_profit", "decision_sell"}
+    def test_strategy_classes_are_the_agent_paths(self) -> None:
+        assert set(STRATEGY_CLASSES) == {"stop", "take_profit", "decision_sell", "time_exit"}
+
+
+class TestTimeExitAttribution:
+    """How a STAMPED time exit would be booked: the classifier and the id helper.
+
+    Until it had a class of its own, a time exit could only land in "flatten"
+    (no agent prefix) or "decision_sell" (a stamped id read by the old
+    prefix-only rule). The first drops the strategy's own exits out of the
+    strategy roll-up; the second credits a council decision nobody made.
+
+    Unit tests of two helpers only. No production path sends this stamp yet:
+    the TimeExit is a bare DELETE with a broker id and books as "flatten".
+    test_manage_positions.TestTimeExitAttributionThroughTheLedger follows the
+    real order into reconcile and pins that, with a strict xfail for the fix.
+    """
+
+    STAMP = "tr-exit-time-XOM-20260927"
+
+    def test_a_stamped_time_exit_is_a_time_exit_not_a_decision(self) -> None:
+        assert classify_exit(_order("market", self.STAMP)) == "time_exit"
+
+    def test_the_id_helper_and_the_classifier_agree(self) -> None:
+        # The two helpers agree on the format. That is all this proves: nothing
+        # in production calls the helper yet (see the class docstring).
+        from tradingagents_us.execution.executor import derive_exit_client_order_id
+
+        client_id = derive_exit_client_order_id("xom", date(2026, 9, 27), "time")
+
+        assert client_id == self.STAMP
+        assert len(client_id) <= 48  # Alpaca's client_order_id cap
+        assert classify_exit(_order("market", client_id)) == "time_exit"
+
+    def test_the_executor_refuses_a_reason_the_classifier_cannot_book(self) -> None:
+        from tradingagents_us.execution.executor import derive_exit_client_order_id
+
+        with pytest.raises(ValueError, match="unknown exit reason"):
+            derive_exit_client_order_id("XOM", date(2026, 9, 27), "margin")
+
+    def test_no_decision_id_reads_as_a_rule_exit_whatever_the_ticker(self) -> None:
+        # A ticker spelled EXIT still yields a decision id: the ticker is upper
+        # cased and the rule-exit prefix is not.
+        from tradingagents_us.execution.executor import derive_client_order_id
+
+        client_id = derive_client_order_id("exit", date(2026, 9, 27), "sell")
+
+        assert classify_exit(_order("market", client_id)) == "decision_sell"
+
+    def test_an_exit_reason_this_build_does_not_know_is_unknown(self) -> None:
+        # An agent exit of unknown kind is not a council decision.
+        assert classify_exit(_order("market", "tr-exit-margin-XOM-20260927")) == "unknown"
+
+    def test_a_time_exit_is_scored_as_strategy_and_reported_as_itself(self) -> None:
+        rows = attribute(
+            [_trade("f1", 12.0), _trade("f2", -600.0)],
+            {"f1": _order("market", self.STAMP), "f2": _order("market", "68c3c73e-uuid")},
+        )
+
+        assert [b.exit_class for b in bucket_by_exit(rows)] == ["time_exit", "flatten"]
+        strategy = strategy_bucket(rows)
+        assert (strategy.trades, strategy.net_pnl) == (1, 12.0)
+
+    def test_a_time_exit_reports_after_the_decision_sells(self) -> None:
+        rows = attribute(
+            [_trade("f1", 5.0), _trade("f2", 7.0)],
+            {"f1": _order("market", self.STAMP), "f2": _order("market", "tr-A-20260801-SELL")},
+        )
+
+        assert [b.exit_class for b in bucket_by_exit(rows)] == ["decision_sell", "time_exit"]
 
 
 class TestBrokerJoin:
@@ -278,7 +348,7 @@ class TestCoerceExitClass:
     """A class read back out of storage, where nothing checked it going in."""
 
     def test_a_known_class_survives_the_round_trip(self) -> None:
-        for name in ("stop", "take_profit", "decision_sell", "flatten", "unknown"):
+        for name in ("stop", "take_profit", "decision_sell", "time_exit", "flatten", "unknown"):
             assert coerce_exit_class(name) == name
 
     def test_case_and_padding_are_tolerated(self) -> None:

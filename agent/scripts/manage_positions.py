@@ -221,7 +221,9 @@ def _build_managed(
                     quantity=p.qty,
                     avg_entry_price=p.avg_entry_price,
                     current_price=p.market_value / p.qty if p.qty else 0.0,
-                    bars_held=_bars_since(bar_dates, entry),
+                    # None, not 0, for an empty cache: 0 is "opened today",
+                    # and a month-old name read that way never ages out.
+                    bars_held=_bars_since(bar_dates, entry) if bar_dates else None,
                     current_stop=stop_price,
                     stop_order_id=stop_id,
                     naked_quantity=cov.naked_qty if cov.is_actionable else 0.0,
@@ -273,15 +275,29 @@ def _execute(client: AlpacaClient, actions: list[Action]) -> int:
                 )
                 log.info("%-6s stop placed, order %s", act.ticker, placed.id)
             else:
-                client.close_position(act.ticker)
-                log.info("%-6s closed on age", act.ticker)
+                # Still the bare DELETE /positions/{symbol}, deliberately. That
+                # endpoint takes no client_order_id, so the close carries a
+                # broker id and the ledger books it as a flatten, outside the
+                # strategy (exit_quality). Stamping it means submitting our own
+                # sell with `derive_exit_client_order_id`, and that is not a
+                # relabel: sized off a quantity read earlier, with the position
+                # gone by then, it can open a short where this DELETE 404s.
+                # Protective orders are left alone too, so a close on shares a
+                # stop reserves is refused exactly as before. Making the exit
+                # execute is a separate change.
+                resp = client.close_position(act.ticker)
+                order_id = resp.get("id") if isinstance(resp, dict) else None
+                log.info(
+                    "%-6s closed on age, order %s (unstamped: books as a flatten)",
+                    act.ticker, order_id or "?",
+                )
         except Exception as exc:  # noqa: BLE001 — one bad symbol must not stop the pass
             failures += 1
             log.error("%-6s FAILED: %s", act.ticker, exc)
     return failures
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--submit", action="store_true", help="actually amend/close (default: report)"
@@ -298,7 +314,7 @@ def main() -> int:
         default=None,
         help="override the bar-cache DB (same flag scripts/trade.py takes)",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     install_log_redaction()

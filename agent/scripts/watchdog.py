@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import socket
 import sys
 import urllib.error
@@ -108,27 +109,72 @@ def ready_url_for(health_url: str) -> str:
     return health_url.rstrip("/") + "/readyz"
 
 
-def probe_ready(url: str) -> ReadinessProbe:
-    """Read the `alpaca` bit out of `/readyz`.
+#: The only strings from /readyz that reach a public issue are check names.
+_CHECK_NAME = re.compile(r"^[a-z_]{1,32}$")
+_STAMP = re.compile(r"^[0-9T:.+\-Z ]{10,40}$")
+#: /readyz's `alerting` booleans, by the name preflight gives the same gap.
+_ALERTING_NAMES = {"healthcheck": "healthcheck", "github": "ops_alert_channel"}
+
+
+def _check_names(raw: object) -> tuple[str, ...]:
+    if not isinstance(raw, list):
+        return ()
+    return tuple(
+        sorted({n if isinstance(n, str) and _CHECK_NAME.match(n) else "unnamed" for n in raw})
+    )
+
+
+def _box_report(payload: dict, now: datetime | None) -> dict[str, object]:
+    """The alerting and preflight facts from /readyz, cleaned for a public issue."""
+    gaps: set[str] = set()
+    alerting = payload.get("alerting")
+    if isinstance(alerting, dict):
+        gaps |= {name for key, name in _ALERTING_NAMES.items() if alerting.get(key) is False}
+    out: dict[str, object] = {}
+    pre = payload.get("preflight")
+    if isinstance(pre, dict) and isinstance(pre.get("ok"), bool):
+        failed = _check_names(pre.get("failed"))
+        if pre["ok"] is False and not failed:
+            failed = ("unnamed",)
+        out["preflight_failed"] = failed
+        gaps |= set(_check_names(pre.get("alerting_gaps")))
+        at = pre.get("at")
+        if isinstance(at, str) and _STAMP.match(at):
+            out["preflight_at"] = at
+            when = _parse_stamp(at)
+            if when is not None and now is not None:
+                out["preflight_age_hours"] = max(0.0, (now - when).total_seconds() / 3600.0)
+    out["alerting_gaps"] = tuple(sorted(gaps))
+    return out
+
+
+def probe_ready(url: str, now: datetime | None = None) -> ReadinessProbe:
+    """Read the `alpaca` bit, and the box's own alerting report, out of `/readyz`.
 
     `/readyz` answers 200 whether or not the broker is reachable (the verdict is
     in the body), so the status code says nothing here. Anything short of a JSON
     object with a boolean `alpaca` is "unknown", never "down": an older API, a
     Cloudflare error page or a timeout must not be able to invent a broker
     outage — the health probe already reports a missing origin.
+
+    The `alerting` and `preflight` fields are what the box can say about its own
+    alert paths without using them; only check names and a timestamp are kept.
     """
     req = urllib.request.Request(url, headers={"User-Agent": "ai-trader-watchdog/1"})
     try:
         with urllib.request.urlopen(req, timeout=PROBE_TIMEOUT_S) as resp:
-            payload = json.loads(resp.read(4096))
+            payload = json.loads(resp.read(8192))
     except urllib.error.HTTPError as exc:
         return ReadinessProbe(broker_ok=None, detail=f"HTTP {exc.code}")
     except Exception as exc:  # timeout, DNS, TLS, not JSON
         return ReadinessProbe(broker_ok=None, detail=type(exc).__name__)
-    alpaca = payload.get("alpaca") if isinstance(payload, dict) else None
-    if not isinstance(alpaca, bool):
+    if not isinstance(payload, dict):
         return ReadinessProbe(broker_ok=None, detail="no `alpaca` field in /readyz")
-    return ReadinessProbe(broker_ok=alpaca)
+    box = _box_report(payload, now)
+    alpaca = payload.get("alpaca")
+    if not isinstance(alpaca, bool):
+        return ReadinessProbe(broker_ok=None, detail="no `alpaca` field in /readyz", **box)
+    return ReadinessProbe(broker_ok=alpaca, **box)
 
 
 def probe_backup(repo: str, token: str | None, now: datetime) -> BackupSignal:
@@ -444,7 +490,9 @@ def check_once(now: datetime, dry_run: bool = False) -> Verdict:
     # Only worth asking when the origin answered: through a dead tunnel /readyz
     # would just repeat the health probe's error as a second, noisier line.
     ready_url = os.environ.get("WATCHDOG_READY_URL") or ready_url_for(health_url)
-    ready = probe_ready(ready_url) if health.reached_origin else ReadinessProbe(broker_ok=None)
+    ready = (
+        probe_ready(ready_url, now) if health.reached_origin else ReadinessProbe(broker_ok=None)
+    )
     verdict = classify(health, backup, host, ready)
 
     print(json.dumps({
@@ -455,6 +503,8 @@ def check_once(now: datetime, dry_run: bool = False) -> Verdict:
         "backup": backup.describe(),
         "host": host.describe(),
         "ready": ready.describe(),
+        "preflight": ready.describe_preflight(),
+        "alerting": ready.describe_alerting(),
         "reasons": list(verdict.reasons),
     }, indent=2))
 

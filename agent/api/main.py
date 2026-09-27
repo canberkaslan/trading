@@ -7,7 +7,7 @@ Run locally:
 
 Endpoints:
     GET  /healthz                              — liveness
-    GET  /readyz                               — Alpaca + DB reachability
+    GET  /readyz                               — Alpaca + DB reachability, alerting state
     GET  /v1/portfolio/snapshot                — equity + positions (live Alpaca)
     GET  /v1/agents/decisions[?ticker&limit]   — recent decisions (DB)
     GET  /v1/agents/decisions/{id}             — single decision
@@ -257,8 +257,18 @@ async def healthz() -> dict[str, str]:
 
 
 @app.get("/readyz")
-async def readyz() -> dict[str, str | bool]:
-    """Check Alpaca + DB reachability."""
+async def readyz() -> dict[str, object]:
+    """Alpaca + DB reachability, and what the box knows about its own alerting.
+
+    `status` is still Alpaca and DB only. `alerting` is which off-phone channels
+    this process's environment (the same secrets.env the timers load) has, and
+    `preflight` is the last preflight run as recorded by scripts.preflight, or
+    null before the first. The off-box watchdog reads both, so a failed check or
+    a missing alert channel reaches someone without needing any of the box's
+    own alert paths to work. Names and booleans only: this endpoint is public.
+    """
+    from tradingagents_us.monitoring.alerting_state import alerting_config, read_preflight
+
     alpaca_ok = False
     db_ok = False
     try:
@@ -274,5 +284,8 @@ async def readyz() -> dict[str, str | bool]:
         db_ok = True
     except Exception:
         db_ok = False
+    preflight = read_preflight()
     return {"status": "ok" if (alpaca_ok and db_ok) else "degraded",
-            "alpaca": alpaca_ok, "db": db_ok, "trading_mode": _trading_mode()}
+            "alpaca": alpaca_ok, "db": db_ok, "trading_mode": _trading_mode(),
+            "alerting": alerting_config(),
+            "preflight": preflight.public() if preflight else None}

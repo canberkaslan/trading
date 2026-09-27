@@ -11,10 +11,13 @@ from __future__ import annotations
 
 from tradingagents_us.monitoring.liveness import (
     BACKUP_STALE_AFTER_HOURS,
+    PREFLIGHT_STALE_AFTER_HOURS,
     STATE_BROKER_DOWN,
     STATE_DARK,
     STATE_DEGRADED,
     STATE_EDGE_DOWN,
+    STATE_PREFLIGHT_FAILED,
+    STATE_UNALERTED,
     STATE_UP,
     STATE_WEDGED,
     BackupSignal,
@@ -289,3 +292,97 @@ class TestBrokerReadiness:
 
     def test_severity_sits_between_wedged_and_edge_down(self) -> None:
         assert severity(STATE_EDGE_DOWN) < severity(STATE_BROKER_DOWN) < severity(STATE_WEDGED)
+
+
+class TestTheBoxReportOnItsOwnAlerting:
+    """What /readyz says about the box's alert paths and its last preflight.
+
+    Every on-box alert of the 2026-09-14 outage went to a phone app being
+    rebuilt. These are the facts the box can publish without using any of
+    those paths, and the watchdog is the one reader that does not depend on
+    them.
+    """
+
+    _ok = HealthProbe(reached_origin=True, status=200)
+
+    def _ready(self, **kw: object) -> ReadinessProbe:
+        return ReadinessProbe(broker_ok=True, **kw)  # type: ignore[arg-type]
+
+    def test_a_missing_alert_path_is_an_incident_that_names_it(self) -> None:
+        gaps = self._ready(alerting_gaps=("healthcheck", "ops_alert_channel"))
+        verdict = classify(self._ok, _fresh(), None, gaps)
+        assert verdict.state == STATE_UNALERTED
+        assert verdict.is_incident
+        assert any("healthcheck, ops_alert_channel" in r for r in verdict.reasons)
+        assert "HEALTHCHECK_URL" in verdict.remedy
+        assert "OPS_ALERT_GITHUB_TOKEN" in verdict.remedy
+
+    def test_a_failed_preflight_is_an_incident_that_names_the_checks(self) -> None:
+        verdict = classify(
+            self._ok,
+            _fresh(),
+            None,
+            self._ready(
+                preflight_failed=("anthropic", "polygon"), preflight_at="2026-09-14T21:45:07"
+            ),
+        )
+        assert verdict.state == STATE_PREFLIGHT_FAILED
+        assert any("failed: anthropic, polygon" in r for r in verdict.reasons)
+        assert "journalctl -u ai-trader-preflight" in verdict.remedy
+
+    def test_a_preflight_that_stopped_recording_is_an_incident(self) -> None:
+        verdict = classify(
+            self._ok,
+            _fresh(),
+            None,
+            self._ready(preflight_failed=(), preflight_age_hours=PREFLIGHT_STALE_AFTER_HOURS + 1),
+        )
+        assert verdict.state == STATE_PREFLIGHT_FAILED
+        assert "stopped reporting" in verdict.headline
+
+    def test_a_weekend_gap_is_not_stale(self) -> None:
+        # Friday 21:45 to Monday 21:45.
+        verdict = classify(
+            self._ok, _fresh(), None, self._ready(preflight_failed=(), preflight_age_hours=72.5)
+        )
+        assert verdict.state == STATE_UP
+
+    def test_a_passing_preflight_with_nothing_missing_is_up(self) -> None:
+        verdict = classify(
+            self._ok, _fresh(), None, self._ready(preflight_failed=(), alerting_gaps=())
+        )
+        assert verdict.state == STATE_UP
+
+    def test_no_report_at_all_changes_nothing(self) -> None:
+        # An older API, or no preflight since this shipped: unknown, not broken.
+        assert classify(self._ok, _fresh(), None, self._ready()).state == STATE_UP
+        assert classify(self._ok, _stale(), None, self._ready()).state == STATE_DEGRADED
+
+    def test_the_worse_news_wins_and_the_rest_still_rides_along(self) -> None:
+        both = self._ready(preflight_failed=("disk",), alerting_gaps=("healthcheck",))
+        verdict = classify(self._ok, _stale(), None, both)
+        assert verdict.state == STATE_PREFLIGHT_FAILED
+        text = "\n".join(verdict.reasons)
+        assert "failed: disk" in text and "healthcheck" in text and "backup" in text
+
+        unalerted = classify(self._ok, _stale(), None, self._ready(alerting_gaps=("healthcheck",)))
+        assert unalerted.state == STATE_UNALERTED
+        assert any("backup" in r for r in unalerted.reasons)
+
+    def test_a_refused_broker_still_outranks_them_and_keeps_them_visible(self) -> None:
+        ready = ReadinessProbe(
+            broker_ok=False, preflight_failed=("alpaca",), alerting_gaps=("healthcheck",)
+        )
+        verdict = classify(self._ok, _fresh(), None, ready)
+        assert verdict.state == STATE_BROKER_DOWN
+        text = "\n".join(verdict.reasons)
+        assert "failed: alpaca" in text and "healthcheck" in text
+
+    def test_severity_order(self) -> None:
+        assert (
+            severity(STATE_DEGRADED)
+            < severity(STATE_UNALERTED)
+            < severity(STATE_EDGE_DOWN)
+            < severity(STATE_PREFLIGHT_FAILED)
+            < severity(STATE_BROKER_DOWN)
+        )

@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import os
 import sys
 import uuid
@@ -151,6 +152,61 @@ def _print_decision(d: AgentDecision) -> None:
     print(f"  Decision ID: {d.decision_id}")
 
 
+def _cap_fraction(raw: str) -> float:
+    """argparse type for a cap: a fraction in (0, 1], never a percent.
+
+    `10` meaning ten percent is an easy thing to type, and the easier still once
+    a flag is fed from an env var. Taken literally it is a 1000% single-name
+    cap, or a cash utilization that spends ten times the cash the account has,
+    and nothing downstream would object.
+    Refusing it here fails the ticker loudly before any broker call or model
+    spend. Zero is refused too: it cannot be a deliberate cap, and it would turn
+    every order into a silent policy refusal.
+    """
+    problem = f"must be a fraction in (0, 1], e.g. 0.10 for 10%; got {raw!r}"
+    try:
+        value = float(raw)
+    except ValueError:
+        raise argparse.ArgumentTypeError(problem) from None
+    if not (math.isfinite(value) and 0.0 < value <= 1.0):
+        raise argparse.ArgumentTypeError(problem)
+    return value
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Decide + size + (optional) submit to Alpaca paper."
+    )
+    parser.add_argument("--ticker", required=True)
+    parser.add_argument("--date", default=datetime.now(UTC).date().isoformat())
+    parser.add_argument("--use-cached", action="store_true",
+                        help="Replay the most recent cached state for this ticker (no LLM cost)")
+    parser.add_argument("--method", choices=["atr", "llm_pct"], default="atr",
+                        help="Risk sizing method")
+    parser.add_argument("--risk-per-trade", type=float, default=0.005)
+    # The caps. These defaults ARE the live values: daily_run.sh passes none of
+    # these flags, and no env var feeds them (see the note in daily_run.sh).
+    parser.add_argument("--max-position-pct", type=_cap_fraction, default=0.10,
+                        help="Single-name cap as a fraction of equity (default 0.10)")
+    parser.add_argument("--max-sector-pct", type=_cap_fraction, default=0.30,
+                        help="Per-sector cap as a fraction of equity (default 0.30)")
+    parser.add_argument("--max-cash-utilization", type=_cap_fraction, default=1.0,
+                        help="Fraction of spendable cash one new BUY may use; 1.0 = all "
+                             "of it but never borrow, < 1.0 keeps dry powder (default 1.0)")
+    parser.add_argument("--submit", action="store_true",
+                        help="Actually submit the order to Alpaca (default: dry run)")
+    parser.add_argument("--hold", action="store_true",
+                        help="Save the order as PENDING (no broker call) — "
+                             "wait for mobile approval")
+    parser.add_argument("--refuse-outside-hours", action="store_true")
+    parser.add_argument("--no-persist", action="store_true",
+                        help="Skip writing to the trade log DB")
+    parser.add_argument("--db-url", default=os.environ.get("LOCAL_DATABASE_URL", "sqlite:///./local.db"),
+                        help="Trade log DB URL (default: SQLite file in CWD). "
+                             "Production sets DATABASE_URL to Aurora — this flag overrides.")
+    return parser
+
+
 def main() -> int:
     logging.basicConfig(
         level=logging.INFO,
@@ -163,29 +219,15 @@ def main() -> int:
     install_log_redaction()
     _load_env()
 
-    parser = argparse.ArgumentParser(
-        description="Decide + size + (optional) submit to Alpaca paper."
+    args = build_parser().parse_args()
+    # One set of caps for the whole run. The pre-council gate and the sizer must
+    # budget with the same cash utilization, or the gate councils names the
+    # sizer then cannot afford (or skips names it could).
+    limits = PortfolioLimits(
+        max_position_pct=args.max_position_pct,
+        max_sector_pct=args.max_sector_pct,
+        max_cash_utilization=args.max_cash_utilization,
     )
-    parser.add_argument("--ticker", required=True)
-    parser.add_argument("--date", default=datetime.now(UTC).date().isoformat())
-    parser.add_argument("--use-cached", action="store_true",
-                        help="Replay the most recent cached state for this ticker (no LLM cost)")
-    parser.add_argument("--method", choices=["atr", "llm_pct"], default="atr",
-                        help="Risk sizing method")
-    parser.add_argument("--risk-per-trade", type=float, default=0.005)
-    parser.add_argument("--max-position-pct", type=float, default=0.10)
-    parser.add_argument("--submit", action="store_true",
-                        help="Actually submit the order to Alpaca (default: dry run)")
-    parser.add_argument("--hold", action="store_true",
-                        help="Save the order as PENDING (no broker call) — "
-                             "wait for mobile approval")
-    parser.add_argument("--refuse-outside-hours", action="store_true")
-    parser.add_argument("--no-persist", action="store_true",
-                        help="Skip writing to the trade log DB")
-    parser.add_argument("--db-url", default=os.environ.get("LOCAL_DATABASE_URL", "sqlite:///./local.db"),
-                        help="Trade log DB URL (default: SQLite file in CWD). "
-                             "Production sets DATABASE_URL to Aurora — this flag overrides.")
-    args = parser.parse_args()
 
     from sqlalchemy import create_engine
     repo = (
@@ -264,6 +306,9 @@ def main() -> int:
         print(f"  PDT:       {acct.pattern_day_trader}")
         print(f"  Already holding {args.ticker}: {held_qty} shares "
               f"(${existing_by_ticker.get(args.ticker, 0.0):,.0f})")
+        print(f"  Caps:      name {limits.max_position_pct * 100:g}% / "
+              f"sector {limits.max_sector_pct * 100:g}% / "
+              f"cash {limits.max_cash_utilization * 100:g}% of spendable")
 
     reserved = reserved_cash_for_open_buys(open_buys, _fetch_current_price)
     spendable = spendable_cash(acct.cash, reserved)
@@ -290,7 +335,7 @@ def main() -> int:
         held_qty=held_qty,
         spendable=spendable,
         price=_fetch_current_price(args.ticker),
-        max_cash_utilization=PortfolioLimits().max_cash_utilization,
+        max_cash_utilization=limits.max_cash_utilization,
     )
     if not _gate.run:
         # No decision row is written, so this line is the only record that the
@@ -340,7 +385,7 @@ def main() -> int:
     if adv is None:
         # No bars is not "infinitely liquid". Fall back to the floor itself so
         # the check neither waves the order through nor blocks on a data gap.
-        adv = PortfolioLimits().min_liquidity_adv
+        adv = limits.min_liquidity_adv
         print(f"  ADV:       unavailable for {args.ticker} — using the floor")
     else:
         print(f"  ADV:       ${adv:,.0f} (20d average dollar volume)")
@@ -432,7 +477,7 @@ def main() -> int:
         circuit_breaker=cb,
         method=args.method,
         risk_per_trade=args.risk_per_trade,
-        portfolio_limits=PortfolioLimits(max_position_pct=args.max_position_pct),
+        portfolio_limits=limits,
         # Alpaca's last_equity is the previous close — the session's opening
         # equity, which is what the daily-drawdown halt measures against. 0.0
         # means Alpaca omitted it; pass None so the check is skipped rather

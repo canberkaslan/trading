@@ -10,12 +10,14 @@ did not all come from the same place:
   - a protective **stop** leg firing,
   - a **take-profit** limit leg filling,
   - a **decision sell** the agent submitted through `trade.py`,
+  - a **time exit** — the position manager closing a position that went
+    nowhere for long enough (`risk.position_manager.TimeExit`),
   - a **flatten** — a market sell submitted outside the agent entirely, which
     on this account is the 2026-06-24 cleanup of the accumulation bug (the
     duplicate shares from buying the same ticker three times a day, dumped at
     market in one go).
 
-Those are four different claims about the system, and averaging them into one
+Those are five different claims about the system, and averaging them into one
 expectancy answers none of them. This module splits the ledger by exit path so
 each can be judged on its own record.
 
@@ -38,13 +40,13 @@ from typing import Literal, Protocol
 
 from tradingagents_us.execution.reconcile import ClosedTrade
 
-ExitClass = Literal["stop", "take_profit", "decision_sell", "flatten", "unknown"]
+ExitClass = Literal["stop", "take_profit", "decision_sell", "time_exit", "flatten", "unknown"]
 
 #: The set of exit classes, as plain strings, for validating a value that has
 #: been round-tripped through storage. A `Literal` cannot check a str at
 #: runtime, and a persisted column is exactly where an unchecked value gets in.
 EXIT_CLASSES: frozenset[str] = frozenset(
-    {"stop", "take_profit", "decision_sell", "flatten", "unknown"}
+    {"stop", "take_profit", "decision_sell", "time_exit", "flatten", "unknown"}
 )
 
 #: Order types that mean "a protective level was reached", whatever the venue
@@ -56,11 +58,25 @@ _STOP_TYPES = frozenset({"stop", "stop_limit", "trailing_stop"})
 #: from one submitted by hand.
 AGENT_CLIENT_ID_PREFIX = "tr-"
 
+#: Exits the system takes on a RULE rather than a council decision are stamped
+#: `tr-exit-<reason>-<TICKER>-<YYYYMMDD>` (`executor.derive_exit_client_order_id`).
+#: Lower-case after the agent prefix on purpose: a decision id upper-cases its
+#: ticker, so no decision id can ever start with this, whatever the symbol.
+#:
+#: Without a stamp of its own, a rule exit carries a broker-generated id and is
+#: filed as a flatten, which `STRATEGY_CLASSES` excludes — the eval would score
+#: the strategy with its own exits taken out of it.
+AGENT_EXIT_CLIENT_ID_PREFIX = f"{AGENT_CLIENT_ID_PREFIX}exit-"
+
+#: The reason token a stamped rule exit carries, and the class it is booked as.
+EXIT_REASON_CLASSES: dict[str, ExitClass] = {"time": "time_exit"}
+
 #: Order of report rows: the agent's own exits first, then what happened to it.
 CLASS_ORDER: tuple[ExitClass, ...] = (
     "take_profit",
     "stop",
     "decision_sell",
+    "time_exit",
     "flatten",
     "unknown",
 )
@@ -69,6 +85,7 @@ CLASS_LABELS: dict[str, str] = {
     "take_profit": "take-profit leg",
     "stop": "protective stop",
     "decision_sell": "agent decision sell",
+    "time_exit": "time exit (position manager)",
     "flatten": "flatten (outside the agent)",
     "unknown": "unknown (order pruned)",
     "strategy": "strategy exits only",
@@ -76,8 +93,11 @@ CLASS_LABELS: dict[str, str] = {
 
 #: The classes that represent the strategy closing its own position. A flatten
 #: is an operator action and an unknown is missing evidence; scoring either as
-#: strategy performance is the mistake this module exists to stop.
-STRATEGY_CLASSES: frozenset[ExitClass] = frozenset({"take_profit", "stop", "decision_sell"})
+#: strategy performance is the mistake this module exists to stop. A time exit
+#: is the strategy's own rule firing, so it is scored with the rest.
+STRATEGY_CLASSES: frozenset[ExitClass] = frozenset(
+    {"take_profit", "stop", "decision_sell", "time_exit"}
+)
 
 
 @dataclass(frozen=True)
@@ -169,6 +189,21 @@ def exits_by_fill(
     return out
 
 
+def _stamped_class(client_id: str) -> ExitClass | None:
+    """The class an agent-stamped client id books as; None if the agent did not stamp it.
+
+    The rule-exit prefix is checked before the decision prefix it shares. A
+    reason this build does not know is an agent exit of unknown kind: filing it
+    as a decision sell would inflate exactly the number being measured.
+    """
+    if client_id.startswith(AGENT_EXIT_CLIENT_ID_PREFIX):
+        reason = client_id[len(AGENT_EXIT_CLIENT_ID_PREFIX) :].split("-", 1)[0]
+        return EXIT_REASON_CLASSES.get(reason, "unknown")
+    if client_id.startswith(AGENT_CLIENT_ID_PREFIX):
+        return "decision_sell"
+    return None
+
+
 def classify_exit(order: ExitOrder | None) -> ExitClass:
     """What closed this position, from the order record alone.
 
@@ -187,8 +222,9 @@ def classify_exit(order: ExitOrder | None) -> ExitClass:
         return "stop"
     if order_type in {"limit", "limit_maker"} and order.is_leg:
         return "take_profit"
-    if (order.client_order_id or "").startswith(AGENT_CLIENT_ID_PREFIX):
-        return "decision_sell"
+    stamped = _stamped_class(order.client_order_id or "")
+    if stamped is not None:
+        return stamped
     if order.is_leg:
         # A bracket child that is neither stop nor limit should not exist. Say
         # so instead of filing it under an operator action it did not come from.

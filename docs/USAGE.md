@@ -88,6 +88,9 @@ Parametreler:
 - `--method atr` (default) — Kelly/ATR risk-based sizing, %0.5 of equity per trade
 - `--method llm_pct` — LLM'in suggested_size_pct'sini olduğu gibi kullan
 - `--max-position-pct 0.10` — bir ticker'ın equity'nin %10'undan fazlasını alamaz
+- `--max-sector-pct 0.30` — bir sektör equity'nin %30'undan fazlasını alamaz
+- `--max-cash-utilization 1.0` — tek bir yeni BUY spendable cash'in en fazla bu kadarını kullanır (1.0 = tamamı ama asla borç; < 1.0 dry powder bırakır)
+- Cap'ler fraction'dır, percent değil (0.10 = %10); (0, 1] dışı değer reddedilir. `daily_run.sh` bu flag'lerin hiçbirini geçirmez ve hiçbir env var (`MAX_POSITION_PCT` vb.) onları beslemez: live değerler yukarıdaki default'lardır. Bir cap'i env var'a bağlamak order flow'u değiştirir, ayrı bir değişiklik olarak gelir.
 - `--refuse-outside-hours` — market kapalıysa submit etme (paper'da gerek yok; live'da aç)
 
 ### C) Backtest çalıştır

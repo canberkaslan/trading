@@ -371,6 +371,26 @@ class TestExitAttribution:
         assert [b["exit_class"] for b in body["by_exit"]] == ["stop"]
         assert body["strategy"]["trades"] == 1
 
+    def test_a_stored_time_exit_is_its_own_bucket_and_counts_as_strategy(
+        self, client: TestClient, repo: TradeLogRepository
+    ) -> None:
+        # The read path re-validates the stored string. A class the reader does
+        # not know is dropped as unattributed, so a time exit written correctly
+        # at reconcile time would still vanish from the split here. (Stored by
+        # hand: production time exits are not stamped yet and store as flatten.)
+        repo.upsert_closed_trades(
+            [_trade("t1", "XOM", 12.0), _trade("t2", "MSFT", -600.0, day=1)],
+            exit_classes={"t1": "time_exit", "t2": "flatten"},
+        )
+
+        body = client.get("/v1/trades").json()
+
+        by_class = {b["exit_class"]: b for b in body["by_exit"]}
+        assert by_class["time_exit"]["net_pnl"] == 12.0
+        assert by_class["time_exit"]["label"] == "time exit (position manager)"
+        assert body["unattributed"] == 0
+        assert (body["strategy"]["trades"], body["strategy"]["net_pnl"]) == (1, 12.0)
+
     def test_buckets_carry_a_human_label(
         self, client: TestClient, repo: TradeLogRepository
     ) -> None:

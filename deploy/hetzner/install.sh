@@ -82,8 +82,9 @@ SUBMIT=1
 PYTHON=/opt/ai-trader/agent/.venv/bin/python
 
 # Alerting that does not depend on the phone app. Both need an account, so a
-# blank value never fails an install or a redeploy; instead preflight reports
-# each blank one as a named failure on every run until it is filled in.
+# blank value never fails an install, a redeploy or preflight's exit code.
+# Instead preflight records each gap, /readyz serves it, and the off-box
+# watchdog keeps an incident open (as github-actions[bot]) until it is filled in.
 #
 # Dead-man's switch: a healthchecks.io check with schedule "30 22 * * 1-5" (UTC)
 # and a grace period of about 7h (the run unit's 6h TimeoutStartSec plus margin).
@@ -143,7 +144,7 @@ fi
 for var in HEALTHCHECK_URL OPS_ALERT_GITHUB_TOKEN; do
   if ! grep -Eq "^${var}=[\"']?[^\"'[:space:]]" "${APP_DIR}/secrets.env"; then
     echo "==> WARNING: ${var} is not set in ${APP_DIR}/secrets.env;" \
-      "preflight will report it as a failure on every run"
+      "box alerts reach only the phone, and the watchdog will open an incident"
   fi
 done
 

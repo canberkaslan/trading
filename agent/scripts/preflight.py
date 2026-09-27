@@ -9,9 +9,18 @@ Alert-only: it never blocks or gates the daily run. On any hard failure it
 sends an ops alert (push AND a GitHub issue, see notifications.ops_channel)
 and exits 1 (visible in systemctl status); on success it exits 0 quietly.
 
-Checks: alerting config (HEALTHCHECK_URL, OPS_ALERT_GITHUB_TOKEN), Alpaca
-(account + paper URL), Anthropic key, Polygon, Finnhub, OpenRouter (only when
-LLM_COUNCIL=1), FRED (warn-only), DB writable, disk.
+Hard checks: Alpaca (account + paper URL), Anthropic key, Polygon, Finnhub,
+OpenRouter (only when LLM_COUNCIL=1), DB writable, disk. FRED is warn-only.
+
+Alerting gaps (no HEALTHCHECK_URL; no GitHub alert token, or one GitHub
+refuses or that expires within days) are reported separately and do NOT set
+the exit code. Exit 1 keeps meaning "a key or dependency the run needs is
+broken", so OnFailure and systemctl status stay worth reading on a box that
+has not set the alert accounts up yet. The gaps still reach a human: every run
+records its result (monitoring.alerting_state), /readyz serves it, and the
+off-box watchdog opens an incident, on a path that needs no secret on the box.
+Reporting a dead alert channel through that same channel is how the
+2026-09-14 outage stayed quiet.
 """
 
 from __future__ import annotations
@@ -175,22 +184,23 @@ def _check_disk(failures: list[Failure], min_free_gb: float = 5.0) -> None:
         failures.append(("disk", f"check failed: {exc}"))
 
 
-def _check_alerting(failures: list[Failure]) -> None:
+def _check_alerting(gaps: list[Failure]) -> None:
     """The two ways a problem on this box reaches a human without the phone.
 
     Both depend on an account created outside this repo, so a deploy cannot
-    require them, and this is where their absence gets said out loud instead.
-    The broker key was refused for nearly two weeks while this canary found it
-    every evening, because its only way out was a push to an app being rebuilt.
+    require them. Gaps go into their own list: they are recorded for /readyz
+    and the watchdog and ride along in a hard-failure alert, but they never
+    make preflight fail on their own.
 
-    Neither check pings anything. A preflight ping to HEALTHCHECK_URL would
-    record a daily run that has not happened yet, which defeats the point of it.
+    Neither check sends anything. A preflight ping to HEALTHCHECK_URL would
+    record a daily run that has not happened yet, which defeats the point of
+    it; the GitHub token is exercised with a read of the alert workflow.
     """
-    from tradingagents_us.notifications.ops_channel import GITHUB_TOKEN_ENV
+    from tradingagents_us.notifications.ops_channel import check_github_channel
 
     hc = os.environ.get("HEALTHCHECK_URL", "").strip()
     if not hc:
-        failures.append(
+        gaps.append(
             (
                 "healthcheck",
                 "HEALTHCHECK_URL unset: no dead-man's switch, so a daily run that "
@@ -199,19 +209,19 @@ def _check_alerting(failures: list[Failure]) -> None:
         )
     elif not hc.startswith(("https://", "http://")):
         # Never echo the value: the URL is a credential for reporting success.
-        failures.append(("healthcheck", "HEALTHCHECK_URL is not an http(s) URL"))
+        gaps.append(("healthcheck", "HEALTHCHECK_URL is not an http(s) URL"))
 
-    if not os.environ.get(GITHUB_TOKEN_ENV, "").strip():
-        failures.append(
-            (
-                "ops_alert_channel",
-                f"{GITHUB_TOKEN_ENV} unset: box alerts reach only the mobile app",
-            )
-        )
+    check = check_github_channel()
+    if check.ok is False:
+        gaps.append(("ops_alert_channel", check.detail))
+    elif check.ok is None:
+        print(f"preflight: alert channel not checked (soft): {check.detail}", file=sys.stderr)
 
 
-def _alert(failures: list[Failure]) -> None:
+def _alert(failures: list[Failure], gaps: list[Failure]) -> None:
     body = "; ".join(f"{n}: {msg}" for n, msg in failures)
+    if gaps:
+        body += " | alerting gaps: " + "; ".join(f"{n}: {msg}" for n, msg in gaps)
     print(f"preflight FAILED: {body}", file=sys.stderr)
     try:
         from tradingagents_us.notifications.ops_channel import send_ops_alert
@@ -222,9 +232,27 @@ def _alert(failures: list[Failure]) -> None:
         print(f"preflight: alert failed: {exc}", file=sys.stderr)
 
 
+def _record(failures: list[Failure], gaps: list[Failure]) -> None:
+    """Leave this run's result where /readyz serves it. Never fails preflight."""
+    from datetime import datetime
+
+    from tradingagents_us.monitoring.alerting_state import PreflightRecord, write_preflight
+
+    record = PreflightRecord.from_names(
+        datetime.now(UTC).isoformat(timespec="seconds"),
+        [n for n, _ in failures],
+        [n for n, _ in gaps],
+    )
+    try:
+        write_preflight(record)
+    except Exception as exc:
+        print(f"preflight: could not record the result for /readyz: {exc}", file=sys.stderr)
+
+
 def main() -> int:
     failures: list[Failure] = []
-    _check_alerting(failures)
+    gaps: list[Failure] = []
+    _check_alerting(gaps)
     _check_alpaca(failures)
     _check_anthropic(failures)
     _check_polygon(failures)
@@ -234,10 +262,17 @@ def main() -> int:
     _check_db(failures)
     _check_disk(failures)
 
+    _record(failures, gaps)
+    if gaps:
+        print(
+            "preflight: alerting gaps (served on /readyz for the watchdog; not a failure): "
+            + "; ".join(f"{n}: {msg}" for n, msg in gaps),
+            file=sys.stderr,
+        )
     if failures:
-        _alert(failures)
+        _alert(failures, gaps)
         return 1
-    print("preflight OK — all checks passed")
+    print("preflight OK — all dependency checks passed")
     return 0
 
 

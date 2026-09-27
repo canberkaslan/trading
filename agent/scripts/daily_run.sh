@@ -126,7 +126,7 @@ echo "===============================================" | tee -a "$RUN_LOG"
 echo "Daily run $(date -u +%FT%TZ)  universe=[$UNIVERSE]  submit=$SUBMIT" | tee -a "$RUN_LOG"
 echo "===============================================" | tee -a "$RUN_LOG"
 if [[ -z "${HEALTHCHECK_URL:-}" ]]; then
-  echo "WARNING: HEALTHCHECK_URL unset, no dead-man's switch (preflight reports it as a failure)" \
+  echo "WARNING: HEALTHCHECK_URL unset, no dead-man's switch (/readyz and the watchdog report it)" \
     | tee -a "$RUN_LOG"
 fi
 

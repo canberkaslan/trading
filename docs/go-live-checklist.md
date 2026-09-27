@@ -62,13 +62,15 @@ On `agentmesh:/opt/ai-trader/secrets.env`:
 - [ ] Kill-switch reachable from mobile Settings (stops the timer without SSH).
 - [ ] `HEALTHCHECK_URL` dead-man ping wired to a healthchecks.io URL so a run
       that stops happening pages you (success ping, `/fail` on a failed run).
-      Preflight reports it as a failure every run until it is set.
+      Until it is set, `/readyz` reports the gap and the watchdog keeps an
+      `unalerted` incident open (preflight's exit code is not affected).
 - [ ] `OPS_ALERT_GITHUB_TOKEN` set (fine-grained PAT, Actions read/write on the
       alert repo only) so box alerts also land as GitHub issues and do not
       depend on the mobile app. The box dispatches `box-alert.yml`, and the
       workflow files the issue as github-actions[bot]: GitHub sends no
       notification for issues filed with your own token, so the box must not
-      write them itself. Preflight reports it as a failure until set.
+      write them itself. Preflight also reads the workflow with the token, so a
+      refused or soon-expiring one shows up in the same `unalerted` incident.
 - [ ] Off-box backup timer (`ai-trader-backup.timer`, 02:15 UTC) confirmed green.
 - [ ] Alerting sane after the 2026-07-09 fixes: a Hold/no-trade day no longer
       false-fails the unit; only real broker/API errors page.

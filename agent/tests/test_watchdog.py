@@ -500,3 +500,62 @@ class TestReadinessProbe:
         probe = watchdog.probe_ready("https://h.example/readyz")
         assert probe.broker_ok is None
         assert probe.detail == "HTTP 503"
+
+
+class TestTheBoxReportInReadyz:
+    """Only check names, a timestamp and booleans may come out of /readyz into a public issue."""
+
+    NOW = datetime(2026, 9, 15, 6, 0, tzinfo=UTC)
+
+    def _probe(self, monkeypatch: pytest.MonkeyPatch, body: bytes):
+        monkeypatch.setattr(watchdog.urllib.request, "urlopen", lambda *a, **k: _Resp(body))
+        return watchdog.probe_ready("https://h.example/readyz", self.NOW)
+
+    def test_reads_missing_alert_paths_and_a_failed_preflight(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        probe = self._probe(
+            monkeypatch,
+            b'{"alpaca":true,"db":true,"alerting":{"healthcheck":false,"github":false},'
+            b'"preflight":{"ok":false,"at":"2026-09-14T21:45:07+00:00",'
+            b'"failed":["anthropic"],"alerting_gaps":["healthcheck"]}}',
+        )
+        assert probe.broker_ok is True
+        assert probe.alerting_gaps == ("healthcheck", "ops_alert_channel")
+        assert probe.preflight_failed == ("anthropic",)
+        assert probe.preflight_at == "2026-09-14T21:45:07+00:00"
+        assert probe.preflight_age_hours == pytest.approx(8.25, abs=0.01)
+
+    def test_a_refused_token_preflight_found_is_a_gap_even_when_the_api_sees_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        probe = self._probe(
+            monkeypatch,
+            b'{"alpaca":true,"alerting":{"healthcheck":true,"github":true},'
+            b'"preflight":{"ok":true,"at":"2026-09-14T21:45:07Z","failed":[],'
+            b'"alerting_gaps":["ops_alert_channel"]}}',
+        )
+        assert probe.alerting_gaps == ("ops_alert_channel",)
+        assert probe.preflight_failed == ()
+
+    def test_nothing_but_names_survives(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        probe = self._probe(
+            monkeypatch,
+            b'{"alpaca":true,"preflight":{"ok":false,"at":"<img src=x>",'
+            b'"failed":["alpaca: key AKIA123 refused", 7],"alerting_gaps":"healthcheck"}}',
+        )
+        assert probe.preflight_failed == ("unnamed",)
+        assert probe.preflight_at is None
+        assert probe.alerting_gaps == ()
+
+    def test_a_failed_run_with_no_names_is_still_failed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        probe = self._probe(
+            monkeypatch, b'{"alpaca":true,"preflight":{"ok":false,"at":"2026-09-14","failed":[]}}'
+        )
+        assert probe.preflight_failed == ("unnamed",)
+
+    def test_an_older_api_reports_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        probe = self._probe(monkeypatch, b'{"status":"ok","alpaca":true,"db":true}')
+        assert (probe.alerting_gaps, probe.preflight_failed) == ((), None)

@@ -29,8 +29,10 @@ The GitHub half needs a credential the box does not ship with:
 alert repo only (dispatching is an Actions write; the issue permission belongs
 to the workflow, not to the box). Actions write covers every dispatchable
 workflow in that repo, so a dedicated private alert repo is the narrow choice.
-Without the token that half reports "not configured", and preflight names the
-gap.
+Without the token that half reports "not configured". Preflight records that
+gap, and `check_github_channel` also catches a token that is present but
+refused or about to expire; /readyz serves the record, and the off-box watchdog
+opens an incident on it (see `monitoring.alerting_state`).
 
 The default repo is public, as the watchdog's incidents are. Text is scrubbed
 before it leaves the box: credential-bearing URL parameters, bearer tokens, URL
@@ -47,7 +49,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import httpx
 
@@ -76,6 +78,9 @@ PUSH_BODY_LIMIT = 200
 #: well inside it so the title and the rest always fit.
 GITHUB_TITLE_LIMIT = 200
 GITHUB_BODY_LIMIT = 20_000
+
+#: A token this close to its expiry is reported now, while it still works.
+TOKEN_EXPIRY_WARN_DAYS = 7
 
 #: Kinds become part of an HTML-comment marker in the issue body. Anything that
 #: is not a plain token is sent as "ops" (the workflow applies the same rule).
@@ -204,3 +209,60 @@ def _send_github(title: str, body: str, kind: str) -> ChannelResult:
         return ChannelResult("github", True, f"dispatched {ALERT_WORKFLOW} on {repo} ({safe_kind})")
     except Exception as exc:  # noqa: BLE001 — never fail the caller over the alert
         return ChannelResult("github", False, f"failed: {scrub(str(exc))}")
+
+
+@dataclass(frozen=True)
+class ChannelCheck:
+    """Whether a channel looks usable, without sending anything through it.
+
+    `ok is None` means the check itself could not run (GitHub unreachable, a
+    5xx): not evidence either way, and never reported as a broken channel.
+    """
+
+    ok: bool | None
+    detail: str
+
+
+def check_github_channel(now: datetime | None = None) -> ChannelCheck:
+    """Exercise the GitHub half without sending anything. Never raises.
+
+    Presence of the token proves nothing: a fine-grained PAT expires after 30
+    days by default, and a revoked or expired one fails every dispatch with a
+    401 that lands only in the journal. This reads the alert workflow with the
+    token, which fails the way the dispatch would for an expired or revoked
+    token, a token without access to the repo, or a repo that lacks the
+    workflow. It cannot prove the Actions *write* permission: GitHub offers no
+    way to read a fine-grained token's permissions without using them.
+    """
+    token = os.environ.get(GITHUB_TOKEN_ENV, "").strip()
+    if not token:
+        return ChannelCheck(False, f"{GITHUB_TOKEN_ENV} unset: box alerts reach only the app")
+    repo = _alert_repo()
+    try:
+        with _github_client(token) as gh:
+            r = gh.get(f"/repos/{repo}/actions/workflows/{ALERT_WORKFLOW}")
+    except Exception as exc:  # noqa: BLE001
+        return ChannelCheck(None, f"GitHub unreachable, token not checked: {scrub(str(exc))}")
+    expiry = _token_expiry(r.headers.get("github-authentication-token-expiration", ""))
+    expires = f", token expires {expiry.isoformat()}" if expiry else ""
+    refusals = {401: "rejected (expired or revoked?)", 403: "lacks permission", 404: "cannot see"}
+    if r.status_code in refusals:
+        return ChannelCheck(
+            False,
+            f"{GITHUB_TOKEN_ENV} {refusals[r.status_code]}: HTTP {r.status_code} reading "
+            f"{repo} {ALERT_WORKFLOW}{expires}",
+        )
+    if r.status_code >= 400:
+        return ChannelCheck(None, f"GitHub answered HTTP {r.status_code}, token not checked")
+    today = (now or datetime.now(UTC)).date()
+    if expiry is not None and (expiry - today).days <= TOKEN_EXPIRY_WARN_DAYS:
+        return ChannelCheck(False, f"{GITHUB_TOKEN_ENV} expires {expiry.isoformat()}: rotate it")
+    return ChannelCheck(True, f"token accepted for {repo}{expires}")
+
+
+def _token_expiry(raw: str) -> date | None:
+    """The date part of GitHub's token-expiration header, if it sent one."""
+    try:
+        return date.fromisoformat(raw.strip()[:10])
+    except ValueError:
+        return None

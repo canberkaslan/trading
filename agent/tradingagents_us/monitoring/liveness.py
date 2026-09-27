@@ -67,9 +67,15 @@ BACKUP_STALE_AFTER_HOURS = BACKUP_INTERVAL_HOURS + BACKUP_GRACE_HOURS
 STATE_DARK = "dark"
 STATE_WEDGED = "wedged"
 STATE_BROKER_DOWN = "broker_down"
+STATE_PREFLIGHT_FAILED = "preflight_failed"
 STATE_EDGE_DOWN = "edge_down"
+STATE_UNALERTED = "unalerted"
 STATE_DEGRADED = "degraded"
 STATE_UP = "up"
+
+#: Preflight runs Mon-Fri 21:45 UTC, so the longest normal gap is Friday to
+#: Monday, 72h. Past this, the timer has stopped recording, which is news.
+PREFLIGHT_STALE_AFTER_HOURS = 80.0
 
 # `wedged` sits just under `dark`: the kernel answers but nothing it is supposed
 # to run does. The book is equally unattended either way, so it is nearly as bad
@@ -82,11 +88,22 @@ STATE_UP = "up"
 # the page loads, but the broker refuses the box's key, so no order is placed
 # and no stop is re-armed. From 2026-09-14 that was the whole outage — eleven
 # days of a failing daily run behind a /healthz that answered 200 throughout.
+#
+# `preflight_failed` sits just under it: the box says a key or dependency the
+# run needs failed its evening check (a refused Anthropic or Polygon key, a full
+# disk). The run is about to fail; the broker may still answer.
+#
+# `unalerted` sits under `edge_down` and over `degraded`: nothing is broken yet,
+# but the box reports that its own alerts reach only the phone, so the next
+# failure on it is silent. That is how the 2026-09-14 outage lasted two weeks;
+# a missed backup, by contrast, is retried the next night.
 _SEVERITY = {
     STATE_DARK: 40,
     STATE_WEDGED: 30,
     STATE_BROKER_DOWN: 25,
+    STATE_PREFLIGHT_FAILED: 22,
     STATE_EDGE_DOWN: 20,
+    STATE_UNALERTED: 15,
     STATE_DEGRADED: 10,
     STATE_UP: 0,
 }
@@ -208,15 +225,54 @@ class ReadinessProbe:
     raise an incident on its own — the health probe already covers "no answer".
     Only an explicit `alpaca: false` counts. The field is a bare boolean, so
     quoting it into a public issue leaks nothing about the book.
+
+    The same answer carries what the box knows about its own alerting
+    (`monitoring.alerting_state`): which off-phone alert paths are missing or
+    refused, and the last preflight's failed checks. Names only. Absent fields
+    (an older API, or no preflight since this shipped) read as "nothing to
+    report", never as a failure.
     """
 
     broker_ok: bool | None
     detail: str | None = None
+    #: Off-phone alert paths the box reports missing or refused, by name.
+    alerting_gaps: tuple[str, ...] = ()
+    #: Dependency checks the last preflight failed, by name; None = no record.
+    preflight_failed: tuple[str, ...] | None = None
+    preflight_at: str | None = None
+    #: Hours since that record, when the watchdog could date it.
+    preflight_age_hours: float | None = None
+
+    @property
+    def preflight_stale(self) -> bool:
+        return (
+            self.preflight_age_hours is not None
+            and self.preflight_age_hours > PREFLIGHT_STALE_AFTER_HOURS
+        )
 
     def describe(self) -> str:
         if self.broker_ok is None:
             return f"unknown ({self.detail or 'not checked'})"
         return "broker reachable" if self.broker_ok else "broker check failing (`alpaca: false`)"
+
+    def describe_preflight(self) -> str:
+        if self.preflight_failed is None:
+            return "no record"
+        when = f" at {self.preflight_at}" if self.preflight_at else ""
+        age = (
+            f", {self.preflight_age_hours:.0f}h ago"
+            if self.preflight_age_hours is not None
+            else ""
+        )
+        verdict = (
+            "failed: " + ", ".join(self.preflight_failed) if self.preflight_failed else "passed"
+        )
+        return f"{verdict} (last run{when}{age})"
+
+    def describe_alerting(self) -> str:
+        if not self.alerting_gaps:
+            return "no gap reported"
+        return "missing or refused: " + ", ".join(self.alerting_gaps)
 
 
 @dataclass(frozen=True)
@@ -313,10 +369,25 @@ def _unreadable_backup(
     )
 
 
+def _box_lines(ready: ReadinessProbe) -> tuple[str, ...]:
+    """What the box says about its own checks, for any verdict where the API answered."""
+    lines = []
+    if ready.preflight_failed is not None:
+        lines.append(f"Last preflight: {ready.describe_preflight()}")
+    if ready.alerting_gaps:
+        lines.append(f"Box alert paths: {ready.describe_alerting()}")
+    return tuple(lines)
+
+
 def _origin_answered(
     health_line: str, backup_line: str, backup: BackupSignal, ready: ReadinessProbe
 ) -> Verdict:
-    """The API answered, so the host is up; what is left is whether it can trade."""
+    """The API answered, so the host is up; what is left is whether it can trade.
+
+    Checked worst first, and each verdict carries the other lines too, so a
+    second problem never hides behind the first.
+    """
+    box_lines = _box_lines(ready)
     if ready.broker_ok is False:
         # Checked before the backup branch because it is the worse news: a
         # stale backup risks the *next* outage, a refused broker key is one
@@ -328,6 +399,7 @@ def _origin_answered(
                 health_line,
                 f"Readiness endpoint: {ready.describe()}",
                 backup_line,
+                *box_lines,
                 "The API answers, so the host, tunnel and process are fine — but the "
                 "daily run cannot read the account, place an order or re-arm a stop. "
                 "The open book is unattended while every liveness check looks green.",
@@ -337,6 +409,52 @@ def _origin_answered(
                 "key pair in the Alpaca dashboard, put it in `/opt/ai-trader/secrets.env` "
                 "(ALPACA_API_KEY / ALPACA_API_SECRET), then "
                 "`sudo systemctl restart ai-trader-api.service` and re-check `/readyz`."
+            ),
+        )
+    if ready.preflight_failed or ready.preflight_stale:
+        stale = (
+            f"No preflight has been recorded for {ready.preflight_age_hours:.0f}h; "
+            "it runs every weekday at 21:45 UTC, so its timer has stopped."
+            if ready.preflight_stale
+            else "A key or dependency the daily run needs failed its check this "
+            "evening, so the run that follows is expected to fail on it."
+        )
+        return Verdict(
+            state=STATE_PREFLIGHT_FAILED,
+            headline=(
+                "Box reachable, but preflight has stopped reporting"
+                if ready.preflight_stale and not ready.preflight_failed
+                else "Box reachable, but the evening preflight failed"
+            ),
+            reasons=(health_line, backup_line, *box_lines, stale),
+            remedy=(
+                "ssh agentmesh, then `journalctl -u ai-trader-preflight -n 50` names each "
+                "failure. Fix the key or dependency in `/opt/ai-trader/secrets.env`, then "
+                "`sudo systemctl start ai-trader-preflight` to re-check; this closes once "
+                "a run records no failure. If nothing is recorded, check "
+                "`systemctl status ai-trader-preflight.timer`."
+            ),
+        )
+    if ready.alerting_gaps:
+        return Verdict(
+            state=STATE_UNALERTED,
+            headline="Box reachable, but its own alerts reach only the phone",
+            reasons=(
+                health_line,
+                backup_line,
+                *box_lines,
+                "Nothing is broken yet. But a failed run, a refused key or a naked book "
+                "on this box would be reported only to the mobile app, which is how the "
+                "2026-09-14 broker outage went unnoticed for nearly two weeks.",
+            ),
+            remedy=(
+                "Fill in the missing values in `/opt/ai-trader/secrets.env`: "
+                "HEALTHCHECK_URL (a healthchecks.io check, schedule `30 22 * * 1-5` UTC) "
+                "and OPS_ALERT_GITHUB_TOKEN (fine-grained PAT, Actions read/write on the "
+                "alert repo; rotate it if it was refused or is expiring). Then "
+                "`sudo systemctl restart ai-trader-api.service` and "
+                "`sudo systemctl start ai-trader-preflight`; this closes once both "
+                "report no gap."
             ),
         )
     if backup.stale:
@@ -365,7 +483,7 @@ def _origin_answered(
     return Verdict(
         state=STATE_UP,
         headline="Box reachable",
-        reasons=(health_line, backup_line),
+        reasons=(health_line, backup_line, *box_lines),
         remedy="Nothing to do.",
     )
 

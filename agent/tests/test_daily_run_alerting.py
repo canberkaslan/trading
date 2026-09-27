@@ -20,6 +20,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.github_fake import FakeGitHub
+
 AGENT = Path(__file__).resolve().parent.parent
 SCRIPT = AGENT / "scripts" / "daily_run.sh"
 HC = "https://hc-ping.example/uuid-not-real"
@@ -305,3 +307,63 @@ def test_every_other_key_keeps_dotenv_precedence(tmp_path: Path) -> None:
     run = run_daily(tmp_path, dotenv='UNIVERSE="XOM"\nSUBMIT=1\n')
     trades = [c for c in run.calls if c[0] == "scripts.trade"]
     assert trades == [["scripts.trade", "--ticker", "XOM", "--date", RUN_DATE, "--submit"]]
+
+
+# --- the handoff to notify_ops ----------------------------------------------
+#
+# The stub interpreter records any argv, and the wrapper ends in `|| true`. A
+# flag renamed or made required on one side only would make notify_ops exit 2
+# in argparse, the wrapper would swallow it, and every daily_run, naked_book
+# and kill_switch page would vanish while every test above stayed green. So the
+# argv the script really built is handed to notify_ops' own entry point, and
+# the alert has to come out the other end as an issue of the right kind.
+
+
+def _deliver(argv: list[str], fake_github: FakeGitHub) -> dict[str, object]:
+    from scripts import notify_ops
+
+    before = len(fake_github.opened)
+    assert notify_ops.main(argv) == 0
+    assert len(fake_github.opened) == before + 1, fake_github.requests
+    return fake_github.opened[-1]
+
+
+@pytest.mark.parametrize(
+    ("kind", "scenario"),
+    [
+        ("daily_run", {"FAKE_RC_scripts_trade": "1"}),
+        ("kill_switch", {"FAKE_RC_scripts_kill_check": "1"}),
+        (
+            "naked_book",
+            {
+                "FAKE_RC_scripts_naked_alert": "3",
+                "FAKE_OUT_scripts_naked_alert": "NAKED: 40 of 100 shares have no stop: AAPL",
+            },
+        ),
+        ("naked_book", {"FAKE_RC_scripts_naked_alert": "1"}),
+    ],
+)
+def test_every_page_the_run_raises_is_one_notify_ops_accepts(
+    tmp_path: Path, fake_github: FakeGitHub, kind: str, scenario: dict[str, str]
+) -> None:
+    run = run_daily(tmp_path, **scenario)
+    calls = [c for c in run.calls if c[0] == "scripts.notify_ops"]
+    assert calls, run.output
+
+    for call in calls:
+        issue = _deliver(call[1:], fake_github)
+        assert f"<!-- box-alert-kind:{kind} -->" in str(issue["body"])
+
+
+def test_the_onfailure_unit_raises_a_page_notify_ops_accepts(fake_github: FakeGitHub) -> None:
+    # ai-trader-alert.service is the page for a run that died where the script
+    # could not report it. Its argv lives in a unit file no other test reads.
+    import shlex
+
+    unit = (AGENT.parent / "deploy" / "hetzner" / "ai-trader-alert.service").read_text()
+    (exec_start,) = [ln for ln in unit.splitlines() if ln.startswith("ExecStart=")]
+    argv = shlex.split(exec_start.removeprefix("ExecStart="))
+    argv = argv[argv.index("scripts.notify_ops") + 1 :]
+
+    issue = _deliver(argv, fake_github)
+    assert "<!-- box-alert-kind:unit_failed -->" in str(issue["body"])

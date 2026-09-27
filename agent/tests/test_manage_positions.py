@@ -121,9 +121,15 @@ def db_url(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
     repo = TradeLogRepository(engine=create_engine(url, future=True))
     flat = {"o": 100.0, "h": 101.0, "l": 99.0, "c": 100.0}
     bars = [{"t": (TODAY - timedelta(days=d)).isoformat(), **flat} for d in range(BAR_DAYS, 0, -1)]
+    # MSFT trades at 200, and its bars say so: a mark twice its last close is
+    # a bad number the stop logic refuses to move a stop off. AAPL has run to
+    # 120 and its bars show that too: a stop trails the lower of mark and close.
+    msft = [{**b, "o": 200.0, "h": 201.0, "l": 199.0, "c": 200.0} for b in bars]
+    aapl = [{**b, "o": 120.0, "h": 121.0, "l": 119.0, "c": 120.0} for b in bars]
     with repo.session() as session:
-        for symbol in ("XOM", "AAPL", "MSFT"):
-            write_bars(session, symbol, bars)
+        write_bars(session, "XOM", bars)
+        write_bars(session, "AAPL", aapl)
+        write_bars(session, "MSFT", msft)
     return url
 
 
@@ -371,7 +377,8 @@ class TestAFailedTimeExitIsCoveredInTheSamePass:
         assert rc == 1, "the exit still failed, and says so"
         stops = [(w[1]["qty"], w[1]["stop_price"]) for w in fake.writes
                  if w[0] == "submit_order" and w[1]["order_type"] == "stop"]
-        assert stops == [(3.0, 90.0), (7.0, 94.5)]
+        # The back-fill trails the last close, 100, not the 100.50 mark above it.
+        assert stops == [(3.0, 90.0), (7.0, 94.0)]
         self._covered_once(fake)
 
     def test_a_lot_left_naked_by_a_crash_mid_release_is_covered_when_its_exit_fails(
@@ -881,7 +888,9 @@ class TestExitBudgetThroughThePass:
 
         rc = _run(monkeypatch, fake, "--submit", "--db-url", aged_book_db)
 
-        assert rc == 0
+        # The budget holds a bad input to two names only until a person
+        # looks, and a warning line in the run log is read by no one.
+        assert rc == 1, "a deferral pages"
         sold = [w[1]["symbol"] for w in fake.writes
                 if w[0] == "submit_order" and w[1]["order_type"] == "market"]
         # Eight names: a quarter is two, under the cap of three.
@@ -893,21 +902,27 @@ class TestExitBudgetThroughThePass:
         assert sorted(fake.positions) == AGED[2:]
 
     def test_a_second_pass_on_the_same_trade_date_closes_nothing_more(
-        self, aged_book_db: str, monkeypatch: pytest.MonkeyPatch
+        self, aged_book_db: str, monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         # A regular-hours run (the exits fill at once), then another the same
         # day: a missed run replayed at boot before the scheduled one, or a
         # re-run by hand. Each pass took a fresh budget off the names still
         # held, and three passes sold four of the eight names.
+        caplog.set_level(logging.INFO, logger="manage_positions")
         fake = self._book()
 
-        for _ in range(3):
-            _run(monkeypatch, fake, "--submit", "--db-url", aged_book_db)
+        rcs = [_run(monkeypatch, fake, "--submit", "--db-url", aged_book_db) for _ in range(3)]
 
         sold = [w[1]["symbol"] for w in fake.writes
                 if w[0] == "submit_order" and w[1]["order_type"] == "market"]
         assert sold == ["T0", "T1"]
         assert sorted(fake.positions) == AGED[2:]
+        assert rcs == [1, 1, 1], "every pass that holds a due exit back pages"
+        last = [r.getMessage() for r in caplog.records if r.getMessage().startswith("exit budget")]
+        assert "closing 0 of 6 due (budget 2 of 8 positions today, 2 closed earlier today)" in (
+            last[-1]
+        )
 
     def test_the_deferred_names_are_reported(
         self, aged_book_db: str, monkeypatch: pytest.MonkeyPatch,
@@ -915,8 +930,9 @@ class TestExitBudgetThroughThePass:
     ) -> None:
         caplog.set_level(logging.INFO, logger="manage_positions")
 
-        _run(monkeypatch, self._book(), "--db-url", aged_book_db)
+        rc = _run(monkeypatch, self._book(), "--db-url", aged_book_db)
 
+        assert rc == 0, "a dry run reports; only --submit pages"
         (line,) = [r for r in caplog.records if r.getMessage().startswith("exit budget")]
         assert line.levelno == logging.WARNING
         assert "closing 2 of 8 due" in line.getMessage()

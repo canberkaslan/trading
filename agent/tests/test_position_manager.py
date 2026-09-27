@@ -33,6 +33,15 @@ def flat_bars(
     return [Bar(high, low, close) for _ in range(n)]
 
 
+def bars_at(close: float, n: int = 30) -> list[Bar]:
+    """A tape that closed where the mark is, with an ATR of 2.0.
+
+    The stop trails the lower of the mark and the last close, so a position
+    that "has run to 120" needs bars that ran there too.
+    """
+    return flat_bars(n, close + 1.0, close - 1.0, close)
+
+
 class TestTrueRange:
     def test_uses_the_widest_of_the_three_spans(self) -> None:
         # Plain intraday range when the gap is small.
@@ -85,7 +94,7 @@ def position(**kw) -> ManagedPosition:
 class TestRatchet:
     def test_raises_the_stop_when_price_has_run(self) -> None:
         # ATR 2.0, mult 3.0, close 120 -> candidate 114, well above the 90 stop.
-        actions, skips = plan_actions([position()], {"AAPL": flat_bars(30)})
+        actions, skips = plan_actions([position()], {"AAPL": bars_at(120.0)})
         assert len(actions) == 1
         act = actions[0]
         assert isinstance(act, RatchetStop)
@@ -107,7 +116,7 @@ class TestRatchet:
     def test_ignores_a_ratchet_too_small_to_be_worth_an_order(self) -> None:
         # Candidate is 0.1% above the current stop; the floor is 0.2%.
         actions, skips = plan_actions(
-            [position(current_price=120.0, current_stop=113.886)], {"AAPL": flat_bars(30)}
+            [position(current_price=120.0, current_stop=113.886)], {"AAPL": bars_at(120.0)}
         )
         assert actions == []
         assert [s.reason for s in skips] == ["stop_unchanged"]
@@ -372,7 +381,7 @@ class TestSafetyInvariants:
 
     def test_config_is_honoured_rather_than_hardcoded(self) -> None:
         tight = ManagementConfig(atr_mult=1.0)
-        actions, _ = plan_actions([position()], {"AAPL": flat_bars(30)}, tight)
+        actions, _ = plan_actions([position()], {"AAPL": bars_at(120.0)}, tight)
         assert isinstance(actions[0], RatchetStop)
         # close 120 - 2.0 ATR * 1.0 = 118, vs 114 at the default 3.0.
         assert actions[0].new_stop == pytest.approx(118.0)
@@ -400,7 +409,7 @@ class TestStopBackfill:
         cfg = ManagementConfig(backfill_missing_stops=True)
         actions, _ = plan_actions(
             [position(current_stop=None, stop_order_id=None, naked_quantity=10.0)],
-            {"AAPL": flat_bars(30)},
+            {"AAPL": bars_at(120.0)},
             cfg,
         )
         assert len(actions) == 1
@@ -444,16 +453,18 @@ class TestStopBackfill:
         assert actions == []
         assert [s.reason for s in skips] == ["stop_at_market"]
 
-    def test_a_wild_atr_cannot_produce_a_negative_stop(self) -> None:
+    def test_a_wild_atr_places_neither_a_negative_stop_nor_a_one_cent_one(self) -> None:
         cfg = ManagementConfig(backfill_missing_stops=True, atr_mult=1000.0)
         actions, skips = plan_actions(
             [position(current_stop=None, stop_order_id=None, naked_quantity=10.0)],
             {"AAPL": flat_bars(30)},
             cfg,
         )
-        # Floored at a cent, and a cent is below the price, so it is placeable.
-        assert isinstance(actions[0], PlaceStop)
-        assert actions[0].stop_price == 0.01
+        # Floored at a cent it was placeable, and coverage then counted a
+        # one-cent stop as protection: the naked-book page went quiet over
+        # shares that were naked in practice.
+        assert actions == []
+        assert [s.reason for s in skips] == ["bad_atr"]
 
     def test_a_time_exit_still_wins_over_a_backfill(self) -> None:
         cfg = ManagementConfig(backfill_missing_stops=True)

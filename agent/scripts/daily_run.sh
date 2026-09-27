@@ -213,13 +213,20 @@ echo "--- position management ---" | tee -a "$RUN_LOG"
 # nothing was putting them back. The flag is gated by --submit like everything
 # else here, so SUBMIT=0 still only reports.
 #
+# --refresh-bars: fetch the held names' daily bars from Polygon first. Only the
+# app's chart views write the bar cache, and a held name nobody charted kept
+# weeks-old bars: its age stopped counting toward the time exit, and once it
+# moved past the mark band its stop was refused every night. The bars are kept
+# for the pass and not written to the cache, which the BUY checks below read.
+# A name that cannot be refreshed is judged by its cache's age.
+#
 # Non-fatal, but never silent. rc 3 means a time exit may have left shares with
 # no stop: a cancel still on its way strips the stop after this run, and the
 # stop-coverage check at the end of the run still sees it standing, so this is
 # the only point that can page about it. Any other failure pages too, more
 # quietly: a pass that failed is protection nobody maintained today.
 set +e
-PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.manage_positions --backfill-stops $SUBMIT_FLAG 2>&1 | tee -a "$RUN_LOG"
+PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.manage_positions --backfill-stops --refresh-bars $SUBMIT_FLAG 2>&1 | tee -a "$RUN_LOG"
 mp_rc=${PIPESTATUS[0]}
 set -e
 if [[ "$mp_rc" -eq 3 ]]; then
@@ -232,7 +239,7 @@ elif [[ "$mp_rc" -ne 0 ]]; then
   echo "  -> position management failed (rc=$mp_rc, non-fatal) — paging, continuing to decisions" | tee -a "$RUN_LOG"
   notify_ops --kind position_pass \
     --title "⚠️ Position management failed (rc=$mp_rc)" \
-    --body "manage_positions rc=$mp_rc @ ${DATE}: see the FAILED lines in ${RUN_LOG}. Stops were not maintained where it failed."
+    --body "manage_positions rc=$mp_rc @ ${DATE}: see the FAILED, REFUSED, UNREFRESHED and exit budget lines in ${RUN_LOG}. Stops were not maintained where it failed or refused; a deferred time exit means more names read as due than one day may close."
 fi
 
 # Commentator feed (ADR-009): fetch and extract ONCE, before the tickers, so

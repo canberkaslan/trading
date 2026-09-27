@@ -295,6 +295,14 @@ def test_a_failed_position_pass_pages_too(tmp_path: Path) -> None:
     assert run.rc == 0, run.output
 
 
+def test_the_position_pass_brings_the_held_names_bars_up_to_date(tmp_path: Path) -> None:
+    # Nothing else in the run writes the bar cache, and a stale one leaves
+    # every stop that moved past the mark band refused, night after night.
+    run = run_daily(tmp_path)
+    (call,) = [c for c in run.calls if c[0] == "scripts.manage_positions"]
+    assert "--refresh-bars" in call[1:]
+
+
 def test_a_clean_position_pass_pages_nobody(tmp_path: Path) -> None:
     run = run_daily(tmp_path)
     assert run.alerts("position_pass") == []

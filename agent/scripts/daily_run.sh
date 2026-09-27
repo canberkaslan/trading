@@ -212,10 +212,27 @@ echo "--- position management ---" | tee -a "$RUN_LOG"
 # cancels its OCO sibling, a flatten cancels orders, a position is added to) and
 # nothing was putting them back. The flag is gated by --submit like everything
 # else here, so SUBMIT=0 still only reports.
-if PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.manage_positions --backfill-stops $SUBMIT_FLAG 2>&1 | tee -a "$RUN_LOG"; then
-  :
-else
-  echo "  -> position management failed (non-fatal) — continuing to decisions" | tee -a "$RUN_LOG"
+#
+# Non-fatal, but never silent. rc 3 means a time exit may have left shares with
+# no stop: a cancel still on its way strips the stop after this run, and the
+# stop-coverage check at the end of the run still sees it standing, so this is
+# the only point that can page about it. Any other failure pages too, more
+# quietly: a pass that failed is protection nobody maintained today.
+set +e
+PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.manage_positions --backfill-stops $SUBMIT_FLAG 2>&1 | tee -a "$RUN_LOG"
+mp_rc=${PIPESTATUS[0]}
+set -e
+if [[ "$mp_rc" -eq 3 ]]; then
+  echo "  -> position management may have left shares with no stop (rc=3) — paging, continuing to decisions" | tee -a "$RUN_LOG"
+  mp_detail="$(sed -n 's/^UNCOVERED: //p' "$RUN_LOG" | tail -n 1 || true)"
+  notify_ops --kind position_pass \
+    --title "⚠️ Time exit may have left shares with no stop" \
+    --body "${mp_detail:-manage_positions rc=3} @ ${DATE}. See the FAILED time exit lines in ${RUN_LOG}. A cancel still on its way removes the stop after the run; check the broker's open orders for those names."
+elif [[ "$mp_rc" -ne 0 ]]; then
+  echo "  -> position management failed (rc=$mp_rc, non-fatal) — paging, continuing to decisions" | tee -a "$RUN_LOG"
+  notify_ops --kind position_pass \
+    --title "⚠️ Position management failed (rc=$mp_rc)" \
+    --body "manage_positions rc=$mp_rc @ ${DATE}: see the FAILED lines in ${RUN_LOG}. Stops were not maintained where it failed."
 fi
 
 # Commentator feed (ADR-009): fetch and extract ONCE, before the tickers, so

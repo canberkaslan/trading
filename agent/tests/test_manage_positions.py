@@ -1,38 +1,39 @@
 """scripts.manage_positions end to end, against a stub broker.
 
 The planner has its own tests; nothing covered the runner that turns its plan
-into broker calls, and `close_position` appeared in no test at all. These drive
-`main()` with a real bar cache and a fake client that records every call, and
-assert on what would reach the broker: nothing in a dry run, exactly the plan
-with --submit, and one bad symbol never stopping the rest of the pass.
+into broker calls. These drive `main()` with a real bar cache and a fake broker
+that records every call and reserves shares for live sell orders the way Alpaca
+does, and assert on what would reach the broker: nothing in a dry run, exactly
+the plan with --submit, and one bad symbol never stopping the rest of the pass.
 
-The TimeExit has two known defects, and this tranche changes neither, because
-fixing either changes what reaches the broker:
-
-  * it is a bare DELETE /positions/{symbol}, so on any position whose GTC stop
-    reserves the shares (every bracket entry, and every stop this pass
-    back-fills) the broker refuses it: held_for_orders=qty, available=0;
-  * the DELETE carries a broker-generated client id, so even a close that goes
-    through books as an operator "flatten" and drops out of the strategy's
-    eval roll-up.
-
-Each is pinned twice: a `known_bug` test that asserts today's behaviour (a
-guard that this tranche did not move order flow), and a strict xfail that
-states the target. The follow-up that fixes the exit must flip both.
+The time exit used to be a bare DELETE /positions/{symbol}. On any position
+whose GTC stop reserves the shares (every bracket entry, and every stop this
+pass back-fills) the broker refused it, and a close that did go through carried
+a broker id and booked as an operator flatten. It now releases the stop, sells
+under the time-exit stamp and re-arms on failure; the step-by-step failure
+points are in test_protected_close.py, and the pass-level wiring is here.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
 
+import httpx
 import pytest
 from sqlalchemy import create_engine
 
 from scripts import manage_positions as mp
-from tradingagents_us.dataflows.alpaca_broker import FillActivity, Order, Position
+from tests.broker_fake import FakeBroker
+from tradingagents_us.dataflows.alpaca_broker import (
+    AlpacaRequestError,
+    FillActivity,
+    Order,
+    Position,
+)
+from tradingagents_us.execution.executor import derive_exit_client_order_id
 from tradingagents_us.risk.position_manager import PlaceStop, RatchetStop, TimeExit
 from tradingagents_us.storage import TradeLogRepository
 from tradingagents_us.storage.price_cache import write_bars
@@ -43,7 +44,8 @@ ENTRY = TODAY - timedelta(days=50)
 #: A flat tape: every true range is 2.0, so the ATR is exactly 2.0.
 BAR_DAYS = 45
 
-WRITES = ("close_position", "submit_order", "replace_order", "cancel_order", "close_all_positions")
+#: The stamp today's time exit on XOM carries, and what the ledger reads.
+XOM_EXIT_ID = derive_exit_client_order_id("XOM", TODAY, "time")
 
 
 def _position(symbol: str, price: float, avg: float = 100.0, qty: float = 10.0) -> Position:
@@ -86,73 +88,7 @@ def _buy(symbol: str, qty: float = 10.0) -> FillActivity:
     )
 
 
-class FakeAlpaca:
-    """Records every call. Reads return the book it was built with."""
-
-    def __init__(
-        self,
-        positions: list[Position],
-        orders: list[Order],
-        fills: list[FillActivity],
-        refuse_close: set[str] | None = None,
-    ) -> None:
-        self.positions = positions
-        self.orders = orders
-        self.fills = fills
-        self.refuse_close = refuse_close or set()
-        self.calls: list[tuple] = []
-
-    def __enter__(self) -> FakeAlpaca:
-        return self
-
-    def __exit__(self, *_: object) -> None:
-        return None
-
-    def list_positions(self) -> list[Position]:
-        self.calls.append(("list_positions",))
-        return self.positions
-
-    def list_orders(self, status: str = "open", limit: int = 50, nested: bool = False):
-        self.calls.append(("list_orders", status))
-        return self.orders
-
-    def list_fill_activities(self) -> list[FillActivity]:
-        self.calls.append(("list_fill_activities",))
-        return self.fills
-
-    def close_position(self, symbol: str) -> dict:
-        self.calls.append(("close_position", symbol))
-        if symbol in self.refuse_close:
-            # What the live XOM close got back: every share reserved by the
-            # GTC stop, nothing free to sell.
-            raise RuntimeError(
-                f"alpaca DELETE /positions/{symbol} failed 403: "
-                '{"code":40310000,"held_for_orders":"10","available":"0"}'
-            )
-        return {"id": f"close-{symbol}", "client_order_id": "68c3c73e-broker-uuid"}
-
-    def submit_order(self, **kw) -> SimpleNamespace:
-        self.calls.append(("submit_order", kw))
-        return SimpleNamespace(id=f"placed-{kw['symbol']}")
-
-    def replace_order(self, order_id: str, **kw) -> SimpleNamespace:
-        self.calls.append(("replace_order", order_id, kw))
-        return SimpleNamespace(id=f"replaced-{order_id}")
-
-    def cancel_order(self, order_id: str) -> dict:
-        self.calls.append(("cancel_order", order_id))
-        return {}
-
-    def close_all_positions(self, cancel_orders: bool = True) -> list:
-        self.calls.append(("close_all_positions", cancel_orders))
-        return []
-
-    @property
-    def writes(self) -> list[tuple]:
-        return [c for c in self.calls if c[0] in WRITES]
-
-
-def _book(refuse_close: set[str] | None = None) -> FakeAlpaca:
+def _book(**kw) -> FakeBroker:
     """One position per branch of the plan.
 
     XOM   flat for 45 bars under a covering stop  -> TimeExit
@@ -160,7 +96,7 @@ def _book(refuse_close: set[str] | None = None) -> FakeAlpaca:
     MSFT  up 33% with no stop at all              -> PlaceStop 10 @ 194
     NVDA  flat for 50 days, bar cache empty       -> no action, reported
     """
-    return FakeAlpaca(
+    return FakeBroker(
         positions=[
             _position("XOM", 100.5),
             _position("AAPL", 120.0),
@@ -173,7 +109,7 @@ def _book(refuse_close: set[str] | None = None) -> FakeAlpaca:
             _stop("stop-nvda", "NVDA", 90.0),
         ],
         fills=[_buy(s) for s in ("XOM", "AAPL", "MSFT", "NVDA")],
-        refuse_close=refuse_close,
+        **kw,
     )
 
 
@@ -191,13 +127,40 @@ def db_url(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
     return url
 
 
-def _run(monkeypatch: pytest.MonkeyPatch, fake: FakeAlpaca, *argv: str) -> int:
+def _run(monkeypatch: pytest.MonkeyPatch, fake: FakeBroker, *argv: str) -> int:
     monkeypatch.setattr(mp, "AlpacaClient", lambda: fake)
     return mp.main(list(argv))
 
 
+XOM_EXIT = (
+    "submit_order",
+    {
+        "symbol": "XOM",
+        "qty": 10.0,
+        "side": "sell",
+        "order_type": "market",
+        "time_in_force": "day",
+        "client_order_id": XOM_EXIT_ID,
+    },
+)
+
+XOM_REARM = (
+    "submit_order",
+    {
+        "symbol": "XOM",
+        "qty": 10.0,
+        "side": "sell",
+        "order_type": "stop",
+        "time_in_force": "gtc",
+        "stop_price": 90.0,
+        # Its own client id, so a re-arm whose reply is lost can be found.
+        "client_order_id": f"{XOM_EXIT_ID}-arm-stop-xom",
+    },
+)
+
 EXPECTED_PLAN = [
-    ("close_position", "XOM"),
+    ("cancel_order", "stop-xom"),
+    XOM_EXIT,
     ("replace_order", "stop-aapl", {"stop_price": 114.0}),
     (
         "submit_order",
@@ -211,6 +174,15 @@ EXPECTED_PLAN = [
         },
     ),
 ]
+
+
+def _kinds(fake: FakeBroker) -> list[tuple[str, str]]:
+    """Each write as (call, symbol or order id), in order."""
+    out = []
+    for call in fake.writes:
+        arg = call[1]
+        out.append((call[0], arg["symbol"] if isinstance(arg, dict) else arg))
+    return out
 
 
 class TestDryRunVersusSubmit:
@@ -245,7 +217,8 @@ class TestDryRunVersusSubmit:
 
         _run(monkeypatch, fake, "--submit", "--db-url", db_url)
 
-        assert [w for w in fake.writes if w[0] == "submit_order"] == []
+        stops = [w for w in fake.writes if w[0] == "submit_order" and w[1]["order_type"] == "stop"]
+        assert stops == []
 
     def test_flatten_all_skips_the_pass_before_any_broker_call(
         self, db_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -261,7 +234,7 @@ class TestDryRunVersusSubmit:
 
 class TestPerSymbolFailureIsolation:
     def test_every_action_is_attempted_and_each_failure_counted(self) -> None:
-        fake = _book(refuse_close={"XOM", "NVDA"})
+        fake = _book(refuse_sell={"XOM", "NVDA"})
 
         failures = mp._execute(
             fake,
@@ -274,99 +247,36 @@ class TestPerSymbolFailureIsolation:
         )
 
         assert failures == 2
-        assert [w[0] for w in fake.writes] == [
-            "close_position",
-            "replace_order",
-            "close_position",
-            "submit_order",
+        # Each refused exit puts its stop back before the pass moves on.
+        assert _kinds(fake) == [
+            ("cancel_order", "stop-xom"),
+            ("submit_order", "XOM"),
+            ("submit_order", "XOM"),
+            ("replace_order", "stop-aapl"),
+            ("cancel_order", "stop-nvda"),
+            ("submit_order", "NVDA"),
+            ("submit_order", "NVDA"),
+            ("submit_order", "MSFT"),
         ]
 
-    def test_a_refused_close_is_counted_and_the_rest_of_the_pass_still_runs(
+    def test_a_refused_exit_is_counted_and_the_rest_of_the_pass_still_runs(
         self, db_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
         caplog.set_level(logging.INFO, logger="manage_positions")
-        fake = _book(refuse_close={"XOM"})
+        fake = _book(refuse_sell={"XOM"})
 
         rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
 
         assert rc == 1
         assert ("replace_order", "stop-aapl", {"stop_price": 114.0}) in fake.writes
-        assert [w for w in fake.writes if w[0] == "submit_order"]
+        assert ("submit_order", "MSFT") in _kinds(fake)
         assert "XOM    FAILED" in caplog.text
-        assert "held_for_orders" in caplog.text
+        assert "market closed for this symbol" in caplog.text
 
 
-class ReservingAlpaca(FakeAlpaca):
-    """A broker that reserves shares for live sell orders, as Alpaca does.
-
-    DELETE /positions/{symbol} is refused while any live sell order holds the
-    shares, and goes through once they are released. Closes it accepts become
-    filled market-sell orders carrying a broker-generated client id, since that
-    endpoint takes none; a submitted order keeps the id it was given.
-    """
-
-    def __init__(self, *args: object, refuse_after_release: set[str] | None = None, **kw) -> None:
-        super().__init__(*args, **kw)  # type: ignore[arg-type]
-        self.cancelled: set[str] = set()
-        self.refuse_after_release = refuse_after_release or set()
-        self.created: list[Order] = []
-
-    def cancel_order(self, order_id: str) -> dict:
-        self.cancelled.add(order_id)
-        return super().cancel_order(order_id)
-
-    def _reserved(self, symbol: str) -> float:
-        return sum(
-            o.qty - o.filled_qty
-            for o in self.orders
-            if o.symbol == symbol and o.side == "sell" and o.id not in self.cancelled
-        )
-
-    def close_position(self, symbol: str) -> dict:
-        self.calls.append(("close_position", symbol))
-        held = self._reserved(symbol)
-        if held > 0:
-            raise RuntimeError(
-                f"alpaca DELETE /positions/{symbol} failed 403: "
-                f'{{"code":40310000,"held_for_orders":"{held:g}","available":"0"}}'
-            )
-        if symbol in self.refuse_after_release:
-            raise RuntimeError(f"alpaca DELETE /positions/{symbol} failed 422: market closed")
-        pos = next(p for p in self.positions if p.symbol == symbol)
-        order = self._order(f"close-{symbol}", symbol, pos.qty, "market", "68c3c73e-broker-uuid")
-        return {"id": order.id, "client_order_id": order.client_order_id}
-
-    def submit_order(self, **kw) -> SimpleNamespace:
-        placed = super().submit_order(**kw)
-        self._order(
-            placed.id,
-            kw["symbol"],
-            kw["qty"],
-            kw.get("order_type", "market"),
-            kw.get("client_order_id") or "9f1d-broker-uuid",
-        )
-        return placed
-
-    def _order(self, oid: str, symbol: str, qty: float, order_type: str, coid: str) -> Order:
-        order = Order(
-            id=oid,
-            client_order_id=coid,
-            symbol=symbol,
-            side="sell",
-            qty=qty,
-            filled_qty=qty,
-            order_type=order_type,
-            status="filled",
-            submitted_at=datetime.now(UTC),
-            filled_avg_price=100.5,
-        )
-        self.created.append(order)
-        return order
-
-
-def _aged_xom(**kw) -> ReservingAlpaca:
+def _aged_xom(**kw) -> FakeBroker:
     """XOM alone: flat for 45 bars, fully covered by a GTC stop -> TimeExit."""
-    return ReservingAlpaca(
+    return FakeBroker(
         positions=[_position("XOM", 100.5)],
         orders=[_stop("stop-xom", "XOM", 90.0)],
         fills=[_buy("XOM")],
@@ -374,36 +284,14 @@ def _aged_xom(**kw) -> ReservingAlpaca:
     )
 
 
-class TestTimeExitAgainstReservedShares:
-    """The time exit is the system's only rule-driven exit; see the module docstring."""
+class TestTimeExitReleasesItsStop:
+    """The time exit is the system's only rule-driven exit.
 
-    def test_known_bug_time_exit_refused_while_stop_reserves_shares(
-        self, db_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        # Today, and deliberately unchanged in the zero-order tranche: the stop
-        # is left in place, the close is refused, and nothing else is sent.
-        caplog.set_level(logging.INFO, logger="manage_positions")
-        fake = _aged_xom()
+    Against a broker that reserves shares, a close that leaves the stop in place
+    is refused, and one that releases it must never leave two sellers on the lot.
+    """
 
-        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
-
-        assert rc == 1
-        assert fake.writes == [("close_position", "XOM")]
-        assert "held_for_orders" in caplog.text
-
-    def test_known_bug_time_exit_never_frees_the_shares_its_stop_reserves(self) -> None:
-        fake = _book()
-
-        failures = mp._execute(fake, [TimeExit("XOM", 10.0, 45, 0.005)])
-
-        assert failures == 0
-        assert fake.writes == [("close_position", "XOM")]
-
-    @pytest.mark.xfail(
-        strict=True,
-        reason="known bug: TimeExit does not release the stop that reserves its shares",
-    )
-    def test_target_time_exit_releases_the_reserving_stop_then_closes(
+    def test_the_stop_is_released_then_the_holding_sold_under_the_exit_stamp(
         self, db_url: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         fake = _aged_xom()
@@ -411,58 +299,528 @@ class TestTimeExitAgainstReservedShares:
         rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
 
         assert rc == 0
-        assert fake.writes == [("cancel_order", "stop-xom"), ("close_position", "XOM")]
+        assert fake.writes == [("cancel_order", "stop-xom"), XOM_EXIT]
+        assert "XOM" not in fake.positions
+        assert fake.live_sells("XOM") == []
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="known bug: TimeExit has no path that re-arms a stop it released",
-    )
-    def test_target_a_close_that_fails_after_the_release_re_arms_the_stop(
+    def test_a_sell_that_fails_after_the_release_re_arms_the_stop(
         self, db_url: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        fake = _aged_xom(refuse_after_release={"XOM"})
+        fake = _aged_xom(refuse_sell={"XOM"})
 
         rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
 
         assert rc == 1
-        rearm = [w for w in fake.writes if w[0] == "submit_order"]
-        assert [(w[1]["symbol"], w[1]["order_type"], w[1]["stop_price"], w[1]["qty"])
-                for w in rearm] == [("XOM", "stop", 90.0, 10.0)]
-        assert rearm[0][1]["time_in_force"] == "gtc"
+        assert fake.writes == [("cancel_order", "stop-xom"), XOM_EXIT, XOM_REARM]
+        # Still held, and protected by exactly one stop for exactly the holding.
+        (stop,) = fake.live_sells("XOM")
+        assert (stop.order_type, stop.stop_price, stop.qty) == ("stop", 90.0, 10.0)
+        assert fake.positions["XOM"].qty == 10.0
 
-    def test_the_close_log_names_the_order_and_what_the_ledger_will_call_it(
-        self, caplog: pytest.LogCaptureFixture
+    def test_the_close_log_names_the_order_and_its_stamp(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
-        # Until the close carries its own stamp, it books as a flatten. The log
-        # says so, and names the order so it can be traced by hand.
         caplog.set_level(logging.INFO, logger="manage_positions")
+        fake = _aged_xom()
 
-        mp._execute(_book(), [TimeExit("XOM", 10.0, 45, 0.005)])
+        _run(monkeypatch, fake, "--submit", "--db-url", db_url)
 
-        assert "close-XOM" in caplog.text
-        assert "books as a flatten" in caplog.text
+        (line,) = [r.getMessage() for r in caplog.records if "closed on age" in r.getMessage()]
+        (exit_order,) = [o for o in fake.created if o.client_order_id == XOM_EXIT_ID]
+        assert exit_order.id in line
+        assert XOM_EXIT_ID in line
+        assert "released stop-xom" in line
+        assert "flatten" not in line
+
+
+class TestAFailedTimeExitIsCoveredInTheSamePass:
+    """A time exit that does not close must not leave its name uncovered.
+
+    The plan is made once, before the pass, and a name planned for a time exit
+    gets no back-fill in it. Whatever the close leaves behind (a refusal, a
+    re-arm that could not cover everything, a crash between release and sell)
+    is re-read from the broker after the pass and back-filled there, or else it
+    stays naked for this run and the next picks it for a time exit again.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _no_waiting(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("tradingagents_us.execution.protected_close.time.sleep", lambda _: None)
+
+    def _covered_once(self, fake: FakeBroker, qty: float = 10.0) -> None:
+        """Held, and every held share under exactly one live stop, nothing else."""
+        assert fake.positions["XOM"].qty == qty
+        live = fake.live_sells("XOM")
+        assert [o for o in live if o.order_type != "stop"] == []
+        assert sum(o.qty - o.filled_qty for o in live) == qty
+
+    def test_a_partly_naked_name_whose_exit_is_refused_ends_fully_covered(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The GOOGL shape: a stop over 3 of 10 shares, the other 7 naked. The
+        # refused exit re-arms the 3; the 7 used to stay naked all run.
+        fake = FakeBroker(
+            positions=[_position("XOM", 100.5)],
+            orders=[_stop("stop-xom", "XOM", 90.0, qty=3.0)],
+            fills=[_buy("XOM")],
+            refuse_sell={"XOM"},
+        )
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        assert rc == 1, "the exit still failed, and says so"
+        stops = [(w[1]["qty"], w[1]["stop_price"]) for w in fake.writes
+                 if w[0] == "submit_order" and w[1]["order_type"] == "stop"]
+        assert stops == [(3.0, 90.0), (7.0, 94.5)]
+        self._covered_once(fake)
+
+    def test_a_lot_left_naked_by_a_crash_mid_release_is_covered_when_its_exit_fails(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A previous pass cancelled the stop and died before the sell. This
+        # pass finds nothing to release, the exit is refused, and nothing was
+        # re-armed because nothing was released.
+        dead = dataclasses.replace(_stop("stop-xom", "XOM", 90.0), status="canceled")
+        fake = FakeBroker(
+            positions=[_position("XOM", 100.5)], orders=[dead], fills=[_buy("XOM")],
+            refuse_sell={"XOM"},
+        )
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        assert rc == 1
+        self._covered_once(fake)
+
+    def test_a_stop_still_cancelling_is_re_read_and_left_alone(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The stop's cancel never landed. It may still fill, so a back-fill
+        # beside it is a second stop on the same shares: the re-read must see
+        # it as ambiguous and place nothing.
+        caplog.set_level(logging.INFO, logger="manage_positions")
+        fake = _aged_xom(cancel_stuck={"stop-xom"})
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        # Not the 1 of a routine refused exit: when that cancel lands the lot has
+        # no stop and no exit, and nothing else in the run will notice.
+        assert rc == 3
+        assert fake.writes == [("cancel_order", "stop-xom")]
+        assert "re-cover: time exits left XOM open" in caplog.text
+        assert "XOM    SKIP  re-cover: a stop sell in pending_cancel still stands" in caplog.text
+
+    def test_a_stop_whose_fill_is_on_its_way_is_not_back_filled_beside(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # `stopped`: the stop triggered and its fill is guaranteed, not booked.
+        # The close refuses to act beside it, and coverage counts it as gone, so
+        # the shares read naked. A back-fill there is a second seller.
+        caplog.set_level(logging.INFO, logger="manage_positions")
+        stopped = dataclasses.replace(_stop("stop-xom", "XOM", 90.0), status="stopped")
+        fake = FakeBroker(positions=[_position("XOM", 100.5)], orders=[stopped],
+                          fills=[_buy("XOM")])
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        assert rc == 1
+        assert fake.writes == []
+        assert "XOM    SKIP  re-cover: a stop sell in stopped still stands" in caplog.text
+
+    def test_a_second_bracket_refusing_its_cancel_leaves_every_share_under_a_stop(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # 20 XOM bought as two brackets. Cancelling TP-A takes SL-A with it as
+        # an OCO pair; TP-B then refuses its cancel. SL-A was never put back,
+        # the close said unchanged, and the re-cover left the name alone while
+        # TP-B stands: 10 shares held with no stop, and nothing paged.
+        tp = dict(side="sell", filled_qty=0.0, order_type="limit", status="new",
+                  submitted_at=datetime.now(UTC), filled_avg_price=None, limit_price=120.0)
+        fake = FakeBroker(
+            positions=[_position("XOM", 100.5, qty=20.0)],
+            orders=[
+                dataclasses.replace(_stop("sl-a", "XOM", 90.0), status="held"),
+                dataclasses.replace(_stop("sl-b", "XOM", 88.0), status="held"),
+                Order(id="tp-a", client_order_id="coid-tp-a", symbol="XOM", qty=10.0, **tp),
+                Order(id="tp-b", client_order_id="coid-tp-b", symbol="XOM", qty=10.0, **tp),
+            ],
+            fills=[_buy("XOM", qty=20.0)],
+            oco={"tp-a": "sl-a", "tp-b": "sl-b"},
+            cancel_refused={"tp-b"},
+        )
+
+        _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        assert fake.positions["XOM"].qty == 20.0
+        stops = [o for o in fake.live_sells("XOM") if o.order_type == "stop"]
+        assert sorted((o.qty, o.stop_price) for o in stops) == [(10.0, 88.0), (10.0, 90.0)]
+
+    def test_an_exit_that_fills_between_the_re_covers_reads_gets_no_stop_beside_it(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The exit POST was accepted but its reply was lost, and the stamp
+        # lookups time out: the close says unknown, and the re-cover runs on a
+        # name whose sell is working. It fills between the re-cover's two reads
+        # (a run in regular hours). Read holding first, orders second, and the
+        # lot reads as held with nothing over it: a stop goes onto a flat book,
+        # which a margin account takes as a short-sale stop.
+        fake = _FillsAfterFirstReadOnceSold(
+            positions=[_position("XOM", 100.5)],
+            orders=[_stop("stop-xom", "XOM", 90.0)],
+            fills=[_buy("XOM")],
+            lose_sell_reply={"XOM"},
+            exit_status="accepted",
+            lookup_fails_after_sell=True,
+            allow_short=True,
+        )
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        assert rc != 0
+        assert fake.fired, "the exit has to fill mid re-cover for this to test anything"
+        assert "XOM" not in fake.positions
+        assert fake.live_sells("XOM") == [], "a sell stop on a flat book is a short"
+
+    @pytest.mark.parametrize("exit_status", ["filled", "accepted"])
+    @pytest.mark.parametrize("lands_after", range(1, 16))
+    def test_an_unverified_exit_landing_on_the_re_covers_back_fill_leaves_no_stop_beside_it(
+        self, lands_after: int, exit_status: str, db_url: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The exit POST lost its reply and the stamp lookups time out, so the
+        # close ends unknown with the exit still in flight. The re-cover reads
+        # the lot as naked and back-fills it. Nine calls on, the exit lands on
+        # the back-fill's POST and fills: the stop stood on the flat book with
+        # nothing to take it back, and the page said the opposite.
+        fake = _aged_xom(
+            sell_in_flight={"XOM": lands_after}, lookup_fails_after_sell=True,
+            allow_short=True, exit_status=exit_status,
+        )
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+        fake.land_in_flight()
+
+        live = fake.live_sells("XOM")
+        if "XOM" not in fake.positions:
+            assert live == [], f"a sell stop on a flat book is a short (rc={rc})"
+        elif [o for o in live if o.order_type == "market"]:
+            assert [o.order_type for o in live] == ["market"], "the exit is the only seller"
+        else:
+            self._covered_once(fake)
+        assert rc != 0, "the exit was not verified when it was sent"
+
+    @pytest.mark.parametrize("variant", ["naked-lot", "re-arm-refused", "holding-unreadable"])
+    def test_an_exit_landing_on_the_back_fill_after_a_close_that_re_armed_nothing(
+        self, variant: str, db_url: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The exit POST lost its reply and 23 s of lookups never found it, so
+        # the close re-armed off a fresh read, and re-armed nothing: the lot
+        # was naked, or the re-arm was refused, or the holding could not be
+        # read. With no stop reserving the shares, the exit can still land. It
+        # lands and fills on the re-cover's back-fill POST, in regular hours:
+        # the back-fill went out plain, nothing looked the stamp up again, and
+        # the stop stood on the flat book.
+        fake = _LandsOnTheBackFill(
+            positions=[_position("XOM", 100.5)],
+            orders=[] if variant == "naked-lot" else [_stop("stop-xom", "XOM", 90.0)],
+            fills=[_buy("XOM")],
+            sell_in_flight={"XOM": 10**6},
+            allow_short=True,
+        )
+        fake.refuse_rearms = variant == "re-arm-refused"
+        fake.unreadable = 3 if variant == "holding-unreadable" else 0
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        exits = [o for o in fake.created if o.client_order_id == XOM_EXIT_ID]
+        assert [o.status for o in exits] == ["filled"], "the exit has to land for this to test"
+        assert "XOM" not in fake.positions
+        assert fake.live_sells("XOM") == [], "a sell stop on a flat book is a short"
+        assert rc == 1, "the close failed; what it left is settled, so this is no page"
+
+    def test_without_backfill_the_re_cover_reports_and_places_nothing(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO, logger="manage_positions")
+        dead = dataclasses.replace(_stop("stop-xom", "XOM", 90.0), status="canceled")
+        fake = FakeBroker(
+            positions=[_position("XOM", 100.5)], orders=[dead], fills=[_buy("XOM")],
+            refuse_sell={"XOM"},
+        )
+
+        _run(monkeypatch, fake, "--submit", "--db-url", db_url)
+
+        assert [w for w in fake.writes
+                if isinstance(w[1], dict) and w[1]["order_type"] == "stop"] == []
+        assert "XOM    SKIP  re-cover: no_stop_order" in caplog.text
+
+
+class TestAReArmBesideALandedExitThroughThePass:
+    """The exit's reply is lost, and it lands and fills on the re-arm's POST.
+
+    The re-armed stop then stands on a flat book, which a margin account takes
+    as a short-sale stop. The broker that lost the exit's reply loses the
+    stop's too, or throttles the DELETE that takes it back. The pass must end
+    flat with nothing standing, and say the exit went through.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _no_waiting(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("tradingagents_us.execution.protected_close.time.sleep", lambda _: None)
+
+    @pytest.mark.parametrize(
+        "fault",
+        [
+            {"stop_reply_error": httpx.ReadTimeout("reply lost")},
+            {"stop_reply_error": AlpacaRequestError("POST", "/orders", 504, "gateway timeout")},
+            {"throttle_own_cancels": True},
+        ],
+        ids=["stop-reply-timeout", "stop-reply-504", "take-back-429"],
+    )
+    def test_the_lot_ends_flat_with_no_sell_standing(
+        self, fault: dict, db_url: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake = _aged_xom(sell_in_flight={"XOM": 9}, allow_short=True, **fault)
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        assert "XOM" not in fake.positions
+        assert fake.live_sells("XOM") == [], "a sell stop on a flat book is a short"
+        assert rc == 0
+
+
+class _FillsAfterFirstReadOnceSold(FakeBroker):
+    """The working exit fills just after the first book read that follows its
+    POST: between that read and the next one, as a regular-hours fill would."""
+
+    fired = False
+
+    def _after_read(self) -> None:
+        if self.fired or not self._sold:
+            return
+        for oid, order in list(self.orders.items()):
+            if order.client_order_id == XOM_EXIT_ID and order.status == "accepted":
+                self.fired = True
+                self.orders[oid] = dataclasses.replace(
+                    order, status="filled", filled_qty=order.qty, filled_avg_price=100.5
+                )
+                self._sell_shares("XOM", order.qty)
+
+    def list_positions(self) -> list[Position]:
+        out = super().list_positions()
+        self._after_read()
+        return out
+
+    def list_orders(self, status: str = "open", limit: int = 50, nested: bool = False):
+        out = super().list_orders(status, limit, nested)
+        self._after_read()
+        return out
+
+
+class _LandsOnTheBackFill(FakeBroker):
+    """An exit in flight lands just before the first stop that is not a re-arm.
+
+    That is the re-cover's back-fill. `refuse_rearms` turns every re-armed
+    stop down with a 4xx, and `unreadable` fails that many holding reads once
+    the exit has been sent.
+    """
+
+    refuse_rearms = False
+    unreadable = 0
+
+    def submit_order(self, **kw) -> Order:
+        if kw.get("order_type") == "stop":
+            if "-arm-" not in (kw.get("client_order_id") or ""):
+                self.land_in_flight()
+            elif self.refuse_rearms:
+                self._record("submit_order", kw)
+                raise AlpacaRequestError("POST", "/orders", 422, "stop price must be below market")
+        return super().submit_order(**kw)
+
+    def get_position(self, symbol: str) -> Position | None:
+        if self._sold and self.unreadable:
+            self.unreadable -= 1
+            self._record("get_position", symbol)
+            raise httpx.ConnectError("positions endpoint unreachable")
+        return super().get_position(symbol)
+
+
+class _StopFillsAfterFirstRead(FakeBroker):
+    """A stop fires just after the pass's first book read returns."""
+
+    fired = False
+
+    def __init__(self, *a, stop_id: str, **kw) -> None:
+        super().__init__(*a, **kw)
+        self.stop_id = stop_id
+
+    def _after_read(self) -> None:
+        if self.fired:
+            return
+        self.fired = True
+        stop = self.orders[self.stop_id]
+        self.orders[self.stop_id] = dataclasses.replace(
+            stop, status="filled", filled_qty=stop.qty, filled_avg_price=stop.stop_price
+        )
+        self._sell_shares(stop.symbol, stop.qty)
+
+    def list_positions(self) -> list[Position]:
+        out = super().list_positions()
+        self._after_read()
+        return out
+
+    def list_orders(self, status: str = "open", limit: int = 50, nested: bool = False):
+        out = super().list_orders(status, limit, nested)
+        self._after_read()
+        return out
+
+
+class TestThePassReadsOrdersBeforeTheHolding:
+    """A sell that fills between the pass's two reads must show as fewer shares.
+
+    Read the holding first and the orders second, and a stop that fires in
+    between reads as gone while its shares still read as held: the lot looks
+    naked, and the back-fill puts a stop on a flat book. A margin account takes
+    that as a short-sale stop.
+    """
+
+    def test_a_stop_that_fires_between_the_reads_is_not_back_filled(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Up 20% (no time exit), fully covered by one stop that fires just
+        # after the pass's first read, in a regular-hours run.
+        fake = _StopFillsAfterFirstRead(
+            positions=[_position("AAPL", 120.0)],
+            orders=[_stop("stop-aapl", "AAPL", 110.0)],
+            fills=[_buy("AAPL")],
+            allow_short=True,
+            stop_id="stop-aapl",
+        )
+
+        _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        assert fake.fired
+        assert "AAPL" not in fake.positions
+        assert fake.live_sells("AAPL") == [], "a sell stop on a flat book is a short"
+
+    def test_a_lot_sold_while_an_earlier_exit_settles_gets_no_back_fill(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The plan is read before the pass writes anything, and a time exit
+        # (release, confirm, sell, look up) can take a minute. In regular
+        # hours the naked MSFT is closed by hand while XOM's stop is being
+        # released: the back-fill planned off the old read went to the flat
+        # book all the same, a short-sale stop on a margin account, rc 0.
+        fake = _SoldWhileXomIsReleased(
+            positions=[_position("XOM", 100.5), _position("MSFT", 200.0, avg=150.0)],
+            orders=[_stop("stop-xom", "XOM", 90.0)],
+            fills=[_buy("XOM"), _buy("MSFT")],
+            allow_short=True,
+        )
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        assert "MSFT" not in fake.positions
+        assert fake.live_sells("MSFT") == [], "a sell stop on a flat book is a short"
+        assert rc == 0
+
+
+class _SoldWhileXomIsReleased(FakeBroker):
+    """Another seller closes MSFT the moment the pass cancels XOM's stop."""
+
+    def cancel_order(self, order_id: str) -> dict:
+        out = super().cancel_order(order_id)
+        if order_id == "stop-xom" and "MSFT" in self.positions:
+            self._new_order("MSFT", self.positions["MSFT"].qty, "market", "by-hand", "filled")
+        return out
+
+
+class _PositionsUnreadableAfterFirstRead(FakeBroker):
+    """The positions endpoint answers the pass's first read, then goes down."""
+
+    def list_positions(self) -> list[Position]:
+        if any(c[0] == "list_positions" for c in self.calls):
+            self._record("list_positions")
+            raise RuntimeError("positions endpoint down")
+        return super().list_positions()
+
+
+class TestAnUncoveredOutcomeHasItsOwnExitCode:
+    """rc 3 when a time exit may have left shares with no stop; 1 stays routine.
+
+    A refused exit whose stop went back is a failure, and the lot is protected.
+    An `unknown` or `naked` close is not that: a cancel that lands after the run
+    strips the stop with no exit behind it, and the stop coverage check at the
+    end of the run still sees the stop standing. daily_run.sh pages on this code.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _no_waiting(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("tradingagents_us.execution.protected_close.time.sleep", lambda _: None)
+
+    def test_a_cancel_never_seen_to_land(self, db_url: str, monkeypatch) -> None:
+        fake = _aged_xom(slow_cancel={"stop-xom": ("new", 10**6)})
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        assert rc == 3
+
+    def test_a_stop_that_could_not_be_put_back(self, db_url: str, monkeypatch) -> None:
+        fake = _aged_xom(refuse_sell={"XOM"}, refuse_stop={"XOM"})
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        assert rc == 3
+
+    def test_a_re_cover_that_cannot_read_the_book(self, db_url: str, monkeypatch) -> None:
+        # A crash between an earlier pass's release and its sell left the lot
+        # with no stop; this exit is refused, and the re-cover cannot look.
+        dead = dataclasses.replace(_stop("stop-xom", "XOM", 90.0), status="canceled")
+        fake = _PositionsUnreadableAfterFirstRead(
+            positions=[_position("XOM", 100.5)], orders=[dead], fills=[_buy("XOM")],
+            refuse_sell={"XOM"},
+        )
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        assert rc == 3
+
+    def test_a_re_arm_that_may_still_land_beside_a_filled_exit(
+        self, db_url: str, monkeypatch
+    ) -> None:
+        # The exit and its re-arm both lose their reply; the exit fills on the
+        # re-arm's POST and the re-arm lands after its lookups, on the flat
+        # book. It read rc 0.
+        fake = _aged_xom(
+            sell_in_flight={"XOM": 11}, stop_in_flight={"XOM": 9}, allow_short=True
+        )
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        assert rc == 3
+
+    def test_a_refused_exit_whose_stop_is_back_stays_an_ordinary_failure(
+        self, db_url: str, monkeypatch
+    ) -> None:
+        fake = _aged_xom(refuse_sell={"XOM"})
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        assert rc == 1
 
 
 class TestTimeExitAttributionThroughTheLedger:
     """What the ledger books a production time exit as, from the pass to reconcile.
 
-    The classifier knows a `time_exit` class and the id helper can mint the
-    stamp it reads (test_exit_quality), but no production path sends that id.
-    This follows the order the pass really produces into the reconcile step
-    that stores the class, so it cannot be satisfied by the helpers alone.
+    Follows the order the pass really produces into the reconcile step that
+    stores the class, so it cannot be satisfied by the classifier and the id
+    helper agreeing with each other (test_exit_quality covers those alone).
     """
 
-    def _booked_as(self, db_url: str, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+    def _booked_as(self, fake: FakeBroker, db_url: str, monkeypatch) -> dict[str, str]:
         from scripts.reconcile import attribute_exits, to_fills
         from tradingagents_us.execution.reconcile import reconcile_fills
 
-        # No stop reserving the shares, so today's DELETE goes through and
-        # there is an order to attribute.
-        fake = ReservingAlpaca(
-            positions=[_position("XOM", 100.5)], orders=[], fills=[_buy("XOM")]
-        )
         _run(monkeypatch, fake, "--submit", "--db-url", db_url)
-        (close,) = [o for o in fake.created if o.symbol == "XOM"]
+        (close,) = [o for o in fake.created if o.symbol == "XOM" and o.order_type == "market"]
         sell = FillActivity(
             id="fill-XOM-close",
             symbol="XOM",
@@ -477,18 +835,16 @@ class TestTimeExitAttributionThroughTheLedger:
         assert len(closed) == 1
         return attribute_exits(closed, activities, fake.created)
 
-    def test_known_bug_a_production_time_exit_books_as_a_flatten(
+    def test_a_protected_time_exit_books_as_a_time_exit(
         self, db_url: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        assert list(self._booked_as(db_url, monkeypatch).values()) == ["flatten"]
+        assert list(self._booked_as(_aged_xom(), db_url, monkeypatch).values()) == ["time_exit"]
 
-    @pytest.mark.xfail(
-        strict=True, reason="TimeExit is an unstamped DELETE; books as flatten"
-    )
-    def test_target_a_production_time_exit_books_as_a_time_exit(
+    def test_an_unprotected_time_exit_books_as_a_time_exit(
         self, db_url: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        assert list(self._booked_as(db_url, monkeypatch).values()) == ["time_exit"]
+        fake = FakeBroker(positions=[_position("XOM", 100.5)], fills=[_buy("XOM")])
+        assert list(self._booked_as(fake, db_url, monkeypatch).values()) == ["time_exit"]
 
 
 class TestEmptyBarCache:

@@ -260,6 +260,47 @@ def test_a_covered_book_pages_nobody(tmp_path: Path) -> None:
     assert "scripts.naked_alert" in run.modules()
 
 
+# --- position management -------------------------------------------------------
+#
+# manage_positions exits 3 when a time exit may have left shares with no stop
+# (a cancel still on its way, a stop that could not be put back) and 1 on an
+# ordinary failure. Both used to become an echo; the stop coverage check at the
+# tail still sees a stop whose cancel has not landed yet, so nothing paged.
+
+
+def test_a_possibly_unprotected_position_pages_and_the_run_carries_on(tmp_path: Path) -> None:
+    run = run_daily(
+        tmp_path,
+        FAKE_RC_scripts_manage_positions="3",
+        FAKE_OUT_scripts_manage_positions=(
+            "XOM    FAILED time exit: unknown | cancel of stop-xom not confirmed\n"
+            "UNCOVERED: shares may have no stop, now or once a pending cancel lands: XOM unknown"
+        ),
+    )
+
+    (alert,) = run.alerts("position_pass")
+    assert "no stop" in alert["--title"]
+    assert "XOM unknown" in alert["--body"], "the page names the lot"
+    assert "FAILED time exit" in alert["--body"]
+    assert "scripts.trade" in run.modules(), "the decisions still run"
+    assert run.rc == 0, run.output
+
+
+def test_a_failed_position_pass_pages_too(tmp_path: Path) -> None:
+    run = run_daily(tmp_path, FAKE_RC_scripts_manage_positions="1")
+
+    (alert,) = run.alerts("position_pass")
+    assert "rc=1" in alert["--title"]
+    assert "scripts.trade" in run.modules()
+    assert run.rc == 0, run.output
+
+
+def test_a_clean_position_pass_pages_nobody(tmp_path: Path) -> None:
+    run = run_daily(tmp_path)
+    assert run.alerts("position_pass") == []
+    assert "scripts.manage_positions" in run.modules()
+
+
 # --- agent/.env against systemd's values ------------------------------------
 #
 # systemd loads secrets.env, then the script sources agent/.env, and a plain
@@ -343,6 +384,8 @@ def _deliver(argv: list[str], fake_github: FakeGitHub) -> dict[str, object]:
             },
         ),
         ("naked_book", {"FAKE_RC_scripts_naked_alert": "1"}),
+        ("position_pass", {"FAKE_RC_scripts_manage_positions": "3"}),
+        ("position_pass", {"FAKE_RC_scripts_manage_positions": "1"}),
     ],
 )
 def test_every_page_the_run_raises_is_one_notify_ops_accepts(

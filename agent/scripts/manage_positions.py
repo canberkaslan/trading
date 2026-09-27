@@ -16,6 +16,19 @@ say exactly that). Without an exit path the freeze is permanent.
     python scripts/manage_positions.py                # report only (default)
     python scripts/manage_positions.py --submit       # actually amend/close
 
+Exit codes, which daily_run.sh turns into pages:
+
+    0  everything planned was done
+    1  something failed, and every lot it touched is as protected as before
+    3  a time exit may have left shares with no stop: a close ended `unknown`
+       or `naked`, or the re-cover after it could not place what it had to.
+       A cancel still on its way strips its stop after this run, while the
+       coverage check at the end of the run still sees the stop standing, so
+       this code is the only thing that can say so while the run is on. An
+       `unknown` close can also mean the opposite: a stop that could not be
+       confirmed off a book the exit already sold, which the coverage check
+       never pages on either.
+
 Safety, in the order it matters:
 
   * DRY RUN BY DEFAULT. `--submit` is the only way anything reaches the broker.
@@ -29,18 +42,31 @@ Safety, in the order it matters:
     `indeterminate` for orders in a status it does not recognise, and acting on a
     guess there is how you end up with two stops on one lot — a short position
     waiting for a gap down.
+  * A time exit releases the stop before it sells, because the stop reserves the
+    shares, and it releases it in the one order that cannot double-sell:
+    cancel, confirm the cancel, sell the holding read after that, verify, and
+    re-arm the stop in the same pass if the sell did not go through
+    (`execution.protected_close`).
   * Nothing here opens or grows a position.
 """
 
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import logging
 import os
 import sys
 from datetime import UTC, date, datetime, timedelta
 
 from tradingagents_us.dataflows.alpaca_broker import AlpacaClient
+from tradingagents_us.execution.protected_close import (
+    CLOSED_STATUSES,
+    RELEASED_STATUSES,
+    CloseOutcome,
+    close_with_protection,
+    cover_beside_exit,
+)
 from tradingagents_us.log_redaction import install as install_log_redaction
 from tradingagents_us.risk.kill_switch import FileKillSwitchReader, default_kill_switch_path
 from tradingagents_us.risk.position_manager import (
@@ -54,6 +80,9 @@ from tradingagents_us.risk.position_manager import (
     plan_actions,
 )
 from tradingagents_us.risk.stop_coverage import (
+    LIVE_STATUSES,
+    PROTECTIVE_TYPES,
+    QTY_EPSILON,
     OrderView,
     PositionView,
     coverage,
@@ -69,6 +98,15 @@ LIVE_ORDER_STATUSES = frozenset({"held", "new", "accepted", "pending_new", "part
 
 #: Enough history for a 14-period ATR with room for holidays. Calendar days.
 BAR_LOOKBACK_DAYS = 60
+
+EXIT_OK = 0
+EXIT_FAILED = 1
+#: A time exit may have left shares with no stop; see the module docstring.
+EXIT_UNCOVERED = 3
+
+#: Close outcomes after which shares may have no stop, now or once a cancel on
+#: its way lands.
+UNCOVERED_STATUSES = frozenset({"unknown", "naked"})
 
 
 def _order_views(client: AlpacaClient) -> tuple[list[OrderView], dict[tuple[str, float], str]]:
@@ -109,6 +147,23 @@ def _order_views(client: AlpacaClient) -> tuple[list[OrderView], dict[tuple[str,
         if o.stop_price is not None and o.status.lower() in LIVE_ORDER_STATUSES
     }
     return views, ids
+
+
+def _read_book(
+    client: AlpacaClient,
+) -> tuple[list[OrderView], dict[tuple[str, float], str], list]:
+    """The orders, then the holding, in that order and never the other.
+
+    A sell that fills between two reads must show up as fewer shares held,
+    never as a lot whose stop has gone. Read the holding first and a stop that
+    fires in between reads as terminal while its shares still read as held: the
+    lot looks naked, and the back-fill puts a stop on a book that is flat by
+    then, which a margin account takes as a short-sale stop. Read the orders
+    first and the same fill shows as a position that is gone. The same rule as
+    `protected_close._read_truth`.
+    """
+    orders, stop_ids = _order_views(client)
+    return orders, stop_ids, client.list_positions()
 
 
 def _bars_for(ticker: str, session, end: date) -> tuple[list[Bar], list[date]]:
@@ -253,8 +308,70 @@ def _describe(act: Action, submitting: bool) -> None:
         )
 
 
-def _execute(client: AlpacaClient, actions: list[Action]) -> int:
-    """Apply the plan. One bad symbol must not stop the rest of the pass."""
+def _naked_now(client: AlpacaClient, ticker: str) -> float:
+    """The shares of `ticker` no stop covers, off the broker's book as it is now.
+
+    The plan's figure comes from a read taken before any of the pass's writes,
+    and a time exit before this one (release, confirm, sell, look up) can take
+    a minute. A lot sold in that time, by a council SELL approved on the phone
+    or by hand, is flat when its back-fill goes, and a margin account takes a
+    sell stop on a flat book as a short-sale stop. So the back-fill is sized
+    off orders read now and the holding read after them, as `_read_book` has
+    it: 0 when the lot is gone or not long. Raises when its protection is
+    ambiguous now, so nothing is placed and the pass fails.
+    """
+    orders = _order_views(client)[0]
+    lot = next((p for p in client.list_positions() if p.symbol == ticker), None)
+    if lot is None or lot.side != "long":
+        return 0.0
+    (row,) = coverage([PositionView(symbol=ticker, qty=lot.qty, side="long")], orders).symbols
+    if row.indeterminate_qty > QTY_EPSILON:
+        raise RuntimeError(
+            f"back-fill not placed: {row.indeterminate_qty:g} shares' protection is ambiguous now"
+        )
+    return row.naked_qty
+
+
+def _place_backfill(client: AlpacaClient, act: PlaceStop) -> None:
+    """One back-fill stop, for no more than the shares `_naked_now` finds naked."""
+    qty = min(act.quantity, _naked_now(client, act.ticker))
+    if qty <= QTY_EPSILON:
+        log.info(
+            "%-6s SKIP  back-fill: no naked shares now, sold or covered since the plan",
+            act.ticker,
+        )
+        return
+    placed = client.submit_order(
+        symbol=act.ticker,
+        qty=qty,
+        side="sell",
+        order_type="stop",
+        # GTC: a day stop expires at the close and leaves the position naked
+        # overnight, which is the window the whole back-fill exists to close.
+        time_in_force="gtc",
+        stop_price=act.stop_price,
+    )
+    log.info("%-6s stop placed, order %s", act.ticker, placed.id)
+
+
+def _execute(
+    client: AlpacaClient,
+    actions: list[Action],
+    trade_date: date | None = None,
+    *,
+    unclosed: list[str] | None = None,
+    uncovered: list[str] | None = None,
+    unsettled: dict[str, str] | None = None,
+) -> int:
+    """Apply the plan. One bad symbol must not stop the rest of the pass.
+
+    `trade_date` dates the time-exit stamp; the pass's UTC date when omitted.
+    Each time exit that did not close its position is appended to `unclosed`,
+    so the caller can cover what it left behind (`_recover_unclosed`), and each
+    one that may have left shares with no stop to `uncovered`, so it can say so.
+    One whose exit was sent and never ruled out goes into `unsettled`, keyed to
+    its stamp: that exit can still land, and a back-fill must look for it.
+    """
     failures = 0
     for act in actions:
         try:
@@ -262,39 +379,158 @@ def _execute(client: AlpacaClient, actions: list[Action]) -> int:
                 replaced = client.replace_order(act.stop_order_id, stop_price=act.new_stop)
                 log.info("%-6s ratcheted, new order %s", act.ticker, replaced.id)
             elif isinstance(act, PlaceStop):
-                placed = client.submit_order(
-                    symbol=act.ticker,
-                    qty=act.quantity,
-                    side="sell",
-                    order_type="stop",
-                    # GTC: a day stop expires at the close and leaves the
-                    # position naked overnight, which is the window the whole
-                    # back-fill exists to close.
-                    time_in_force="gtc",
-                    stop_price=act.stop_price,
-                )
-                log.info("%-6s stop placed, order %s", act.ticker, placed.id)
+                _place_backfill(client, act)
             else:
-                # Still the bare DELETE /positions/{symbol}, deliberately. That
-                # endpoint takes no client_order_id, so the close carries a
-                # broker id and the ledger books it as a flatten, outside the
-                # strategy (exit_quality). Stamping it means submitting our own
-                # sell with `derive_exit_client_order_id`, and that is not a
-                # relabel: sized off a quantity read earlier, with the position
-                # gone by then, it can open a short where this DELETE 404s.
-                # Protective orders are left alone too, so a close on shares a
-                # stop reserves is refused exactly as before. Making the exit
-                # execute is a separate change.
-                resp = client.close_position(act.ticker)
-                order_id = resp.get("id") if isinstance(resp, dict) else None
-                log.info(
-                    "%-6s closed on age, order %s (unstamped: books as a flatten)",
-                    act.ticker, order_id or "?",
+                # Not DELETE /positions/{symbol}: the GTC stop reserves every
+                # share of a protected position, so the broker refused that
+                # close on exactly the positions that have one, and what it did
+                # close carried a broker id and booked as a flatten.
+                # close_with_protection releases the stop, confirms it, sells
+                # the holding read after the release under the time-exit stamp,
+                # and re-arms the stop in the same pass if the sell fails.
+                outcome = close_with_protection(
+                    client, act.ticker, trade_date=trade_date or datetime.now(UTC).date()
                 )
+                if not outcome.ok:
+                    failures += 1
+                    if unclosed is not None:
+                        unclosed.append(act.ticker)
+                    if uncovered is not None and outcome.status in UNCOVERED_STATUSES:
+                        uncovered.append(f"{act.ticker} {outcome.status}")
+                    if unsettled is not None and outcome.client_order_id:
+                        unsettled[act.ticker] = outcome.client_order_id
+                _log_close(outcome)
         except Exception as exc:  # noqa: BLE001 — one bad symbol must not stop the pass
             failures += 1
             log.error("%-6s FAILED: %s", act.ticker, exc)
+            if not isinstance(act, RatchetStop | PlaceStop):
+                # Died somewhere inside the close: nothing says what it released.
+                if unclosed is not None:
+                    unclosed.append(act.ticker)
+                if uncovered is not None:
+                    uncovered.append(f"{act.ticker} close died: {exc}")
     return failures
+
+
+def _log_close(outcome: CloseOutcome) -> None:
+    """One line per time exit, naming the order and what was released or re-armed."""
+    parts = [outcome.status, outcome.detail]
+    if outcome.client_order_id:
+        parts.append(f"order {outcome.exit_order_id or '?'} ({outcome.client_order_id})")
+    if outcome.released:
+        parts.append("released " + ",".join(outcome.released))
+    if outcome.rearmed:
+        parts.append("re-armed " + ",".join(outcome.rearmed))
+    line = " | ".join(parts)
+    if outcome.ok:
+        log.info("%-6s closed on age: %s", outcome.ticker, line)
+    else:
+        log.error("%-6s FAILED time exit: %s", outcome.ticker, line)
+
+
+def _recover_unclosed(
+    client: AlpacaClient,
+    repo,
+    tickers: set[str],
+    entries: dict[str, date],
+    today: date,
+    config: ManagementConfig,
+    uncovered: list[str],
+    unsettled: dict[str, str] | None = None,
+) -> int:
+    """Back-fill, from a fresh broker read, the names a time exit left open.
+
+    The plan was made from the book as it stood before the pass, and a name
+    planned for a time exit got no back-fill in it: the close was going to make
+    one moot. A close that did not happen (refused, naked, unknown, or cut short
+    by a crash between the release and the sell) leaves that name exactly where
+    the back-fill exists for, and the next pass would pick it for a time exit
+    again rather than cover it. So those names are planned again here, from
+    positions and orders read now, under a config in which nothing is old
+    enough to exit: all that can come out of it is the back-fill, placed only
+    if --backfill-stops asked for back-fills at all.
+
+    Stricter than the main pass, because a failed close is where the book is
+    least settled: a name is left alone while any sell other than a working
+    stop still stands on it. That covers a stop still in `pending_cancel`, which
+    may yet fill; one in `stopped`, whose fill is on its way; an exit that
+    landed after all; a take-profit. Each reserves the shares or is about to
+    sell them, and a stop placed beside it is refused while the lot is held and
+    becomes a short once that sell fills.
+
+    A name whose exit was sent and never ruled out (`unsettled`) is back-filled
+    all the same, since it may never land, but through
+    `protected_close.cover_beside_exit`: that exit can land between this read
+    and the stop's POST, fill, and leave the stop on a flat book, so the stamp
+    and the book are read again once the stop stands, and it is taken back if
+    the exit got there first. A name it settles either way is off `uncovered`.
+
+    Returns how many placements failed. A book it could not read, or a
+    placement that failed, is also appended to `uncovered`: the names it was
+    handed may have shares with no stop, and it could not put one there.
+    """
+    try:
+        # Orders first, holding last (see `_read_book`).
+        orders, stop_ids, positions = _read_book(client)
+    except Exception as exc:  # noqa: BLE001 — reported and counted, never guessed past
+        log.error("re-cover after failed exits: book unreadable, nothing placed: %s", exc)
+        uncovered.append(f"re-cover could not read the book: {exc}")
+        return 1
+    held = [p for p in positions if p.symbol in tickers]
+    if not held:
+        return 0
+
+    standing: dict[str, str] = {}
+    for o in orders:
+        gone = o.status in RELEASED_STATUSES or o.status == "replaced"
+        a_working_stop = o.order_type in PROTECTIVE_TYPES and o.status in LIVE_STATUSES
+        if o.side == "sell" and o.remaining_qty > QTY_EPSILON and not gone and not a_working_stop:
+            standing.setdefault(o.symbol, f"{o.order_type} sell in {o.status}")
+    for p in held:
+        if p.symbol in standing:
+            log.info("%-6s SKIP  re-cover: a %s still stands on it", p.symbol, standing[p.symbol])
+    held = [p for p in held if p.symbol not in standing]
+
+    report = coverage([PositionView(symbol=p.symbol, qty=p.qty, side="long") for p in held], orders)
+    by_symbol = {row.symbol: row for row in report.symbols}
+    managed, bars_by_ticker = _build_managed(
+        client, repo, held, by_symbol, orders, stop_ids, entries, today
+    )
+    never_old = dataclasses.replace(config, max_bars=sys.maxsize)
+    actions, skips = plan_actions(managed, bars_by_ticker, never_old)
+    for skip in skips:
+        log.info("%-6s SKIP  re-cover: %-20s %s", skip.ticker, skip.reason, skip.detail)
+    backfills = [a for a in actions if isinstance(a, PlaceStop)]
+    for act in backfills:
+        _describe(act, True)
+    unsettled = unsettled or {}
+    failed = _execute(client, [a for a in backfills if a.ticker not in unsettled], today)
+    if failed:
+        uncovered.append(f"re-cover could not place {failed} back-fill stop(s)")
+    for act in (a for a in backfills if a.ticker in unsettled):
+        failed += _cover_beside_exit(client, act, unsettled[act.ticker], uncovered)
+    return failed
+
+
+def _cover_beside_exit(
+    client: AlpacaClient, act: PlaceStop, stamp: str, uncovered: list[str]
+) -> int:
+    """One back-fill beside an exit that may still land; 1 if it is not settled."""
+    try:
+        outcome = cover_beside_exit(
+            client, act.ticker, stamp=stamp, qty=act.quantity, stop_price=act.stop_price
+        )
+    except Exception as exc:  # noqa: BLE001 — one bad symbol must not stop the pass
+        log.error("%-6s FAILED back-fill beside exit %s: %s", act.ticker, stamp, exc)
+        uncovered.append(f"{act.ticker} back-fill beside exit {stamp} died: {exc}")
+        return 1
+    _log_close(outcome)
+    if outcome.status in CLOSED_STATUSES or outcome.status == "unchanged":
+        # Protected, or gone with nothing standing: the close's doubt is settled.
+        uncovered[:] = [u for u in uncovered if not u.startswith(f"{act.ticker} ")]
+        return 0
+    uncovered.append(f"{act.ticker} {outcome.status} beside exit {stamp}")
+    return 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -344,12 +580,11 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     with AlpacaClient() as client:
-        positions_raw = client.list_positions()
+        orders, stop_ids, positions_raw = _read_book(client)
         if not positions_raw:
             log.info("no open positions")
             return 0
 
-        orders, stop_ids = _order_views(client)
         report = coverage(
             [PositionView(symbol=p.symbol, qty=p.qty, side="long") for p in positions_raw],
             orders,
@@ -378,8 +613,27 @@ def main(argv: list[str] | None = None) -> int:
             log.info("dry run — pass --submit to act")
             return 0
 
-        failures = _execute(client, actions)
-        return 1 if failures else 0
+        unclosed: list[str] = []
+        uncovered: list[str] = []
+        unsettled: dict[str, str] = {}
+        failures = _execute(
+            client, actions, today, unclosed=unclosed, uncovered=uncovered, unsettled=unsettled
+        )
+        if unclosed:
+            log.warning(
+                "re-cover: time exits left %s open; re-reading the book", ", ".join(unclosed)
+            )
+            failures += _recover_unclosed(
+                client, repo, set(unclosed), entries, today, config, uncovered, unsettled
+            )
+        if uncovered:
+            log.error(
+                "UNCOVERED: shares may have no stop, now or once a pending cancel lands, "
+                "or a stop may stand on a lot already sold: %s",
+                "; ".join(uncovered),
+            )
+            return EXIT_UNCOVERED
+        return EXIT_FAILED if failures else EXIT_OK
 
 
 if __name__ == "__main__":

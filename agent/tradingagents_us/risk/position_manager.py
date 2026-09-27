@@ -67,6 +67,25 @@ DEFAULT_FLAT_PNL_PCT = 0.03
 #: the market, which is the one direction that must never happen by accident.
 PRICE_DECIMALS = 2
 
+#: The exit budget: one pass closes at most this many positions, and never more
+#: than this fraction of the positions it examined (see `exit_budget`). The pass
+#: acts on whatever it is handed, so without a cap one bad input — a bar cache
+#: that ages every name at once, a mark that reads every position as flat —
+#: liquidates the book in a single run, and nobody sees it until it is done.
+#: With it, the same fault costs at most three names before a person can look.
+#: The budget is a trade date's, not a process's: a pass run again the same day
+#: (a missed run replayed at boot, a re-run by hand) spends what the earlier
+#: ones left of it, counted off the exits they stamped (`plan_actions`).
+#:
+#: It counts time exits, the only closes this module plans. A stop moved to the
+#: market is a close as well, and one it never counts: a flat tape or bars on
+#: the wrong scale put every stop there in the same pass. Rationing stops is not
+#: the answer, since a deferred stop is protection left unmaintained exactly when
+#: the book looks wrong. The stop logic has to refuse such a level outright, and
+#: this cap is the whole story only while it does.
+DEFAULT_MAX_CLOSES_PER_RUN = 3
+DEFAULT_MAX_CLOSE_FRACTION = 0.25
+
 #: ATR multiple for the trailing stop. 3.0 is the `atr_trailing_stop` default
 #: and is deliberately loose: this stop exists to end a broken trade, not to
 #: scalp a wick.
@@ -178,6 +197,7 @@ Action = RatchetStop | PlaceStop | TimeExit
 #: and "could not decide" look identical in a log that only records actions,
 #: and this system has already been bitten by a guard that silently did nothing.
 SkipReason = Literal[
+    "exit_budget",
     "no_stop_order",
     "no_bars",
     "insufficient_bars",
@@ -210,6 +230,11 @@ class ManagementConfig:
     #: Off by default: placing a stop is an order, and this module's caller
     #: decides when it is allowed to submit one.
     backfill_missing_stops: bool = False
+    #: The per-pass cap on time exits; see DEFAULT_MAX_CLOSES_PER_RUN. Stop
+    #: maintenance never counts against it, which is safe only while no stop is
+    #: moved to the market (see there). 0 closes nothing.
+    max_closes_per_run: int = DEFAULT_MAX_CLOSES_PER_RUN
+    max_close_fraction: float = DEFAULT_MAX_CLOSE_FRACTION
 
 
 def true_range(prev_close: float, high: float, low: float) -> float:
@@ -294,6 +319,75 @@ def _no_atr(pos: ManagedPosition, bars: Sequence[Bar], config: ManagementConfig)
     return Skip(pos.ticker, "insufficient_bars", f"have={len(bars)} need={need}")
 
 
+def exit_budget(n_positions: int, config: ManagementConfig) -> int:
+    """How many positions one pass may close.
+
+    The smaller of the count cap and the fraction of the book, but at least one
+    while the count cap allows any. Without that floor a book of three names
+    could never time-exit at all (25% of 3 rounds down to 0). A book that small
+    is one close from flat whatever the cap says.
+    """
+    if config.max_closes_per_run <= 0 or n_positions <= 0:
+        return 0
+    by_fraction = max(1, math.floor(n_positions * config.max_close_fraction))
+    return min(config.max_closes_per_run, by_fraction)
+
+
+def _unusable(pos: ManagedPosition) -> Skip | None:
+    """Why a position cannot be reasoned about at all, or None when it can."""
+    if pos.current_price <= 0 or pos.avg_entry_price <= 0:
+        return Skip(pos.ticker, "non_positive_price", f"price={pos.current_price}")
+    if pos.bars_held is None:
+        # A held name with no bars at all: its age cannot be read, so the time
+        # exit cannot be evaluated, and there is no ATR for a stop. Said out
+        # loud because the alternative, an age of 0, looks exactly like a
+        # position opened today and never ages out.
+        return Skip(pos.ticker, "no_bars", _NO_BARS_DETAIL)
+    return None
+
+
+def _time_exit_due(pos: ManagedPosition, config: ManagementConfig) -> bool:
+    if _unusable(pos) is not None or pos.bars_held is None:
+        return False
+    pnl_pct = pos.current_price / pos.avg_entry_price - 1.0
+    return time_exit(pos.bars_held, config.max_bars, pnl_pct, config.flat_pnl_pct)
+
+
+def _ration_exits(
+    positions: Sequence[ManagedPosition],
+    config: ManagementConfig,
+    exited_today: frozenset[str] = frozenset(),
+) -> tuple[set[str], dict[str, Skip]]:
+    """Which due time exits this pass takes, and a Skip for each one it defers.
+
+    Most overdue first: the position that has sat longest past its window has
+    the weakest claim on the capital. A deferred close is not dropped. It is
+    reported, it keeps its stop maintenance this pass, and the next pass takes
+    it if it is still due.
+
+    The budget is the trade date's. It is sized off the book as it stood
+    before today's exits, and each name `exited_today` has spent its share. A
+    name among them that is still held and due (an exit queued for the open)
+    is let through again without a second share: its close sends nothing new.
+    """
+    due = sorted(
+        (p for p in positions if _time_exit_due(p, config)),
+        key=lambda p: (-(p.bars_held or 0), p.ticker),
+    )
+    book = len({p.ticker for p in positions} | exited_today)
+    left = max(0, exit_budget(book, config) - len(exited_today))
+    fresh = [p for p in due if p.ticker not in exited_today]
+    detail = (
+        f"close deferred: {left} of {len(fresh)} due this pass "
+        f"(cap {config.max_closes_per_run}, {config.max_close_fraction:.0%} "
+        f"of {book} positions, {len(exited_today)} closed today)"
+    )
+    allowed = {p.ticker for p in due if p.ticker in exited_today}
+    allowed |= {p.ticker for p in fresh[:left]}
+    deferred = {p.ticker: Skip(p.ticker, "exit_budget", detail) for p in fresh[left:]}
+    return allowed, deferred
+
+
 #: The defaults, as a singleton. A dataclass call in a parameter default is
 #: evaluated once at import anyway — naming it says so instead of hiding it.
 DEFAULT_CONFIG = ManagementConfig()
@@ -303,37 +397,41 @@ def plan_actions(
     positions: Sequence[ManagedPosition],
     bars_by_ticker: dict[str, Sequence[Bar]],
     config: ManagementConfig = DEFAULT_CONFIG,
+    *,
+    exited_today: frozenset[str] = frozenset(),
 ) -> tuple[list[Action], list[Skip]]:
     """Decide what to do with every open position.
 
     Pure: no clock, no network, no broker. Returns the actions to take and, for
-    every position NOT acted on, why.
+    every position NOT acted on, why. Time exits are rationed by `exit_budget`;
+    stop maintenance is not, so it must never set a stop at the market (see
+    DEFAULT_MAX_CLOSES_PER_RUN). `exited_today` names the positions a time exit
+    already sold, or is selling, under today's stamp: the budget is the trade
+    date's, and they have spent part of it.
     """
     actions: list[Action] = []
     skips: list[Skip] = []
+    exits, deferred = _ration_exits(positions, config, exited_today)
 
     for pos in positions:
-        if pos.current_price <= 0 or pos.avg_entry_price <= 0:
-            skips.append(Skip(pos.ticker, "non_positive_price", f"price={pos.current_price}"))
+        unusable = _unusable(pos)
+        if unusable is not None:
+            skips.append(unusable)
             continue
-
-        if pos.bars_held is None:
-            # A held name with no bars at all: its age cannot be read, so the
-            # time exit cannot be evaluated, and there is no ATR for a stop.
-            # Said out loud because the alternative, an age of 0, looks exactly
-            # like a position opened today and never ages out.
-            skips.append(Skip(pos.ticker, "no_bars", _NO_BARS_DETAIL))
-            continue
+        assert pos.bars_held is not None  # _unusable skipped the unknown age
 
         pnl_pct = pos.current_price / pos.avg_entry_price - 1.0
 
         # ---- Time exit ----------------------------------------------------
         # Checked first: closing a position makes ratcheting its stop moot, and
         # emitting both would have the runner replace a stop it is about to
-        # cancel.
-        if time_exit(pos.bars_held, config.max_bars, pnl_pct, config.flat_pnl_pct):
+        # cancel. A close the budget deferred is still held tonight, so it goes
+        # on to the stop logic like any other position.
+        if pos.ticker in exits:
             actions.append(TimeExit(pos.ticker, pos.quantity, pos.bars_held, pnl_pct))
             continue
+        if pos.ticker in deferred:
+            skips.append(deferred[pos.ticker])
 
         # Past the age window but still moving is not a skip: the thesis is
         # playing out, so the position simply carries on to the stop logic.

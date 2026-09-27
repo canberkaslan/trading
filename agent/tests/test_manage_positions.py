@@ -847,6 +847,83 @@ class TestTimeExitAttributionThroughTheLedger:
         assert list(self._booked_as(fake, db_url, monkeypatch).values()) == ["time_exit"]
 
 
+AGED = [f"T{i}" for i in range(8)]
+
+
+@pytest.fixture
+def aged_book_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    """A flat tape for eight names, every one of them due a time exit."""
+    monkeypatch.setenv("KILL_SWITCH_FILE", str(tmp_path / "kill_switch.state"))
+    url = f"sqlite:///{tmp_path / 'bars.db'}"
+    repo = TradeLogRepository(engine=create_engine(url, future=True))
+    flat = {"o": 100.0, "h": 101.0, "l": 99.0, "c": 100.0}
+    bars = [{"t": (TODAY - timedelta(days=d)).isoformat(), **flat} for d in range(BAR_DAYS, 0, -1)]
+    with repo.session() as session:
+        for symbol in AGED:
+            write_bars(session, symbol, bars)
+    return url
+
+
+class TestExitBudgetThroughThePass:
+    """What reaches the broker when every name in the book is due at once."""
+
+    def _book(self) -> FakeBroker:
+        return FakeBroker(
+            positions=[_position(s, 100.5) for s in AGED],
+            orders=[_stop(f"stop-{s}", s, 90.0) for s in AGED],
+            fills=[_buy(s) for s in AGED],
+        )
+
+    def test_only_the_budget_is_sold_and_the_rest_keep_their_stops(
+        self, aged_book_db: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake = self._book()
+
+        rc = _run(monkeypatch, fake, "--submit", "--db-url", aged_book_db)
+
+        assert rc == 0
+        sold = [w[1]["symbol"] for w in fake.writes
+                if w[0] == "submit_order" and w[1]["order_type"] == "market"]
+        # Eight names: a quarter is two, under the cap of three.
+        assert sold == ["T0", "T1"]
+        assert [w[1] for w in fake.writes if w[0] == "cancel_order"] == ["stop-T0", "stop-T1"]
+        # The six deferred are still held, and their stops are maintained, not released.
+        ratcheted = [w[1] for w in fake.writes if w[0] == "replace_order"]
+        assert ratcheted == [f"stop-{s}" for s in AGED[2:]]
+        assert sorted(fake.positions) == AGED[2:]
+
+    def test_a_second_pass_on_the_same_trade_date_closes_nothing_more(
+        self, aged_book_db: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A regular-hours run (the exits fill at once), then another the same
+        # day: a missed run replayed at boot before the scheduled one, or a
+        # re-run by hand. Each pass took a fresh budget off the names still
+        # held, and three passes sold four of the eight names.
+        fake = self._book()
+
+        for _ in range(3):
+            _run(monkeypatch, fake, "--submit", "--db-url", aged_book_db)
+
+        sold = [w[1]["symbol"] for w in fake.writes
+                if w[0] == "submit_order" and w[1]["order_type"] == "market"]
+        assert sold == ["T0", "T1"]
+        assert sorted(fake.positions) == AGED[2:]
+
+    def test_the_deferred_names_are_reported(
+        self, aged_book_db: str, monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        caplog.set_level(logging.INFO, logger="manage_positions")
+
+        _run(monkeypatch, self._book(), "--db-url", aged_book_db)
+
+        (line,) = [r for r in caplog.records if r.getMessage().startswith("exit budget")]
+        assert line.levelno == logging.WARNING
+        assert "closing 2 of 8 due" in line.getMessage()
+        assert "deferred: T2, T3, T4, T5, T6, T7" in line.getMessage()
+        assert sum("SKIP  exit_budget" in r.getMessage() for r in caplog.records) == 6
+
+
 class TestEmptyBarCache:
     def test_a_held_name_with_no_bars_is_reported_and_never_closed(
         self, db_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture

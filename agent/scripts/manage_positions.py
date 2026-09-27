@@ -47,6 +47,14 @@ Safety, in the order it matters:
     cancel, confirm the cancel, sell the holding read after that, verify, and
     re-arm the stop in the same pass if the sell did not go through
     (`execution.protected_close`).
+  * One pass time-exits at most 3 positions, or 25% of those examined if fewer
+    (`position_manager.exit_budget`), so one bad input cannot liquidate the book
+    through time exits in a single run. The budget is the trade date's: a pass
+    run again the same day counts the exits already stamped today against it.
+    The rest are reported as deferred and keep their stops. Stop maintenance
+    does not count against the budget. A stop moved to the last price is a
+    close all the same, so the claim holds for the whole pass only while the
+    planner refuses such a level.
   * Nothing here opens or grows a position.
 """
 
@@ -62,6 +70,7 @@ from datetime import UTC, date, datetime, timedelta
 from tradingagents_us.dataflows.alpaca_broker import AlpacaClient
 from tradingagents_us.execution.protected_close import (
     CLOSED_STATUSES,
+    FAILED_EXIT_STATUSES,
     RELEASED_STATUSES,
     CloseOutcome,
     close_with_protection,
@@ -77,6 +86,8 @@ from tradingagents_us.risk.position_manager import (
     ManagementConfig,
     PlaceStop,
     RatchetStop,
+    TimeExit,
+    exit_budget,
     plan_actions,
 )
 from tradingagents_us.risk.stop_coverage import (
@@ -96,6 +107,9 @@ log = logging.getLogger("manage_positions")
 #: than stop_coverage's LIVE_STATUSES on purpose: this set gates a WRITE.
 LIVE_ORDER_STATUSES = frozenset({"held", "new", "accepted", "pending_new", "partially_filled"})
 
+#: Statuses in which a sell never sold a share and never will.
+_NEVER_SOLD = FAILED_EXIT_STATUSES | {"replaced"}
+
 #: Enough history for a 14-period ATR with room for holidays. Calendar days.
 BAR_LOOKBACK_DAYS = 60
 
@@ -109,7 +123,9 @@ EXIT_UNCOVERED = 3
 UNCOVERED_STATUSES = frozenset({"unknown", "naked"})
 
 
-def _order_views(client: AlpacaClient) -> tuple[list[OrderView], dict[tuple[str, float], str]]:
+def _order_views(
+    client: AlpacaClient,
+) -> tuple[list[OrderView], dict[tuple[str, float], str], frozenset[tuple[str, str]]]:
     """Every live order as a pure view, plus a map back to the broker order id.
 
     Two things this gets right that the obvious version does not:
@@ -126,6 +142,10 @@ def _order_views(client: AlpacaClient) -> tuple[list[OrderView], dict[tuple[str,
     The id map exists because `OrderView` deliberately carries no id (it is the
     pure view the coverage rules are written against) while amending a stop needs
     one. Keyed on symbol + stop price, which is unique for a live protective leg.
+
+    Last, (symbol, client id) for every sell that sold or may still sell, read
+    off the same listing: what today's time exits have spent of the exit
+    budget is counted from their stamps there (`_exited_on`).
     """
     raw = client.list_orders(status="all", limit=500, nested=True)
     flat = flatten_orders(raw)
@@ -146,12 +166,17 @@ def _order_views(client: AlpacaClient) -> tuple[list[OrderView], dict[tuple[str,
         for o in flat
         if o.stop_price is not None and o.status.lower() in LIVE_ORDER_STATUSES
     }
-    return views, ids
+    sells = frozenset(
+        (o.symbol, o.client_order_id)
+        for o in flat
+        if o.side.lower() == "sell" and o.status.lower() not in _NEVER_SOLD
+    )
+    return views, ids, sells
 
 
 def _read_book(
     client: AlpacaClient,
-) -> tuple[list[OrderView], dict[tuple[str, float], str], list]:
+) -> tuple[list[OrderView], dict[tuple[str, float], str], list, frozenset[tuple[str, str]]]:
     """The orders, then the holding, in that order and never the other.
 
     A sell that fills between two reads must show up as fewer shares held,
@@ -162,8 +187,24 @@ def _read_book(
     first and the same fill shows as a position that is gone. The same rule as
     `protected_close._read_truth`.
     """
-    orders, stop_ids = _order_views(client)
-    return orders, stop_ids, client.list_positions()
+    orders, stop_ids, sells = _order_views(client)
+    return orders, stop_ids, client.list_positions(), sells
+
+
+def _exited_on(sells: frozenset[tuple[str, str]], day: date) -> frozenset[str]:
+    """The names a time exit sold, or is selling, under `day`'s stamp.
+
+    The stamp or a retry of it (`-rN`), in a status that sold or still can:
+    what earlier passes on the same trade date spent of the exit budget.
+    """
+    from tradingagents_us.execution.executor import derive_exit_client_order_id
+
+    out = set()
+    for symbol, coid in sells:
+        stamp = derive_exit_client_order_id(symbol, day, "time")
+        if coid == stamp or coid.startswith(f"{stamp}-r"):
+            out.add(symbol)
+    return frozenset(out)
 
 
 def _bars_for(ticker: str, session, end: date) -> tuple[list[Bar], list[date]]:
@@ -412,6 +453,30 @@ def _execute(
     return failures
 
 
+def _report_exit_budget(
+    actions: list[Action], skips: list, examined: int, config: ManagementConfig
+) -> None:
+    """Say what the exit budget held back, in one line a person will read.
+
+    A deferred close is not a failure: it is still held, its stop is still
+    maintained, and the next pass takes it if it is still due. But several at
+    once is what a bad input looks like (a bar cache that ages every name, a
+    mark that reads every position flat), so it is a warning, not a skip line.
+    """
+    deferred = [s.ticker for s in skips if s.reason == "exit_budget"]
+    if not deferred:
+        return
+    closing = sum(1 for a in actions if isinstance(a, TimeExit))
+    log.warning(
+        "exit budget: closing %d of %d due (budget %d of %d positions); deferred: %s",
+        closing,
+        closing + len(deferred),
+        exit_budget(examined, config),
+        examined,
+        ", ".join(deferred),
+    )
+
+
 def _log_close(outcome: CloseOutcome) -> None:
     """One line per time exit, naming the order and what was released or re-armed."""
     parts = [outcome.status, outcome.detail]
@@ -471,7 +536,7 @@ def _recover_unclosed(
     """
     try:
         # Orders first, holding last (see `_read_book`).
-        orders, stop_ids, positions = _read_book(client)
+        orders, stop_ids, positions, _ = _read_book(client)
     except Exception as exc:  # noqa: BLE001 — reported and counted, never guessed past
         log.error("re-cover after failed exits: book unreadable, nothing placed: %s", exc)
         uncovered.append(f"re-cover could not read the book: {exc}")
@@ -580,7 +645,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     with AlpacaClient() as client:
-        orders, stop_ids, positions_raw = _read_book(client)
+        orders, stop_ids, positions_raw, sells = _read_book(client)
         if not positions_raw:
             log.info("no open positions")
             return 0
@@ -597,10 +662,12 @@ def main(argv: list[str] | None = None) -> int:
             client, repo, positions_raw, by_symbol, orders, stop_ids, entries, today
         )
 
-        actions, skips = plan_actions(managed, bars_by_ticker, config)
+        exited_today = _exited_on(sells, today)
+        actions, skips = plan_actions(managed, bars_by_ticker, config, exited_today=exited_today)
 
         for skip in skips:
             log.info("%-6s SKIP  %-20s %s", skip.ticker, skip.reason, skip.detail)
+        _report_exit_budget(actions, skips, len(managed), config)
 
         if not actions:
             log.info("nothing to do (%d positions examined)", len(managed))

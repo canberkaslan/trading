@@ -4,9 +4,21 @@ The planner has its own tests; nothing covered the runner that turns its plan
 into broker calls, and `close_position` appeared in no test at all. These drive
 `main()` with a real bar cache and a fake client that records every call, and
 assert on what would reach the broker: nothing in a dry run, exactly the plan
-with --submit, and a TimeExit that is still the bare close it was — no cancel
-of the protective stop and no sell of our own, so a close refused today stays
-refused.
+with --submit, and one bad symbol never stopping the rest of the pass.
+
+The TimeExit has two known defects, and this tranche changes neither, because
+fixing either changes what reaches the broker:
+
+  * it is a bare DELETE /positions/{symbol}, so on any position whose GTC stop
+    reserves the shares (every bracket entry, and every stop this pass
+    back-fills) the broker refuses it: held_for_orders=qty, available=0;
+  * the DELETE carries a broker-generated client id, so even a close that goes
+    through books as an operator "flatten" and drops out of the strategy's
+    eval roll-up.
+
+Each is pinned twice: a `known_bug` test that asserts today's behaviour (a
+guard that this tranche did not move order flow), and a strict xfail that
+states the target. The follow-up that fixes the exit must flip both.
 """
 
 from __future__ import annotations
@@ -247,44 +259,7 @@ class TestDryRunVersusSubmit:
         assert fake.calls == []
 
 
-class TestTimeExitIsStillTheBareClose:
-    """Labelling only. The close must fail in exactly the cases it fails today."""
-
-    def test_a_refused_close_is_counted_and_the_rest_of_the_pass_still_runs(
-        self, db_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        caplog.set_level(logging.INFO, logger="manage_positions")
-        fake = _book(refuse_close={"XOM"})
-
-        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
-
-        assert rc == 1
-        # Same calls as a clean pass: the refusal is not "fixed" by cancelling
-        # the stop that reserves the shares, nor worked around with a sell.
-        assert fake.writes == EXPECTED_PLAN
-        assert "XOM    FAILED" in caplog.text
-        assert "held_for_orders" in caplog.text
-
-    def test_the_close_never_cancels_protection_or_submits_a_sell_of_its_own(self) -> None:
-        fake = _book()
-
-        failures = mp._execute(fake, [TimeExit("XOM", 10.0, 45, 0.005)])
-
-        assert failures == 0
-        assert fake.writes == [("close_position", "XOM")]
-
-    def test_the_close_log_names_the_order_and_what_the_ledger_will_call_it(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        # Until the close carries its own stamp, it books as a flatten. The log
-        # says so, and names the order so it can be traced by hand.
-        caplog.set_level(logging.INFO, logger="manage_positions")
-
-        mp._execute(_book(), [TimeExit("XOM", 10.0, 45, 0.005)])
-
-        assert "close-XOM" in caplog.text
-        assert "books as a flatten" in caplog.text
-
+class TestPerSymbolFailureIsolation:
     def test_every_action_is_attempted_and_each_failure_counted(self) -> None:
         fake = _book(refuse_close={"XOM", "NVDA"})
 
@@ -305,6 +280,215 @@ class TestTimeExitIsStillTheBareClose:
             "close_position",
             "submit_order",
         ]
+
+    def test_a_refused_close_is_counted_and_the_rest_of_the_pass_still_runs(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO, logger="manage_positions")
+        fake = _book(refuse_close={"XOM"})
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        assert rc == 1
+        assert ("replace_order", "stop-aapl", {"stop_price": 114.0}) in fake.writes
+        assert [w for w in fake.writes if w[0] == "submit_order"]
+        assert "XOM    FAILED" in caplog.text
+        assert "held_for_orders" in caplog.text
+
+
+class ReservingAlpaca(FakeAlpaca):
+    """A broker that reserves shares for live sell orders, as Alpaca does.
+
+    DELETE /positions/{symbol} is refused while any live sell order holds the
+    shares, and goes through once they are released. Closes it accepts become
+    filled market-sell orders carrying a broker-generated client id, since that
+    endpoint takes none; a submitted order keeps the id it was given.
+    """
+
+    def __init__(self, *args: object, refuse_after_release: set[str] | None = None, **kw) -> None:
+        super().__init__(*args, **kw)  # type: ignore[arg-type]
+        self.cancelled: set[str] = set()
+        self.refuse_after_release = refuse_after_release or set()
+        self.created: list[Order] = []
+
+    def cancel_order(self, order_id: str) -> dict:
+        self.cancelled.add(order_id)
+        return super().cancel_order(order_id)
+
+    def _reserved(self, symbol: str) -> float:
+        return sum(
+            o.qty - o.filled_qty
+            for o in self.orders
+            if o.symbol == symbol and o.side == "sell" and o.id not in self.cancelled
+        )
+
+    def close_position(self, symbol: str) -> dict:
+        self.calls.append(("close_position", symbol))
+        held = self._reserved(symbol)
+        if held > 0:
+            raise RuntimeError(
+                f"alpaca DELETE /positions/{symbol} failed 403: "
+                f'{{"code":40310000,"held_for_orders":"{held:g}","available":"0"}}'
+            )
+        if symbol in self.refuse_after_release:
+            raise RuntimeError(f"alpaca DELETE /positions/{symbol} failed 422: market closed")
+        pos = next(p for p in self.positions if p.symbol == symbol)
+        order = self._order(f"close-{symbol}", symbol, pos.qty, "market", "68c3c73e-broker-uuid")
+        return {"id": order.id, "client_order_id": order.client_order_id}
+
+    def submit_order(self, **kw) -> SimpleNamespace:
+        placed = super().submit_order(**kw)
+        self._order(
+            placed.id,
+            kw["symbol"],
+            kw["qty"],
+            kw.get("order_type", "market"),
+            kw.get("client_order_id") or "9f1d-broker-uuid",
+        )
+        return placed
+
+    def _order(self, oid: str, symbol: str, qty: float, order_type: str, coid: str) -> Order:
+        order = Order(
+            id=oid,
+            client_order_id=coid,
+            symbol=symbol,
+            side="sell",
+            qty=qty,
+            filled_qty=qty,
+            order_type=order_type,
+            status="filled",
+            submitted_at=datetime.now(UTC),
+            filled_avg_price=100.5,
+        )
+        self.created.append(order)
+        return order
+
+
+def _aged_xom(**kw) -> ReservingAlpaca:
+    """XOM alone: flat for 45 bars, fully covered by a GTC stop -> TimeExit."""
+    return ReservingAlpaca(
+        positions=[_position("XOM", 100.5)],
+        orders=[_stop("stop-xom", "XOM", 90.0)],
+        fills=[_buy("XOM")],
+        **kw,
+    )
+
+
+class TestTimeExitAgainstReservedShares:
+    """The time exit is the system's only rule-driven exit; see the module docstring."""
+
+    def test_known_bug_time_exit_refused_while_stop_reserves_shares(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Today, and deliberately unchanged in the zero-order tranche: the stop
+        # is left in place, the close is refused, and nothing else is sent.
+        caplog.set_level(logging.INFO, logger="manage_positions")
+        fake = _aged_xom()
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        assert rc == 1
+        assert fake.writes == [("close_position", "XOM")]
+        assert "held_for_orders" in caplog.text
+
+    def test_known_bug_time_exit_never_frees_the_shares_its_stop_reserves(self) -> None:
+        fake = _book()
+
+        failures = mp._execute(fake, [TimeExit("XOM", 10.0, 45, 0.005)])
+
+        assert failures == 0
+        assert fake.writes == [("close_position", "XOM")]
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="known bug: TimeExit does not release the stop that reserves its shares",
+    )
+    def test_target_time_exit_releases_the_reserving_stop_then_closes(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake = _aged_xom()
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        assert rc == 0
+        assert fake.writes == [("cancel_order", "stop-xom"), ("close_position", "XOM")]
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="known bug: TimeExit has no path that re-arms a stop it released",
+    )
+    def test_target_a_close_that_fails_after_the_release_re_arms_the_stop(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake = _aged_xom(refuse_after_release={"XOM"})
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        assert rc == 1
+        rearm = [w for w in fake.writes if w[0] == "submit_order"]
+        assert [(w[1]["symbol"], w[1]["order_type"], w[1]["stop_price"], w[1]["qty"])
+                for w in rearm] == [("XOM", "stop", 90.0, 10.0)]
+        assert rearm[0][1]["time_in_force"] == "gtc"
+
+    def test_the_close_log_names_the_order_and_what_the_ledger_will_call_it(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Until the close carries its own stamp, it books as a flatten. The log
+        # says so, and names the order so it can be traced by hand.
+        caplog.set_level(logging.INFO, logger="manage_positions")
+
+        mp._execute(_book(), [TimeExit("XOM", 10.0, 45, 0.005)])
+
+        assert "close-XOM" in caplog.text
+        assert "books as a flatten" in caplog.text
+
+
+class TestTimeExitAttributionThroughTheLedger:
+    """What the ledger books a production time exit as, from the pass to reconcile.
+
+    The classifier knows a `time_exit` class and the id helper can mint the
+    stamp it reads (test_exit_quality), but no production path sends that id.
+    This follows the order the pass really produces into the reconcile step
+    that stores the class, so it cannot be satisfied by the helpers alone.
+    """
+
+    def _booked_as(self, db_url: str, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+        from scripts.reconcile import attribute_exits, to_fills
+        from tradingagents_us.execution.reconcile import reconcile_fills
+
+        # No stop reserving the shares, so today's DELETE goes through and
+        # there is an order to attribute.
+        fake = ReservingAlpaca(
+            positions=[_position("XOM", 100.5)], orders=[], fills=[_buy("XOM")]
+        )
+        _run(monkeypatch, fake, "--submit", "--db-url", db_url)
+        (close,) = [o for o in fake.created if o.symbol == "XOM"]
+        sell = FillActivity(
+            id="fill-XOM-close",
+            symbol="XOM",
+            side="sell",
+            qty=close.qty,
+            price=100.5,
+            transaction_time=datetime.now(UTC),
+            order_id=close.id,
+        )
+        activities = [*fake.fills, sell]
+        closed = reconcile_fills(to_fills(activities)).closed
+        assert len(closed) == 1
+        return attribute_exits(closed, activities, fake.created)
+
+    def test_known_bug_a_production_time_exit_books_as_a_flatten(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assert list(self._booked_as(db_url, monkeypatch).values()) == ["flatten"]
+
+    @pytest.mark.xfail(
+        strict=True, reason="TimeExit is an unstamped DELETE; books as flatten"
+    )
+    def test_target_a_production_time_exit_books_as_a_time_exit(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assert list(self._booked_as(db_url, monkeypatch).values()) == ["time_exit"]
 
 
 class TestEmptyBarCache:

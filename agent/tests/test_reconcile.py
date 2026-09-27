@@ -339,7 +339,9 @@ class TestExitAttributionAtWriteTime:
     def test_a_stamped_time_exit_is_stored_as_a_time_exit(self) -> None:
         # What the ledger stores is what the eval scores. Stored as a flatten
         # it drops out of the strategy roll-up; as a decision sell it credits a
-        # council verdict that was never given.
+        # council verdict that was never given. The id here is hand-written:
+        # production time exits carry no stamp yet and store as a flatten
+        # (test_manage_positions.TestTimeExitAttributionThroughTheLedger).
         from scripts.reconcile import attribute_exits
 
         time_exit = self._order("aged", "market", "tr-exit-time-AAPL-20260803")

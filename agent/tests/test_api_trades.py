@@ -376,7 +376,8 @@ class TestExitAttribution:
     ) -> None:
         # The read path re-validates the stored string. A class the reader does
         # not know is dropped as unattributed, so a time exit written correctly
-        # at reconcile time would still vanish from the split here.
+        # at reconcile time would still vanish from the split here. (Stored by
+        # hand: production time exits are not stamped yet and store as flatten.)
         repo.upsert_closed_trades(
             [_trade("t1", "XOM", 12.0), _trade("t2", "MSFT", -600.0, day=1)],
             exit_classes={"t1": "time_exit", "t2": "flatten"},

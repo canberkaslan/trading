@@ -190,12 +190,17 @@ class TestBuckets:
 
 
 class TestTimeExitAttribution:
-    """The position manager's own time exit, booked as the strategy's exit.
+    """How a STAMPED time exit would be booked: the classifier and the id helper.
 
     Until it had a class of its own, a time exit could only land in "flatten"
     (no agent prefix) or "decision_sell" (a stamped id read by the old
     prefix-only rule). The first drops the strategy's own exits out of the
     strategy roll-up; the second credits a council decision nobody made.
+
+    Unit tests of two helpers only. No production path sends this stamp yet:
+    the TimeExit is a bare DELETE with a broker id and books as "flatten".
+    test_manage_positions.TestTimeExitAttributionThroughTheLedger follows the
+    real order into reconcile and pins that, with a strict xfail for the fix.
     """
 
     STAMP = "tr-exit-time-XOM-20260927"
@@ -203,9 +208,9 @@ class TestTimeExitAttribution:
     def test_a_stamped_time_exit_is_a_time_exit_not_a_decision(self) -> None:
         assert classify_exit(_order("market", self.STAMP)) == "time_exit"
 
-    def test_the_executor_stamp_is_what_the_classifier_reads(self) -> None:
-        # The seam between the two modules: a stamp the classifier did not
-        # recognise would book every time exit wrong while both unit tests pass.
+    def test_the_id_helper_and_the_classifier_agree(self) -> None:
+        # The two helpers agree on the format. That is all this proves: nothing
+        # in production calls the helper yet (see the class docstring).
         from tradingagents_us.execution.executor import derive_exit_client_order_id
 
         client_id = derive_exit_client_order_id("xom", date(2026, 9, 27), "time")

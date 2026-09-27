@@ -380,6 +380,11 @@ def derive_exit_client_order_id(ticker: str, trade_date: date, reason: str) -> s
 
     An unknown reason raises instead of minting an id the classifier would
     book as `unknown`: a stamp that does not attribute is not worth sending.
+
+    No caller yet. The TimeExit still goes out as a bare DELETE that carries a
+    broker id, so production time exits book as "flatten" until the exit is
+    reworked to submit its own sell (an order-flow change; see
+    scripts/manage_positions.py `_execute`).
     """
     if reason not in EXIT_REASON_CLASSES:
         raise ValueError(

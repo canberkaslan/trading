@@ -1,15 +1,19 @@
-"""daily_run.sh forwards the cap env vars to scripts.trade, and only when set.
+"""No cap env var reaches scripts.trade: the daily run's argv is today's, whatever the box holds.
 
-MAX_POSITION_PCT sat in .env for months with nothing reading it: the live cap was
-trade.py's flag default, and the run never passed the flag. Editing the file
-changed nothing, and nothing said so. These tests run the real script (under the
-recording stubs of test_daily_run_alerting) and read the argv each ticker's
-trade process was actually given, then hand that argv to trade.py's own parser,
-so a flag name the two sides spell differently cannot pass.
+MAX_POSITION_PCT and MAX_SECTOR_PCT sat uncommented in .env.example for months
+with nothing reading them, so any agent/.env built from it carries them, and
+nobody has looked at what values a box actually holds. Forwarding them would
+turn a setting that did nothing into one that resizes orders, and a value
+trade.py's parser refuses (`10`, `0.10 # note`) into an argparse exit before
+every ticker's council, which is a whole day with no orders. Either changes
+what reaches the broker, so this tranche does not forward them; wiring a cap to
+an env var belongs in a change that means to move order flow, after the box has
+been checked.
 
-The unset case is pinned to the exact argv of the run before the vars were
-wired: with nothing set, the defaults in trade.py stay the only source of the
-caps, and a default changed there cannot be shadowed by a stale copy here.
+These run the real script under the recording stubs of test_daily_run_alerting
+and pin each ticker's trade invocation to the exact argv origin/main builds.
+The flags themselves stay on trade.py (see test_trade_cli), where nothing can
+reach them without one being typed.
 """
 
 from __future__ import annotations
@@ -25,10 +29,21 @@ from tests.test_daily_run_alerting import RUN_DATE, Run, run_daily
 pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
 
 UNIVERSE = ("AAPL", "MSFT")  # what run_daily sets
+CAP_VARS = ("MAX_POSITION_PCT", "MAX_SECTOR_PCT", "MAX_CASH_UTILIZATION")
+
+#: What origin/main's .env.example shipped uncommented, so what a box .env copied
+#: from it holds today.
+OLD_EXAMPLE_RISK_BLOCK = (
+    "# Risk\n"
+    "MAX_DAILY_DRAWDOWN=0.03\n"
+    "MAX_POSITION_PCT=0.10\n"
+    "MAX_SECTOR_PCT=0.30\n"
+    "KILL_SWITCH_POLL_INTERVAL_SECONDS=5\n"
+)
 
 
 def _todays_argv(ticker: str, *, submit: bool) -> list[str]:
-    """The trade invocation as daily_run.sh built it before the caps were wired."""
+    """The trade invocation exactly as origin/main's daily_run.sh builds it."""
     argv = ["scripts.trade", "--ticker", ticker, "--date", RUN_DATE]
     if submit:
         argv.append("--submit")
@@ -48,73 +63,54 @@ def test_with_the_caps_unset_the_invocation_is_exactly_todays(
     assert _trade_argvs(run) == [_todays_argv(t, submit=submit) for t in UNIVERSE]
 
 
-def test_a_blank_cap_counts_as_unset(tmp_path: Path) -> None:
-    # `MAX_POSITION_PCT=` in an env file is a blank, not a value. Forwarded, it
-    # would be `--max-position-pct ''` and every ticker would die in argparse.
-    run = run_daily(tmp_path, MAX_POSITION_PCT="", MAX_SECTOR_PCT="", MAX_CASH_UTILIZATION="")
+@pytest.mark.parametrize(
+    "value",
+    [
+        "0.10",  # the old example's value: neutral only if parsed, still not sent
+        "0.05",  # a hand-tuned value that did nothing until now
+        "10",  # "ten percent": trade.py would refuse it and fail every ticker
+        "0.10 # single name",  # systemd keeps inline comments in the value
+        "",  # blank
+    ],
+)
+def test_a_cap_in_the_environment_never_reaches_trade(tmp_path: Path, value: str) -> None:
+    # systemd's EnvironmentFile=/opt/ai-trader/secrets.env is where these land.
+    run = run_daily(tmp_path, SUBMIT="1", **dict.fromkeys(CAP_VARS, value))
+    assert run.rc == 0, run.output
+    assert _trade_argvs(run) == [_todays_argv(t, submit=True) for t in UNIVERSE]
+
+
+def test_a_dotenv_copied_from_the_old_example_changes_nothing(tmp_path: Path) -> None:
+    # agent/.env is untracked, survives install.sh's `git reset --hard`, and is
+    # sourced by the script after systemd has loaded secrets.env.
+    run = run_daily(tmp_path, SUBMIT="1", dotenv=OLD_EXAMPLE_RISK_BLOCK)
+    assert run.rc == 0, run.output
+    assert _trade_argvs(run) == [_todays_argv(t, submit=True) for t in UNIVERSE]
+
+
+def test_a_hand_edited_dotenv_cap_changes_nothing(tmp_path: Path) -> None:
+    run = run_daily(tmp_path, dotenv="MAX_POSITION_PCT=0.05\nMAX_CASH_UTILIZATION=0.5\n")
     assert run.rc == 0, run.output
     assert _trade_argvs(run) == [_todays_argv(t, submit=False) for t in UNIVERSE]
 
 
-def test_set_caps_are_forwarded_to_every_ticker(tmp_path: Path) -> None:
-    run = run_daily(
-        tmp_path,
-        SUBMIT="1",
-        MAX_POSITION_PCT="0.05",
-        MAX_SECTOR_PCT="0.25",
-        MAX_CASH_UTILIZATION="0.9",
-    )
-    assert run.rc == 0, run.output
-    caps = [
-        "--max-position-pct", "0.05",
-        "--max-sector-pct", "0.25",
-        "--max-cash-utilization", "0.9",
-    ]
-    assert _trade_argvs(run) == [_todays_argv(t, submit=True) + caps for t in UNIVERSE]
-    # And the run log says which caps were in force, so a tuned value is visible.
-    assert "--max-position-pct 0.05" in run.output
-
-
-@pytest.mark.parametrize(
-    ("var", "flag"),
-    [
-        ("MAX_POSITION_PCT", "--max-position-pct"),
-        ("MAX_SECTOR_PCT", "--max-sector-pct"),
-        ("MAX_CASH_UTILIZATION", "--max-cash-utilization"),
-    ],
-)
-def test_each_cap_is_forwarded_on_its_own(tmp_path: Path, var: str, flag: str) -> None:
-    run = run_daily(tmp_path, **{var: "0.07"})
-    assert run.rc == 0, run.output
-    assert _trade_argvs(run) == [_todays_argv(t, submit=False) + [flag, "0.07"] for t in UNIVERSE]
-
-
-def test_a_cap_tuned_in_dotenv_reaches_trade(tmp_path: Path) -> None:
-    # The path the dead config was on: someone edits agent/.env, the script
-    # sources it, and the value has to come out the other end as a flag.
-    run = run_daily(tmp_path, dotenv="MAX_POSITION_PCT=0.08\nMAX_CASH_UTILIZATION=0.5\n")
-    assert run.rc == 0, run.output
-    for argv in _trade_argvs(run):
-        assert argv[-4:] == ["--max-position-pct", "0.08", "--max-cash-utilization", "0.5"]
-
-
-def test_the_forwarded_flags_are_ones_trade_py_accepts(tmp_path: Path) -> None:
-    # The stub interpreter records any argv, so a flag spelled differently here
-    # and in trade.py would pass every test above and fail every ticker on the
-    # box. Parse what the run really handed over with trade.py's own parser.
-    run = run_daily(
-        tmp_path,
-        MAX_POSITION_PCT="0.05",
-        MAX_SECTOR_PCT="0.25",
-        MAX_CASH_UTILIZATION="0.9",
-    )
+def test_what_trade_receives_parses_to_the_default_limits(tmp_path: Path) -> None:
+    # Handed to trade.py's own parser, the argv the run really built yields the
+    # same caps trade.py used before the flags existed, whatever the env says.
     from scripts.trade import build_parser
+    from tradingagents_us.risk.portfolio_limits import PortfolioLimits
 
-    argv = _trade_argvs(run)[0][1:]  # drop the module name
-    args = build_parser().parse_args(argv)
-    assert args.max_position_pct == pytest.approx(0.05)
-    assert args.max_sector_pct == pytest.approx(0.25)
-    assert args.max_cash_utilization == pytest.approx(0.9)
+    run = run_daily(tmp_path, **dict.fromkeys(CAP_VARS, "0.05"))
+    for argv in _trade_argvs(run):
+        args = build_parser().parse_args(argv[1:])  # drop the module name
+        limits = PortfolioLimits(
+            max_position_pct=args.max_position_pct,
+            max_sector_pct=args.max_sector_pct,
+            max_cash_utilization=args.max_cash_utilization,
+        )
+        # origin/main built PortfolioLimits(max_position_pct=0.10) from the
+        # flag default and left the rest at the dataclass defaults.
+        assert limits == PortfolioLimits(max_position_pct=0.10)
 
 
 def test_env_example_lists_no_risk_control_that_nothing_reads() -> None:
@@ -124,12 +120,19 @@ def test_env_example_lists_no_risk_control_that_nothing_reads() -> None:
     # risk-shaped key the example offers, commented or not, must have one.
     agent = Path(__file__).resolve().parent.parent
     example = (agent / ".env.example").read_text(encoding="utf-8")
-    keys = re.findall(r"^#?([A-Z][A-Z0-9_]*)=", example, re.MULTILINE)
-    risk_keys = [
-        k for k in keys if re.search(r"^MAX_|_PCT$|_UTILIZATION$|DRAWDOWN|POLL_INTERVAL", k)
+    key_line = re.compile(r"^#?([A-Z][A-Z0-9_]*)=", re.MULTILINE)
+    risk_key = re.compile(r"^MAX_|_PCT$|_UTILIZATION$|DRAWDOWN|POLL_INTERVAL")
+    # The filter itself still recognises the old block, commented or not.
+    old = key_line.findall(OLD_EXAMPLE_RISK_BLOCK + "#MAX_CASH_UTILIZATION=1.0\n")
+    assert [k for k in old if risk_key.search(k)] == [
+        "MAX_DAILY_DRAWDOWN",
+        "MAX_POSITION_PCT",
+        "MAX_SECTOR_PCT",
+        "KILL_SWITCH_POLL_INTERVAL_SECONDS",
+        "MAX_CASH_UTILIZATION",
     ]
-    assert "MAX_POSITION_PCT" in risk_keys  # the filter still sees the caps
 
+    risk_keys = [k for k in key_line.findall(example) if risk_key.search(k)]
     sources = [agent / "scripts" / "daily_run.sh"]
     for pkg in ("scripts", "tradingagents_us", "api"):
         sources += sorted((agent / pkg).rglob("*.py"))

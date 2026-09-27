@@ -335,10 +335,10 @@ def test_max_sector_pct_flag_reaches_the_portfolio_check(mock_dependencies, monk
 def test_a_cap_outside_zero_to_one_is_refused_before_the_broker(
     mock_dependencies, monkeypatch, capsys, flag, value
 ):
-    # `MAX_POSITION_PCT=10` meaning ten percent would be a 1000% cap, and a cash
-    # utilization above 1 spends cash the account does not have. Both used to be
-    # accepted; now the run dies in argparse, which daily_run counts as a failed
-    # ticker and pages on, before any broker call or model spend.
+    # `--max-position-pct 10` meaning ten percent would be a 1000% cap, and a
+    # cash utilization above 1 spends cash the account does not have. Both used
+    # to be accepted; now the run dies in argparse, before any broker call or
+    # model spend. (daily_run.sh passes none of these flags.)
     monkeypatch.setattr(
         sys, "argv", ["trade.py", "--ticker", "TSLA", "--use-cached", "--no-persist", flag, value]
     )

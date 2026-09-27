@@ -155,10 +155,10 @@ def _print_decision(d: AgentDecision) -> None:
 def _cap_fraction(raw: str) -> float:
     """argparse type for a cap: a fraction in (0, 1], never a percent.
 
-    These flags are fed from env vars (daily_run.sh forwards MAX_POSITION_PCT and
-    friends), where `10` meaning ten percent is an easy thing to write. Taken
-    literally it is a 1000% single-name cap, or a cash utilization that spends
-    ten times the cash the account has, and nothing downstream would object.
+    `10` meaning ten percent is an easy thing to type, and the easier still once
+    a flag is fed from an env var. Taken literally it is a 1000% single-name
+    cap, or a cash utilization that spends ten times the cash the account has,
+    and nothing downstream would object.
     Refusing it here fails the ticker loudly before any broker call or model
     spend. Zero is refused too: it cannot be a deliberate cap, and it would turn
     every order into a silent policy refusal.
@@ -184,9 +184,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--method", choices=["atr", "llm_pct"], default="atr",
                         help="Risk sizing method")
     parser.add_argument("--risk-per-trade", type=float, default=0.005)
-    # The caps. These defaults ARE the live values: daily_run.sh passes a flag
-    # only when its env var (MAX_POSITION_PCT, MAX_SECTOR_PCT,
-    # MAX_CASH_UTILIZATION) is set, so with none set nothing overrides them.
+    # The caps. These defaults ARE the live values: daily_run.sh passes none of
+    # these flags, and no env var feeds them (see the note in daily_run.sh).
     parser.add_argument("--max-position-pct", type=_cap_fraction, default=0.10,
                         help="Single-name cap as a fraction of equity (default 0.10)")
     parser.add_argument("--max-sector-pct", type=_cap_fraction, default=0.30,

@@ -145,6 +145,15 @@ Both A and B must finish within the 29 days that YouTube items are kept; the dai
 
 The code enforces this. `config.youtube_api_key()` refuses the key, with a warning, unless `COMMENTATOR_YOUTUBE_CLEARED=1` is also set, whatever `COMMENTATOR_FEED` or `--ignore-flag` says; the fetch then skips YouTube and its summary names the missing clearance. That variable is the record that all three conditions above are true in writing. Set it only then, never to make a run work. A key alone never reaches the API, so it never creates derived data. The `.env.example` and `deploy/hetzner/install.sh` templates carry the warning next to the variable.
 
+### Evaluation exception, 2026-09-28 (gate A only)
+
+Canberk (owner) accepted the derived-data risk for one run of gate A, knowing the clause above. This is an exception for a measurement. It is not a clearance, and none of the three conditions above is met by it.
+
+- **Key:** `trading-commentator-youtube` in the `fusapp-trader` project, restricted to the YouTube Data API v3. It is held in the laptop's `agent/.env`, not on any box. `COMMENTATOR_YOUTUBE_CLEARED` is not set persistently anywhere.
+- **Data:** a 60-day backfill of 61 videos, fetched 2026-09-28 13:39 UTC into a scratch SQLite database outside the repository, plus one copy per ticker for the parallel run. The run used the code as of `e96beec`, before the key gate existed.
+- **Deletion:** the scratch databases and the dry-run dump are deleted once the per-point scores are summarised, and in any case by 2026-10-27 13:39 UTC, the earliest `expires_at_utc` they hold. Only scores, bands and counts are kept.
+- **Production:** unchanged. The flag stays off, and the key does not go on a box until the preconditions above are met in writing.
+
 ## Enabling X (phase 2) — preconditions
 
 The code is complete and tested, but inert until all of the following are true:

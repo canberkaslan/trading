@@ -315,7 +315,7 @@ export default function TodayScreen() {
               const submitted = parseUtc(o.submitted_at_utc);
               const buy = o.side === 'BUY';
               return (
-                <Card key={o.order_id} padded={false} onPress={() => router.push(`/approve/${o.order_id}` as never)}
+                <Card key={o.order_id} padded={false} onPress={() => router.push(`/review/${o.order_id}` as never)}
                   accessibilityLabel={orderActionLabel(o, 'review')}>
                   <DataRow
                     chevron={false}

@@ -5,7 +5,7 @@
  * one after another. Same orders, same two calls the approve screen makes, and
  * deliberately no new judgement: the decision joined to each row supplies the
  * rating chip and the entry price, and nothing here re-answers "is this order
- * still good" — `/approve/[orderId]` and the backend guards own that.
+ * still good" — `/review/[orderId]` and the backend guards own that.
  *
  * Two things the port had to decide.
  *
@@ -14,7 +14,7 @@
  *    touch path is primary everywhere: every shortcut has a button beside it,
  *    and the key caps only render where the keys exist.
  * 2. The prototype approves straight from the row. The app does not: approving
- *    an order goes through the device lock (see `app/approve/[orderId].tsx`),
+ *    an order goes through the device lock (see `app/review/[orderId].tsx`),
  *    and a faster screen is not a reason to drop the one gate that stands in
  *    front of real money. So "Onayla" here opens the same auth → verify →
  *    broker-answer sequence, just without leaving the list.
@@ -94,7 +94,7 @@ async function errorDetail(res: Response): Promise<unknown> {
  * refusal (armed kill switch, or already at the broker) and carries a sentence,
  * everything else is transport and must not be dressed up as a risk decision.
  *
- * This mirrors `approveFailure` in `app/approve/[orderId].tsx`. That copy lives
+ * This mirrors `approveFailure` in `app/review/[orderId].tsx`. That copy lives
  * inside a route module and is not exported, and route files are not mine to
  * edit; both go through `rejectionReasonTr`, which is where the wording that
  * matters actually lives. Worth lifting into `utils/orders` once one owner has
@@ -226,7 +226,7 @@ export default function QueueScreen() {
   }, [rows, notionalOf]);
 
   const openOrder = useCallback(
-    (o: OrderListItem) => router.push(`/approve/${o.order_id}` as never),
+    (o: OrderListItem) => router.push(`/review/${o.order_id}` as never),
     [router],
   );
 

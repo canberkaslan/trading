@@ -48,7 +48,7 @@ Mobile (React Native + Expo)
 |---|---|
 | Agent framework | TradingAgents v0.2.5 fork (Apache-2.0) + Turkish/BIST adaptation |
 | LLM | Claude Opus 4.7 (managers), Sonnet 4.6 (researchers), Haiku 4.5 (risk debators) — per-agent routing |
-| US data | Polygon.io + Finnhub + SEC EDGAR + Reddit/X sentiment |
+| US data | Polygon.io + Finnhub + SEC EDGAR + FRED. Sentiment reads Yahoo Finance news, Reddit RSS + ApeWisdom mention counts and StockTwits (whose public stream currently answers 403); there is no X sentiment feed. An opt-in commentator feed (YouTube + X, off by default) is [ADR-009](docs/adr/009-commentator-feed.md) |
 | BIST data | Matriks IQ + KAP (kap.org.tr) + TCMB EVDS |
 | US execution | Alpaca paper → live |
 | BIST execution | Matriks IQ / Algolab (Deniz Yatırım) |

@@ -116,6 +116,20 @@ KILL_SWITCH_PATH=/opt/ai-trader/agent/kill_switch.state
 # Trading mode the preflight canary asserts against ('paper' | 'live').
 # Flip to live TOGETHER with ALPACA_BASE_URL on go-live day.
 EXPECTED_TRADING_MODE=paper
+
+# Commentator feed (docs/adr/009-commentator-feed.md). Off unless exactly 1;
+# each source is skipped, with a log line, while its key is blank. X also needs
+# a numeric user id pinned once (never a handle), and stores no post until
+# ai-trader-commentator-retention.timer (the daily deletion check) has run.
+# YOUTUBE_API_KEY stays unset until ADR-009 "Enabling YouTube — preconditions"
+# are met: the fetch creates derived data from YouTube API Data, which the
+# Developer Policies (III.E.4) prohibit, and that is unresolved. The code
+# refuses the key unless COMMENTATOR_YOUTUBE_CLEARED=1, the record that those
+# preconditions are met in writing. Do not set it before.
+#COMMENTATOR_FEED=1
+#YOUTUBE_API_KEY=
+#X_BEARER_TOKEN=
+#COMMENTATOR_X_USER_ID=
 EOF
   chmod 600 "${APP_DIR}/secrets.env"
 else
@@ -154,6 +168,8 @@ for unit in ai-trader.service ai-trader.timer ai-trader-alert.service \
             ai-trader-preflight.service ai-trader-preflight.timer \
             ai-trader-backup.service ai-trader-backup.timer \
             ai-trader-reconcile.service ai-trader-reconcile.timer \
+            ai-trader-commentator-retention.service \
+            ai-trader-commentator-retention.timer \
             ai-trader-api.service eval-report.service eval-report.timer; do
   sudo cp "${APP_DIR}/deploy/hetzner/${unit}" "/etc/systemd/system/${unit}"
 done
@@ -171,7 +187,7 @@ echo "        set -a && source ${APP_DIR}/secrets.env && set +a && \\"
 echo "        UNIVERSE='AAPL' SUBMIT=0 bash scripts/daily_run.sh"
 echo "   3. Enable the timers: sudo systemctl enable --now ai-trader.timer \\"
 echo "        ai-trader-preflight.timer ai-trader-backup.timer \\"
-echo "        ai-trader-reconcile.timer"
+echo "        ai-trader-reconcile.timer ai-trader-commentator-retention.timer"
 echo "   4. Check schedule:    systemctl list-timers 'ai-trader*'"
 echo "   5. Watch a run:       journalctl -u ai-trader.service -f"
 echo "============================================================"

@@ -17,3 +17,4 @@ ADRs capture the reasoning behind significant architectural choices. Each one na
 | [006](006-llm-cost-optimization.md) | Per-agent LLM routing + prompt caching + Batch API | Accepted |
 | [007](007-regulatory-stance.md) | Personal use only initially; commercial path requires licensing | Accepted (Turkey section superseded by ADR-008) |
 | [008](008-scope-us-only.md) | **Scope reduced to US equities only — BIST removed** | **Accepted** |
+| [009](009-commentator-feed.md) | Commentator feed (Bora Özkent, YouTube + X) as labelled opinion context in the sentiment prompt | Accepted — off by default until its measurement gate passes |

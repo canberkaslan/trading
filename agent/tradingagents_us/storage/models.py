@@ -18,7 +18,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -209,3 +209,116 @@ class SectorCacheRow(Base):
     ticker: Mapped[str] = mapped_column(String(16), primary_key=True)
     sector: Mapped[str | None] = mapped_column(String(64), nullable=True)
     fetched_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class CommentatorItemRow(Base):
+    """One commentator video or post, reduced to what the sentiment analyst reads.
+
+    ADR-009. The row holds identifiers and DERIVED fields only — the English
+    paraphrase and the tickers, topics and stances an extraction pass read out
+    of the original. The title, description or post text is never stored: it
+    is read once at fetch time, handed to the extractor, and dropped. That keeps
+    both platforms' redistribution terms out of the report the mobile app shows,
+    and means the table holds claims about markets, not a profile of a person.
+
+    `fetched_at_utc` is when the item was FIRST seen and never moves; a later
+    re-fetch does not re-date it, so a backtest can tell what the system could
+    have known on a given day. `expires_at_utc` is the retention deadline the
+    purge enforces and every read checks — twenty-nine days after the fetch
+    for YouTube, so the daily purge deletes it inside the thirty that API
+    policy III.E.4 allows; a short window for X, whose items are also purged
+    the moment a reconcile finds the post gone.
+
+    `extracted_at_utc` NULL means the extraction has not succeeded yet, so the
+    item is retried rather than silently shown to the analyst empty, and a
+    window that holds it reads as unavailable, not as one with no commentary.
+
+    `verified_at_utc` is the last time the source confirmed the item is still
+    public — for X, the fetch and every deletion check. X rows are shown only
+    while that is under a day old; YouTube rows leave it NULL.
+
+    New table — created by create_all(), so no additive-column entry.
+    """
+
+    __tablename__ = "commentator_items"
+
+    item_id: Mapped[str] = mapped_column(String(96), primary_key=True)  # "<source>:<id>"
+    source: Mapped[str] = mapped_column(String(16), index=True)          # "youtube" | "x"
+    source_id: Mapped[str] = mapped_column(String(64))
+    channel_id: Mapped[str] = mapped_column(String(64))
+    url: Mapped[str] = mapped_column(String(256))
+    published_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    fetched_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    content_sha256: Mapped[str] = mapped_column(String(64))
+    extracted_at_utc: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    extraction_model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    tickers_json: Mapped[Any] = mapped_column(JSON, default=list)
+    macro_topics_json: Mapped[Any] = mapped_column(JSON, default=list)
+    stance_json: Mapped[Any] = mapped_column(JSON, default=dict)
+    claim_en: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    is_promo: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    is_market_content: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    verified_at_utc: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class DecisionCommentatorRefRow(Base):
+    """Which commentator items a decision's sentiment analyst was shown.
+
+    Nothing else in the trade log records a decision's raw inputs, so without
+    this there is no way to ask afterwards whether a flip followed the feed.
+
+    The prompt labels items `[C1]`, `[C2]`, ... rather than by platform id, so
+    the reports stored beside this row cite labels; a decision's refs are
+    written in prompt order, and its n-th row by `id` is `[Cn]`. This table is
+    the only place a label resolves to a video or post id.
+
+    When an item is purged (retention, or an X deletion) its `item_id` here is
+    set to NULL rather than the row being deleted: the fact that the decision
+    read commentator input from `source` survives, the identifier of content
+    that must be gone does not — the same trade `kill_switch_events.actor`
+    makes for a deleted user.
+
+    New table — created by create_all().
+    """
+
+    __tablename__ = "decision_commentator_refs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    decision_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("agent_decisions.decision_id"), index=True
+    )
+    source: Mapped[str] = mapped_column(String(16))
+    item_id: Mapped[str | None] = mapped_column(String(96), nullable=True, index=True)
+    created_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class CommentatorStatusRow(Base):
+    """When a commentator job last completed, one row per job, overwritten each time.
+
+    ADR-009. `retention` is the flag-independent daily retention pass. The X
+    fetch reads it: it stores no new post unless that pass ran recently, because
+    that pass is what checks X deletions on the days the trading run does not.
+
+    `read:<source>` is the last successful read of a source, and
+    `covered_since_utc` how far back the unbroken run of reads saw everything
+    published. The prompt says "no commentary" only for a window such a read
+    covers; otherwise it says the feed is unavailable, because an empty table
+    after a missing key or a failed fetch is not an observed absence.
+
+    Timestamps only. Nothing here is API data.
+
+    New table — created by create_all().
+    """
+
+    __tablename__ = "commentator_status"
+
+    name: Mapped[str] = mapped_column(String(32), primary_key=True)
+    at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    covered_since_utc: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

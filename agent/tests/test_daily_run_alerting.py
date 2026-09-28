@@ -37,7 +37,8 @@ mod="$2"
 n=$(ls "$CALLS_DIR" | wc -l | tr -d ' ')
 printf '%s\n' "${@:2}" > "$CALLS_DIR/$(printf '%04d' "$n")"
 printf '%s\n' "OPS_ALERT_GITHUB_TOKEN=${OPS_ALERT_GITHUB_TOKEN:-}" \
-  "OPS_ALERT_GITHUB_REPO=${OPS_ALERT_GITHUB_REPO:-}" > "$ENV_DIR/$(printf '%04d' "$n")"
+  "OPS_ALERT_GITHUB_REPO=${OPS_ALERT_GITHUB_REPO:-}" \
+  "COMMENTATOR_LIVE_AS_OF=${COMMENTATOR_LIVE_AS_OF:-}" > "$ENV_DIR/$(printf '%04d' "$n")"
 key="${mod//./_}"
 out="FAKE_OUT_${key}"
 rc="FAKE_RC_${key}"
@@ -75,7 +76,8 @@ class Run:
     output: str
     calls: list[list[str]]
     pings: list[list[str]]
-    #: The alert-channel env each call in `calls` saw, index for index.
+    #: The alert-channel env (and the commentator live anchor) each call in
+    #: `calls` saw, index for index.
     envs: list[dict[str, str]]
 
     def modules(self) -> list[str]:

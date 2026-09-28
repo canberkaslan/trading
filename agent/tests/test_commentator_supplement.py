@@ -1,0 +1,326 @@
+"""The commentator block in the sentiment analyst's prompt (ADR-009).
+
+The contract that matters most is the first class: with COMMENTATOR_FEED off
+the sentiment prompt is the vendor's, byte for byte.
+"""
+
+from __future__ import annotations
+
+import sys
+from collections.abc import Iterator
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+from sqlalchemy import create_engine, select
+
+_VENDOR = Path(__file__).resolve().parent.parent / "vendor" / "tradingagents"
+if str(_VENDOR) not in sys.path:
+    sys.path.insert(0, str(_VENDOR))
+
+from tradingagents_us.dataflows import commentator_supplement as cs  # noqa: E402
+from tradingagents_us.graph import pipeline  # noqa: E402
+from tradingagents_us.schemas import AgentDecision  # noqa: E402
+from tradingagents_us.storage import TradeLogRepository  # noqa: E402
+from tradingagents_us.storage import commentator as store  # noqa: E402
+from tradingagents_us.storage.commentator import StoredItem  # noqa: E402
+from tradingagents_us.storage.models import DecisionCommentatorRefRow  # noqa: E402
+
+KW = {
+    "ticker": "META",
+    "start_date": "2026-09-15",
+    "end_date": "2026-09-22",
+    "news_block": "NEWS",
+    "stocktwits_block": "TWITS",
+    "reddit_block": "REDDIT",
+}
+TODAY = datetime(2026, 9, 28, 12, 0, tzinfo=UTC)
+
+
+def item(sid: str, when: datetime | None, *, tickers=("META",), topics=(), stance=None,
+         promo=False, market=True, source="youtube", claim="A paraphrase.") -> StoredItem:
+    return StoredItem(
+        item_id=f"{source}:{sid}", source=source, source_id=sid,
+        published_at=when,  # type: ignore[arg-type] — None exercises the refusal
+        tickers=tuple(tickers), macro_topics=tuple(topics),
+        stance=stance or {t: "unstated" for t in tickers}, claim_en=claim,
+        is_promo=promo, is_market_content=market,
+    )
+
+
+def at(day: int, hour: int = 12, minute: int = 0) -> datetime:
+    return datetime(2026, 9, day, hour, minute, tzinfo=UTC)
+
+
+@pytest.fixture
+def analyst() -> Iterator[object]:
+    from tradingagents.agents.analysts import sentiment_analyst as mod
+
+    original = mod._build_system_message
+    yield mod
+    mod._build_system_message = original
+    with cs._state_lock:
+        cs._consumed.clear()
+        cs._run_starts.clear()
+
+
+@pytest.fixture
+def feed_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("COMMENTATOR_FEED", "1")
+
+
+@pytest.fixture
+def feed_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("COMMENTATOR_FEED", raising=False)
+
+
+class TestFlagOffIsByteIdentical:
+    def test_the_pipeline_does_not_install_it(
+        self, analyst, feed_off, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        before = analyst._build_system_message
+        monkeypatch.setattr(cs, "install", lambda: pytest.fail("installed with the flag off"))
+        assert pipeline._install_commentator_feed("META", "2026-09-22") is False
+        assert analyst._build_system_message is before
+
+    @pytest.mark.parametrize("value", ["0", "true", "yes", ""])
+    def test_only_exactly_1_turns_it_on(
+        self, analyst, monkeypatch: pytest.MonkeyPatch, value: str
+    ) -> None:
+        monkeypatch.setenv("COMMENTATOR_FEED", value)
+        before = analyst._build_system_message
+        assert pipeline._install_commentator_feed("META", "2026-09-22") is False
+        assert analyst._build_system_message is before
+
+    def test_an_installed_wrapper_passes_the_prompt_through_untouched(
+        self, analyst, feed_off, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A long-lived process that installed it earlier must still produce the
+        # vendor's prompt exactly when the flag is off — and must not read the DB.
+        baseline = analyst._build_system_message(**KW)
+        monkeypatch.setattr(cs, "_load_items", lambda *a: pytest.fail("read with the flag off"))
+        assert cs.install() is True
+        assert analyst._build_system_message(**KW) == baseline
+
+    def test_flag_on_installs_and_marks_the_run(self, analyst, feed_on) -> None:
+        assert pipeline._install_commentator_feed("META", "2026-09-22") is True
+        assert getattr(analyst._build_system_message, "_supplemented", False)
+        assert cs._run_start("META", "2026-09-22") is not None
+
+
+class TestInstall:
+    def test_idempotent(self, analyst) -> None:
+        assert cs.install() is True
+        wrapped = analyst._build_system_message
+        assert cs.install() is True
+        assert analyst._build_system_message is wrapped
+
+    def test_the_block_goes_before_the_marker(
+        self, analyst, feed_on, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(cs, "_load_items", lambda *a: [item("v1", at(20))])
+        cs.install()
+        out = analyst._build_system_message(**KW)
+        block_at = out.index("### Commentator feed")
+        assert out.index("<end_of_reddit>") < block_at < out.index(cs.MARKER)
+        assert out.count(cs.MARKER) == 1
+        assert "[YouTube v1]" in out
+
+    def test_it_is_not_in_the_reddit_or_stocktwits_blocks(
+        self, analyst, feed_on, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(cs, "_load_items", lambda *a: [item("v1", at(20))])
+        cs.install()
+        out = analyst._build_system_message(**KW)
+        reddit = out[out.index("<start_of_reddit>"): out.index("<end_of_reddit>")]
+        twits = out[out.index("<start_of_stocktwits>"): out.index("<end_of_stocktwits>")]
+        assert "v1" not in reddit and "v1" not in twits
+
+    def test_without_the_marker_it_is_appended(self) -> None:
+        out = cs.insert("vendor prompt with no marker\n", "### Commentator feed — x")
+        assert out == "vendor prompt with no marker\n\n### Commentator feed — x\n"
+
+    def test_the_items_used_are_recorded_for_the_decision(
+        self, analyst, feed_on, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(cs, "_load_items", lambda *a: [item("v1", at(20))])
+        cs.install()
+        analyst._build_system_message(**KW)
+        assert cs.consumed("META", "2026-09-22") == [("youtube", "youtube:v1")]
+
+    def test_a_storage_failure_says_unavailable_and_keeps_the_report(
+        self, analyst, feed_on, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def boom(*a):
+            raise RuntimeError("db locked")
+
+        monkeypatch.setattr(cs, "_load_items", boom)
+        cs.install()
+        out = analyst._build_system_message(**KW)
+        assert "Commentator feed unavailable" in out
+        assert "not an absence of commentary" in out
+        assert "<start_of_news>" in out  # the vendor prompt is all still there
+
+
+class TestNoLookAhead:
+    def test_backtest_excludes_anything_from_the_trade_date_on(self) -> None:
+        # in_window alone admits the whole trade date; a video posted that
+        # morning would be read by a decision "made" before it existed.
+        items = [
+            item("before", at(21, 23, 59)),
+            item("midnight", at(22, 0, 0)),
+            item("morning", at(22, 9, 30)),
+        ]
+        own, _ = cs.select(items, "META", "2026-09-15", "2026-09-22", run_start=None, now=TODAY)
+        assert [i.source_id for i in own] == ["before"]
+
+    def test_live_admits_up_to_the_run_start_and_nothing_after(self) -> None:
+        start = at(28, 22, 30)
+        items = [item("at", start), item("after", at(28, 22, 31)), item("earlier", at(28, 9))]
+        own, _ = cs.select(items, "META", "2026-09-21", "2026-09-28", run_start=start,
+                           now=at(28, 22, 40))
+        assert [i.source_id for i in own] == ["at", "earlier"]
+
+    def test_the_window_start_still_applies(self) -> None:
+        own, _ = cs.select([item("old", at(14))], "META", "2026-09-15", "2026-09-22",
+                           run_start=None, now=TODAY)
+        assert own == []
+
+    def test_an_undated_item_is_refused(self) -> None:
+        # Undated cannot be kept out of a backtest, so it is refused on live
+        # runs too — unlike the vendor's in_window, which keeps it live.
+        own, macro = cs.select([item("nodate", None)], "META", "2026-09-21", "2026-09-28",
+                               run_start=at(28, 22), now=at(28, 22, 5))
+        assert own == [] and macro == []
+
+
+class TestSelection:
+    def test_promo_and_off_topic_items_are_dropped(self) -> None:
+        items = [item("promo", at(20), promo=True), item("mindset", at(20), market=False),
+                 item("ok", at(19))]
+        own, _ = cs.select(items, "META", "2026-09-15", "2026-09-22", run_start=None, now=TODAY)
+        assert [i.source_id for i in own] == ["ok"]
+
+    def test_at_most_five_about_the_ticker_newest_first(self) -> None:
+        items = [item(f"v{d}", at(d)) for d in range(15, 22)]
+        own, _ = cs.select(items, "META", "2026-09-15", "2026-09-22", run_start=None, now=TODAY)
+        assert [i.source_id for i in own] == ["v21", "v20", "v19", "v18", "v17"]
+
+    def test_other_tickers_get_one_market_wide_line_at_most(self) -> None:
+        items = [item("m1", at(21), tickers=("SPY",), topics=("Fed rates",)),
+                 item("m2", at(20), tickers=(), topics=("Oil",)),
+                 item("nvda", at(19), tickers=("NVDA",))]
+        own, macro = cs.select(items, "META", "2026-09-15", "2026-09-22", run_start=None,
+                               now=TODAY)
+        assert own == [] and [i.source_id for i in macro] == ["m1"]
+
+    def test_spy_reads_market_wide_items_as_its_own(self) -> None:
+        items = [item("m1", at(21), tickers=("SPY",), topics=("Fed rates",)),
+                 item("m2", at(20), tickers=(), topics=("Oil",))]
+        own, macro = cs.select(items, "SPY", "2026-09-15", "2026-09-22", run_start=None,
+                               now=TODAY)
+        assert [i.source_id for i in own] == ["m1", "m2"] and macro == []
+
+
+class TestRender:
+    def test_empty_says_so(self) -> None:
+        out = cs.render("META", [], [], start_date="2026-09-15", end_date="2026-09-22")
+        assert "No commentary in window" in out
+
+    def test_it_is_labelled_as_one_commentators_opinion(self) -> None:
+        out = cs.render("META", [item("v1", at(20))], [], start_date="s", end_date="e")
+        assert out.startswith("### Commentator feed — Bora Özkent (")
+        assert "not investment advice" in out and "opinion" in out
+        assert "not consensus" in out
+        assert "must not move overall_score" in out
+        assert "Commentator view:" in out
+        assert "skews bullish" in out
+
+    def test_an_item_line_carries_id_time_and_stance_only(self) -> None:
+        i = item("iIVDlDLd9yk", at(22, 9, 30), tickers=("META", "NVDA"),
+                 topics=("Nasdaq rally breadth",), stance={"META": "unstated", "NVDA": "bullish"})
+        out = cs.render("META", [i], [], start_date="s", end_date="e")
+        assert ("- 2026-09-22T09:30Z [YouTube iIVDlDLd9yk] also on: NVDA; "
+                "topics: Nasdaq rally breadth; stance on META: unstated") in out
+
+    def test_a_market_wide_line_reports_the_broad_market_stance(self) -> None:
+        m = item("m1", at(21), tickers=("SPY",), topics=("Fed rates",), stance={"SPY": "bearish"},
+                 source="x")
+        out = cs.render("META", [], [m], start_date="s", end_date="e")
+        assert "[X m1] market-wide; topics: Fed rates; broad-market stance: bearish" in out
+
+
+class TestDecisionLink:
+    def test_bind_then_save_writes_the_refs(self, analyst, feed_on,
+                                            monkeypatch: pytest.MonkeyPatch) -> None:
+        repo = TradeLogRepository(engine=create_engine("sqlite://", future=True))
+        monkeypatch.setattr(cs, "_load_items", lambda *a: [item("v1", at(20))])
+        cs.install()
+        cs.begin_run("META", "2026-09-22")
+        analyst._build_system_message(**KW)
+        cs.bind_decision("META", "2026-09-22", "dec-link")
+        repo.save_decision(AgentDecision(
+            ticker="META", market="US", quote_currency="USD", rating="Hold",
+            reasoning=[], timestamp_utc=TODAY, decision_id="dec-link",
+        ))
+        with repo.session() as s:
+            refs = s.scalars(select(DecisionCommentatorRefRow.item_id)).all()
+        assert refs == ["youtube:v1"]
+        assert cs.consumed("META", "2026-09-22") == []
+        assert store.pop_decision_refs("dec-link") == []
+
+
+class TestTheRealNode:
+    """The whole sentiment node, fetchers and model faked, prompt captured."""
+
+    class _LLM:
+        def __init__(self) -> None:
+            self.prompts: list[list] = []
+
+        def with_structured_output(self, schema):
+            raise NotImplementedError  # take the plain path; this fake has no tools
+
+        def invoke(self, messages):
+            import types
+
+            self.prompts.append(messages)
+            header = "**Overall Sentiment:** **Neutral** (Score: 5.0/10)"
+            return types.SimpleNamespace(content=header)
+
+    def _system(self, analyst, monkeypatch: pytest.MonkeyPatch) -> str:
+        import types
+
+        monkeypatch.setattr(analyst, "get_news", types.SimpleNamespace(func=lambda *a: "NEWS"))
+        monkeypatch.setattr(analyst, "finnhub_block", lambda t: "FINNHUB")
+        monkeypatch.setattr(analyst, "fetch_stocktwits_messages", lambda *a, **k: "TWITS")
+        monkeypatch.setattr(analyst, "fetch_reddit_posts", lambda *a, **k: "REDDIT")
+        llm = self._LLM()
+        node = analyst.create_sentiment_analyst(llm)
+        node({"messages": [("human", "META")], "company_of_interest": "META",
+              "trade_date": "2026-09-22", "instrument_context": "META (stock)"})
+        (messages,) = llm.prompts
+        return messages[0].content
+
+    def test_flag_off_the_node_sends_mains_system_message(
+        self, analyst, feed_off, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        baseline = self._system(analyst, monkeypatch)
+        assert pipeline._install_commentator_feed("META", "2026-09-22") is False
+        cs.install()  # even installed, the flag decides
+        assert self._system(analyst, monkeypatch) == baseline
+        assert "Commentator feed" not in baseline
+
+    def test_flag_on_the_node_sends_the_block(
+        self, analyst, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("COMMENTATOR_FEED", raising=False)
+        baseline = self._system(analyst, monkeypatch)
+        monkeypatch.setenv("COMMENTATOR_FEED", "1")
+        monkeypatch.setattr(cs, "_load_items", lambda *a: [item("v1", at(20))])
+        assert pipeline._install_commentator_feed("META", "2026-09-22") is True
+        with_feed = self._system(analyst, monkeypatch)
+        assert "### Commentator feed" in with_feed and "[YouTube v1]" in with_feed
+        # Everything else is the vendor's prompt, untouched.
+        start = with_feed.index("### Commentator feed")
+        end = with_feed.index(cs.MARKER)
+        assert with_feed[:start] + with_feed[end:] == baseline

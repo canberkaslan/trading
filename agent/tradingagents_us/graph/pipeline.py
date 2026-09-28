@@ -37,6 +37,7 @@ if str(_VENDOR) not in sys.path:
 from tradingagents_us.dataflows import (  # noqa: E402
     alpaca_news_vendor,
     alpha_vantage_limited,
+    commentator_supplement,
     sentiment_supplement,
 )
 from tradingagents_us.llm import translate as _translate  # noqa: E402
@@ -110,6 +111,10 @@ def propagate(
     # ApeWisdom aggregates the same corpus Reddit RSS was 429ing on.
     if not sentiment_supplement.install():
         log.warning("sentiment supplement not installed — analyst keeps its existing sources")
+    # One commentator's views as a labelled opinion block in the same analyst's
+    # prompt (ADR-009). Off unless COMMENTATOR_FEED=1; reads the items the
+    # once-per-run fetch cached, so nothing here touches the network.
+    commentator_on = _install_commentator_feed(ticker, trade_date)
 
     usage = UsageCollector(on_node=on_progress)
 
@@ -250,6 +255,12 @@ def propagate(
         else None
     )
 
+    decision_id = str(uuid.uuid4())
+    if commentator_on:
+        # Written beside the decision by save_decision, so the record says which
+        # commentator items the sentiment read was formed from.
+        commentator_supplement.bind_decision(ticker, trade_date, decision_id)
+
     return AgentDecision(
         ticker=ticker,
         market="US",
@@ -265,7 +276,7 @@ def propagate(
         final_decision_text=final_text,
         final_decision_text_tr=final_tr,
         timestamp_utc=datetime.now(UTC),
-        decision_id=str(uuid.uuid4()),
+        decision_id=decision_id,
         tokens_in=u.input_tokens,
         tokens_out=u.output_tokens,
         cache_read_tokens=u.cache_read_tokens,
@@ -274,6 +285,21 @@ def propagate(
         # above names which, so a low figure cannot pass as a cheap run.
         cost_usd=u.cost_usd,
     )
+
+
+def _install_commentator_feed(ticker: str, trade_date: str) -> bool:
+    """Install the commentator block when COMMENTATOR_FEED=1. True when it is active.
+
+    With the flag off this does nothing at all — the sentiment prompt stays the
+    vendor's, byte for byte.
+    """
+    if os.getenv("COMMENTATOR_FEED") != "1":
+        return False
+    if not commentator_supplement.install():
+        log.warning("commentator feed not installed")
+        return False
+    commentator_supplement.begin_run(ticker, trade_date)
+    return True
 
 
 def _apply_council(ticker, final_state, house_rating, house_final, reasoning):

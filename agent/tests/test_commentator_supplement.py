@@ -133,7 +133,7 @@ class TestInstall:
         block_at = out.index("### Commentator feed")
         assert out.index("<end_of_reddit>") < block_at < out.index(cs.MARKER)
         assert out.count(cs.MARKER) == 1
-        assert "[YouTube v1]" in out
+        assert "[C1, YouTube]" in out
 
     def test_it_is_not_in_the_reddit_or_stocktwits_blocks(
         self, analyst, feed_on, monkeypatch: pytest.MonkeyPatch
@@ -253,7 +253,7 @@ class TestNoLookAhead:
         cs.begin_run("META", "2026-09-28", now=at(29, 0, 5))  # this ticker began after 00:00
         out = analyst._build_system_message(**{**KW, "start_date": "2026-09-21",
                                                "end_date": "2026-09-28"})
-        assert "[YouTube today_video]" in out
+        assert "[C1, YouTube]" in out and "today_video" not in out
 
     def test_the_window_start_still_applies(self) -> None:
         own, _ = cs.select([item("old", at(14))], "META", "2026-09-15", "2026-09-22",
@@ -498,18 +498,34 @@ class TestRender:
         assert "Commentator view:" in out
         assert "skews bullish" in out
 
-    def test_an_item_line_carries_id_time_and_stance_only(self) -> None:
+    def test_an_item_line_carries_a_label_time_and_stance_only(self) -> None:
         i = item("iIVDlDLd9yk", at(22, 9, 30), tickers=("META", "NVDA"),
                  topics=("Nasdaq rally breadth",), stance={"META": "unstated", "NVDA": "bullish"})
         out = cs.render("META", [i], [], start_date="s", end_date="e")
-        assert ("- 2026-09-22T09:30Z [YouTube iIVDlDLd9yk] also on: NVDA; "
+        assert ("- 2026-09-22T09:30Z [C1, YouTube] also on: NVDA; "
                 "topics: Nasdaq rally breadth; stance on META: unstated") in out
 
     def test_a_market_wide_line_reports_the_broad_market_stance(self) -> None:
         m = item("m1", at(21), tickers=("SPY",), topics=("Fed rates",), stance={"SPY": "bearish"},
                  source="x")
         out = cs.render("META", [], [m], start_date="s", end_date="e")
-        assert "[X m1] market-wide; topics: Fed rates; broad-market stance: bearish" in out
+        assert "[C1, X] market-wide; topics: Fed rates; broad-market stance: bearish" in out
+
+    def test_no_platform_id_reaches_the_prompt(self) -> None:
+        # The report the analyst writes from this block is stored whole, shown
+        # in the app and backed up for good; an id here would outlive a deleted
+        # post there. Only the refs table, which the purge scrubs, holds ids.
+        own = [item("iIVDlDLd9yk", at(22)), item("1790000000000000001", at(21), source="x")]
+        macro = [item("M7qtACFd9g4", at(20), tickers=("SPY",), stance={"SPY": "bullish"})]
+        out = cs.render("META", own, macro, start_date="s", end_date="e")
+        for sid in ("iIVDlDLd9yk", "1790000000000000001", "M7qtACFd9g4"):
+            assert sid not in out
+        assert [ln.split("] ")[0].split(" [")[1] for ln in out.splitlines()
+                if ln.startswith("- 2026-")] == ["C1, YouTube", "C2, X", "C3, YouTube"]
+
+    def test_the_guidance_asks_for_labels(self) -> None:
+        out = cs.render("META", [item("v1", at(20))], [], start_date="s", end_date="e")
+        assert "`Commentator view:` and citing items by label ([C1], ...)" in out
 
 
 class TestDecisionLink:
@@ -530,6 +546,28 @@ class TestDecisionLink:
         assert refs == ["youtube:v1"]
         assert cs.consumed("META", "2026-09-22") == []
         assert store.pop_decision_refs("dec-link") == []
+
+    def test_the_nth_ref_is_the_item_labelled_cn(self, analyst, feed_on,
+                                                  monkeypatch: pytest.MonkeyPatch) -> None:
+        # The report cites [C2]; the refs table is where that resolves.
+        repo = TradeLogRepository(engine=create_engine("sqlite://", future=True))
+        items = [item("v1", at(21)), item("v2", at(20)), item("x9", at(19), source="x"),
+                 item("m1", at(18), tickers=(), topics=("Fed rates",))]
+        monkeypatch.setattr(cs, "_load_items", lambda *a: items)
+        cs.install()
+        prompt = analyst._build_system_message(**KW)
+        labels = [ln.split("] ")[0].split(" [")[1].split(",")[0]
+                  for ln in prompt.splitlines() if ln.startswith("- 2026-")]
+        cs.bind_decision("META", "2026-09-22", "dec-order")
+        repo.save_decision(AgentDecision(
+            ticker="META", market="US", quote_currency="USD", rating="Hold",
+            reasoning=[], timestamp_utc=TODAY, decision_id="dec-order",
+        ))
+        with repo.session() as s:
+            refs = s.scalars(select(DecisionCommentatorRefRow.item_id)
+                             .order_by(DecisionCommentatorRefRow.id)).all()
+        assert labels == ["C1", "C2", "C3", "C4"]
+        assert refs == ["youtube:v1", "youtube:v2", "x:x9", "youtube:m1"]
 
 
 class TestTheRealNode:
@@ -581,7 +619,7 @@ class TestTheRealNode:
         monkeypatch.setattr(cs, "_load_items", lambda *a: [item("v1", at(20))])
         assert pipeline._install_commentator_feed("META", "2026-09-22") is True
         with_feed = self._system(analyst, monkeypatch)
-        assert "### Commentator feed" in with_feed and "[YouTube v1]" in with_feed
+        assert "### Commentator feed" in with_feed and "[C1, YouTube]" in with_feed
         # Everything else is the vendor's prompt, untouched.
         start = with_feed.index("### Commentator feed")
         end = with_feed.index(cs.MARKER)

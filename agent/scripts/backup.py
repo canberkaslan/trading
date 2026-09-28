@@ -66,10 +66,13 @@ def _sqlite_path() -> Path | None:
 #: What the copy loses before it leaves the box (ADR-009). The commentator
 #: feed holds YouTube API data that must be gone 30 days after its fetch and X
 #: posts that must go within a day of their deletion; these artifacts are kept
-#: for good (git history, dated S3 keys), so no feed data may be in them. The
+#: for good (git history, dated S3 keys), so no feed table may be in them. The
 #: items go, and so do the read records, which would otherwise vouch for reads
 #: whose items the copy no longer holds. A decision's ref keeps its source, so
-#: the fact that it read the feed survives; the item id does not.
+#: the fact that it read the feed survives; the item id does not. Decision
+#: reports are copied whole: they cite items by per-block label, never by
+#: platform id, and what the analyst wrote about a claim is kept by decision
+#: (ADR-009, "Reports keep what the analyst wrote").
 _OFF_BOX_SCRUB: tuple[tuple[str, str], ...] = (
     ("commentator_items", "DELETE FROM commentator_items"),
     ("commentator_status", "DELETE FROM commentator_status"),

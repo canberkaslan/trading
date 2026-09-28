@@ -89,6 +89,14 @@ MAX_MACRO_LINES = 1
 
 _SOURCE_LABEL = {"youtube": "YouTube", "x": "X"}
 
+#: Items are labelled per block, `[C1, YouTube]`, never by platform id. The
+#: sentiment report is stored whole, shown in the app and backed up for good,
+#: and the analyst cites what it was shown, so an id in the prompt would
+#: outlive a deleted post or YouTube's 30 days in every one of those places.
+#: The label resolves through `decision_commentator_refs` (written in prompt
+#: order), whose ids the purge scrubs.
+LABEL_PREFIX = "C"
+
 _GUIDANCE = (
     "One commentator's published views, machine-extracted from Turkish titles, "
     "descriptions and posts and paraphrased in English. Read them under rule 4 "
@@ -100,7 +108,8 @@ _GUIDANCE = (
     "- Known bias: he runs a paid community and his content carries promotion; his "
     "headline tone skews bullish.\n"
     "- Report this source on its own line in the narrative, starting "
-    "`Commentator view:`. Paraphrase; never quote him."
+    "`Commentator view:` and citing items by label ([C1], ...). Paraphrase; never "
+    "quote him."
 )
 
 _state_lock = threading.Lock()
@@ -128,7 +137,10 @@ def _record_consumed(ticker: str, trade_date: str, items: Sequence[StoredItem]) 
 
 
 def consumed(ticker: str, trade_date: str) -> list[tuple[str, str]]:
-    """`(source, item_id)` pairs the last prompt built for this run contained."""
+    """`(source, item_id)` pairs the last prompt built for this run contained.
+
+    In prompt order: the n-th pair is the item labelled `[Cn]`.
+    """
     with _state_lock:
         return list(_consumed.get((ticker, trade_date), []))
 
@@ -324,11 +336,11 @@ def _stamp(item: StoredItem) -> str:
     return item.published_at.astimezone(UTC).strftime("%Y-%m-%dT%H:%MZ")
 
 
-def _ref(item: StoredItem) -> str:
-    return f"[{_SOURCE_LABEL.get(item.source, item.source)} {item.source_id}]"
+def _ref(label: int, item: StoredItem) -> str:
+    return f"[{LABEL_PREFIX}{label}, {_SOURCE_LABEL.get(item.source, item.source)}]"
 
 
-def _line(item: StoredItem, ticker: str, *, market_wide: bool) -> str:
+def _line(item: StoredItem, ticker: str, *, label: int, market_wide: bool) -> str:
     parts: list[str] = []
     if market_wide:
         parts.append("market-wide")
@@ -343,7 +355,7 @@ def _line(item: StoredItem, ticker: str, *, market_wide: bool) -> str:
         parts.append(f"stance on {ticker}: {item.stance.get(ticker, 'unstated')}")
     if item.claim_en:
         parts.append(f"paraphrase: {item.claim_en}")
-    return f"- {_stamp(item)} {_ref(item)} " + "; ".join(parts)
+    return f"- {_stamp(item)} {_ref(label, item)} " + "; ".join(parts)
 
 
 def render(
@@ -358,14 +370,18 @@ def render(
 ) -> str:
     """The section. With no items, absence is claimed only on `observed` reads.
 
+    Items are labelled `[C1]`, `[C2]`, ... in this order: `ticker_items`, then
+    `macro_items`, the order `build_block` records them in.
+
     `unread` items are in the window but were never extracted: with nothing
     else to show, the feed is unavailable; beside shown items, the list is
     said to be incomplete.
     """
     sym = ticker.upper()
-    lines = [_line(i, sym, market_wide=sym == MARKET_KEY and sym not in i.tickers)
-             for i in ticker_items]
-    lines += [_line(i, sym, market_wide=True) for i in macro_items]
+    shown = [(i, sym == MARKET_KEY and sym not in i.tickers) for i in ticker_items]
+    shown += [(i, True) for i in macro_items]
+    lines = [_line(i, sym, label=n, market_wide=wide)
+             for n, (i, wide) in enumerate(shown, start=1)]
     if lines:
         if unread:
             lines.append(

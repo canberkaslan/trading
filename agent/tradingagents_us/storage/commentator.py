@@ -8,7 +8,10 @@ every ticker's sentiment analyst after that.
 
 Retention is enforced here, so there is one place to audit it. The one copy
 that leaves the box, the daily backup, is kept for good, so it carries none of
-this: `scripts/backup.py` empties these tables in its copy first. The rules:
+these tables: `scripts/backup.py` empties them in its copy first. Decision
+reports are kept whole there and here; they cite items by per-block label,
+never by platform id, and what the analyst wrote about a claim stays with the
+decision (ADR-009, "Reports keep what the analyst wrote"). The rules:
 
 - YouTube: at most thirty days after the fetch (API Developer Policies
   III.E.4), then deleted. Nothing re-dates `fetched_at_utc`, and the ingest
@@ -418,6 +421,8 @@ def write_decision_refs(session: Session, decision_id: str) -> int:
 
     Popped, so a re-save of the same decision does not write them twice. The
     decision row is flushed first because the ref carries a foreign key to it.
+    Added in prompt order, so the decision's n-th ref by `id` is the item its
+    prompt labelled `[Cn]` — the only place that label resolves to an item.
     """
     refs = pop_decision_refs(decision_id)
     if not refs:

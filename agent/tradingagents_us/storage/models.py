@@ -272,6 +272,11 @@ class DecisionCommentatorRefRow(Base):
     Nothing else in the trade log records a decision's raw inputs, so without
     this there is no way to ask afterwards whether a flip followed the feed.
 
+    The prompt labels items `[C1]`, `[C2]`, ... rather than by platform id, so
+    the reports stored beside this row cite labels; a decision's refs are
+    written in prompt order, and its n-th row by `id` is `[Cn]`. This table is
+    the only place a label resolves to a video or post id.
+
     When an item is purged (retention, or an X deletion) its `item_id` here is
     set to NULL rather than the row being deleted: the fact that the decision
     read commentator input from `source` survives, the identifier of content

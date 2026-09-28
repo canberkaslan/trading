@@ -1,6 +1,6 @@
 # ADR-009: Commentator feed as opinion context
 
-**Status:** Accepted — shipped **off** (`COMMENTATOR_FEED=1` enables it). It stays off until the measurement gate below passes.
+**Status:** Accepted — shipped **off** (`COMMENTATOR_FEED=1` enables it). It stays off until the measurement gate below passes. `YOUTUBE_API_KEY` stays unset until the YouTube legal preconditions below are met: the YouTube source, as designed, does what the YouTube Developer Policies prohibit (derived data from API Data), and that is unresolved.
 **Date:** 2026-09-28
 **Related:** ADR-004 (data providers), ADR-008 (US equities only; unchanged by this ADR)
 
@@ -64,7 +64,9 @@ The scope question is smaller than it looked. In a 15-upload sample (09-18 → 0
 | Rule | How it is met |
 |---|---|
 | Only official APIs | YouTube Data API v3 (`channels.list` → uploads playlist → `playlistItems.list` → `videos.list`, about 3 quota units a run, 10,000/day free) and X API v2 `GET /2/users/{id}/tweets` with `exclude=replies,retweets` and `since_id`. There is no scraping, no transcript library, no audio download, and no polling of `youtube.com/feeds` (its robots.txt disallows it) |
-| YouTube Developer Policies III.E.4: keep API data at most 30 days | `expires_at_utc` = first fetch + 29 days: one day inside the limit, because the daily pass can run up to a day after a deadline. So an item is deleted within 30 days of its fetch. Reads never return an item past `expires_at_utc`, whenever the purge last ran. The routine ingest horizon (14 days) is shorter than retention, so a purged video is not re-ingested the next day |
+| YouTube Developer Policies III.E.4: keep API data at most 30 days (the storage rule only; see the next row) | `expires_at_utc` = first fetch + 29 days: one day inside the limit, because the daily pass can run up to a day after a deadline. So an item is deleted within 30 days of its fetch. Reads never return an item past `expires_at_utc`, whenever the purge last ran. The routine ingest horizon (14 days) is shorter than retention, so a purged video is not re-ingested the next day |
+| YouTube Developer Policies III.E.4: no new or derived data from API Data | **Not met. Unresolved legal risk.** The same subsection as the 30-day rule says API Clients must not "access or use API Data to create new or derived data or metrics". The YouTube path exists to do exactly that. The extractor turns a video's title, description and chapters (API Data) into new fields: `tickers`, a `stance` per ticker, `claim_en`, `is_promo` and `is_market_content`. Those fields are stored, shown to the sentiment analyst, and restated in reports that reach the mobile app. The policy's examples are about metrics (likes, engagement scores), and there may be an argument that classifying a video's topic is not what the clause targets. That argument has not been made to, or confirmed by, a lawyer or YouTube. The only route the policies name is III.L: permission for audited developers with analytics use cases, requested through the quota extension form. It has not been applied for. Until this is resolved, the YouTube source must not be keyed (see "Enabling YouTube — preconditions") |
+| YouTube Developer Policies III.A.1, III.A.2: YouTube Terms link and a privacy policy | **Not assessed.** An API Client must link to the YouTube Terms of Service and state in its own terms that users are bound by them. It must also require users to accept a privacy policy that says it uses YouTube API Services and links Google's Privacy Policy. Derived YouTube content reaches app users through decision reports, so these may apply to the mobile app. Nothing in this repository, the mobile app included, does either today |
 | X: honour deletions | Every retention pass (daily, weekends included) and every fetch re-reads the stored post ids (`GET /2/tweets?ids=`) and purges any that X no longer serves (deleted, protected, withheld). X items also expire after 8 days (`COMMENTATOR_X_RETENTION_DAYS`), which keeps each check to about 20 billed lookups. Without a token, or when the check fails (revoked token, spend cap, 429, outage), every stored X item is purged, because its deletions can no longer be seen. Reads skip an X post that has not been confirmed live in the last 24 hours, so a pass that never runs cannot keep one in a prompt. The X fetch stores no new post unless the daily pass ran in the last 26 hours |
 | Backups | `scripts/backup.py` ships a dated copy of `local.db` off the box every day, and those copies are kept for good (git history, dated S3 keys), past every deadline above. So the copy loses the feed tables before it is compressed: `commentator_items` and `commentator_status` are emptied and every `decision_commentator_refs.item_id` is set to NULL. The backup API copies free pages too, which hold the bytes of rows the live database already purged, so the copy is then rebuilt with `VACUUM`. No feed table row, live or purged, reaches a backup, and no video or post id does, because reports cite labels. **Decision reports do reach it, whole**, with whatever the analyst wrote about a claim; that is a recorded decision with an open legal question, not something the scrub covers (see "Reports keep what the analyst wrote"). A restored database has an empty feed, and its prompts say the feed is unavailable until the next fetch |
 | No redistribution, no quotation | Titles, descriptions and post text are read at fetch time and never stored. The table holds ids, timestamps and derived fields. The prompt carries per-block labels, publish times and paraphrases, never ids or verbatim text, so reports can carry no more than that; this matters because reports reach the mobile app (`GET /decisions/{id}`, `final_decision_text_tr`). Reports are not purged (below) |
@@ -96,6 +98,8 @@ What that text can hold is bounded by the prompt: labels, publish times, stances
 
 Suggested target: SPY, META, NVDA and AMZN × 25 dates that have feed items.
 
+Blocked until the YouTube preconditions below are met: step 1 needs `YOUTUBE_API_KEY`, and that fetch is what creates the derived data.
+
 ```bash
 # 1. Put items in the table: routine fetch, plus a backfill for history.
 python -m scripts.commentator_fetch --ignore-flag --backfill-days 120 --youtube-pages 4
@@ -125,6 +129,16 @@ COMMENTATOR_FEED=1 python -m backtest.llm_backtest --points META:2026-09-22 NVDA
 - **What it can establish:** expect 10–30 flips, which is little statistical power. So this is a **no-harm** gate: correct flips ≥ wrong flips, and no systematic bullish drift. If it fails, the feed stays off. No comparison script ships with this ADR; B has not been run.
 
 Both A and B must finish within the 29 days that YouTube items are kept; the daily retention pass deletes them then, flag or no flag. Descriptions can be edited after publication, and deleted videos are missing from a backfill. This is a small look-ahead and survivorship effect: `fetched_at_utc` marks when each item was first seen, and a later edit never replaces the first extraction.
+
+## Enabling YouTube — preconditions
+
+`YOUTUBE_API_KEY` must not be set on any box, and must not be set for the measurement gate's `--ignore-flag` backfill either, until all of the following are true. The key is what creates the derived data. The flag only decides whether a prompt reads it, and the gate fetches with the flag off.
+
+1. **The derived-data clause is resolved in writing.** Either a lawyer confirms that extracting tickers, stances and a paraphrase from titles and descriptions is outside III.E.4's "new or derived data" prohibition, or YouTube grants the III.L permission for this use. Until then the YouTube source is described as non-compliant, not as compliant.
+2. **III.A.1/III.A.2 are settled for every surface that shows the result.** Either the mobile app (and trader.fusapp.com, if it shows reports) links the YouTube Terms and carries a conforming privacy policy, or a lawyer confirms these do not apply to a backend client whose users see only derived text.
+3. **The report-retention question is answered** (see "Reports keep what the analyst wrote"), because YouTube-derived text in stored reports outlives the 30 days.
+
+Nothing in the code enforces this: a key in the environment is used. The `.env.example` and `deploy/hetzner/install.sh` templates carry the warning next to the variable.
 
 ## Enabling X (phase 2) — preconditions
 
@@ -162,6 +176,7 @@ Whether sending X post text to an LLM API for extraction is compatible with the 
 - About $0.002 of Haiku per new item (an estimate, not measured), a few X posts at $0.005 each when X is enabled, and extra prompt tokens on every sentiment call while the feed is on: about 900 characters (~220 tokens) for an empty or unavailable block and about 2,500 (~600 tokens) for a full one.
 
 **Accepted risks**
+- **Legal, open.** The YouTube source, as designed, runs against the Developer Policies' derived-data clause (III.E.4), and the III.A.1/III.A.2 obligations for what users see are not assessed. This is not accepted; it is why the key stays unset (see "Enabling YouTube — preconditions"). Two more questions are also open: X III.A(d), and keeping derived restatements in stored reports.
 - **Stance is mostly `unstated` on YouTube,** because the view is spoken and transcripts are off-limits. The block will often carry topics rather than views. That is accurate: it is all that can be known.
 - **Bias.** He runs a paid community, and his headline tone skews bullish. The prompt names this, and gate B checks for drift.
 - **Extraction errors.** A misread stance is limited to one labelled line that cannot move the score when it is `unstated`. Items whose extraction fails are retried and never shown half-read; while one sits in a window, that window is reported unavailable, not empty.

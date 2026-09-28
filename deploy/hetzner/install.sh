@@ -121,6 +121,9 @@ EXPECTED_TRADING_MODE=paper
 # each source is skipped, with a log line, while its key is blank. X also needs
 # a numeric user id pinned once (never a handle), and stores no post until
 # ai-trader-commentator-retention.timer (the daily deletion check) has run.
+# YOUTUBE_API_KEY stays unset until ADR-009 "Enabling YouTube — preconditions"
+# are met: the fetch creates derived data from YouTube API Data, which the
+# Developer Policies (III.E.4) prohibit, and that is unresolved.
 #COMMENTATOR_FEED=1
 #YOUTUBE_API_KEY=
 #X_BEARER_TOKEN=

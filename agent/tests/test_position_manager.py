@@ -324,7 +324,7 @@ class TestStopBackfill:
             cfg,
         )
         assert actions == []
-        assert [s.reason for s in skips] == ["stop_would_widen"]
+        assert [s.reason for s in skips] == ["stop_at_market"]
 
     def test_a_wild_atr_cannot_produce_a_negative_stop(self) -> None:
         cfg = ManagementConfig(backfill_missing_stops=True, atr_mult=1000.0)

@@ -1,10 +1,18 @@
 """The sell side of the risk layer.
 
-Every cap in this module exists to bound how much exposure may be taken on, and
+Almost every control here exists to bound how much risk may be taken ON, and
 until now they were applied to sells as well — so the machinery built to stop
 the book getting too concentrated was also what stopped it unwinding. The worst
 shape: a name at or above its single-name cap has zero headroom to add, so the
 exit was trimmed to zero on exactly the position that most needed exiting.
+
+It was not only the caps. One layer up the circuit breaker halted the exit too:
+on a daily drawdown, on a losing streak, and on a PAUSE_NEW kill switch whose
+own docstring reads "no new entries; manage existing (honor stops)". Of the
+risk gates only FLATTEN_ALL still refuses a sell, because the flatten path is
+already selling the book; the gate that doubts the price itself, the anomaly
+z-score, keeps both sides too. The API error-rate gate is not tested as a sell
+control here: nothing in production feeds it, so it cannot fire (see sizer.py).
 
 Grepping tests/ before this file, "SELL" appeared once, against an empty book,
 so the trim never engaged and none of it was visible to CI.
@@ -110,9 +118,14 @@ def test_a_sell_is_not_blocked_by_a_full_sector() -> None:
 
 
 def test_a_sell_is_not_blocked_by_gross_exposure() -> None:
+    """The book has to be far enough over the 1.5x cap that the sell's own
+    notional pushes the (wrongly) added total past it — $150k gross on $100k
+    equity, plus a $5k exit. Sized so it breaches only under the old both-sides
+    reading, which is the whole point: an exit rejected for the gross exposure
+    it removes."""
     order = _sell(
         50.0,
-        existing_position_values_by_ticker={"MSFT": 5_000.0, "AAPL": 140_000.0},
+        existing_position_values_by_ticker={"MSFT": 5_000.0, "AAPL": 145_000.0},
     )
     assert order.risk_approved, order.rejection_reasons
 
@@ -235,21 +248,115 @@ def test_a_buy_is_still_bounded_by_cash() -> None:
     assert any("cash_cap" in r for r in order.rejection_reasons)
 
 
-def test_the_kill_switch_still_stops_a_sell() -> None:
-    """Exposure caps stop applying to sells; the kill switch must not. FLATTEN_ALL
-    has its own path, and an operator halting the system means halting all of it."""
+# --------------------------------------------------------------------------
+# The circuit breaker's risk-taking gates are entry-side too.
+#
+# The caps in the sizer were not the only controls written for entries and then
+# applied to both sides — one layer up, the breaker halts on a drawdown, on a
+# losing streak, and on a kill switch whose own docstring reads "no new entries;
+# manage existing". Each of those refused the exit as well.
+# --------------------------------------------------------------------------
+
+
+def _sell_through(cb: CircuitBreaker, **kw):
+    return size_from_decision(
+        decision=_decision("Sell"),
+        account_equity=100_000.0,
+        market_ctx=_market(),
+        portfolio_ctx=_portfolio(existing_position_values_by_ticker={"MSFT": 5_000.0}),
+        circuit_breaker=cb,
+        held_quantity=50.0,
+        **kw,
+    )
+
+
+def test_a_drawdown_halt_does_not_strand_a_sell() -> None:
+    """The sharpest case of all. The halt exists to stop the account taking on
+    new risk after a bad day; blocking the exits is how the bad day compounds —
+    the hazard test_risk_cash_budget.py already names for the cash cap."""
+    order = _sell_through(_cb(), session_open_equity=104_200.0)  # -4% vs a 3% limit
+    assert order.risk_approved, order.rejection_reasons
+    assert order.quantity == 50
+
+
+def test_a_buy_is_still_halted_by_a_drawdown() -> None:
+    order = size_from_decision(
+        decision=_decision("Buy"),
+        account_equity=100_000.0,
+        market_ctx=_market(),
+        portfolio_ctx=_portfolio(),
+        circuit_breaker=_cb(),
+        session_open_equity=104_200.0,
+    )
+    assert not order.risk_approved
+    assert any("daily_drawdown" in r for r in order.rejection_reasons)
+
+
+def test_a_losing_streak_does_not_strand_a_sell() -> None:
+    """A run of losses is a reason to stop opening positions. It is not a reason
+    to keep holding the ones doing the losing."""
+    cb = _cb()
+    for _ in range(5):
+        cb.record_trade_result(profitable=False)
+    assert _sell_through(cb).risk_approved
+
+
+def test_pause_new_does_not_block_a_sell() -> None:
+    """PAUSE_NEW is documented as "no new entries; manage existing (honor stops)"
+    and an exit is managing existing. It is also what FileKillSwitchReader
+    returns for an unreadable, empty or corrupt flag file — so leaving it on the
+    sell side let a failed read of a local file seal the exits."""
 
     class _Paused(KillSwitchReader):
         def read(self) -> str:
             return "PAUSE_NEW"
 
+    assert _sell_through(CircuitBreaker(kill_switch=_Paused())).risk_approved
+
+
+def test_flatten_all_still_blocks_a_sell() -> None:
+    """FLATTEN_ALL is not a halt on risk-taking: it hands the book to
+    execution/flatten.py, which is already selling every lot. A sell from the
+    sizer would be a second writer on the same shares, sized off a holding read
+    before the flatten ran — the double sell manage_positions skips its whole
+    pass to avoid."""
+
+    class _Flatten(KillSwitchReader):
+        def read(self) -> str:
+            return "FLATTEN_ALL"
+
+    order = _sell_through(CircuitBreaker(kill_switch=_Flatten()))
+    assert not order.risk_approved
+    assert "kill_switch=FLATTEN_ALL" in order.rejection_reasons
+
+
+def test_the_kill_switch_still_stops_a_buy() -> None:
+    class _Paused(KillSwitchReader):
+        def read(self) -> str:
+            return "PAUSE_NEW"
+
     order = size_from_decision(
-        decision=_decision("Sell"),
+        decision=_decision("Buy"),
         account_equity=100_000.0,
         market_ctx=_market(),
-        portfolio_ctx=_portfolio(existing_position_values_by_ticker={"MSFT": 5_000.0}),
+        portfolio_ctx=_portfolio(),
         circuit_breaker=CircuitBreaker(kill_switch=_Paused()),
-        held_quantity=50.0,
     )
     assert not order.risk_approved
     assert any("kill_switch" in r for r in order.rejection_reasons)
+
+
+def test_a_bad_print_still_stops_a_sell() -> None:
+    """The one class of gate that keeps both sides. A price 5 sigma off the mean
+    is a reason to doubt the number, not a statement about exposure, and selling
+    into a bad print is no safer than buying into one."""
+    order = size_from_decision(
+        decision=_decision("Sell"),
+        account_equity=100_000.0,
+        market_ctx=_market(current_price=150.0, rolling_mean=PRICE, rolling_std=10.0),
+        portfolio_ctx=_portfolio(existing_position_values_by_ticker={"MSFT": 5_000.0}),
+        circuit_breaker=_cb(),
+        held_quantity=50.0,
+    )
+    assert not order.risk_approved
+    assert any("z_score" in r for r in order.rejection_reasons)

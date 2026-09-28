@@ -54,6 +54,9 @@ _BROKER_STATUS_MAP: dict[str, OrderStatus] = {
 # order — hitting one of these in the duplicate check allows a resubmit.
 _RESUBMITTABLE = {"canceled", "expired", "rejected", "replaced"}
 
+#: Fractional-share float dust, as in execution.reconcile.
+_QTY_EPSILON = 1e-9
+
 
 def _map_broker_status(raw: str) -> OrderStatus:
     return _BROKER_STATUS_MAP.get(raw.lower(), "NEEDS_RECONCILE")
@@ -292,6 +295,19 @@ def submit_order(
                 refusal_reasons=[reason],
             )
 
+        if order.side == "SELL":
+            changed = _holding_changed_since_sizing(cli, order)
+            if changed is not None:
+                return ExecutionResult(
+                    submitted=False,
+                    dry_run=False,
+                    update=OrderUpdate(
+                        order_id=order.order_id, status="REJECTED",
+                        error_message=changed, timestamp_utc=now,
+                    ),
+                    refusal_reasons=[changed],
+                )
+
         # Broker-side protective legs. Stop and take-profit attach
         # INDEPENDENTLY (bracket when both, OTO when one) — a missing
         # price_target must never drop the stop leg with it: broker-side
@@ -360,6 +376,36 @@ def submit_order(
     finally:
         if own_client:
             cli.close()
+
+
+def _holding_changed_since_sizing(cli: AlpacaClient, order: TradeOrder) -> str | None:
+    """Why a sell may not go as sized, read off the holding right now, or None.
+
+    A sell is sized off a holding read before the council ran, five to ten
+    minutes earlier, or hours earlier when it waits for mobile approval. While
+    a stop or take-profit stands, the broker refuses the sell anyway: the leg
+    reserves the shares. It accepts it only once that leg has filled, which is
+    when the book is already flat, and a margin account books the sell as a
+    short with nothing protecting it. A lot that shrank has another seller on
+    it, the second-writer case FLATTEN_ALL refuses for, so it is refused too
+    rather than resized. Read with list_positions, the call this path has
+    always had, so it depends on nothing newer in the broker adapter.
+    """
+    held = [p for p in cli.list_positions() if p.symbol.upper() == order.ticker.upper()]
+    if not held:
+        return (
+            f"position_changed_since_sizing: sized {order.quantity} to sell, "
+            f"nothing held in {order.ticker} now"
+        )
+    position = held[0]
+    if position.side != "long":
+        return f"position_changed_since_sizing: {order.ticker} is held {position.side}"
+    if order.quantity > position.qty + _QTY_EPSILON:
+        return (
+            f"position_changed_since_sizing: sized {order.quantity} to sell, "
+            f"{position.qty:g} held now"
+        )
+    return None
 
 
 def derive_client_order_id(ticker: str, trade_date: date, side: str) -> str:

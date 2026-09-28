@@ -6,6 +6,10 @@ fetches. Run once, it costs three YouTube quota units, a handful of X posts at
 pay-per-use rates when X is configured, and one cheap-tier extraction per NEW
 item. An item already extracted is never extracted again.
 
+YouTube needs COMMENTATOR_YOUTUBE_CLEARED=1 beside YOUTUBE_API_KEY, whatever
+the flag or `--ignore-flag` says: a key alone is refused (config.py, ADR-009
+"Enabling YouTube — preconditions").
+
 Best-effort by design: exits 0 on every failure, like the other steps
 daily_run.sh appends, because a missing commentator block must never cost a
 trading day. A source without credentials is skipped and logged.
@@ -63,7 +67,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="List the YouTube uploads that would be ingested; no extraction, "
                         "no DB writes, no X call")
     p.add_argument("--ignore-flag", action="store_true",
-                   help="Run even when COMMENTATOR_FEED is not 1 (to prepare an evaluation)")
+                   help="Run even when COMMENTATOR_FEED is not 1 (to prepare an evaluation). "
+                        "YouTube still needs COMMENTATOR_YOUTUBE_CLEARED=1 beside its key")
     p.add_argument("--backfill-days", type=int, default=None,
                    help="Ingest YouTube uploads this many days back (default: the routine "
                         "lookback). Items still expire 30 days after this fetch.")
@@ -109,7 +114,7 @@ def _dry_run(lookback: timedelta, pages: int) -> int:
     now = datetime.now(UTC)
     key = config.youtube_api_key()
     if key is None:
-        print("YouTube: YOUTUBE_API_KEY not set — skipped")
+        print(f"YouTube: skipped ({config.youtube_skip_reason()})")
     else:
         with YouTubeClient(key) as yt:
             items = fetch_recent(

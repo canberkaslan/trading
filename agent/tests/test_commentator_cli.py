@@ -37,7 +37,8 @@ _DEPLOY = Path(__file__).resolve().parents[2] / "deploy" / "hetzner"
 
 @pytest.fixture(autouse=True)
 def _no_keys(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    for var in ("YOUTUBE_API_KEY", "X_BEARER_TOKEN", "COMMENTATOR_X_USER_ID"):
+    for var in ("YOUTUBE_API_KEY", "X_BEARER_TOKEN", "COMMENTATOR_X_USER_ID",
+                "COMMENTATOR_YOUTUBE_CLEARED"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("TRADE_LOG_DB_URL", f"sqlite:///{tmp_path / 'feed.db'}")
 
@@ -127,6 +128,30 @@ class TestFetchCli:
         assert "X skipped: X_BEARER_TOKEN is not set" in out
         assert "extracted=0" in out
 
+    @pytest.mark.parametrize(("flag", "argv"), [
+        ("1", []),                   # the daily run
+        (None, ["--ignore-flag"]),   # the measurement gate's backfill
+        ("1", ["--dry-run"]),
+    ])
+    def test_a_youtube_key_alone_never_reaches_youtube(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+        flag: str | None, argv: list[str],
+    ) -> None:
+        # ADR-009: the fetch turns YouTube API Data into derived fields, which
+        # the Developer Policies prohibit until the preconditions are met. The
+        # key must not be what decides that; the clearance variable is.
+        if flag is None:
+            monkeypatch.delenv("COMMENTATOR_FEED", raising=False)
+        else:
+            monkeypatch.setenv("COMMENTATOR_FEED", flag)
+        monkeypatch.setenv("YOUTUBE_API_KEY", "yt-key-not-real-0001")
+        monkeypatch.setattr(
+            yt_source.YouTubeClient, "__init__", lambda *a, **k: pytest.fail("YouTube client")
+        )
+        monkeypatch.setattr(extract_mod, "extract", lambda *a, **k: pytest.fail("extracted"))
+        assert cli.main(argv) == 0
+        assert "COMMENTATOR_YOUTUBE_CLEARED is not 1" in capsys.readouterr().out
+
     def test_a_crash_never_fails_the_run(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -175,6 +200,7 @@ class TestNoIdReachesTheLog:
         x = FakeXAPI([post(pid, (now - timedelta(hours=n + 1)).strftime(stamp), "Nasdaq")
                       for n, pid in enumerate(self.POSTS)])
         for var, value in (("COMMENTATOR_FEED", "1"), ("YOUTUBE_API_KEY", "yt-key-not-real-0001"),
+                           ("COMMENTATOR_YOUTUBE_CLEARED", "1"),
                            ("X_BEARER_TOKEN", "x-token-not-real-0001"),
                            ("COMMENTATOR_X_USER_ID", X_USER)):
             monkeypatch.setenv(var, value)

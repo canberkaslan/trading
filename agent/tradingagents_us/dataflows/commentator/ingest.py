@@ -295,7 +295,7 @@ def run(
     alive = _retain(sessions, x, now=now, report=report)
 
     if youtube is None:
-        report.notes.append("YouTube skipped: YOUTUBE_API_KEY is not set")
+        report.notes.append(f"YouTube skipped: {config.youtube_skip_reason()}")
     else:
         try:
             _youtube_step(

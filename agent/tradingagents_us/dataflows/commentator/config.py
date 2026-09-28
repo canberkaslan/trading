@@ -74,6 +74,16 @@ _INGEST_LOOKBACK_DAYS_DEFAULT = 14
 #: First X fetch with nothing stored: how many recent posts to buy.
 X_FIRST_RUN_MAX = 20
 
+#: ADR-009 "Enabling YouTube — preconditions". The YouTube source turns API
+#: Data (title, description, chapters) into derived fields — tickers, a stance
+#: per ticker, a paraphrase — and the Developer Policies (III.E.4) prohibit
+#: creating derived data from API Data. Nobody has cleared that. So a key is
+#: not enough to start it: an operator exporting one for the measurement
+#: gate's `--ignore-flag` backfill would create exactly that data. The key is
+#: used only beside this separate acknowledgement, which records that the
+#: preconditions were met in writing. Only exactly "1".
+YOUTUBE_CLEARED_ENV = "COMMENTATOR_YOUTUBE_CLEARED"
+
 
 def is_enabled() -> bool:
     """The feed's master switch. Off unless exactly "1"."""
@@ -133,8 +143,33 @@ def _secret(name: str) -> str | None:
     return value if value and value != "..." else None
 
 
+def youtube_cleared() -> bool:
+    """Whether the ADR-009 YouTube preconditions are recorded as met."""
+    return os.environ.get(YOUTUBE_CLEARED_ENV) == "1"
+
+
 def youtube_api_key() -> str | None:
-    return _secret("YOUTUBE_API_KEY")
+    """The YouTube key, or None: unset, a placeholder, or the source not cleared.
+
+    A key without the acknowledgement is refused with a warning, and the
+    YouTube source is skipped exactly as if no key were set.
+    """
+    key = _secret("YOUTUBE_API_KEY")
+    if key is not None and not youtube_cleared():
+        log.warning(
+            "YOUTUBE_API_KEY is set but %s is not 1; the YouTube source stays off until "
+            "the ADR-009 preconditions are met (derived data from YouTube API Data)",
+            YOUTUBE_CLEARED_ENV,
+        )
+        return None
+    return key
+
+
+def youtube_skip_reason() -> str:
+    """Why `youtube_api_key()` gave nothing, for the run's summary."""
+    if _secret("YOUTUBE_API_KEY") is None:
+        return "YOUTUBE_API_KEY is not set"
+    return f"{YOUTUBE_CLEARED_ENV} is not 1 (ADR-009 YouTube preconditions not met)"
 
 
 def x_bearer_token() -> str | None:

@@ -37,7 +37,9 @@ the flips against the 21-day forward return, mean rating shift and cost:
 
 Items must be in `commentator_items` first (`scripts.commentator_fetch
 --ignore-flag --backfill-days N`), and both steps must finish inside the
-thirty days YouTube items are kept.
+thirty days YouTube items are kept. That fetch reads YouTube only with
+COMMENTATOR_YOUTUBE_CLEARED=1 beside the key: until the ADR-009 YouTube
+preconditions are met there are no YouTube items, and this gate is blocked.
 """
 
 from __future__ import annotations

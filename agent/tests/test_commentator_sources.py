@@ -261,8 +261,38 @@ class TestPinnedIdentity:
     ) -> None:
         monkeypatch.setenv("X_BEARER_TOKEN", value)
         monkeypatch.setenv("YOUTUBE_API_KEY", value)
+        monkeypatch.setenv(config.YOUTUBE_CLEARED_ENV, "1")  # so the key is what is judged
         assert config.x_bearer_token() is None
         assert config.youtube_api_key() is None
+
+    @pytest.mark.parametrize("cleared", [None, "", "0", "true", "yes"])
+    def test_a_youtube_key_is_refused_until_the_source_is_cleared(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+        cleared: str | None,
+    ) -> None:
+        monkeypatch.setenv("YOUTUBE_API_KEY", "yt-key-not-real-0001")
+        if cleared is None:
+            monkeypatch.delenv(config.YOUTUBE_CLEARED_ENV, raising=False)
+        else:
+            monkeypatch.setenv(config.YOUTUBE_CLEARED_ENV, cleared)
+        with caplog.at_level(logging.WARNING):
+            assert config.youtube_api_key() is None
+        assert config.YOUTUBE_CLEARED_ENV in caplog.text
+        assert "yt-key-not-real-0001" not in caplog.text
+        assert config.YOUTUBE_CLEARED_ENV in config.youtube_skip_reason()
+
+    def test_a_cleared_source_uses_its_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("YOUTUBE_API_KEY", "yt-key-not-real-0001")
+        monkeypatch.setenv(config.YOUTUBE_CLEARED_ENV, "1")
+        assert config.youtube_api_key() == "yt-key-not-real-0001"
+
+    def test_clearance_without_a_key_is_still_no_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("YOUTUBE_API_KEY", raising=False)
+        monkeypatch.setenv(config.YOUTUBE_CLEARED_ENV, "1")
+        assert config.youtube_api_key() is None
+        assert config.youtube_skip_reason() == "YOUTUBE_API_KEY is not set"
 
     def test_resolve_is_a_separate_one_off_call(self) -> None:
         api = FakeXAPI([])

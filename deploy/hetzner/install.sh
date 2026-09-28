@@ -123,7 +123,9 @@ EXPECTED_TRADING_MODE=paper
 # ai-trader-commentator-retention.timer (the daily deletion check) has run.
 # YOUTUBE_API_KEY stays unset until ADR-009 "Enabling YouTube — preconditions"
 # are met: the fetch creates derived data from YouTube API Data, which the
-# Developer Policies (III.E.4) prohibit, and that is unresolved.
+# Developer Policies (III.E.4) prohibit, and that is unresolved. The code
+# refuses the key unless COMMENTATOR_YOUTUBE_CLEARED=1, the record that those
+# preconditions are met in writing. Do not set it before.
 #COMMENTATOR_FEED=1
 #YOUTUBE_API_KEY=
 #X_BEARER_TOKEN=

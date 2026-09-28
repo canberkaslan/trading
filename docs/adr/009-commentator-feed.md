@@ -113,7 +113,7 @@ python -m scripts.commentator_sentiment_diff --tickers SPY META NVDA AMZN --max-
 ```
 
 How to read the result:
-- If points whose items are all `unstated` move the score (|Δ| > 0.5), the prompt is leaking tone into the score. Fix the prompt before anything else.
+- If points whose prompt lines all show an `unstated` stance move the score (|Δ| > 0.5), the prompt is leaking tone into the score. Fix the prompt before anything else. A point is judged by the stance each line shows, not by every stance its items carry: a META item that also names SPY is shown as `stance on META: …`, and its SPY stance is not in META's prompt.
 - If Δ ≈ 0 everywhere, the feed adds nothing the analyst uses. **Stop; keep it off.**
 
 **B. Paired ablation** (only if A shows movement). Run `backtest/llm_backtest.py` twice on the same `(ticker, date)` points. The only difference between the two runs is the environment variable.

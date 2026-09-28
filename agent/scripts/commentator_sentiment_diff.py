@@ -15,8 +15,10 @@ adds a second feed-off call per point to measure what is left of run-to-run
 variation, which is the floor any feed effect has to clear.
 
 How to read the result (plan §5, step A):
-  - points whose items all have stance `unstated` should show Δ ≈ 0; if they
-    do not, the prompt is leaking tone into the score — fix the prompt;
+  - points whose prompt lines all show stance `unstated` should show Δ ≈ 0;
+    if they do not, the prompt is leaking tone into the score — fix the
+    prompt. "Shows" is per line, as rendered: a META line shows the META
+    stance only, even when the item also carries one for SPY;
   - if Δ ≈ 0 everywhere, the feed adds nothing the analyst uses — stop there;
   - otherwise, and only then, run step B.
 
@@ -188,9 +190,17 @@ def candidate_points(
     return points
 
 
-def stance_stated(items: Sequence[StoredItem], ticker: str) -> bool:
-    keys = (ticker.upper(), cs.MARKET_KEY)
-    return any(i.stance.get(k, "unstated") != "unstated" for i in items for k in keys)
+def stance_stated(lines: Sequence[tuple[StoredItem, bool]], ticker: str) -> bool:
+    """Whether any line the prompt showed states a stance, judged by what the line shows.
+
+    Per line, as `cs.build_block_lines` returns them: a META item that also
+    names SPY is shown as "stance on META: unstated", and its SPY stance is
+    not in the prompt. Counting it would file a moving unstated point under
+    `stance_stated`, where the PROMPT BUG check never looks.
+    """
+    return any(
+        cs.shown_stance(item, ticker, market_wide=wide) != "unstated" for item, wide in lines
+    )
 
 
 @contextlib.contextmanager
@@ -268,7 +278,7 @@ def run_point(
     noise: bool,
 ) -> PointDiff:
     """Both arms of one point. The node must come from a module under `frozen_inputs`."""
-    _, used = cs.build_block(ticker, _start(trade_date), trade_date)
+    _, lines = cs.build_block_lines(ticker, _start(trade_date), trade_date)
     def score() -> tuple[str, float] | None:
         return parse_header(node(_state(ticker, trade_date))["sentiment_report"])
 
@@ -280,8 +290,8 @@ def run_point(
     return PointDiff(
         ticker=ticker,
         date=trade_date,
-        items=len(used),
-        stance_stated=stance_stated(used, ticker),
+        items=len(lines),
+        stance_stated=stance_stated(lines, ticker),
         off_score=off[1] if off else None,
         on_score=on[1] if on else None,
         off_band=off[0] if off else None,
@@ -328,9 +338,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.dry_run:
         for ticker, d in points:
-            block, used = cs.build_block(ticker, _start(d), d)
-            print(f"== {ticker} @ {d}: {len(used)} item(s), +{len(block)} chars, "
-                  f"stance stated: {stance_stated(used, ticker)}")
+            block, lines = cs.build_block_lines(ticker, _start(d), d)
+            print(f"== {ticker} @ {d}: {len(lines)} item(s), +{len(block)} chars, "
+                  f"stance stated: {stance_stated(lines, ticker)}")
             print(block)
         return 0
 

@@ -340,6 +340,28 @@ def _ref(label: int, item: StoredItem) -> str:
     return f"[{LABEL_PREFIX}{label}, {_SOURCE_LABEL.get(item.source, item.source)}]"
 
 
+def shown_lines(
+    ticker: str, ticker_items: Sequence[StoredItem], macro_items: Sequence[StoredItem]
+) -> list[tuple[StoredItem, bool]]:
+    """`(item, market_wide)` per line, in label order: how `render` shows each item.
+
+    Every macro item is a market-wide line. A ticker item is one only in SPY's
+    own block, when SPY is not among its tickers (macro topics, no ticker).
+    """
+    sym = ticker.upper()
+    lines = [(i, sym == MARKET_KEY and sym not in i.tickers) for i in ticker_items]
+    return lines + [(i, True) for i in macro_items]
+
+
+def shown_stance(item: StoredItem, ticker: str, *, market_wide: bool) -> str:
+    """The one stance a line shows: the broad market's if market-wide, else the ticker's.
+
+    An item's other stances are not shown: a META item that also names SPY
+    shows only its META stance, so its SPY stance cannot move META's score.
+    """
+    return item.stance.get(MARKET_KEY if market_wide else ticker.upper(), "unstated")
+
+
 def _line(item: StoredItem, ticker: str, *, label: int, market_wide: bool) -> str:
     parts: list[str] = []
     if market_wide:
@@ -349,10 +371,11 @@ def _line(item: StoredItem, ticker: str, *, label: int, market_wide: bool) -> st
         parts.append("also on: " + ", ".join(others))
     if item.macro_topics:
         parts.append("topics: " + ", ".join(item.macro_topics))
+    stance = shown_stance(item, ticker, market_wide=market_wide)
     if market_wide:
-        parts.append(f"broad-market stance: {item.stance.get(MARKET_KEY, 'unstated')}")
+        parts.append(f"broad-market stance: {stance}")
     else:
-        parts.append(f"stance on {ticker}: {item.stance.get(ticker, 'unstated')}")
+        parts.append(f"stance on {ticker}: {stance}")
     if item.claim_en:
         parts.append(f"paraphrase: {item.claim_en}")
     return f"- {_stamp(item)} {_ref(label, item)} " + "; ".join(parts)
@@ -378,10 +401,8 @@ def render(
     said to be incomplete.
     """
     sym = ticker.upper()
-    shown = [(i, sym == MARKET_KEY and sym not in i.tickers) for i in ticker_items]
-    shown += [(i, True) for i in macro_items]
     lines = [_line(i, sym, label=n, market_wide=wide)
-             for n, (i, wide) in enumerate(shown, start=1)]
+             for n, (i, wide) in enumerate(shown_lines(sym, ticker_items, macro_items), start=1)]
     if lines:
         if unread:
             lines.append(
@@ -468,7 +489,26 @@ def build_block(
     load: Callable[[datetime, datetime], list[StoredItem]] | None = None,
     load_reads: Callable[[], list[SourceRead]] | None = None,
 ) -> tuple[str, list[StoredItem]]:
-    """The rendered section and the items in it."""
+    """The rendered section and the items in it, in label order."""
+    block, lines = build_block_lines(
+        ticker, start_date, end_date, run_start=run_start, now=now,
+        live_anchor=live_anchor, load=load, load_reads=load_reads,
+    )
+    return block, [i for i, _ in lines]
+
+
+def build_block_lines(
+    ticker: str,
+    start_date: str,
+    end_date: str,
+    *,
+    run_start: datetime | None = None,
+    now: datetime | None = None,
+    live_anchor: datetime | None = None,
+    load: Callable[[datetime, datetime], list[StoredItem]] | None = None,
+    load_reads: Callable[[], list[SourceRead]] | None = None,
+) -> tuple[str, list[tuple[StoredItem, bool]]]:
+    """`build_block`, with each item's `market_wide` flag as `shown_lines` gives it."""
     now = now or datetime.now(UTC)
     loader = load or _load_items
     items = loader(_day(start_date), _day(end_date) + timedelta(days=1))
@@ -485,7 +525,7 @@ def build_block(
         )
     block = render(ticker, own, macro, start_date=start_date, end_date=end_date,
                    observed=observed, unread=len(pending))
-    return block, own + macro
+    return block, shown_lines(ticker, own, macro)
 
 
 # ------------------------------------------------------------------ install

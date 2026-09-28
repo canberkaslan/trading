@@ -253,7 +253,9 @@ export default function ApproveOrderScreen() {
   }
 
   const target = order;
-  const label = `${target.side} ${target.quantity} ${target.ticker} onayla`;
+  const orderText = `${target.side} ${target.quantity} ${target.ticker}`;
+  // The device-lock prompt's reason line. Only the approval asks for it.
+  const label = `${orderText} onayla`;
   const buy = target.side === 'BUY';
   const sideColor = buy ? t.up : t.downText ?? t.down;
 
@@ -577,7 +579,7 @@ export default function ApproveOrderScreen() {
       <Sheet
         visible={flow.step === 'rejectConfirm' || flow.step === 'rejecting'}
         title="Emri reddet?"
-        message={`${label} — emir gönderilmeyecek; günlük koşu bugün yeniden önermez.`}
+        message={`${orderText} — emir gönderilmeyecek; günlük koşu bugün yeniden önermez.`}
         summary={sheetSummary}
         busy={flow.step === 'rejecting'}
         busyLabel="Reddediliyor…"

@@ -175,3 +175,27 @@ class TestFeedStaysOnTheBox:
         assert restored.execute("SELECT decision_id FROM agent_decisions").fetchall() == [
             ("dec-0",)
         ]
+
+    def test_a_db_whose_feed_never_stored_anything_is_copied_untouched(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The feed tables exist on every DB the models touch, flag off included.
+        # Empty, they cost the copy nothing: no scrub, no VACUUM, so a DB that
+        # VACUUM cannot rewrite still ships, as it did on main.
+        db = tmp_path / "flag-off.db"
+        TradeLogRepository(create_engine(f"sqlite:///{db}"))
+        statements: list[str] = []
+        real_scrub = backup._scrub_for_off_box
+
+        def spy(dst: sqlite3.Connection) -> None:
+            dst.set_trace_callback(statements.append)
+            real_scrub(dst)
+
+        monkeypatch.setattr(backup, "_scrub_for_off_box", spy)
+        restored = _restore(tmp_path, backup._dump_sqlite_gz(db))
+        listing = restored.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        names = {row[0] for row in listing}
+        assert {"agent_decisions", "commentator_items"} <= names
+        assert statements, "the spy saw no statement; the check below would prove nothing"
+        assert not [s for s in statements if s.startswith(("DELETE", "UPDATE", "VACUUM"))]
+

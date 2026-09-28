@@ -91,11 +91,29 @@ def _scrub_for_off_box(conn: sqlite3.Connection) -> None:
     """
     listing = conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
     tables = {row[0] for row in listing}
+    if not _feed_ever_stored(conn, tables):
+        return
     with conn:
         for table, sql in _OFF_BOX_SCRUB:
             if table in tables:
                 conn.execute(sql)
     conn.execute("VACUUM")
+
+
+def _feed_ever_stored(conn: sqlite3.Connection, tables: set[str]) -> bool:
+    """Whether any feed table holds a row: an item, a read record or a ref.
+
+    The tables exist on every DB the models have touched, flag or no flag, so
+    their presence says nothing. With no row in any of them the feed never
+    stored anything, no page of the copy can hold its bytes, and the copy is
+    left exactly as main shipped it. That matters beyond speed: VACUUM rewrites
+    every page and fails on a DB with one damaged page, which would drop the
+    whole local.db from the backup where main still shipped it.
+    """
+    for table, _ in _OFF_BOX_SCRUB:
+        if table in tables and conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone():
+            return True
+    return False
 
 
 def _dump_sqlite_gz(db_path: Path) -> bytes:

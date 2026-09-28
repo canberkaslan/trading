@@ -113,6 +113,9 @@ class FakeXAPI:
         self.posts = {p["id"]: p for p in posts}
         self.username = username
         self.requests: list[httpx.Request] = []
+        #: A status for GET /2/tweets (the deletion check) to fail with, e.g.
+        #: 402 once the pay-per-use credits or the spend cap run out.
+        self.fail_lookup_with: int | None = None
 
     def delete(self, pid: str) -> None:
         self.posts.pop(pid, None)
@@ -131,6 +134,8 @@ class FakeXAPI:
                 "meta": {"result_count": len(data)},
             })
         if path == "/2/tweets":
+            if self.fail_lookup_with:
+                return _json({"title": "CreditsDepleted"}, self.fail_lookup_with)
             ids = params["ids"].split(",")
             data = [self.posts[i] for i in ids if i in self.posts]
             errors = [

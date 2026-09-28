@@ -108,6 +108,25 @@ class TestRetention:
             got = store.extracted_items_between(s, NOW - timedelta(days=7), NOW, now=NOW)
         assert [i.source_id for i in got] == ["live"]
 
+    def test_a_deletion_checked_source_is_read_only_while_its_check_is_fresh(
+        self, repo: TradeLogRepository
+    ) -> None:
+        _put(repo, "x", "fresh", expires=NOW + timedelta(days=8))
+        _put(repo, "x", "stale", expires=NOW + timedelta(days=8))
+        _put(repo, "x", "never", expires=NOW + timedelta(days=8))
+        _put(repo, "youtube", "yt", expires=NOW + timedelta(days=8))
+        with repo.session() as s:
+            store.mark_verified(s, ["x:fresh"], NOW - timedelta(hours=1))
+            store.mark_verified(s, ["x:stale"], NOW - timedelta(hours=25))
+        with repo.session() as s:
+            got = store.extracted_items_between(s, NOW - timedelta(days=7), NOW, now=NOW)
+        assert sorted(i.item_id for i in got) == ["x:fresh", "youtube:yt"]
+
+    def test_x_is_the_deletion_checked_source(self) -> None:
+        from tradingagents_us.dataflows.commentator.items import X
+
+        assert frozenset({X}) == store.DELETION_CHECKED_SOURCES
+
     def test_a_status_is_recorded_and_overwritten(self, repo: TradeLogRepository) -> None:
         with repo.session() as s:
             assert store.status_at(s, store.RETENTION_PASS) is None

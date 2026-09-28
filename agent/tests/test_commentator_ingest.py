@@ -225,6 +225,61 @@ class TestX:
         report = _run(repo, x=None, now=NOW + timedelta(hours=1))
         assert report.purged_deleted == 1 and _items(repo) == {}
 
+    def test_a_failed_deletion_check_purges_every_stored_post(
+        self, repo: TradeLogRepository
+    ) -> None:
+        # A revoked token, the spend cap or an outage: the check that would see
+        # a deletion cannot run, so what it would have protected must go —
+        # the same rule as no token at all. Nothing stays readable for days.
+        api = FakeXAPI([post("1001", "2026-09-26T12:00:00Z", "a"),
+                        post("1002", "2026-09-27T12:00:00Z", "b")])
+        _run(repo, x=api.client())
+        api.delete("1001")
+        api.fail_lookup_with = 402
+        first = _run(repo, x=api.client(), x_user=None, now=NOW + timedelta(hours=1))
+        assert any("X reconcile failed: HTTPStatusError" in n for n in first.notes)
+        assert first.purged_deleted == 2
+        for day in range(1, 8):
+            at = NOW + timedelta(days=day)
+            _run(repo, x=api.client(), x_user=None, now=at)
+            with repo.session() as s:
+                visible = store.extracted_items_between(s, NOW - timedelta(days=7), at, now=at)
+            assert _items(repo) == {} and visible == []
+
+    def test_a_failed_deletion_check_in_the_daily_pass_purges_too(
+        self, repo: TradeLogRepository
+    ) -> None:
+        api = FakeXAPI([post("1001", "2026-09-26T12:00:00Z", "a")])
+        _run(repo, x=api.client())
+        api.fail_lookup_with = 429
+        at = NOW + timedelta(hours=12)
+        report = ingest.enforce_retention(repo.session, x=api.client(), now=at)
+        assert report.purged_deleted == 1 and _items(repo) == {}
+
+    def test_a_post_unchecked_for_a_day_is_not_read_even_before_a_pass(
+        self, repo: TradeLogRepository
+    ) -> None:
+        # If no pass runs at all (timer down), the read path still refuses a
+        # post whose deletion has not been checked in the last day.
+        _run(repo, x=FakeXAPI([post("1001", "2026-09-26T12:00:00Z", "a")]).client())
+
+        def visible(at: datetime) -> list[str]:
+            with repo.session() as s:
+                return [i.item_id for i in store.extracted_items_between(
+                    s, NOW - timedelta(days=7), at, now=at)]
+
+        assert visible(NOW + timedelta(hours=23)) == ["x:1001"]
+        assert visible(NOW + timedelta(hours=25)) == []
+
+    def test_a_deletion_check_restamps_the_posts_it_still_sees(
+        self, repo: TradeLogRepository
+    ) -> None:
+        api = FakeXAPI([post("1001", "2026-09-26T12:00:00Z", "a")])
+        _run(repo, x=api.client())
+        later = NOW + timedelta(hours=20)
+        ingest.enforce_retention(repo.session, x=api.client(), now=later)
+        assert store.aware(_items(repo)["x:1001"].verified_at_utc) == later
+
     def test_without_a_pinned_id_nothing_is_fetched_but_deletions_are_still_checked(
         self, repo: TradeLogRepository
     ) -> None:

@@ -232,6 +232,10 @@ class CommentatorItemRow(Base):
     `extracted_at_utc` NULL means the extraction has not succeeded yet, so the
     item is retried rather than silently shown to the analyst empty.
 
+    `verified_at_utc` is the last time the source confirmed the item is still
+    public — for X, the fetch and every deletion check. X rows are shown only
+    while that is under a day old; YouTube rows leave it NULL.
+
     New table — created by create_all(), so no additive-column entry.
     """
 
@@ -256,6 +260,9 @@ class CommentatorItemRow(Base):
     claim_en: Mapped[str | None] = mapped_column(String(256), nullable=True)
     is_promo: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     is_market_content: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    verified_at_utc: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class DecisionCommentatorRefRow(Base):

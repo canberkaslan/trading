@@ -14,6 +14,8 @@ Retention is enforced here and nowhere else, so there is one place to audit:
   re-ingested the next morning.
 - X: a short retention window, and a purge the moment a reconcile finds the
   post deleted or no longer visible (Developer Agreement: honour deletions).
+  A reconcile that fails purges every X post: a deletion it could not see is
+  still a deletion. Reads skip an X post whose last check is over a day old.
 - Reads never return an item past its deadline, so a retention pass that runs
   late cannot put expired data in front of an analyst.
 
@@ -35,9 +37,9 @@ import threading
 from collections import OrderedDict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.orm import Session
 
 from .models import CommentatorItemRow, CommentatorStatusRow, DecisionCommentatorRefRow
@@ -49,6 +51,14 @@ _STASH_LIMIT = 256
 
 #: `commentator_status` name of the flag-independent daily retention pass.
 RETENTION_PASS = "retention"
+
+#: Sources whose deletions must be honoured (X Developer Agreement). A row
+#: from one of these is readable only while its last liveness check is fresh.
+DELETION_CHECKED_SOURCES = frozenset({"x"})
+
+#: How old that check may be: a deletion not seen for longer than this is a
+#: deletion kept past the day the rule allows.
+DELETION_CHECK_MAX_AGE = timedelta(hours=24)
 
 
 def item_key(source: str, source_id: str) -> str:
@@ -142,18 +152,25 @@ def newest_numeric_id(session: Session, source: str) -> str | None:
 def extracted_items_between(
     session: Session, start: datetime, end: datetime, *, now: datetime
 ) -> list[StoredItem]:
-    """Extracted items published in `[start, end)` and not yet expired at `now`, newest first.
+    """Extracted items published in `[start, end)` and still keepable at `now`, newest first.
 
-    `now` is the wall clock even on a backtest: the deadline is a retention
-    rule about the real world, not a point-in-time filter.
+    Keepable: not past the retention deadline, and — for a source whose
+    deletions must be honoured — confirmed live within the last day. `now` is
+    the wall clock even on a backtest: these are rules about the real world,
+    not a point-in-time filter.
     """
+    now = aware(now)
     rows = session.scalars(
         select(CommentatorItemRow)
         .where(
             CommentatorItemRow.extracted_at_utc.is_not(None),
             CommentatorItemRow.published_at_utc >= start,
             CommentatorItemRow.published_at_utc < end,
-            CommentatorItemRow.expires_at_utc > aware(now),
+            CommentatorItemRow.expires_at_utc > now,
+            or_(
+                CommentatorItemRow.source.not_in(DELETION_CHECKED_SOURCES),
+                CommentatorItemRow.verified_at_utc >= now - DELETION_CHECK_MAX_AGE,
+            ),
         )
         .order_by(CommentatorItemRow.published_at_utc.desc())
     )
@@ -182,12 +199,14 @@ def upsert_item(
     expires_at: datetime,
     extraction: Extraction | None,
     extraction_model: str | None,
+    verified_at: datetime | None = None,
 ) -> CommentatorItemRow:
     """Insert an item, or fill in the extraction of one stored without it.
 
     An existing row keeps its `fetched_at_utc` (first seen) and its expiry: a
     retry is not a new fetch, and extending the deadline on every retry would
-    let a stubborn item outlive the retention rule.
+    let a stubborn item outlive the retention rule. `verified_at` is when the
+    source was last seen serving the item, for sources whose deletions count.
     """
     key = item_key(source, source_id)
     # UTC throughout: SQLite stores no offset, so a non-UTC stamp would compare wrong.
@@ -206,6 +225,8 @@ def upsert_item(
             content_sha256=content_sha256,
         )
         session.add(row)
+    if verified_at is not None:
+        row.verified_at_utc = aware(verified_at)
     if extraction is not None:
         row.extracted_at_utc = now
         row.extraction_model = extraction_model
@@ -216,6 +237,17 @@ def upsert_item(
         row.is_promo = extraction.is_promo
         row.is_market_content = extraction.is_market_content
     return row
+
+
+def mark_verified(session: Session, item_ids: Sequence[str], at: datetime) -> None:
+    """Record that the source still served these items at `at`."""
+    ids = list(item_ids)
+    if ids:
+        session.execute(
+            update(CommentatorItemRow)
+            .where(CommentatorItemRow.item_id.in_(ids))
+            .values(verified_at_utc=aware(at))
+        )
 
 
 def purge(session: Session, item_ids: Sequence[str]) -> int:

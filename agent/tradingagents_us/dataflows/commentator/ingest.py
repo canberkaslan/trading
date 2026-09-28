@@ -78,6 +78,7 @@ def _store(
     now: datetime,
     expires_at: datetime,
     report: IngestReport,
+    verified_at: datetime | None = None,
 ) -> None:
     """Extract what is new or still unextracted; leave extracted items alone."""
     rows = store.get_rows(session, (store.item_key(i.source, i.source_id) for i in items))
@@ -104,6 +105,7 @@ def _store(
             expires_at=expires_at,
             extraction=extraction,
             extraction_model=model if extraction is not None else None,
+            verified_at=verified_at,
         )
         if row is None:
             report.new_items += 1
@@ -136,9 +138,9 @@ def _youtube_step(
 
 
 def _x_check_deletions(
-    sessions: SessionFactory, client: XClient, *, report: IngestReport
+    sessions: SessionFactory, client: XClient, *, now: datetime, report: IngestReport
 ) -> dict[str, dict[str, Any]]:
-    """Purge stored posts X no longer serves; return the ones it still does."""
+    """Purge stored posts X no longer serves; stamp and return the ones it still does."""
     with sessions() as s:
         stored = store.source_ids(s, X)
         if not stored:
@@ -146,6 +148,7 @@ def _x_check_deletions(
         alive = client.lookup_alive(stored)
         gone = [store.item_key(X, pid) for pid in stored if pid not in alive]
         report.purged_deleted += store.purge(s, gone)
+        store.mark_verified(s, [store.item_key(X, pid) for pid in stored if pid in alive], now)
         return alive
 
 
@@ -184,19 +187,23 @@ def _retain(
     """
     with sessions() as s:
         report.purged_expired += store.purge_expired(s, now)
+    # Without a deletion check there is no way to see a deletion, so nothing
+    # from X may stay: keeping it would be keeping posts that might be gone.
+    # That holds for a failed check (revoked token, spend cap, 429, outage)
+    # exactly as for a missing token.
     if x is None:
         report.notes.append("X skipped: X_BEARER_TOKEN is not set")
-        # Without the API there is no way to see a deletion, so nothing from X
-        # may stay: keeping it would be keeping posts that might be gone.
-        with sessions() as s:
-            report.purged_deleted += store.purge_source(s, X)
-        return None
-    try:
-        return _x_check_deletions(sessions, x, report=report)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("X deletion reconcile failed", exc_info=True)
-        report.notes.append(f"X reconcile failed: {type(exc).__name__}")
-        return None
+    else:
+        try:
+            return _x_check_deletions(sessions, x, now=now, report=report)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("X deletion reconcile failed; purging stored X posts", exc_info=True)
+            report.notes.append(
+                f"X reconcile failed: {type(exc).__name__}; stored X posts purged"
+            )
+    with sessions() as s:
+        report.purged_deleted += store.purge_source(s, X)
+    return None
 
 
 def enforce_retention(
@@ -239,6 +246,7 @@ def _x_fetch(
         _store(
             s, items, extractor=extractor, model=model, now=now,
             expires_at=now + config.x_retention(), report=report,
+            verified_at=now,  # X served it just now
         )
 
 

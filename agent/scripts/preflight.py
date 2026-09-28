@@ -32,6 +32,8 @@ from datetime import UTC
 
 import httpx
 
+from tradingagents_us.log_redaction import install as install_log_redaction
+
 # (name, hard) — hard failures alert; soft ones only log.
 Failure = tuple[str, str]
 
@@ -250,6 +252,7 @@ def _record(failures: list[Failure], gaps: list[Failure]) -> None:
 
 
 def main() -> int:
+    install_log_redaction()
     failures: list[Failure] = []
     gaps: list[Failure] = []
     _check_alerting(gaps)

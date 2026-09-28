@@ -2,9 +2,20 @@
 
 from __future__ import annotations
 
+import io
 import logging
+import sys
+from pathlib import Path
 
+import pytest
+import requests
+
+from tradingagents_us import log_redaction
 from tradingagents_us.log_redaction import RedactingFilter, install, redact
+
+_VENDOR = Path(__file__).resolve().parent.parent / "vendor" / "tradingagents"
+if str(_VENDOR) not in sys.path:
+    sys.path.insert(0, str(_VENDOR))
 
 
 class TestRedact:
@@ -87,3 +98,148 @@ class TestInstall:
         install()
         after = len([f for f in root.filters if isinstance(f, RedactingFilter)])
         assert after == max(1, before)
+
+
+# --- Exceptions whose text is a keyed URL ------------------------------------
+#
+# The leak that brought these in: the vendor fallback logged a FRED 502 as
+#   Vendor 'fred' failed for get_macro_indicators: 502 Server Error: Bad
+#   Gateway for url: https://api.stlouisfed.org/...&api_key=<the key>&...
+# The exception object was the argument, not a string, and the line came from
+# a child logger propagating to root, so neither half of the old filter saw it.
+
+# A planted value, not a credential: shaped so a secret scanner does not read it as one.
+_PLANTED = "planted-value-for-this-test"
+_URL = (
+    "https://api.stlouisfed.org/fred/series/observations"
+    f"?series_id=DGS10&observation_start=2025-07-21&api_key={_PLANTED}&file_type=json"
+)
+
+
+def _http_error() -> requests.HTTPError:
+    """The error `raise_for_status()` raises for a 502 on a keyed URL."""
+    response = requests.Response()
+    response.status_code = 502
+    response.reason = "Bad Gateway"
+    response.url = _URL
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        return exc
+    raise AssertionError("raise_for_status did not raise")
+
+
+def _connection_error() -> requests.ConnectionError:
+    """The shape urllib3 gives a connection failure: the path and query, key included."""
+    path = _URL.split("api.stlouisfed.org", 1)[1]
+    return requests.ConnectionError(
+        f"HTTPSConnectionPool(host='api.stlouisfed.org', port=443): "
+        f"Max retries exceeded with url: {path}"
+    )
+
+
+@pytest.fixture
+def installed():
+    """install() for one test, then put logging back as it was."""
+    root = logging.getLogger()
+    factory = logging.getLogRecordFactory()
+    root_filters = list(root.filters)
+    handler_filters = {h: list(h.filters) for h in root.handlers}
+    install()
+    yield
+    logging.setLogRecordFactory(factory)
+    root.filters[:] = root_filters
+    for handler, filters in handler_filters.items():
+        handler.filters[:] = filters
+
+
+def _capture(logger: logging.Logger) -> io.StringIO:
+    """A handler attached AFTER install(), the case a handler filter never covered."""
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter("%(levelname)s %(name)s | %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+    return stream
+
+
+class TestExceptionsCarryingAKey:
+    def test_the_exception_text_really_carries_the_key(self) -> None:
+        # Guards the premise: if requests stopped putting the URL in the
+        # message, the tests below would pass without testing anything.
+        assert _PLANTED in str(_http_error())
+        assert _PLANTED in str(_connection_error())
+
+    def test_the_vendor_fallback_line_that_leaked(self, installed, monkeypatch) -> None:
+        from tradingagents.dataflows import interface
+
+        def fred(*_a: object, **_k: object) -> str:
+            raise _http_error()
+
+        monkeypatch.setitem(
+            interface.VENDOR_METHODS, "get_macro_indicators",
+            {"fred": fred, "backup": lambda *_a, **_k: "ok"},
+        )
+        monkeypatch.setattr(interface, "get_vendor", lambda *_a, **_k: "fred,backup")
+        stream = _capture(logging.getLogger("tradingagents.dataflows.interface"))
+
+        assert interface.route_to_vendor("get_macro_indicators") == "ok"
+
+        line = stream.getvalue()
+        assert "Vendor 'fred' failed for get_macro_indicators" in line
+        assert "502 Server Error" in line
+        assert "/fred/series/observations?series_id=DGS10" in line
+        assert _PLANTED not in line
+        assert "api_key=<redacted>" in line
+
+    def test_an_exception_argument_on_a_child_logger(self, installed) -> None:
+        stream = _capture(logging.getLogger("t.child.deep"))
+        logging.getLogger("t.child.deep").warning("failed: %s", _connection_error())
+        assert _PLANTED not in stream.getvalue()
+        assert "Max retries exceeded" in stream.getvalue()
+
+    def test_a_traceback_attached_with_exc_info(self, installed) -> None:
+        log = logging.getLogger("t.exc_info")
+        stream = _capture(log)
+        try:
+            raise _http_error()
+        except requests.HTTPError:
+            log.exception("fetch failed")
+        out = stream.getvalue()
+        assert "Traceback" in out and "HTTPError" in out
+        assert _PLANTED not in out
+
+    def test_an_exception_logged_as_the_message(self, installed) -> None:
+        log = logging.getLogger("t.msg_obj")
+        stream = _capture(log)
+        log.error(_http_error())
+        assert "502 Server Error" in stream.getvalue()
+        assert _PLANTED not in stream.getvalue()
+
+    def test_repr_formatting_keeps_its_shape(self, installed) -> None:
+        log = logging.getLogger("t.repr")
+        stream = _capture(log)
+        log.warning("got %r", _connection_error())
+        out = stream.getvalue()
+        assert "ConnectionError(" in out
+        assert _PLANTED not in out
+
+    def test_arguments_without_a_key_are_left_as_they_are(self, installed) -> None:
+        err = ValueError("no url here")
+        record = logging.getLogger("t.plain").makeRecord(
+            "t.plain", logging.INFO, __file__, 1, "n=%d x=%.1f e=%s", (5, 2.5, err), None,
+        )
+        assert record.args == (5, 2.5, err)
+        assert record.args[2] is err
+        assert record.getMessage() == "n=5 x=2.5 e=no url here"
+
+    def test_the_record_factory_is_wrapped_once(self, installed) -> None:
+        factory = logging.getLogRecordFactory()
+        install()
+        install()
+        assert logging.getLogRecordFactory() is factory
+        assert getattr(factory, "_redacting", False)
+
+    def test_redact_value_leaves_numbers_for_numeric_formats(self) -> None:
+        assert log_redaction._redact_value(7) == 7
+        assert log_redaction._redact_value(None) is None

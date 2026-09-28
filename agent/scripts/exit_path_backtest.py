@@ -52,6 +52,7 @@ from tradingagents_us.execution.exit_quality import (  # noqa: E402
     bucket_by_exit,
     strategy_bucket,
 )
+from tradingagents_us.log_redaction import install as install_log_redaction  # noqa: E402
 
 #: The live universe, so the replay runs on the names the account actually holds.
 DEFAULT_TICKERS = (
@@ -192,6 +193,7 @@ def _render(exits: list[SimulatedExit], stop_pct: float, tp_pct: float) -> None:
 
 
 def main() -> int:
+    install_log_redaction()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tickers", default=DEFAULT_TICKERS, help="comma-separated")
     parser.add_argument("--start", default="2018-01-01")

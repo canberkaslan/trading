@@ -60,6 +60,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
 from tradingagents_us.backtest.exit_paths import Bar
+from tradingagents_us.log_redaction import scrub_exception
 
 #: A class-share ticker in the hyphen convention: `BF-B`, `BRK-B`, `BF-A`.
 #: Deliberately anchored and narrow — it must not match a warrant (`FOO-WT`),
@@ -389,11 +390,15 @@ def read_issuer(ticker: str, day: date, api_key: str | None = None) -> IssuerRef
     """Who held `ticker` on `day`, per Polygon's point-in-time reference."""
     import httpx
 
-    resp = httpx.get(
-        f"https://api.polygon.io/v3/reference/tickers/{ticker}",
-        params={"date": day.isoformat(), "apiKey": _api_key(api_key)},
-        timeout=30.0,
-    )
+    try:
+        resp = httpx.get(
+            f"https://api.polygon.io/v3/reference/tickers/{ticker}",
+            params={"date": day.isoformat(), "apiKey": _api_key(api_key)},
+            timeout=30.0,
+        )
+    except httpx.HTTPError as e:
+        scrub_exception(e)  # the URL carries apiKey; see log_redaction
+        raise
     # 404 is "a symbol, nobody held it on this date"; 400 is "not a symbol I can
     # parse at all", which is what the hyphen form of a class share returns
     # (`BF-B`, `BRK-B`, measured 2026-09-08). Both are the same answer to the
@@ -402,7 +407,11 @@ def read_issuer(ticker: str, day: date, api_key: str | None = None) -> IssuerRef
     # 500-ticker universe run instead of costing that one row.
     if resp.status_code in (400, 404):
         return IssuerRef(ticker, day, UNKNOWN_CIK, None)
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        scrub_exception(e)  # the URL carries apiKey; see log_redaction
+        raise
     body = resp.json()
     result = body.get("results") or {}
     cik = result.get("cik") or None
@@ -420,13 +429,21 @@ def read_bars(
     """
     import httpx
 
-    resp = httpx.get(
-        f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/"
-        f"{start.isoformat()}/{end.isoformat()}",
-        params={"adjusted": "true", "limit": 50000, "apiKey": _api_key(api_key)},
-        timeout=60.0,
-    )
-    resp.raise_for_status()
+    try:
+        resp = httpx.get(
+            f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/"
+            f"{start.isoformat()}/{end.isoformat()}",
+            params={"adjusted": "true", "limit": 50000, "apiKey": _api_key(api_key)},
+            timeout=60.0,
+        )
+    except httpx.HTTPError as e:
+        scrub_exception(e)  # the URL carries apiKey; see log_redaction
+        raise
+    try:
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        scrub_exception(e)  # the URL carries apiKey; see log_redaction
+        raise
     body = resp.json()
     if body.get("status") == "NOT_AUTHORIZED":
         raise ProviderWindowError(

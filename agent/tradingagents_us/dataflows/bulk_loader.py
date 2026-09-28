@@ -22,6 +22,8 @@ from datetime import date
 import boto3
 import pandas as pd
 
+from tradingagents_us.log_redaction import install as install_log_redaction
+
 from .polygon import PolygonClient
 
 log = logging.getLogger(__name__)
@@ -87,6 +89,7 @@ def fetch_and_upload(
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    install_log_redaction()
     parser = argparse.ArgumentParser()
     parser.add_argument("--tickers", nargs="+", help="Tickers (or --universe us)")
     parser.add_argument("--universe", choices=["us"], help="Predefined universe")

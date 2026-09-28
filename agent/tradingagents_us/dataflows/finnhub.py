@@ -16,6 +16,8 @@ from dataclasses import dataclass
 
 import httpx
 
+from tradingagents_us.log_redaction import redact, scrub_exception
+
 _BASE = "https://finnhub.io/api/v1"
 _TIMEOUT = 10.0
 
@@ -66,8 +68,13 @@ class FinnhubClient:
 
     def _get(self, path: str, params: dict) -> object:
         params = {**params, "token": self.api_key}
-        r = self._http.get(f"{_BASE}{path}", params=params)
-        r.raise_for_status()
+        try:
+            r = self._http.get(f"{_BASE}{path}", params=params)
+            r.raise_for_status()
+        except httpx.HTTPError as e:
+            # The message carries the URL with `token=`; see log_redaction.
+            scrub_exception(e)
+            raise
         return r.json()
 
     def recommendations(self, symbol: str) -> list[Recommendation]:
@@ -134,4 +141,5 @@ def finnhub_block(symbol: str) -> str:
             f"Recent earnings surprises:\n{_fmt_earnings(earns)}"
         )
     except Exception as exc:  # noqa: BLE001 — degrade, never break the pipeline
-        return f"[Finnhub] fetch failed for {symbol}: {exc}"
+        # This text goes into the sentiment prompt and the saved reports.
+        return f"[Finnhub] fetch failed for {symbol}: {redact(str(exc))}"

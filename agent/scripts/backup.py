@@ -7,7 +7,8 @@ Hetzner disk. This ships a dated copy to S3 daily so a dead box can't erase
 the eval evidence.
 
 Targets (each best-effort; missing files are skipped with a note):
-  - TRADE_LOG_DB_URL sqlite file  -> sqlite3 online .backup -> gzip
+  - TRADE_LOG_DB_URL sqlite file  -> sqlite3 online .backup -> commentator
+                                     feed scrubbed (ADR-009) -> gzip
   - EVAL_SNAPSHOT_FILE (JSONL)    -> gzip
   - ~/.tradingagents/memory/      -> tar.gz (reflection memory)
 
@@ -62,14 +63,48 @@ def _sqlite_path() -> Path | None:
     return Path(u.database)
 
 
+#: What the copy loses before it leaves the box (ADR-009). The commentator
+#: feed holds YouTube API data that must be gone 30 days after its fetch and X
+#: posts that must go within a day of their deletion; these artifacts are kept
+#: for good (git history, dated S3 keys), so no feed data may be in them. The
+#: items go, and so do the read records, which would otherwise vouch for reads
+#: whose items the copy no longer holds. A decision's ref keeps its source, so
+#: the fact that it read the feed survives; the item id does not.
+_OFF_BOX_SCRUB: tuple[tuple[str, str], ...] = (
+    ("commentator_items", "DELETE FROM commentator_items"),
+    ("commentator_status", "DELETE FROM commentator_status"),
+    ("decision_commentator_refs", "UPDATE decision_commentator_refs SET item_id = NULL"),
+)
+
+
+def _scrub_for_off_box(conn: sqlite3.Connection) -> None:
+    """Remove the commentator feed from a backup copy, bytes included.
+
+    The backup API copies pages, free ones too, so the copy also carries the
+    bytes of rows the live DB already purged, and a DELETE here would only add
+    to them. VACUUM rebuilds the file from the rows that remain, so neither
+    reaches the artifact. A DB that predates the feed has no such tables and
+    loses nothing.
+    """
+    listing = conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    tables = {row[0] for row in listing}
+    with conn:
+        for table, sql in _OFF_BOX_SCRUB:
+            if table in tables:
+                conn.execute(sql)
+    conn.execute("VACUUM")
+
+
 def _dump_sqlite_gz(db_path: Path) -> bytes:
     """Consistent online backup (sqlite3 backup API — safe against live writers),
-    gzipped in memory. local.db is ~2MB; fine to buffer."""
+    scrubbed of the commentator feed, gzipped in memory. local.db is ~2MB; fine
+    to buffer. The scrub runs on the temporary copy; the live DB is only read."""
     with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
         src = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         dst = sqlite3.connect(tmp.name)
         try:
             src.backup(dst)
+            _scrub_for_off_box(dst)
         finally:
             dst.close()
             src.close()

@@ -6,7 +6,9 @@ of what an analyst read is kept. The commentator feed must not repeat that: an
 item is fetched once, extracted once (a paid LLM call), and read from here by
 every ticker's sentiment analyst after that.
 
-Retention is enforced here and nowhere else, so there is one place to audit:
+Retention is enforced here, so there is one place to audit it. The one copy
+that leaves the box, the daily backup, is kept for good, so it carries none of
+this: `scripts/backup.py` empties these tables in its copy first. The rules:
 
 - YouTube: at most thirty days after the fetch (API Developer Policies
   III.E.4), then deleted. Nothing re-dates `fetched_at_utc`, and the ingest

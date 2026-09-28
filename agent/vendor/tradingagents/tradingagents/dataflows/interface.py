@@ -1,4 +1,5 @@
 import logging
+import re
 
 from .alpha_vantage import (
     get_balance_sheet as get_alpha_vantage_balance_sheet,
@@ -31,6 +32,38 @@ from .y_finance import (
 from .yfinance_news import get_global_news_yfinance, get_news_yfinance
 
 logger = logging.getLogger(__name__)
+
+# --- fork patch (trading repo): keep query-string keys out of vendor errors ---
+# FRED, Alpha Vantage and others take the key as a query parameter, and
+# requests/httpx put the request URL in the exception message. The fallback
+# below logs that exception, hands its text to the agent as DATA_UNAVAILABLE,
+# and re-raises it, so the key reached the logs, the prompt and saved state.
+# The app-side twin, with the logging side, is tradingagents_us/log_redaction.py.
+_SECRET_QUERY = re.compile(
+    r"(?i)\b(apikey|api_key|token|access_token|key|secret|password|signature)=([^&\s\"']+)"
+)
+
+
+def _scrub_exception(exc: BaseException) -> BaseException:
+    """Replace credentials in `exc`'s arguments (and its chain) in place; return it."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        try:
+            args = tuple(
+                _SECRET_QUERY.sub(r"\1=<redacted>", a if isinstance(a, str) else str(a))
+                if _SECRET_QUERY.search(a if isinstance(a, str) else str(a))
+                else a
+                for a in current.args
+            )
+            if args != current.args:
+                current.args = args
+        except Exception:  # noqa: BLE001 — scrubbing must never mask the real error
+            pass
+        current = current.__cause__ or current.__context__
+    return exc
+# --- end fork patch ---
 
 # Tools organized by category
 TOOLS_CATEGORIES = {
@@ -212,6 +245,7 @@ def route_to_vendor(method: str, *args, **kwargs):
             last_no_data = e  # No data here; another configured vendor may have it
             continue
         except Exception as e:
+            _scrub_exception(e)  # fork patch: logged, returned and re-raised below
             # Don't let one vendor's failure crash the call when another can
             # serve it, but never swallow silently: a broken primary must be
             # visible in the logs (#989), not hidden behind a fallback's verdict.

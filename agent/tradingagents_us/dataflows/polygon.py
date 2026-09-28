@@ -16,6 +16,8 @@ from typing import Literal
 
 import httpx
 
+from tradingagents_us.log_redaction import redact, scrub_exception
+
 BASE = "https://api.polygon.io"
 
 Multiplier = int
@@ -208,12 +210,16 @@ class PolygonClient:
                 r.raise_for_status()
                 return r.json()
             except httpx.HTTPStatusError as e:
+                # The message carries the request URL, apiKey included; it
+                # must not leave the client with it (see log_redaction).
+                scrub_exception(e)
                 # 4xx (429 already handled above) will not change on a retry.
                 if 400 <= e.response.status_code < 500:
                     raise
                 last_err = e
                 time.sleep(2 ** attempt)
             except httpx.HTTPError as e:  # transport/timeout — worth retrying
-                last_err = e
+                last_err = scrub_exception(e)
                 time.sleep(2 ** attempt)
-        raise RuntimeError(f"polygon request failed: {url_or_path} — {last_err}")
+        # A pagination next_url has the key appended, so the text is redacted too.
+        raise RuntimeError(redact(f"polygon request failed: {url_or_path} — {last_err}"))

@@ -30,6 +30,7 @@ from pathlib import Path
 import pandas as pd
 
 from tradingagents_us.dataflows.alpaca_broker import AlpacaClient
+from tradingagents_us.log_redaction import install as install_log_redaction
 from tradingagents_us.risk import metrics
 
 # ADR-005 gates (eval phase). Sharpe is the primary signal; MaxDD bounds risk.
@@ -432,6 +433,7 @@ def _notify(sc: Scorecard, verdict: str) -> None:
 
 
 def main() -> int:
+    install_log_redaction()
     ap = argparse.ArgumentParser(description="Paper-trading eval scorecard")
     ap.add_argument("--period", default="1M", help="Alpaca history window (1M/3M/6M/1A)")
     ap.add_argument("--no-benchmark", action="store_true", help="skip SPY benchmark")

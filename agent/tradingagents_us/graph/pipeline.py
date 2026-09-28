@@ -45,6 +45,7 @@ from tradingagents_us.llm import translate as _translate  # noqa: E402
 from tradingagents_us.llm.agent_routing import install as install_agent_routing  # noqa: E402
 from tradingagents_us.llm.prompt_cache import install as install_prompt_cache  # noqa: E402
 from tradingagents_us.llm.usage import UsageCollector  # noqa: E402
+from tradingagents_us.log_redaction import install as install_log_redaction  # noqa: E402
 
 from ..schemas import AgentDecision, AgentReasoning  # noqa: E402
 
@@ -86,6 +87,7 @@ def propagate(
     Returns:
         AgentDecision with the final rating and reasoning blobs.
     """
+    install_log_redaction()  # every caller: trade.py, the API, backtests, CLIs
     _load_env()
 
     from tradingagents.graph.trading_graph import (

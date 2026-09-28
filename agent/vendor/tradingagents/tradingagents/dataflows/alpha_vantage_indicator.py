@@ -215,5 +215,10 @@ def get_indicator(
         # successful-looking error string.
         raise
     except Exception as e:
+        # fork patch (trading repo): the message can carry `apikey=`; this text
+        # is logged and returned to the agent. Imported here: interface imports us.
+        from .interface import _scrub_exception
+
+        _scrub_exception(e)
         logger.warning("Alpha Vantage indicator %s failed: %s", indicator, e)
         return f"Error retrieving {indicator} data: {str(e)}"

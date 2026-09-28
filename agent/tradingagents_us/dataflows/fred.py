@@ -11,6 +11,8 @@ from datetime import date
 
 import httpx
 
+from tradingagents_us.log_redaction import scrub_exception
+
 BASE = "https://api.stlouisfed.org/fred"
 
 # Series IDs we care about
@@ -66,8 +68,13 @@ class FREDClient:
             params["observation_start"] = start.isoformat()
         if end:
             params["observation_end"] = end.isoformat()
-        r = self._http.get(f"{BASE}/series/observations", params=params)
-        r.raise_for_status()
+        try:
+            r = self._http.get(f"{BASE}/series/observations", params=params)
+            r.raise_for_status()
+        except httpx.HTTPError as e:
+            # The message carries the URL with `api_key=`; see log_redaction.
+            scrub_exception(e)
+            raise
         return [
             Observation(
                 date=date.fromisoformat(o["date"]),

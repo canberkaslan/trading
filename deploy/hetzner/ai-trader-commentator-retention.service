@@ -1,0 +1,21 @@
+[Unit]
+Description=AI Trader — commentator retention pass: delete expired items, honour X deletions
+After=network-online.target
+Wants=network-online.target
+# A retention pass that stops running is data kept past its deadline — page.
+OnFailure=ai-trader-alert.service
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/opt/ai-trader/agent
+EnvironmentFile=/opt/ai-trader/secrets.env
+Environment=PYTHONPATH=.:vendor/tradingagents
+# No YouTube call and no extraction. With X_BEARER_TOKEN set and X posts
+# stored, one GET /2/tweets per 100 of them; with nothing stored, no network.
+# Exits 1 only when the pass itself fails (the store), which fires OnFailure.
+ExecStart=/opt/ai-trader/agent/.venv/bin/python -m scripts.commentator_fetch --retention-only
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

@@ -119,8 +119,8 @@ EXPECTED_TRADING_MODE=paper
 
 # Commentator feed (docs/adr/009-commentator-feed.md). Off unless exactly 1;
 # each source is skipped, with a log line, while its key is blank. X also needs
-# a numeric user id pinned once (never a handle), and a daily deletion check
-# before it is switched on — see the ADR.
+# a numeric user id pinned once (never a handle), and stores no post until
+# ai-trader-commentator-retention.timer (the daily deletion check) has run.
 #COMMENTATOR_FEED=1
 #YOUTUBE_API_KEY=
 #X_BEARER_TOKEN=
@@ -163,6 +163,8 @@ for unit in ai-trader.service ai-trader.timer ai-trader-alert.service \
             ai-trader-preflight.service ai-trader-preflight.timer \
             ai-trader-backup.service ai-trader-backup.timer \
             ai-trader-reconcile.service ai-trader-reconcile.timer \
+            ai-trader-commentator-retention.service \
+            ai-trader-commentator-retention.timer \
             ai-trader-api.service eval-report.service eval-report.timer; do
   sudo cp "${APP_DIR}/deploy/hetzner/${unit}" "/etc/systemd/system/${unit}"
 done
@@ -180,7 +182,7 @@ echo "        set -a && source ${APP_DIR}/secrets.env && set +a && \\"
 echo "        UNIVERSE='AAPL' SUBMIT=0 bash scripts/daily_run.sh"
 echo "   3. Enable the timers: sudo systemctl enable --now ai-trader.timer \\"
 echo "        ai-trader-preflight.timer ai-trader-backup.timer \\"
-echo "        ai-trader-reconcile.timer"
+echo "        ai-trader-reconcile.timer ai-trader-commentator-retention.timer"
 echo "   4. Check schedule:    systemctl list-timers 'ai-trader*'"
 echo "   5. Watch a run:       journalctl -u ai-trader.service -f"
 echo "============================================================"

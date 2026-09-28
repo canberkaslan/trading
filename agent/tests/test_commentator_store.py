@@ -45,7 +45,7 @@ def _decision(dec_id: str) -> AgentDecision:
 class TestTables:
     def test_create_all_builds_both(self, repo: TradeLogRepository) -> None:
         names = set(inspect(repo.engine).get_table_names())
-        assert {"commentator_items", "decision_commentator_refs"} <= names
+        assert {"commentator_items", "decision_commentator_refs", "commentator_status"} <= names
 
     def test_a_legacy_database_gets_them_without_touching_agent_decisions(
         self, tmp_path
@@ -94,8 +94,28 @@ class TestRetention:
         _put(repo, "youtube", "done", expires=NOW + timedelta(days=1))
         _put(repo, "youtube", "pending", expires=NOW + timedelta(days=1), extraction=None)
         with repo.session() as s:
-            got = store.extracted_items_between(s, NOW - timedelta(days=7), NOW)
+            got = store.extracted_items_between(s, NOW - timedelta(days=7), NOW, now=NOW)
         assert [i.source_id for i in got] == ["done"]
+
+    def test_an_expired_item_is_never_read_even_before_the_purge(
+        self, repo: TradeLogRepository
+    ) -> None:
+        # The purge runs once a day; between its runs an expired row still
+        # exists and must not reach a prompt.
+        _put(repo, "youtube", "expired", expires=NOW - timedelta(seconds=1))
+        _put(repo, "youtube", "live", expires=NOW + timedelta(days=1))
+        with repo.session() as s:
+            got = store.extracted_items_between(s, NOW - timedelta(days=7), NOW, now=NOW)
+        assert [i.source_id for i in got] == ["live"]
+
+    def test_a_status_is_recorded_and_overwritten(self, repo: TradeLogRepository) -> None:
+        with repo.session() as s:
+            assert store.status_at(s, store.RETENTION_PASS) is None
+            store.record_status(s, store.RETENTION_PASS, NOW)
+        with repo.session() as s:
+            store.record_status(s, store.RETENTION_PASS, NOW + timedelta(days=1))
+        with repo.session() as s:
+            assert store.status_at(s, store.RETENTION_PASS) == NOW + timedelta(days=1)
 
 
 class TestPurgeAndRefs:

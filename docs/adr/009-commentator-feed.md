@@ -54,16 +54,17 @@ The scope question is smaller than it looked. In a 15-upload sample (09-18 → 0
   - **Backtest** (trade date before today): an item must be published strictly before the trade date's 00:00 UTC.
   - **Live** (trade date is today): an item must be published no later than the run's start.
   - An undated item is refused in both cases. For live streams, the latest timestamp the API reports is used.
-- **Record what was read.** `decision_commentator_refs` links each decision to the items its sentiment analyst was shown. The rows are written by `TradeLogRepository.save_decision`. Both new tables are created by `create_all()`, and no column is added to `agent_decisions`.
-- **Flag off means unchanged.** With `COMMENTATOR_FEED` unset or anything other than `1`, nothing is installed, nothing is fetched and nothing is written. The sentiment prompt is byte-identical to the one before this ADR. The wrapper also checks the flag on every call, so a process that installed it earlier still sends the vendor's prompt when the flag is off.
+- **Record what was read.** `decision_commentator_refs` links each decision to the items its sentiment analyst was shown. The rows are written by `TradeLogRepository.save_decision`. The new tables are created by `create_all()`, and no column is added to `agent_decisions`.
+- **Flag off means unchanged.** With `COMMENTATOR_FEED` unset or anything other than `1`, nothing is installed and nothing is fetched. The sentiment prompt is byte-identical to the one before this ADR. The wrapper also checks the flag on every call, so a process that installed it earlier still sends the vendor's prompt when the flag is off. The one thing that runs whatever the flag says is the retention pass (below): it only deletes, and records that it ran.
+- **Retention runs every day, on its own.** `ai-trader-commentator-retention.timer` runs `commentator_fetch --retention-only` daily at 11:00 UTC, weekends included, whatever `COMMENTATOR_FEED` or the kill switch says. The trading run cannot carry retention: it is Mon–Fri, flag-gated, and skipped while the kill switch holds. The measurement gate below fills the table with the flag off, and a feed switched off later still holds data; both must leave on time. The pass makes no YouTube call and no extraction. It exits 1 if the store fails, so the unit's `OnFailure` alert fires. The daily fetch also starts with the same pass.
 
 ## Compliance
 
 | Rule | How it is met |
 |---|---|
 | Only official APIs | YouTube Data API v3 (`channels.list` → uploads playlist → `playlistItems.list` → `videos.list`, about 3 quota units a run, 10,000/day free) and X API v2 `GET /2/users/{id}/tweets` with `exclude=replies,retweets` and `since_id`. There is no scraping, no transcript library, no audio download, and no polling of `youtube.com/feeds` (its robots.txt disallows it) |
-| YouTube Developer Policies III.E.4: keep API data at most 30 days | `expires_at_utc` = first fetch + 30 days. Each run starts with a purge. The routine ingest horizon (14 days) is shorter than retention, so a purged video is not re-ingested the next day |
-| X: honour deletions | Every run re-reads the stored post ids (`GET /2/tweets?ids=`) and purges any that X no longer serves (deleted, protected, withheld). X items also expire after 8 days (`COMMENTATOR_X_RETENTION_DAYS`), which keeps that check to about 20 billed lookups. Without a token, every stored X item is purged, because its deletions can no longer be seen |
+| YouTube Developer Policies III.E.4: keep API data at most 30 days | `expires_at_utc` = first fetch + 29 days: one day inside the limit, because the daily pass can run up to a day after a deadline. So an item is deleted within 30 days of its fetch. Reads never return an item past `expires_at_utc`, whenever the purge last ran. The routine ingest horizon (14 days) is shorter than retention, so a purged video is not re-ingested the next day |
+| X: honour deletions | Every retention pass (daily, weekends included) and every fetch re-reads the stored post ids (`GET /2/tweets?ids=`) and purges any that X no longer serves (deleted, protected, withheld). X items also expire after 8 days (`COMMENTATOR_X_RETENTION_DAYS`), which keeps each check to about 20 billed lookups. Without a token, every stored X item is purged, because its deletions can no longer be seen. The X fetch stores no new post unless the daily pass ran in the last 26 hours |
 | No redistribution, no quotation | Titles, descriptions and post text are read at fetch time and never stored. The table holds ids, timestamps and derived fields. Reports carry paraphrases and ids, never verbatim text; this matters because `final_decision_text_tr` reaches the mobile app |
 | No profiling (X Developer Agreement, surveillance clause) | Only claims about markets are stored. Nothing about the person is extracted |
 | Identity | YouTube is followed by channel id. X is followed by numeric user id, never by handle. The id is resolved once, by a person (`python -m scripts.commentator_fetch --resolve-x-id BoraOzkentNSDQ`), checked against the profile, and pinned in `dataflows/commentator/config.py` or `COMMENTATOR_X_USER_ID`. A rename is logged; nothing is ever re-resolved by handle |
@@ -105,15 +106,15 @@ COMMENTATOR_FEED=1 python -m backtest.llm_backtest --points META:2026-09-22 NVDA
 - **Cost:** about $1–2 a decision, so 4 × 25 × 2 comes to roughly $200–400.
 - **What it can establish:** expect 10–30 flips, which is little statistical power. So this is a **no-harm** gate: correct flips ≥ wrong flips, and no systematic bullish drift. If it fails, the feed stays off. No comparison script ships with this ADR; B has not been run.
 
-Both A and B must finish within the 30 days that YouTube items are kept. Descriptions can be edited after publication, and deleted videos are missing from a backfill. This is a small look-ahead and survivorship effect: `fetched_at_utc` marks when each item was first seen, and a later edit never replaces the first extraction.
+Both A and B must finish within the 29 days that YouTube items are kept; the daily retention pass deletes them then, flag or no flag. Descriptions can be edited after publication, and deleted videos are missing from a backfill. This is a small look-ahead and survivorship effect: `fetched_at_utc` marks when each item was first seen, and a later edit never replaces the first extraction.
 
 ## Enabling X (phase 2) — preconditions
 
 The code is complete and tested, but inert until all of the following are true:
 
-1. **An X pay-per-use account** with a monthly spend limit of $20 (Canberk sets it up and pays). Expected spend is under $5 a month: a few posts a day at $0.005 each, plus the deletion re-check.
+1. **An X pay-per-use account** with a monthly spend limit of $20 (Canberk sets it up and pays). Expected spend is about $6 a month: a few posts a day at $0.005 each, plus the deletion re-check (about 20 posts, twice on weekdays and once on weekend days).
 2. **A pinned numeric user id** (see Compliance above). It is `None` today.
-3. **A deletion check that runs every day, weekends included.** `daily_run.sh` runs Monday to Friday, so a post deleted on Friday evening would stay stored until Monday, past a 24-hour window. Before X is switched on, run `scripts.commentator_fetch` from its own daily timer, or accept that gap explicitly.
+3. **The daily deletion check is running.** `ai-trader-commentator-retention.timer` must be enabled. The code enforces this: the X fetch stores nothing new until that pass has run within the last 26 hours, so a post deleted on Friday evening is purged on Saturday, not Monday.
 
 Whether sending X post text to an LLM API for extraction is compatible with the X redistribution clause (III.A(d)) has not been confirmed with a lawyer. The design keeps it to extraction only, with no verbatim text in any report. If the app is ever monetised, re-evaluate this.
 

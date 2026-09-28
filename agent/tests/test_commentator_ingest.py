@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import create_engine, select
 
 from tests.commentator_fakes import X_USER, FakeXAPI, FakeYouTubeAPI, post, video
-from tradingagents_us.dataflows.commentator import ingest
+from tradingagents_us.dataflows.commentator import config, ingest
 from tradingagents_us.schemas import AgentDecision
 from tradingagents_us.storage import TradeLogRepository
 from tradingagents_us.storage import commentator as store
@@ -48,7 +48,11 @@ def repo() -> TradeLogRepository:
     return TradeLogRepository(engine=create_engine("sqlite://", future=True))
 
 
-def _run(repo, *, yt=None, x=None, x_user=X_USER, extractor=None, now=NOW, **kw):
+def _run(repo, *, yt=None, x=None, x_user=X_USER, extractor=None, now=NOW,
+         retention_pass=True, **kw):
+    if retention_pass:  # the daily timer ran; without it X stores nothing new
+        with repo.session() as s:
+            store.record_status(s, store.RETENTION_PASS, now - timedelta(hours=1))
     return ingest.run(
         repo.session, youtube=yt, x=x, x_user_id=x_user,
         extractor=extractor or Extractor(), model="haiku-test", now=now, **kw,
@@ -85,7 +89,7 @@ class TestExtractOncePerItem:
         assert report.extraction_failed == 1
         assert _items(repo)["youtube:v2"].extracted_at_utc is None
         with repo.session() as s:  # an unextracted item is invisible to the analyst
-            visible = store.extracted_items_between(s, NOW - timedelta(days=10), NOW)
+            visible = store.extracted_items_between(s, NOW - timedelta(days=10), NOW, now=NOW)
         assert "v2" not in {i.source_id for i in visible}
 
         ext = Extractor()
@@ -106,15 +110,57 @@ class TestExtractOncePerItem:
 
 
 class TestRetention:
-    def test_youtube_items_expire_thirty_days_after_the_fetch(
+    def test_youtube_items_expire_a_pass_interval_inside_thirty_days(
         self, repo: TradeLogRepository
     ) -> None:
+        # The daily pass may run up to a day after the deadline; the deadline
+        # is set a day early so the item is gone by day thirty either way.
         _run(repo, yt=FakeYouTubeAPI(_videos()).client())
         row = _items(repo)["youtube:v1"]
-        assert store.aware(row.expires_at_utc) == NOW + timedelta(days=30)
-        report = _run(repo, now=NOW + timedelta(days=30, seconds=1), x=None)
+        assert store.aware(row.expires_at_utc) == NOW + timedelta(days=29)
+        assert (
+            store.aware(row.expires_at_utc) + config.RETENTION_PASS_INTERVAL
+            <= NOW + config.YOUTUBE_MAX_RETENTION
+        )
+        report = _run(repo, now=NOW + timedelta(days=29, seconds=1), x=None)
         assert report.purged_expired == 6
         assert _items(repo) == {}
+
+    def test_the_retention_pass_alone_purges_and_calls_no_source(
+        self, repo: TradeLogRepository
+    ) -> None:
+        # What the daily timer runs, flag on or off: no YouTube client, no
+        # extractor, and the expired rows still go.
+        _run(repo, yt=FakeYouTubeAPI(_videos()).client())
+        report = ingest.enforce_retention(
+            repo.session, x=None, now=NOW + timedelta(days=29, seconds=1)
+        )
+        assert report.purged_expired == 6 and _items(repo) == {}
+        assert "commentator retention: purged_expired=6" in report.retention_summary()
+        with repo.session() as s:
+            assert store.status_at(s, store.RETENTION_PASS) == NOW + timedelta(
+                days=29, seconds=1
+            )
+
+    def test_the_retention_pass_checks_x_deletions(self, repo: TradeLogRepository) -> None:
+        api = FakeXAPI([post("1001", "2026-09-26T12:00:00Z", "a"),
+                        post("1002", "2026-09-27T12:00:00Z", "b")])
+        _run(repo, x=api.client())
+        api.delete("1001")
+        api.requests.clear()
+        report = ingest.enforce_retention(
+            repo.session, x=api.client(), now=NOW + timedelta(days=5)  # Saturday: no trading run
+        )
+        assert report.purged_deleted == 1 and set(_items(repo)) == {"x:1002"}
+        # Deletion check only: nothing bought from the user timeline.
+        assert all("/users/" not in r.url.path for r in api.requests)
+
+    def test_the_retention_pass_with_nothing_stored_calls_nothing(
+        self, repo: TradeLogRepository
+    ) -> None:
+        api = FakeXAPI([post("1001", "2026-09-26T12:00:00Z", "a")])
+        ingest.enforce_retention(repo.session, x=api.client(), now=NOW)
+        assert api.requests == []
 
     def test_an_expired_video_is_not_reingested_the_next_day(
         self, repo: TradeLogRepository
@@ -200,6 +246,26 @@ class TestX:
         ext = Extractor()
         report = _run(repo, x=api.client(), extractor=ext, now=NOW + timedelta(hours=1))
         assert report.extracted == 1 and ext.calls == ["zor metin"]
+
+    def test_no_new_post_is_stored_without_a_recent_daily_retention_pass(
+        self, repo: TradeLogRepository
+    ) -> None:
+        # The trading run checks deletions Mon-Fri only; the daily pass covers
+        # the rest. Until it has run, X buys nothing.
+        api = FakeXAPI([post("1001", "2026-09-26T12:00:00Z", "a")])
+        report = _run(repo, x=api.client(), retention_pass=False)
+        assert any("retention pass has not run" in n for n in report.notes)
+        assert _items(repo) == {}
+        assert all("/users/" not in r.url.path for r in api.requests)
+
+        with repo.session() as s:  # a pass 27h ago is too old
+            store.record_status(s, store.RETENTION_PASS, NOW - timedelta(hours=27))
+        report = _run(repo, x=api.client(), retention_pass=False)
+        assert _items(repo) == {}
+
+        ingest.enforce_retention(repo.session, x=api.client(), now=NOW - timedelta(hours=2))
+        _run(repo, x=api.client(), retention_pass=False)
+        assert set(_items(repo)) == {"x:1001"}
 
     def test_x_items_expire_on_the_short_window(
         self, repo: TradeLogRepository, monkeypatch: pytest.MonkeyPatch

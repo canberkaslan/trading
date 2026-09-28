@@ -224,9 +224,10 @@ class CommentatorItemRow(Base):
     `fetched_at_utc` is when the item was FIRST seen and never moves; a later
     re-fetch does not re-date it, so a backtest can tell what the system could
     have known on a given day. `expires_at_utc` is the retention deadline the
-    purge enforces — thirty days after the fetch for YouTube (API policy
-    III.E.4), a short window for X, whose items are also purged the moment a
-    reconcile finds the post gone.
+    purge enforces and every read checks — twenty-nine days after the fetch
+    for YouTube, so the daily purge deletes it inside the thirty that API
+    policy III.E.4 allows; a short window for X, whose items are also purged
+    the moment a reconcile finds the post gone.
 
     `extracted_at_utc` NULL means the extraction has not succeeded yet, so the
     item is retried rather than silently shown to the analyst empty.
@@ -281,3 +282,21 @@ class DecisionCommentatorRefRow(Base):
     source: Mapped[str] = mapped_column(String(16))
     item_id: Mapped[str | None] = mapped_column(String(96), nullable=True, index=True)
     created_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class CommentatorStatusRow(Base):
+    """When a commentator job last completed, one row per job, overwritten each time.
+
+    ADR-009. `retention` is the flag-independent daily retention pass. The X
+    fetch reads it: it stores no new post unless that pass ran recently, because
+    that pass is what checks X deletions on the days the trading run does not.
+
+    Timestamps only. Nothing here is API data.
+
+    New table — created by create_all().
+    """
+
+    __tablename__ = "commentator_status"
+
+    name: Mapped[str] = mapped_column(String(32), primary_key=True)
+    at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True))

@@ -14,6 +14,12 @@ Retention is enforced here and nowhere else, so there is one place to audit:
   re-ingested the next morning.
 - X: a short retention window, and a purge the moment a reconcile finds the
   post deleted or no longer visible (Developer Agreement: honour deletions).
+- Reads never return an item past its deadline, so a retention pass that runs
+  late cannot put expired data in front of an analyst.
+
+The purge runs every day from its own timer, whatever COMMENTATOR_FEED says
+(`ingest.enforce_retention`): data an evaluation stored while the flag was off
+must still leave on time.
 
 The decision link is written by `TradeLogRepository.save_decision` from a
 small in-process stash (`stash_decision_refs`), because the sentiment analyst
@@ -34,12 +40,15 @@ from datetime import UTC, datetime
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
-from .models import CommentatorItemRow, DecisionCommentatorRefRow
+from .models import CommentatorItemRow, CommentatorStatusRow, DecisionCommentatorRefRow
 
 #: How many decisions' refs may wait in the stash before the oldest is dropped.
 #: A decision that is never saved (a backtest point, a failed run) would
 #: otherwise leak its entry for the life of the process.
 _STASH_LIMIT = 256
+
+#: `commentator_status` name of the flag-independent daily retention pass.
+RETENTION_PASS = "retention"
 
 
 def item_key(source: str, source_id: str) -> str:
@@ -131,19 +140,30 @@ def newest_numeric_id(session: Session, source: str) -> str | None:
 
 
 def extracted_items_between(
-    session: Session, start: datetime, end: datetime
+    session: Session, start: datetime, end: datetime, *, now: datetime
 ) -> list[StoredItem]:
-    """Extracted items published in `[start, end)`, newest first."""
+    """Extracted items published in `[start, end)` and not yet expired at `now`, newest first.
+
+    `now` is the wall clock even on a backtest: the deadline is a retention
+    rule about the real world, not a point-in-time filter.
+    """
     rows = session.scalars(
         select(CommentatorItemRow)
         .where(
             CommentatorItemRow.extracted_at_utc.is_not(None),
             CommentatorItemRow.published_at_utc >= start,
             CommentatorItemRow.published_at_utc < end,
+            CommentatorItemRow.expires_at_utc > aware(now),
         )
         .order_by(CommentatorItemRow.published_at_utc.desc())
     )
     return [_to_stored(r) for r in rows]
+
+
+def status_at(session: Session, name: str) -> datetime | None:
+    """When the job `name` last recorded itself, or None if it never has."""
+    row = session.get(CommentatorStatusRow, name)
+    return aware(row.at_utc) if row is not None else None
 
 
 # ------------------------------------------------------------------ writes
@@ -222,6 +242,14 @@ def purge_expired(session: Session, now: datetime) -> int:
         )
     )
     return purge(session, expired)
+
+
+def record_status(session: Session, name: str, at: datetime) -> None:
+    row = session.get(CommentatorStatusRow, name)
+    if row is None:
+        session.add(CommentatorStatusRow(name=name, at_utc=aware(at)))
+    else:
+        row.at_utc = aware(at)
 
 
 def purge_source(session: Session, source: str) -> int:

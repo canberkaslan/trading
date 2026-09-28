@@ -4,6 +4,12 @@
 sentiment analysts that follow only read `commentator_items`; nothing on the
 decision path touches the network for this feed.
 
+Retention is its own entry point, `enforce_retention()`, and `run()` starts
+with the same pass. The daily timer calls it whatever COMMENTATOR_FEED says,
+weekends and kill-switch days included: data an evaluation stored with the
+flag off, or a feed later switched off, must still leave on time, and an X
+deletion must be seen within a day, not at the next weekday run.
+
 Each source is its own step with its own session, so a YouTube quota error
 does not roll back what X stored, and neither failure stops the other. A
 source with no credentials is skipped and says so; it is not an error.
@@ -16,6 +22,7 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -50,6 +57,13 @@ class IngestReport:
             f"commentator ingest: fetched[{fetched}] new={self.new_items} "
             f"extracted={self.extracted} extraction_failed={self.extraction_failed} "
             f"cached={self.cached} purged_expired={self.purged_expired} "
+            f"purged_deleted={self.purged_deleted}"
+        )
+        return "\n".join([line, *(f"  - {n}" for n in self.notes)])
+
+    def retention_summary(self) -> str:
+        line = (
+            f"commentator retention: purged_expired={self.purged_expired} "
             f"purged_deleted={self.purged_deleted}"
         )
         return "\n".join([line, *(f"  - {n}" for n in self.notes)])
@@ -121,23 +135,31 @@ def _youtube_step(
         )
 
 
-def _x_reconcile(
+def _x_check_deletions(
+    sessions: SessionFactory, client: XClient, *, report: IngestReport
+) -> dict[str, dict[str, Any]]:
+    """Purge stored posts X no longer serves; return the ones it still does."""
+    with sessions() as s:
+        stored = store.source_ids(s, X)
+        if not stored:
+            return {}
+        alive = client.lookup_alive(stored)
+        gone = [store.item_key(X, pid) for pid in stored if pid not in alive]
+        report.purged_deleted += store.purge(s, gone)
+        return alive
+
+
+def _x_retry_extraction(
     sessions: SessionFactory,
-    client: XClient,
+    alive: dict[str, dict[str, Any]],
     *,
     extractor: Extractor,
     model: str,
     now: datetime,
     report: IngestReport,
 ) -> None:
-    """Purge stored posts X no longer serves; retry extraction on the rest."""
+    """Extract stored posts whose extraction failed, from the text the deletion check read."""
     with sessions() as s:
-        stored = store.source_ids(s, X)
-        if not stored:
-            return
-        alive = client.lookup_alive(stored)
-        gone = [store.item_key(X, pid) for pid in stored if pid not in alive]
-        report.purged_deleted += store.purge(s, gone)
         rows = store.get_rows(s, (store.item_key(X, pid) for pid in alive))
         retry = [
             item
@@ -151,6 +173,48 @@ def _x_reconcile(
                 s, retry, extractor=extractor, model=model, now=now,
                 expires_at=now + config.x_retention(), report=report,
             )
+
+
+def _retain(
+    sessions: SessionFactory, x: XClient | None, *, now: datetime, report: IngestReport
+) -> dict[str, dict[str, Any]] | None:
+    """The retention half of a pass: expiry, then X deletions.
+
+    Returns the stored posts X still serves, or None when X was not read.
+    """
+    with sessions() as s:
+        report.purged_expired += store.purge_expired(s, now)
+    if x is None:
+        report.notes.append("X skipped: X_BEARER_TOKEN is not set")
+        # Without the API there is no way to see a deletion, so nothing from X
+        # may stay: keeping it would be keeping posts that might be gone.
+        with sessions() as s:
+            report.purged_deleted += store.purge_source(s, X)
+        return None
+    try:
+        return _x_check_deletions(sessions, x, report=report)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("X deletion reconcile failed", exc_info=True)
+        report.notes.append(f"X reconcile failed: {type(exc).__name__}")
+        return None
+
+
+def enforce_retention(
+    sessions: SessionFactory, *, x: XClient | None, now: datetime | None = None
+) -> IngestReport:
+    """The retention pass alone: no YouTube call, no extraction, no fetch.
+
+    Deletes expired items and checks X deletions (with a token; without one,
+    every stored X post goes). Then records that it ran, which is what lets
+    the X fetch store new posts. Raises only when the store itself fails, so
+    the timer that runs it pages.
+    """
+    now = now or datetime.now(UTC)
+    report = IngestReport()
+    _retain(sessions, x, now=now, report=report)
+    with sessions() as s:
+        store.record_status(s, store.RETENTION_PASS, now)
+    return report
 
 
 def _x_fetch(
@@ -195,8 +259,7 @@ def run(
     lookback = lookback or config.ingest_lookback()
     report = IngestReport()
 
-    with sessions() as s:
-        report.purged_expired = store.purge_expired(s, now)
+    alive = _retain(sessions, x, now=now, report=report)
 
     if youtube is None:
         report.notes.append("YouTube skipped: YOUTUBE_API_KEY is not set")
@@ -211,20 +274,28 @@ def run(
             report.notes.append(f"YouTube failed: {type(exc).__name__}")
 
     if x is None:
-        report.notes.append("X skipped: X_BEARER_TOKEN is not set")
-        # Without the API there is no way to see a deletion, so nothing from X
-        # may stay: keeping it would be keeping posts that might be gone.
-        with sessions() as s:
-            report.purged_deleted += store.purge_source(s, X)
         return report
-
-    try:
-        _x_reconcile(sessions, x, extractor=extractor, model=model, now=now, report=report)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("X deletion reconcile failed", exc_info=True)
-        report.notes.append(f"X reconcile failed: {type(exc).__name__}")
+    if alive:
+        try:
+            _x_retry_extraction(
+                sessions, alive, extractor=extractor, model=model, now=now, report=report
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("X extraction retry failed", exc_info=True)
+            report.notes.append(f"X extraction retry failed: {type(exc).__name__}")
     if x_user_id is None:
         report.notes.append("X fetch skipped: no numeric user id pinned (see config.X_USER_ID)")
+        return report
+    with sessions() as s:
+        last_pass = store.status_at(s, store.RETENTION_PASS)
+    if last_pass is None or now - last_pass > config.RETENTION_PASS_MAX_AGE:
+        # This run checks deletions on weekdays only; the daily pass is what
+        # covers weekends and kill-switch days. No pass, no new posts stored.
+        report.notes.append(
+            "X fetch skipped: the daily retention pass has not run in the last "
+            f"{config.RETENTION_PASS_MAX_AGE.total_seconds() / 3600:.0f}h "
+            "(enable ai-trader-commentator-retention.timer)"
+        )
         return report
     try:
         _x_fetch(

@@ -1,0 +1,19 @@
+[Unit]
+Description=AI Trader commentator retention — daily 11:00 UTC, weekends included (ADR-009)
+
+[Timer]
+# Every day, whatever COMMENTATOR_FEED and the kill switch say. The retention
+# rules do not pause for a weekend, a held book, or a feed switched off after
+# an evaluation filled the table: YouTube API data at most 30 days (Developer
+# Policies III.E.4), X deletions honoured within a day. The trading run is
+# Mon-Fri and flag-gated, so it cannot carry them.
+#
+# YouTube items carry a deadline one day inside 30 for this cadence, so there
+# is no RandomizedDelaySec: two passes must never be more than a day apart.
+# Persistent catches a pass missed while the box was down. 11:00 UTC is clear
+# of the 22:30 run and the 02:15 backup.
+OnCalendar=*-*-* 11:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

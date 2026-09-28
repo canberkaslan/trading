@@ -252,8 +252,10 @@ def _repo() -> TradeLogRepository:
 
 
 def _load_items(start: datetime, end: datetime) -> list[StoredItem]:
+    # The wall clock, even on a backtest: an item past its retention deadline
+    # is never shown, whenever the purge last ran.
     with _repo().session() as s:
-        return store.extracted_items_between(s, start, end)
+        return store.extracted_items_between(s, start, end, now=datetime.now(UTC))
 
 
 def build_block(

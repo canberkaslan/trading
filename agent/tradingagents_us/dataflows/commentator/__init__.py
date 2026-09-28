@@ -11,8 +11,10 @@ polling of youtube.com/feeds (its robots.txt disallows it). The spoken content
 of a video is therefore not available, which is why most YouTube items carry
 topics and an `unstated` stance rather than a view.
 
-Off unless COMMENTATOR_FEED=1. With the flag off nothing here runs: no fetch,
-no extraction, no write, and the sentiment prompt is byte-identical to before.
+Off unless COMMENTATOR_FEED=1. With the flag off there is no fetch and no
+extraction, and the sentiment prompt is byte-identical to before. Only the
+retention pass runs whatever the flag says (a daily timer): it deletes what
+is past its deadline and checks X deletions.
 
 Modules:
     config          pinned identities, retention and horizon settings

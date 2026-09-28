@@ -10,9 +10,15 @@ Best-effort by design: exits 0 on every failure, like the other steps
 daily_run.sh appends, because a missing commentator block must never cost a
 trading day. A source without credentials is skipped and logged.
 
+Retention does not wait for the flag. With COMMENTATOR_FEED off nothing is
+fetched, but the retention pass still runs, and `--retention-only` is that
+pass alone — what ai-trader-commentator-retention.timer runs every day,
+weekends included. It exits 1 when the pass itself fails, so the timer pages.
+
     python -m scripts.commentator_fetch                   # needs COMMENTATOR_FEED=1
     python -m scripts.commentator_fetch --dry-run         # list uploads; no LLM, no X, no writes
     python -m scripts.commentator_fetch --backfill-days 90 --youtube-pages 4
+    python -m scripts.commentator_fetch --retention-only  # purge + X deletion check; any flag
     python -m scripts.commentator_fetch --resolve-x-id BoraOzkentNSDQ   # one-off, prints the id
 
 `--resolve-x-id` is the one step that looks an account up by handle, and it only
@@ -28,6 +34,7 @@ import os
 import sys
 from datetime import timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 # Make package + vendor importable when running as a script
 _AGENT_ROOT = Path(__file__).resolve().parent.parent
@@ -35,6 +42,9 @@ if str(_AGENT_ROOT) not in sys.path:
     sys.path.insert(0, str(_AGENT_ROOT))
 
 from tradingagents_us.dataflows.commentator import config  # noqa: E402
+
+if TYPE_CHECKING:
+    from tradingagents_us.storage import TradeLogRepository
 
 log = logging.getLogger("commentator_fetch")
 
@@ -55,6 +65,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "lookback). Items still expire 30 days after this fetch.")
     p.add_argument("--youtube-pages", type=int, default=1,
                    help=f"Playlist pages of 50 to read (max {_MAX_YOUTUBE_PAGES})")
+    p.add_argument("--retention-only", action="store_true",
+                   help="Only enforce retention: delete expired items and check X "
+                        "deletions. No YouTube call, no extraction. Runs whatever "
+                        "COMMENTATOR_FEED says; exits 1 if the pass fails")
     p.add_argument("--resolve-x-id", metavar="USERNAME", default=None,
                    help="Print the numeric X id for a handle, to be checked and pinned. "
                         "Makes one paid API call; nothing is stored.")
@@ -111,18 +125,52 @@ def _dry_run(lookback: timedelta, pages: int) -> int:
     return 0
 
 
-def _ingest(lookback: timedelta, pages: int) -> int:
+def _repo() -> TradeLogRepository:
     from sqlalchemy import create_engine
 
+    from tradingagents_us.storage import TradeLogRepository
+
+    url = os.environ.get("TRADE_LOG_DB_URL", "sqlite:///./local.db")
+    return TradeLogRepository(engine=create_engine(url, future=True))
+
+
+def _retain() -> int:
+    """The retention pass alone. Raises on a store failure; the caller decides the exit code."""
+    from tradingagents_us.dataflows.commentator import ingest
+    from tradingagents_us.dataflows.commentator.x_source import XClient
+
+    token = config.x_bearer_token()
+    x = XClient(token) if token else None
+    try:
+        report = ingest.enforce_retention(_repo().session, x=x)
+    finally:
+        if x is not None:
+            x.close()
+    print(report.retention_summary())
+    return 0
+
+
+def _retention_pass(*, fatal: bool) -> int:
+    """Run `_retain`. A failure exits 1 when `fatal` (the timer must page), else 0."""
+    try:
+        return _retain()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("commentator retention pass failed", exc_info=True)
+        if fatal:
+            print(f"commentator retention pass FAILED: {type(exc).__name__}")
+            return 1
+        print(f"commentator retention pass failed (non-fatal): {type(exc).__name__}")
+        return 0
+
+
+def _ingest(lookback: timedelta, pages: int) -> int:
     from tradingagents_us.dataflows.commentator import ingest
     from tradingagents_us.dataflows.commentator.extract import extract, model_name
     from tradingagents_us.dataflows.commentator.x_source import XClient
     from tradingagents_us.dataflows.commentator.youtube_source import YouTubeClient
     from tradingagents_us.llm.usage import UsageCollector
-    from tradingagents_us.storage import TradeLogRepository
 
-    url = os.environ.get("TRADE_LOG_DB_URL", "sqlite:///./local.db")
-    repo = TradeLogRepository(engine=create_engine(url, future=True))
+    repo = _repo()
     usage = UsageCollector()
 
     key, token = config.youtube_api_key(), config.x_bearer_token()
@@ -163,9 +211,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.resolve_x_id:
         return _resolve(args.resolve_x_id)
+    if args.retention_only:
+        return _retention_pass(fatal=True)
     if not config.is_enabled() and not args.ignore_flag:
         print("commentator feed off (COMMENTATOR_FEED != 1); nothing fetched")
-        return 0
+        # Retention does not wait for the flag; a dry run writes nothing.
+        return 0 if args.dry_run else _retention_pass(fatal=False)
 
     pages = max(1, min(args.youtube_pages, _MAX_YOUTUBE_PAGES))
     lookback = (

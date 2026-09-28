@@ -42,7 +42,23 @@ X_EXPECTED_USERNAME = "BoraOzkentNSDQ"
 
 #: YouTube API Developer Policies III.E.4: API data that is not authorised
 #: user data may be kept at most thirty days, then refreshed or deleted.
-YOUTUBE_RETENTION = timedelta(days=30)
+YOUTUBE_MAX_RETENTION = timedelta(days=30)
+
+#: The retention pass runs once a day (ai-trader-commentator-retention.timer,
+#: weekends included, whatever COMMENTATOR_FEED says), so an item can sit up
+#: to this long past its deadline before the pass deletes it.
+RETENTION_PASS_INTERVAL = timedelta(days=1)
+
+#: The deadline stored on a YouTube item: one pass interval inside the policy
+#: limit, so the daily pass has deleted it by day thirty. Reads skip an item
+#: past its deadline whenever the pass runs.
+YOUTUBE_RETENTION = YOUTUBE_MAX_RETENTION - RETENTION_PASS_INTERVAL
+
+#: The X fetch stores new posts only when the daily retention pass ran within
+#: this long. That pass is what checks X deletions on weekends and while the
+#: kill switch holds the trading run, so without it a post deleted on Friday
+#: evening would stay stored until Monday. A day plus slack for a late timer.
+RETENTION_PASS_MAX_AGE = timedelta(hours=26)
 
 #: X items are also purged on deletion (checked every run). The window is kept
 #: short because the deletion check bills per post still stored: at ~2-3 posts

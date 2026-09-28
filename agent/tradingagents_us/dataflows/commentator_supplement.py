@@ -390,6 +390,7 @@ def render(
     end_date: str,
     observed: Sequence[SourceRead] = (),
     unread: int = 0,
+    live: bool = False,
 ) -> str:
     """The section. With no items, absence is claimed only on `observed` reads.
 
@@ -399,6 +400,11 @@ def render(
     `unread` items are in the window but were never extracted: with nothing
     else to show, the feed is unavailable; beside shown items, the list is
     said to be incomplete.
+
+    A read is named with its time only on a `live` run. A backtest's covering
+    read happened after its trade date, and the same prompt tells the analyst
+    the trade date is "now": the read's time would hand it the real present.
+    So by default a read is named by its source alone.
     """
     sym = ticker.upper()
     lines = [_line(i, sym, label=n, market_wide=wide)
@@ -420,7 +426,8 @@ def render(
             f"no successful read of his channels covers {start_date} to {end_date}"
         )
     reads = ", ".join(
-        f"{_SOURCE_LABEL.get(r.source, r.source)} at {r.read_at.strftime('%Y-%m-%dT%H:%MZ')}"
+        _SOURCE_LABEL.get(r.source, r.source)
+        + (f" at {r.read_at.strftime('%Y-%m-%dT%H:%MZ')}" if live else "")
         for r in observed
     )
     return _wrap(
@@ -517,6 +524,7 @@ def build_block_lines(
     pending = unread(items, start_date, end_date, run_start=run_start, now=now,
                      live_anchor=live_anchor)
     observed: list[SourceRead] = []
+    live = False
     if not own and not macro and not pending:  # only this makes a claim that needs proof
         limit, live = cutoff(end_date, run_start=run_start, now=now, live_anchor=live_anchor)
         observed = covering_reads(
@@ -524,7 +532,7 @@ def build_block_lines(
             now=now,
         )
     block = render(ticker, own, macro, start_date=start_date, end_date=end_date,
-                   observed=observed, unread=len(pending))
+                   observed=observed, unread=len(pending), live=live)
     return block, shown_lines(ticker, own, macro)
 
 

@@ -6,6 +6,7 @@ the sentiment prompt is the vendor's, byte for byte.
 
 from __future__ import annotations
 
+import re
 import sys
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
@@ -346,9 +347,28 @@ class TestAbsenceNeedsARead:
     def test_empty_with_a_covering_read_says_so_and_names_it(self) -> None:
         r = read("youtube", at(28, 22, 35), at(14))
         out = cs.render("META", [], [], start_date="2026-09-21", end_date="2026-09-28",
-                        observed=[r])
+                        observed=[r], live=True)
         assert "No commentary in window (2026-09-21 to 2026-09-28) for META" in out
         assert "read from YouTube at 2026-09-28T22:35Z" in out
+
+    def test_a_backtest_names_the_read_without_its_time(self) -> None:
+        # The read came after the trade date; its time would tell the analyst,
+        # told the trade date is "now", what the real present is.
+        r = read("youtube", at(28, 22, 35), at(1))
+        out = cs.render("META", [], [], start_date="2026-09-15", end_date="2026-09-22",
+                        observed=[r])
+        assert "No commentary in window (2026-09-15 to 2026-09-22) for META" in out
+        assert "(read from YouTube)." in out
+        assert "2026-09-28" not in out and "22:35" not in out
+
+    def test_a_backtest_block_names_no_date_after_the_trade_date(self) -> None:
+        reads = [read("youtube", at(28, 14, 12), at(1))]
+        block, used = cs.build_block("META", "2026-09-15", "2026-09-22", now=at(28, 14, 30),
+                                     load=lambda *a: [], load_reads=lambda: reads)
+        assert used == [] and "No commentary in window" in block
+        assert "(read from YouTube)." in block
+        dates = re.findall(r"\d{4}-\d{2}-\d{2}", block)
+        assert dates and max(dates) <= "2026-09-22"
 
     def test_empty_without_a_read_says_unavailable(self) -> None:
         out = cs.render("META", [], [], start_date="2026-09-15", end_date="2026-09-22")
@@ -370,6 +390,7 @@ class TestAbsenceNeedsARead:
                                   live_anchor=at(28, 22, 35), now=at(28, 23),
                                   load=lambda *a: [], load_reads=lambda: reads)
         assert "No commentary in window" in block
+        assert "read from YouTube at 2026-09-28T22:35Z" in block  # live: the time is now
 
     def test_a_failed_fetch_today_leaves_only_yesterdays_read(self) -> None:
         # Today's fetch hit the quota or the 600s timeout; the last good read

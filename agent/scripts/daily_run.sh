@@ -226,6 +226,11 @@ fi
 if [[ "${COMMENTATOR_FEED:-0}" == "1" ]]; then
   echo "" | tee -a "$RUN_LOG"
   echo "--- commentator feed ---" | tee -a "$RUN_LOG"
+  # One live cutoff for the whole run, taken before the fetch: every ticker
+  # admits items published up to this instant. A ticker that starts after
+  # midnight UTC would otherwise read DATE as a past day and drop its items.
+  export COMMENTATOR_LIVE_AS_OF
+  COMMENTATOR_LIVE_AS_OF="$(date -u +%FT%TZ)"
   if timeout -k 30 "${COMMENTATOR_TIMEOUT_S:-600}" env PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.commentator_fetch 2>&1 | tee -a "$RUN_LOG"; then
     :
   else

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -180,6 +180,71 @@ class TestNoLookAhead:
         own, _ = cs.select(items, "META", "2026-09-21", "2026-09-28", run_start=start,
                            now=at(28, 22, 40))
         assert [i.source_id for i in own] == ["at", "earlier"]
+
+    def test_a_run_that_crosses_midnight_keeps_the_trade_dates_items(self) -> None:
+        # daily_run fixes DATE at 22:30 UTC; later tickers start after 00:00.
+        # They must see what the earlier tickers saw, not a backtest of DATE.
+        items = [item("today_video", at(28, 14))]
+        anchor = at(28, 22, 35)
+        for started in (at(28, 22, 40), at(29, 0, 5), at(29, 1, 30)):
+            own, _ = cs.select(items, "META", "2026-09-21", "2026-09-28", run_start=started,
+                               now=started + timedelta(minutes=3), live_anchor=anchor)
+            assert [i.source_id for i in own] == ["today_video"], started
+
+    def test_one_run_has_one_live_cutoff(self) -> None:
+        anchor = at(28, 22, 35)
+        items = [item("before", at(28, 22, 30)), item("after", at(28, 22, 50))]
+        seen = {
+            tuple(i.source_id for i in cs.select(
+                items, "META", "2026-09-21", "2026-09-28", run_start=started,
+                now=started, live_anchor=anchor)[0])
+            for started in (at(28, 22, 40), at(28, 23, 55), at(29, 0, 20))
+        }
+        assert seen == {("before",)}
+
+    def test_without_an_anchor_the_start_not_the_clock_decides(self) -> None:
+        # A manual run that began at 23:50 and builds this prompt at 00:05.
+        items = [item("today_video", at(28, 14))]
+        own, _ = cs.select(items, "META", "2026-09-21", "2026-09-28", run_start=at(28, 23, 50),
+                           now=at(29, 0, 5))
+        assert [i.source_id for i in own] == ["today_video"]
+
+    def test_a_backtest_of_yesterday_stays_strict(self) -> None:
+        # llm_backtest the next morning: begin_run records 29 10:00 for 09-28.
+        items = [item("today_video", at(28, 14)), item("prior", at(27, 18))]
+        own, _ = cs.select(items, "META", "2026-09-21", "2026-09-28", run_start=at(29, 10),
+                           now=at(29, 10, 1))
+        assert [i.source_id for i in own] == ["prior"]
+
+    @pytest.mark.parametrize(("raw", "expected"), [
+        (None, None),
+        ("", None),
+        ("2026-09-28T22:35:00Z", datetime(2026, 9, 28, 22, 35, tzinfo=UTC)),
+        ("2026-09-29T00:10:00Z", datetime(2026, 9, 29, 0, 10, tzinfo=UTC)),  # slipped past 00:00
+        ("2026-09-30T22:35:00Z", None),  # another run's anchor
+        ("2026-09-27T22:35:00Z", None),  # before the trade date
+        ("2026-09-28T22:35:00", None),   # no offset
+        ("yesterday", None),
+    ])
+    def test_the_live_anchor_is_read_only_for_its_own_trade_date(
+        self, monkeypatch: pytest.MonkeyPatch, raw: str | None, expected: datetime | None
+    ) -> None:
+        if raw is None:
+            monkeypatch.delenv(cs.LIVE_AS_OF_ENV, raising=False)
+        else:
+            monkeypatch.setenv(cs.LIVE_AS_OF_ENV, raw)
+        assert cs.live_as_of("2026-09-28") == expected
+
+    def test_the_wrapper_uses_the_daily_runs_anchor(
+        self, analyst, feed_on, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(cs.LIVE_AS_OF_ENV, "2026-09-28T22:35:00Z")
+        monkeypatch.setattr(cs, "_load_items", lambda *a: [item("today_video", at(28, 14))])
+        cs.install()
+        cs.begin_run("META", "2026-09-28", now=at(29, 0, 5))  # this ticker began after 00:00
+        out = analyst._build_system_message(**{**KW, "start_date": "2026-09-21",
+                                               "end_date": "2026-09-28"})
+        assert "[YouTube today_video]" in out
 
     def test_the_window_start_still_applies(self) -> None:
         own, _ = cs.select([item("old", at(14))], "META", "2026-09-15", "2026-09-22",

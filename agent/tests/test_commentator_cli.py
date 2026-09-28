@@ -148,6 +148,21 @@ class TestDailyRunGuard:
         assert mods.count("scripts.commentator_fetch") == 1  # once per run, not per ticker
         assert mods.index("scripts.commentator_fetch") < mods.index("scripts.trade")
 
+    def test_flag_on_every_ticker_shares_one_live_anchor(self, tmp_path: Path) -> None:
+        run = run_daily(tmp_path, COMMENTATOR_FEED="1")
+        anchors = {
+            env["COMMENTATOR_LIVE_AS_OF"]
+            for mod, env in zip(run.modules(), run.envs, strict=True)
+            if mod in ("scripts.commentator_fetch", "scripts.trade")
+        }
+        assert len(anchors) == 1 and anchors != {""}
+        (anchor,) = anchors
+        assert datetime.fromisoformat(anchor).tzinfo is not None
+
+    def test_flag_off_no_anchor_is_exported(self, tmp_path: Path) -> None:
+        run = run_daily(tmp_path)
+        assert all(env["COMMENTATOR_LIVE_AS_OF"] == "" for env in run.envs)
+
     def test_a_failed_fetch_does_not_cost_the_trading_day(self, tmp_path: Path) -> None:
         run = run_daily(tmp_path, COMMENTATOR_FEED="1", FAKE_RC_scripts_commentator_fetch="1")
         assert run.rc == 0, run.output

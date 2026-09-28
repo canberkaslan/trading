@@ -17,9 +17,15 @@ read, and should have no path to an order that bypasses the rest of the graph.
 Look-ahead. The vendor's `in_window` admits the whole trade date (`[start,
 end + 1 day)`), which on a backtest lets in a video published after the
 decision would have been made. So on top of it:
-  - backtest (trade date before today): published strictly before the trade
-    date's 00:00 UTC — conservative, since the run time on that day is unknown;
-  - live (trade date is today): published no later than this run's start.
+  - live: published no later than the run's anchor. The daily run exports
+    COMMENTATOR_LIVE_AS_OF once, before its fetch, so every ticker of one run
+    shares one cutoff — including those that start after midnight UTC, which
+    a wall-clock test would take for a backtest of yesterday. Without it
+    (on-demand analysis, a manual run), a run that started on its trade date
+    is live, cut off at its own start;
+  - backtest (a run that started after its trade date): published strictly
+    before the trade date's 00:00 UTC — conservative, since the run time on
+    that day is unknown.
 An undated item is refused outright, backtest or live.
 
 The seam is the same one `sentiment_supplement` uses: the analyst node resolves
@@ -51,6 +57,14 @@ MARKER = "## How to analyze this data"
 
 #: At most this many items about the ticker itself.
 MAX_ITEMS_PER_TICKER = 5
+
+#: Set by daily_run.sh (feed on) to the instant its commentator fetch starts:
+#: the one live cutoff for every ticker of that run.
+LIVE_AS_OF_ENV = "COMMENTATOR_LIVE_AS_OF"
+
+#: How long after its trade date a live anchor may fall: a run starts at
+#: 22:30 UTC and its fetch can slip past midnight, never past the next day.
+_LIVE_ANCHOR_MAX_LAG = timedelta(days=1)
 
 #: Market-wide items are keyed as SPY by the extractor; an item with macro
 #: topics and no ticker at all is market-wide too. SPY's own analyst reads
@@ -119,16 +133,55 @@ def _day(value: str) -> datetime:
     return datetime.combine(date.fromisoformat(value), datetime.min.time(), tzinfo=UTC)
 
 
-def cutoff(end_date: str, *, run_start: datetime | None, now: datetime) -> tuple[datetime, bool]:
+def live_as_of(end_date: str) -> datetime | None:
+    """The daily run's live anchor for `end_date`, or None when there is none.
+
+    Only an anchor dated on the trade date or the day after counts: anything
+    else is not this run's, and a wrong anchor would let a backtest see the
+    trade date.
+    """
+    raw = (os.environ.get(LIVE_AS_OF_ENV) or "").strip()
+    if not raw:
+        return None
+    try:
+        at = datetime.fromisoformat(raw)
+    except ValueError:
+        log.warning("%s=%r is not an ISO timestamp; ignored", LIVE_AS_OF_ENV, raw)
+        return None
+    if at.tzinfo is None:
+        log.warning("%s=%r carries no offset; ignored", LIVE_AS_OF_ENV, raw)
+        return None
+    at = at.astimezone(UTC)
+    lag = at.date() - date.fromisoformat(end_date)
+    if not timedelta(0) <= lag <= _LIVE_ANCHOR_MAX_LAG:
+        log.warning("%s=%s is not an anchor for trade date %s; ignored",
+                    LIVE_AS_OF_ENV, raw, end_date)
+        return None
+    return at
+
+
+def cutoff(
+    end_date: str,
+    *,
+    run_start: datetime | None,
+    now: datetime,
+    live_anchor: datetime | None = None,
+) -> tuple[datetime, bool]:
     """`(instant, inclusive)`: nothing published after it may be shown.
 
-    A trade date before today is a backtest: strictly before that day's 00:00
-    UTC. Today (or later) is live: no later than the run's start, or `now` when
-    the run did not record one.
+    With the daily run's anchor: live, no later than the anchor. Otherwise
+    the mode follows when the run STARTED (`run_start`, else `now`), never the
+    wall clock at prompt time, so a run that began at 23:50 and reaches this
+    ticker at 00:05 is still live. Started after the trade date: a backtest,
+    strictly before that day's 00:00 UTC. Started on it (or before): live, no
+    later than the start.
     """
-    if date.fromisoformat(end_date) < now.astimezone(UTC).date():
+    if live_anchor is not None:
+        return live_anchor.astimezone(UTC), True
+    started = (run_start or now).astimezone(UTC)
+    if started.date() > date.fromisoformat(end_date):
         return _day(end_date), False
-    return (run_start or now).astimezone(UTC), True
+    return started, True
 
 
 def select(
@@ -139,12 +192,13 @@ def select(
     *,
     run_start: datetime | None,
     now: datetime,
+    live_anchor: datetime | None = None,
 ) -> tuple[list[StoredItem], list[StoredItem]]:
     """`(ticker_items, macro_items)` the analyst for `ticker` may see, newest first."""
     from tradingagents.dataflows.date_window import in_window
 
     start_dt, end_dt = _day(start_date), _day(end_date)
-    limit, inclusive = cutoff(end_date, run_start=run_start, now=now)
+    limit, inclusive = cutoff(end_date, run_start=run_start, now=now, live_anchor=live_anchor)
 
     def admissible(item: StoredItem) -> bool:
         pub = item.published_at
@@ -269,13 +323,15 @@ def build_block(
     *,
     run_start: datetime | None = None,
     now: datetime | None = None,
+    live_anchor: datetime | None = None,
     load: Callable[[datetime, datetime], list[StoredItem]] | None = None,
 ) -> tuple[str, list[StoredItem]]:
     """The rendered section and the items in it."""
     now = now or datetime.now(UTC)
     loader = load or _load_items
     items = loader(_day(start_date), _day(end_date) + timedelta(days=1))
-    own, macro = select(items, ticker, start_date, end_date, run_start=run_start, now=now)
+    own, macro = select(items, ticker, start_date, end_date, run_start=run_start, now=now,
+                        live_anchor=live_anchor)
     return render(ticker, own, macro, start_date=start_date, end_date=end_date), own + macro
 
 
@@ -310,7 +366,8 @@ def install() -> bool:
             return text
         try:
             block, used = build_block(
-                ticker, start_date, end_date, run_start=_run_start(ticker, end_date)
+                ticker, start_date, end_date, run_start=_run_start(ticker, end_date),
+                live_anchor=live_as_of(end_date),
             )
         except Exception as exc:  # noqa: BLE001 — a supplement must never cost the report
             log.warning("commentator feed unavailable for %s", ticker, exc_info=True)

@@ -266,3 +266,14 @@ export type Colors = typeof dark;
 export type ThemeName = 'dark' | 'modernist' | 'aurora';
 
 export const themes = { dark, modernist, aurora } as const;
+
+/**
+ * Whether a palette is drawn light or dark, for the chrome the OS draws over
+ * it. The app never follows the system appearance, so the status bar has to be
+ * told which one the palette is.
+ */
+export const themeScheme: Record<ThemeName, 'light' | 'dark'> = {
+  dark: 'dark',
+  aurora: 'dark',
+  modernist: 'light',
+};

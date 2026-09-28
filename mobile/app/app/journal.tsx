@@ -230,7 +230,7 @@ export default function JournalScreen() {
 
   if (trades.isLoading && !data) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top']}>
+      <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
         <ScrollView contentContainerStyle={styles.content}>
           {header}
           <Card tone="dashed" style={styles.slot}>
@@ -243,7 +243,7 @@ export default function JournalScreen() {
 
   if (trades.isError && !data) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top']}>
+      <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
         <ScrollView contentContainerStyle={styles.content}>
           {header}
           <ErrorState
@@ -257,7 +257,7 @@ export default function JournalScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={

@@ -102,7 +102,7 @@ export default function BacktestScreen() {
   const leaky = leaks(strategy);
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
       <ScrollView contentContainerStyle={styles.content}>
         <Pressable
           style={styles.backBtn}

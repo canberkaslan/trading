@@ -222,7 +222,7 @@ export default function MarketScreen() {
     router.push(`/(tabs)/charts?ticker=${encodeURIComponent(ticker)}` as never);
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={

@@ -192,7 +192,7 @@ export default function ApproveOrderScreen() {
   // "not in pending list" during that race falsely tells the user the order is gone.
   if (!order && ordersLoading) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top']}>
+      <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
         <View style={styles.center}>
           <ActivityIndicator color={t.textPrimary} />
           <Text style={styles.muted}>Emir yükleniyor…</Text>
@@ -218,7 +218,7 @@ export default function ApproveOrderScreen() {
    */
   if (!order && ordersFailed) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top']}>
+      <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
         <ErrorState
           title="Bekleyen emirler okunamadı"
           detail={ordersError}
@@ -232,7 +232,7 @@ export default function ApproveOrderScreen() {
      order that is no longer there should read as an absence. */
   if (!order) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top']}>
+      <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
         <View style={styles.center}>
           <Card tone="dashed" style={styles.gone}>
             <Text style={styles.goneText}>
@@ -365,7 +365,7 @@ export default function ApproveOrderScreen() {
   ];
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
       <ScrollView contentContainerStyle={styles.content}>
         <Pressable
           onPress={() => router.back()}

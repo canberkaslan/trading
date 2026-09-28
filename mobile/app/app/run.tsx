@@ -345,7 +345,7 @@ export default function RunScreen() {
 
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top']}>
+      <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
         <ScrollView contentContainerStyle={styles.content}>
           {header}
           <Card tone="dashed" style={styles.slot}>
@@ -358,7 +358,7 @@ export default function RunScreen() {
 
   if (isError) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top']}>
+      <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
         <ScrollView contentContainerStyle={styles.content}>
           {header}
           <ErrorState
@@ -373,7 +373,7 @@ export default function RunScreen() {
 
   if (!selected || total === 0) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top']}>
+      <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
         <ScrollView
           contentContainerStyle={styles.content}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={t.textSecondary} />}
@@ -389,7 +389,7 @@ export default function RunScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={t.textSecondary} />}

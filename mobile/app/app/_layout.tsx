@@ -8,7 +8,8 @@ import { useFonts } from 'expo-font';
 import { FONT_ASSETS } from '@/theme/fonts';
 
 import i18n, { hydrateLanguage } from '@/i18n';
-import { hydrateTheme } from '@/theme/useTheme';
+import { hydrateTheme, useThemeName } from '@/theme/useTheme';
+import { themeScheme } from '@/theme/colors';
 import { hydrateWatchlist } from '@/stores/watchlist';
 import { registerReceivedHandler, registerTapHandler, syncPushTokenIfGranted } from '@/notifications';
 import { useInboxStore } from '@/stores/notifications';
@@ -25,6 +26,11 @@ const queryClient = new QueryClient({
 export default function RootLayout() {
   const router = useRouter();
   const [fontsLoaded, fontError] = useFonts(FONT_ASSETS);
+  // The status-bar icons follow the palette, not the phone. `style="auto"`
+  // resolves against the system appearance, so on a phone in light mode
+  // Android drew dark icons on Aurora's near-black ground, where the clock and
+  // battery disappeared on every screen without its own StatusBar.
+  const scheme = themeScheme[useThemeName()];
 
   useEffect(() => {
     const { hydrate, push } = useInboxStore.getState();
@@ -64,7 +70,7 @@ export default function RootLayout() {
   return (
     <QueryClientProvider client={queryClient}>
       <I18nextProvider i18n={i18n}>
-        <StatusBar style="auto" />
+        <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="(auth)" />
           <Stack.Screen name="(tabs)" />

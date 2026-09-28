@@ -13,6 +13,7 @@
 
 import { View, Text, Modal, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useMemo, type ReactNode } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTheme } from '@/theme/useTheme';
 import { useShape, type Shape } from '@/theme/shape';
@@ -69,6 +70,14 @@ export function Sheet({
   const t = useTheme();
   const sh = useShape();
   const styles = useMemo(() => makeStyles(t, sh), [t, sh]);
+  // The dock sits on the screen's bottom edge, and since SDK 54 Android draws
+  // the app under the navigation bar. A fixed 32 cleared the gesture handle by
+  // a few pixels and put the buttons half under a three-button bar, where
+  // Reddet and FLATTEN are what the bar swallows. The inset is read from the
+  // root provider: context crosses the Modal's portal, and both windows are
+  // full-screen, so the value is the same.
+  const insets = useSafeAreaInsets();
+  const bottomPad = Math.max(SHEET_BOTTOM_PAD, insets.bottom + SHEET_INSET_GAP);
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onDismiss} statusBarTranslucent>
@@ -82,7 +91,7 @@ export function Sheet({
         accessibilityElementsHidden={busy}
       />
       <View style={styles.dock} pointerEvents="box-none">
-        <View style={styles.sheet} accessibilityViewIsModal accessibilityRole="alert">
+        <View style={[styles.sheet, { paddingBottom: bottomPad }]} accessibilityViewIsModal accessibilityRole="alert">
           {/* The grab handle only exists on a rounded system. Modernist's sheet
               is a square slab with a 2px rule, and a pill on it would be the
               one soft corner in the whole design. */}
@@ -166,6 +175,11 @@ export function Sheet({
 
 type Palette = ReturnType<typeof useTheme>;
 
+/** The handoff's bottom padding, kept where there is no system bar under the sheet. */
+const SHEET_BOTTOM_PAD = 32;
+/** Space between the last button and the top of a system bar. */
+const SHEET_INSET_GAP = 16;
+
 const makeStyles = (t: Palette, sh: Shape) =>
   StyleSheet.create({
     /*
@@ -186,7 +200,6 @@ const makeStyles = (t: Palette, sh: Shape) =>
       borderTopRightRadius: sh.radius,
       paddingHorizontal: 16,
       paddingTop: 20,
-      paddingBottom: 32,
       gap: 10,
       // The system's only elevation, and only here.
       shadowColor: t.shadowColor,

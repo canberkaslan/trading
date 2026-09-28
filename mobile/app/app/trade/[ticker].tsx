@@ -105,7 +105,7 @@ export default function DecisionDetailScreen() {
   const shown = decision?.ticker ?? ticker;
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
       <ScrollView contentContainerStyle={styles.content}>
         <Pressable
           onPress={() => router.back()}

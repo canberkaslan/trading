@@ -207,7 +207,7 @@ export default function AuditScreen() {
         : 'oturum bilinmiyor';
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
       <ScrollView contentContainerStyle={styles.content}>
         <Pressable
           style={styles.backBtn}

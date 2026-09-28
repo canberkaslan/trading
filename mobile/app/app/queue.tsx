@@ -332,7 +332,7 @@ export default function QueueScreen() {
 
   if (pending.isLoading && rows.length === 0) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top']}>
+      <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
         <View style={styles.center}>
           <Text style={styles.muted}>Kuyruk yükleniyor…</Text>
         </View>
@@ -342,7 +342,7 @@ export default function QueueScreen() {
 
   if (pending.isError && rows.length === 0) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top']}>
+      <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
         <ErrorState
           title="Onay kuyruğu okunamadı"
           detail={pending.error}
@@ -353,7 +353,7 @@ export default function QueueScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={

@@ -37,6 +37,11 @@ the flips against the 21-day forward return, mean rating shift and cost:
     COMMENTATOR_FEED=0 python -m backtest.llm_backtest --points META:2026-09-22 ... > off.txt
     COMMENTATOR_FEED=1 python -m backtest.llm_backtest --points META:2026-09-22 ... > on.txt
 
+The feed-on arm goes through the pipeline, which installs the block only
+with a source configured (`config.configured_sources()`): run it with the
+environment the fetch had, or it logs "no commentator source" and is the
+feed-off arm again.
+
 Items must be in `commentator_items` first (`scripts.commentator_fetch
 --ignore-flag --backfill-days N`), and both steps must finish inside the
 thirty days YouTube items are kept. That fetch reads YouTube only with

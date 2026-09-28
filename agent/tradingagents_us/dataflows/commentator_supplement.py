@@ -33,10 +33,11 @@ read covers the window (`commentator_status`): its reads reach back to the
 window's start, it happened no earlier than the cutoff (a live run: at most
 LIVE_READ_MAX_AGE before), nothing it read can have been purged since, and
 no item it fetched in the window is still waiting for extraction. Otherwise —
-no key, a failed or timed-out fetch, a window older than the reads or than
-retention, an item the extractor could not read — the block says the feed is
-unavailable. An empty table is not an observed absence, and neither is an
-empty selection over an item nobody read.
+a source with no key, a failed or timed-out fetch, a window older than the
+reads or than retention, an item the extractor could not read — the block
+says the feed is unavailable. An empty table is not an observed absence, and
+neither is an empty selection over an item nobody read. With no source
+configured at all the pipeline installs nothing (`graph/pipeline.py`).
 
 The seam is the same one `sentiment_supplement` uses: the analyst node resolves
 `_build_system_message` from its module globals at call time, so rebinding that

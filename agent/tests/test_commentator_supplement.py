@@ -84,6 +84,25 @@ def feed_off(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("COMMENTATOR_FEED", raising=False)
 
 
+_SOURCE_VARS = ("YOUTUBE_API_KEY", "COMMENTATOR_YOUTUBE_CLEARED", "X_BEARER_TOKEN",
+                "COMMENTATOR_X_USER_ID")
+
+
+@pytest.fixture(autouse=True)
+def _no_sources(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A developer shell holding real keys must not decide what these tests see."""
+    for var in _SOURCE_VARS:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(pipeline, "_commentator_no_source_logged", set())
+
+
+@pytest.fixture
+def source_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """YouTube configured as the fetch reads it: a key beside the ADR-009 clearance."""
+    monkeypatch.setenv("YOUTUBE_API_KEY", "yt-key-not-real-0001")
+    monkeypatch.setenv("COMMENTATOR_YOUTUBE_CLEARED", "1")
+
+
 class TestFlagOffIsByteIdentical:
     def test_the_pipeline_does_not_install_it(
         self, analyst, feed_off, monkeypatch: pytest.MonkeyPatch
@@ -112,7 +131,7 @@ class TestFlagOffIsByteIdentical:
         assert cs.install() is True
         assert analyst._build_system_message(**KW) == baseline
 
-    def test_flag_on_installs_and_marks_the_run(self, analyst, feed_on) -> None:
+    def test_flag_on_installs_and_marks_the_run(self, analyst, feed_on, source_on) -> None:
         assert pipeline._install_commentator_feed("META", "2026-09-22") is True
         assert getattr(analyst._build_system_message, "_supplemented", False)
         assert cs._run_start("META", "2026-09-22") is not None
@@ -637,7 +656,7 @@ class TestTheRealNode:
         assert "Commentator feed" not in baseline
 
     def test_flag_on_the_node_sends_the_block(
-        self, analyst, monkeypatch: pytest.MonkeyPatch
+        self, analyst, source_on, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("COMMENTATOR_FEED", raising=False)
         baseline = self._system(analyst, monkeypatch)
@@ -650,3 +669,65 @@ class TestTheRealNode:
         start = with_feed.index("### Commentator feed")
         end = with_feed.index(cs.MARKER)
         assert with_feed[:start] + with_feed[end:] == baseline
+
+    def test_flag_on_with_no_source_sends_mains_system_message(
+        self, analyst, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The documented default: the flag on, YOUTUBE_API_KEY unset, no X id
+        # pinned. An "unavailable" block here would sit in every ticker's
+        # prompt, and rule 6 reads such a placeholder as a reason to lower
+        # confidence, although nothing was ever read.
+        monkeypatch.delenv("COMMENTATOR_FEED", raising=False)
+        baseline = self._system(analyst, monkeypatch)
+        monkeypatch.setenv("COMMENTATOR_FEED", "1")
+        monkeypatch.setattr(cs, "install", lambda: pytest.fail("installed with no source"))
+        assert pipeline._install_commentator_feed("META", "2026-09-22") is False
+        assert self._system(analyst, monkeypatch) == baseline
+
+
+class TestNoSourceIsANoOp:
+    """The flag on with no source configured does what the fetch does: skip, and say so."""
+
+    @pytest.mark.parametrize("env", [
+        {},
+        {"YOUTUBE_API_KEY": "yt-key-not-real-0001"},  # a key the ADR-009 gate refuses
+        {"COMMENTATOR_YOUTUBE_CLEARED": "1"},
+        {"YOUTUBE_API_KEY": "...", "COMMENTATOR_YOUTUBE_CLEARED": "1"},  # the template
+        {"X_BEARER_TOKEN": "x-token-not-real-0001"},  # no numeric id pinned
+        {"X_BEARER_TOKEN": "x-token-not-real-0001", "COMMENTATOR_X_USER_ID": "BoraOzkentNSDQ"},
+        {"COMMENTATOR_X_USER_ID": "123456789"},
+    ])
+    def test_nothing_is_installed(
+        self, analyst, feed_on, monkeypatch: pytest.MonkeyPatch, env: dict[str, str]
+    ) -> None:
+        for var, value in env.items():
+            monkeypatch.setenv(var, value)
+        before = analyst._build_system_message
+        assert pipeline._install_commentator_feed("META", "2026-09-22") is False
+        assert analyst._build_system_message is before
+        assert cs._run_start("META", "2026-09-22") is None
+
+    @pytest.mark.parametrize("env", [
+        {"YOUTUBE_API_KEY": "yt-key-not-real-0001", "COMMENTATOR_YOUTUBE_CLEARED": "1"},
+        {"X_BEARER_TOKEN": "x-token-not-real-0001", "COMMENTATOR_X_USER_ID": "123456789"},
+    ])
+    def test_one_configured_source_installs_it(
+        self, analyst, feed_on, monkeypatch: pytest.MonkeyPatch, env: dict[str, str]
+    ) -> None:
+        # A configured source whose read then fails still gets "unavailable":
+        # that is a read that did not happen, not a feed that cannot read.
+        for var, value in env.items():
+            monkeypatch.setenv(var, value)
+        assert pipeline._install_commentator_feed("META", "2026-09-22") is True
+
+    def test_it_is_logged_once_with_the_reasons(
+        self, analyst, feed_on, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level("WARNING", logger=pipeline.log.name):
+            for ticker in ("META", "NVDA", "SPY"):
+                assert pipeline._install_commentator_feed(ticker, "2026-09-22") is False
+        warned = [m for m in (r.getMessage() for r in caplog.records)
+                  if "no commentator source" in m]
+        assert len(warned) == 1
+        assert "YOUTUBE_API_KEY is not set" in warned[0]
+        assert "X_BEARER_TOKEN is not set" in warned[0]

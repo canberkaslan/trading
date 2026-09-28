@@ -174,3 +174,25 @@ def youtube_skip_reason() -> str:
 
 def x_bearer_token() -> str | None:
     return _secret("X_BEARER_TOKEN")
+
+
+def configured_sources() -> list[str]:
+    """The sources a fetch can read: YouTube with a cleared key, X with a token and a pinned id.
+
+    With none, nothing can ever have been read, so the pipeline leaves the
+    sentiment prompt alone instead of telling every ticker the feed is
+    unavailable. Checked without `youtube_api_key()`'s warning, because the
+    pipeline asks once per ticker.
+    """
+    sources = []
+    if _secret("YOUTUBE_API_KEY") is not None and youtube_cleared():
+        sources.append("youtube")
+    if x_bearer_token() is not None and x_user_id() is not None:
+        sources.append("x")
+    return sources
+
+
+def no_source_reason() -> str:
+    """Why `configured_sources()` is empty, source by source, for the log."""
+    x = "X_BEARER_TOKEN is not set" if x_bearer_token() is None else "no numeric user id pinned"
+    return f"YouTube: {youtube_skip_reason()}; X: {x}"

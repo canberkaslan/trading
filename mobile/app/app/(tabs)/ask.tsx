@@ -24,7 +24,6 @@ import {
   ScrollView,
   Keyboard,
   KeyboardAvoidingView,
-  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
@@ -139,6 +138,8 @@ export default function AskScreen() {
    */
   const notified = useRef<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
+  const screenRef = useRef<View>(null);
+  const [screenTop, setScreenTop] = useState(0);
 
   // A started job is still "running" in the window between the mutation
   // settling and the first poll returning — without this the blinker would
@@ -285,18 +286,31 @@ export default function AskScreen() {
   const isEmpty = chat.messages.length === 0 && !chat.busy;
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <SafeAreaView
+      ref={screenRef}
+      style={styles.screen}
+      edges={['top']}
+      onLayout={() => screenRef.current?.measureInWindow((_x, y) => setScreenTop(y))}
+    >
       {/*
-        No `keyboardVerticalOffset`: the tab bar is a flex SIBLING of the
-        screen (the shell renders it below the scene container, not over it),
-        so this view's frame already ends at the bar's top edge and the padding
-        RN computes — keyboard height minus that gap — is exactly right. A
-        positive offset is ADDED to that padding, so passing the bar's height
-        would float the composer a whole tab bar above the keyboard.
+        KeyboardAvoidingView measures its own frame against its parent and the
+        keyboard against the window; `keyboardVerticalOffset` is how far that
+        parent starts below the window's top. This screen does not start at
+        the top, because the tab shell's header sits above the scene. With no
+        offset the padding came up short by exactly that header and the
+        composer stayed under the keyboard (Android: input at 1453-1591 px,
+        keyboard from 1517). Measured, the padding is the keyboard's overlap
+        with this screen and nothing else. The tab bar below is a flex
+        sibling, so this view already ends at the bar's top edge.
+
+        `padding` on Android as well: under edge-to-edge (SDK 54+) the window
+        no longer shrinks for the keyboard, so leaving Android to adjustResize
+        left the composer under the keyboard entirely.
       */}
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior="padding"
+        keyboardVerticalOffset={screenTop}
       >
         <View style={styles.header}>
           <Text style={styles.heading} accessibilityRole="header">

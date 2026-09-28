@@ -137,7 +137,8 @@ def to_raw_item(post: dict[str, Any], user_id: str) -> RawItem | None:
     if not pid or not text:
         return None
     if when is None:
-        log.warning("X post %s carries no usable created_at; skipped rather than guessed", pid)
+        # No id in the log: it would outlive a deletion (see `failures`).
+        log.warning("an X post carries no usable created_at; skipped rather than guessed")
         return None
     if post.get("author_id") and str(post["author_id"]) != user_id:
         return None

@@ -17,7 +17,8 @@ in the fetched batch are dropped before extraction: they cost tokens, carry no
 view on the market, and would otherwise mark every video as a promo.
 
 The API key travels in the `X-Goog-Api-Key` header, not the query string, so
-httpx's INFO request log never carries it.
+httpx's INFO request log never carries it. The video ids in `videos.list`'s
+query string would, so `scripts/commentator_fetch` holds that log at WARNING.
 """
 
 from __future__ import annotations
@@ -204,14 +205,15 @@ def to_raw_item(
     if not vid:
         return None
     if snippet.get("channelId") and snippet.get("channelId") != channel_id:
-        log.warning("video %s belongs to channel %s, not %s; skipped",
-                    vid, snippet.get("channelId"), channel_id)
+        # No video id in the log: it would outlive YouTube's 30 days (see `failures`).
+        log.warning("a video from channel %s, not %s, was skipped",
+                    snippet.get("channelId"), channel_id)
         return None
     if snippet.get("liveBroadcastContent") in ("upcoming", "live"):
         return None
     when = published_at(video)
     if when is None:
-        log.warning("video %s carries no usable timestamp; skipped rather than guessed", vid)
+        log.warning("a video carries no usable timestamp; skipped rather than guessed")
         return None
     chapters, body = split_description(str(snippet.get("description") or ""), boilerplate)
     return RawItem(

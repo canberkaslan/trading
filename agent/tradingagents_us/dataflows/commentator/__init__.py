@@ -23,4 +23,5 @@ Modules:
     x_source        /2/users/{id}/tweets by pinned numeric id; deletion reconcile
     extract         one cheap-tier call per item: Turkish text -> English fields
     ingest          fetch, extract once, store, purge — once per run, not per ticker
+    failures        what a log line may say about a failure: never a post or video id
 """

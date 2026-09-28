@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import sys
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import httpx
 import pytest
 from sqlalchemy import create_engine
 
@@ -14,11 +17,20 @@ if str(_VENDOR) not in sys.path:
     sys.path.insert(0, str(_VENDOR))
 
 from scripts import commentator_fetch as cli  # noqa: E402
+from tests.commentator_fakes import (  # noqa: E402
+    X_USER,
+    FakeXAPI,
+    FakeYouTubeAPI,
+    post,
+    video,
+)
 from tests.test_daily_run_alerting import run_daily  # noqa: E402
-from tradingagents_us.dataflows.commentator import ingest  # noqa: E402
+from tradingagents_us.dataflows.commentator import extract as extract_mod  # noqa: E402
+from tradingagents_us.dataflows.commentator import ingest, x_source  # noqa: E402
 from tradingagents_us.dataflows.commentator import youtube_source as yt_source  # noqa: E402
 from tradingagents_us.storage import TradeLogRepository  # noqa: E402
 from tradingagents_us.storage import commentator as store  # noqa: E402
+from tradingagents_us.storage.commentator import Extraction  # noqa: E402
 
 _DEPLOY = Path(__file__).resolve().parents[2] / "deploy" / "hetzner"
 
@@ -132,6 +144,116 @@ class TestFetchCli:
     ) -> None:
         assert cli.main(["--resolve-x-id", "BoraOzkentNSDQ"]) == 0
         assert "X_BEARER_TOKEN is not set" in capsys.readouterr().err
+
+
+@pytest.fixture
+def httpx_level() -> Iterator[None]:
+    """`main` quiets the httpx logger for the process; put it back for the next test."""
+    logger = logging.getLogger("httpx")
+    before = logger.level
+    yield
+    logger.setLevel(before)
+
+
+class TestNoIdReachesTheLog:
+    """daily_run.sh appends this script's output to a log nothing rotates, and the
+    retention unit's goes to journald: an id there outlives the purge of its item."""
+
+    POSTS = ("1839000000000000001", "1839000000000000002")
+    VIDEOS = ("kZfGFVq8ric", "iIVDlDLd9yk")
+
+    def test_fetch_retention_and_dry_run_log_no_post_or_video_id(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+        capsys: pytest.CaptureFixture[str], tmp_path: Path, httpx_level: None,
+    ) -> None:
+        now = datetime.now(UTC)
+        stamp = "%Y-%m-%dT%H:%M:%SZ"
+        yt = FakeYouTubeAPI([
+            video(vid, (now - timedelta(days=n + 1)).strftime(stamp), f"Video {n}", ["Nasdaq"])
+            for n, vid in enumerate(self.VIDEOS)
+        ])
+        x = FakeXAPI([post(pid, (now - timedelta(hours=n + 1)).strftime(stamp), "Nasdaq")
+                      for n, pid in enumerate(self.POSTS)])
+        for var, value in (("COMMENTATOR_FEED", "1"), ("YOUTUBE_API_KEY", "yt-key-not-real-0001"),
+                           ("X_BEARER_TOKEN", "x-token-not-real-0001"),
+                           ("COMMENTATOR_X_USER_ID", X_USER)):
+            monkeypatch.setenv(var, value)
+        monkeypatch.setattr(yt_source, "YouTubeClient", lambda key: yt.client())
+        monkeypatch.setattr(x_source, "XClient", lambda token: x.client())
+        monkeypatch.setattr(extract_mod, "extract", lambda text, **kw: Extraction(
+            tickers=("SPY",), macro_topics=(), stance={"SPY": "unstated"}, claim_en="p",
+            is_promo=False, is_market_content=True,
+        ))
+        with _repo(tmp_path).session() as s:  # the daily pass ran; X may store posts
+            store.record_status(s, store.RETENTION_PASS, now - timedelta(hours=1))
+
+        with caplog.at_level(logging.INFO):  # what basicConfig gives the real run
+            assert cli.main([]) == 0
+            # An edited description, a deleted post, and a deletion check that
+            # fails: every path that used to name an id.
+            yt.videos[0]["snippet"]["description"] += "\nedited"
+            x.delete(self.POSTS[0])
+            x.fail_lookup_with = 429
+            assert cli.main([]) == 0
+            assert cli.main(["--retention-only"]) == 0
+            assert cli.main(["--dry-run"]) == 0
+            # videos.list, whose query string is the video ids, refused.
+            serve = yt.handle
+
+            def refuse_videos(request: httpx.Request) -> httpx.Response:
+                if request.url.path.endswith("/videos"):
+                    yt.requests.append(request)
+                    return httpx.Response(403, request=request)
+                return serve(request)
+
+            yt.handle = refuse_videos  # type: ignore[method-assign]
+            assert cli.main([]) == 0
+            assert cli.main(["--dry-run"]) == 0
+            # The X fetch refused, its since_id (a stored post id) in the query.
+            x.fail_lookup_with = None
+            timeline = x.handle
+
+            def refuse_timeline(request: httpx.Request) -> httpx.Response:
+                if request.url.path.endswith("/tweets") and "since_id" in request.url.params:
+                    x.requests.append(request)
+                    return httpx.Response(503, request=request)
+                return timeline(request)
+
+            x.handle = refuse_timeline  # type: ignore[method-assign]
+            assert cli.main([]) == 0
+
+        out = capsys.readouterr()
+        sent = " ".join(str(r.url) for r in [*yt.requests, *x.requests])
+        assert all(i in sent for i in (*self.POSTS, *self.VIDEOS))  # the URLs did carry them
+        # The failures are still said, by type and status.
+        assert "HTTPStatusError 429" in caplog.text
+        assert "YouTube fetch failed (HTTPStatusError 403)" in caplog.text
+        assert "X fetch failed (HTTPStatusError 503)" in caplog.text
+        assert "commentator fetch failed (non-fatal): HTTPStatusError 403" in out.out
+        assert "1 item(s) edited since first fetch" in caplog.text
+        for text in (caplog.text, out.out, out.err):
+            for sid in (*self.POSTS, *self.VIDEOS):
+                assert sid not in text
+
+    def test_an_http_error_anywhere_in_the_chain_drops_the_traceback(self) -> None:
+        from tradingagents_us.dataflows.commentator.failures import describe, traceback_of
+
+        url = "https://api.x.com/2/tweets?ids=1839000000000000001"
+        request = httpx.Request("GET", url)
+        http = httpx.HTTPStatusError(
+            f"for url '{url}'", request=request, response=httpx.Response(402, request=request)
+        )
+        try:
+            try:
+                raise http
+            except httpx.HTTPStatusError as inner:
+                raise RuntimeError("rollback failed") from inner
+        except RuntimeError as outer:
+            wrapped = outer
+        assert describe(http) == "HTTPStatusError 402"
+        assert traceback_of(wrapped) is None and traceback_of(http) is None
+        plain = ValueError("x")
+        assert traceback_of(plain) is plain and describe(plain) == "ValueError"
 
 
 class TestDailyRunGuard:

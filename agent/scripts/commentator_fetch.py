@@ -42,6 +42,10 @@ if str(_AGENT_ROOT) not in sys.path:
     sys.path.insert(0, str(_AGENT_ROOT))
 
 from tradingagents_us.dataflows.commentator import config  # noqa: E402
+from tradingagents_us.dataflows.commentator.failures import (  # noqa: E402
+    describe,
+    traceback_of,
+)
 
 if TYPE_CHECKING:
     from tradingagents_us.storage import TradeLogRepository
@@ -112,8 +116,8 @@ def _dry_run(lookback: timedelta, pages: int) -> int:
                 yt, config.YOUTUBE_CHANNEL_ID, since=now - lookback, max_pages=pages
             )
         print(f"YouTube: {len(items)} upload(s) since {(now - lookback):%Y-%m-%d}")
-        for i in items:
-            print(f"  {i.published_at:%Y-%m-%dT%H:%MZ} {i.source_id} ({len(i.text)} chars)")
+        for i in items:  # no video id: this output may land in a kept log
+            print(f"  {i.published_at:%Y-%m-%dT%H:%MZ} ({len(i.text)} chars)")
     # X bills per post read, so a dry run only reports whether it would run.
     token, uid = config.x_bearer_token(), config.x_user_id()
     if token is None:
@@ -131,7 +135,9 @@ def _repo() -> TradeLogRepository:
     from tradingagents_us.storage import TradeLogRepository
 
     url = os.environ.get("TRADE_LOG_DB_URL", "sqlite:///./local.db")
-    return TradeLogRepository(engine=create_engine(url, future=True))
+    # A failed statement's message would otherwise carry its parameters, the
+    # item ids, into the traceback this script logs.
+    return TradeLogRepository(engine=create_engine(url, future=True, hide_parameters=True))
 
 
 def _retain() -> int:
@@ -155,11 +161,12 @@ def _retention_pass(*, fatal: bool) -> int:
     try:
         return _retain()
     except Exception as exc:  # noqa: BLE001
-        log.warning("commentator retention pass failed", exc_info=True)
+        log.warning("commentator retention pass failed (%s)", describe(exc),
+                    exc_info=traceback_of(exc))
         if fatal:
-            print(f"commentator retention pass FAILED: {type(exc).__name__}")
+            print(f"commentator retention pass FAILED: {describe(exc)}")
             return 1
-        print(f"commentator retention pass failed (non-fatal): {type(exc).__name__}")
+        print(f"commentator retention pass failed (non-fatal): {describe(exc)}")
         return 0
 
 
@@ -202,8 +209,13 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s | %(message)s"
     )
-    # httpx logs request URLs at INFO; keys stay in headers here, and the filter
-    # is the backstop for anything that ever lands in a query string.
+    # httpx logs every request URL at INFO, and this feed's query strings carry
+    # the ids of stored content (the X deletion check, videos.list). This output
+    # goes to a daily log nothing rotates and to journald, where an id would
+    # outlive its purge. Failures are logged by type and status (`failures`).
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    # Keys stay in headers here; the filter is the backstop for any that ever
+    # lands in a query string.
     from tradingagents_us.log_redaction import install as install_log_redaction
 
     install_log_redaction()
@@ -227,8 +239,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return _dry_run(lookback, pages) if args.dry_run else _ingest(lookback, pages)
     except Exception as exc:  # noqa: BLE001 — never fail the run this is appended to
-        log.warning("commentator fetch failed", exc_info=True)
-        print(f"commentator fetch failed (non-fatal): {type(exc).__name__}")
+        log.warning("commentator fetch failed (%s)", describe(exc), exc_info=traceback_of(exc))
+        print(f"commentator fetch failed (non-fatal): {describe(exc)}")
         return 0
 
 

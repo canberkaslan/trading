@@ -30,6 +30,7 @@ from tradingagents_us.storage import commentator as store
 from tradingagents_us.storage.commentator import Extraction
 
 from . import config
+from .failures import describe, traceback_of
 from .items import YOUTUBE, RawItem, X
 from .x_source import XClient, fetch_new, to_raw_item
 from .youtube_source import YouTubeClient, fetch_window
@@ -82,6 +83,7 @@ def _store(
 ) -> None:
     """Extract what is new or still unextracted; leave extracted items alone."""
     rows = store.get_rows(session, (store.item_key(i.source, i.source_id) for i in items))
+    edited = 0
     for item in items:
         row = rows.get(store.item_key(item.source, item.source_id))
         if row is not None and row.extracted_at_utc is not None:
@@ -90,7 +92,7 @@ def _store(
                 # Kept as first read: the stored fields are what was knowable at
                 # first fetch, and re-extracting an edit would date a later view
                 # to the original publish time.
-                log.info("%s edited since first fetch; keeping the first extraction", row.item_id)
+                edited += 1
             continue
         extraction = extractor(item.text)
         store.upsert_item(
@@ -113,6 +115,9 @@ def _store(
             report.extraction_failed += 1
         else:
             report.extracted += 1
+    if edited:
+        # A count, not ids: the log outlives the items (see `failures`).
+        log.info("%d item(s) edited since first fetch; keeping the first extraction", edited)
 
 
 def _youtube_step(
@@ -203,10 +208,9 @@ def _retain(
         try:
             return _x_check_deletions(sessions, x, now=now, report=report)
         except Exception as exc:  # noqa: BLE001
-            log.warning("X deletion reconcile failed; purging stored X posts", exc_info=True)
-            report.notes.append(
-                f"X reconcile failed: {type(exc).__name__}; stored X posts purged"
-            )
+            log.warning("X deletion reconcile failed (%s); purging stored X posts",
+                        describe(exc), exc_info=traceback_of(exc))
+            report.notes.append(f"X reconcile failed: {describe(exc)}; stored X posts purged")
     with sessions() as s:
         report.purged_deleted += store.purge_source(s, X)
     return None
@@ -299,8 +303,8 @@ def run(
                 lookback=lookback, max_pages=youtube_max_pages, report=report,
             )
         except Exception as exc:  # noqa: BLE001 — one source must not cost the other
-            log.warning("YouTube fetch failed", exc_info=True)
-            report.notes.append(f"YouTube failed: {type(exc).__name__}")
+            log.warning("YouTube fetch failed (%s)", describe(exc), exc_info=traceback_of(exc))
+            report.notes.append(f"YouTube failed: {describe(exc)}")
 
     if x is None:
         return report
@@ -310,8 +314,9 @@ def run(
                 sessions, alive, extractor=extractor, model=model, now=now, report=report
             )
         except Exception as exc:  # noqa: BLE001
-            log.warning("X extraction retry failed", exc_info=True)
-            report.notes.append(f"X extraction retry failed: {type(exc).__name__}")
+            log.warning("X extraction retry failed (%s)", describe(exc),
+                        exc_info=traceback_of(exc))
+            report.notes.append(f"X extraction retry failed: {describe(exc)}")
     if x_user_id is None:
         report.notes.append("X fetch skipped: no numeric user id pinned (see config.X_USER_ID)")
         return report
@@ -331,6 +336,6 @@ def run(
             sessions, x, x_user_id, extractor=extractor, model=model, now=now, report=report
         )
     except Exception as exc:  # noqa: BLE001
-        log.warning("X fetch failed", exc_info=True)
-        report.notes.append(f"X failed: {type(exc).__name__}")
+        log.warning("X fetch failed (%s)", describe(exc), exc_info=traceback_of(exc))
+        report.notes.append(f"X failed: {describe(exc)}")
     return report

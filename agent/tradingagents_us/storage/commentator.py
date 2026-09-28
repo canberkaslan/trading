@@ -20,6 +20,7 @@ this: `scripts/backup.py` empties these tables in its copy first. The rules:
   still a deletion. Reads skip an X post whose last check is over a day old.
 - Reads never return an item past its deadline, so a retention pass that runs
   late cannot put expired data in front of an analyst.
+- A purge removes the bytes, not just the row (`_zero_freed_space`).
 
 The purge runs every day from its own timer, whatever COMMENTATOR_FEED says
 (`ingest.enforce_retention`): data an evaluation stored while the flag was off
@@ -41,7 +42,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, or_, select, text, update
 from sqlalchemy.orm import Session
 
 from .models import CommentatorItemRow, CommentatorStatusRow, DecisionCommentatorRefRow
@@ -219,6 +220,22 @@ def status_at(session: Session, name: str) -> datetime | None:
 # ------------------------------------------------------------------ writes
 
 
+def _zero_freed_space(session: Session) -> None:
+    """Have SQLite overwrite the space this session frees with zeros.
+
+    A DELETE only unlinks a row; its bytes stay in the file's free space
+    until something reuses it, so a purged paraphrase or post id would still
+    be in local.db. `secure_delete` zeroes space as it is freed. Every write
+    to these tables sets it, not only the purge: an UPDATE or a page split
+    frees the old copy of a row too, and a purge cannot reach a copy freed
+    earlier. The setting is per connection and stays on for the rest of its
+    life, which only zeroes that connection's later frees too. Other
+    databases need nothing here.
+    """
+    if session.get_bind().dialect.name == "sqlite":
+        session.execute(text("PRAGMA secure_delete = ON"))
+
+
 def upsert_item(
     session: Session,
     *,
@@ -241,6 +258,7 @@ def upsert_item(
     let a stubborn item outlive the retention rule. `verified_at` is when the
     source was last seen serving the item, for sources whose deletions count.
     """
+    _zero_freed_space(session)
     key = item_key(source, source_id)
     # UTC throughout: SQLite stores no offset, so a non-UTC stamp would compare wrong.
     published_at, now, expires_at = aware(published_at), aware(now), aware(expires_at)
@@ -276,6 +294,7 @@ def mark_verified(session: Session, item_ids: Sequence[str], at: datetime) -> No
     """Record that the source still served these items at `at`."""
     ids = list(item_ids)
     if ids:
+        _zero_freed_space(session)
         session.execute(
             update(CommentatorItemRow)
             .where(CommentatorItemRow.item_id.in_(ids))
@@ -288,6 +307,7 @@ def purge(session: Session, item_ids: Sequence[str]) -> int:
     ids = list(item_ids)
     if not ids:
         return 0
+    _zero_freed_space(session)
     session.execute(
         update(DecisionCommentatorRefRow)
         .where(DecisionCommentatorRefRow.item_id.in_(ids))
@@ -385,6 +405,7 @@ def write_decision_refs(session: Session, decision_id: str) -> int:
     refs = pop_decision_refs(decision_id)
     if not refs:
         return 0
+    _zero_freed_space(session)
     session.flush()
     now = datetime.now(UTC)
     for source, key in refs:

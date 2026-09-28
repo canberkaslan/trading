@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, inspect, select, text
+from sqlalchemy.pool import StaticPool
 
 from tradingagents_us.schemas import AgentDecision
 from tradingagents_us.storage import TradeLogRepository
@@ -211,3 +215,84 @@ class TestPurgeAndRefs:
             _put(repo, "x", sid, expires=NOW + timedelta(days=8))
         with repo.session() as s:
             assert store.newest_numeric_id(s, "x") == "1000"  # not "999"
+
+
+class TestPurgedBytes:
+    """A purge removes the bytes from local.db, not just the row (ADR-009).
+
+    Each step opens its own engine, as the fetch, the daily run and the
+    retention timer each run in their own process: a setting one connection
+    turned on must not be what makes another step's write safe.
+    """
+
+    MARK = "PARAPHRASE-OF-A-PURGED-ITEM-3c9d"
+    ID_PREFIX = "77009900"
+    N = 120
+
+    @contextmanager
+    def _process(self, db: Path) -> Iterator[TradeLogRepository]:
+        repo = TradeLogRepository(engine=create_engine(f"sqlite:///{db}", future=True))
+        try:
+            yield repo
+        finally:
+            repo.engine.dispose()
+
+    def _live_cycle(self, db: Path) -> None:
+        """Store, extract later, re-verify and cite X items, as a live feed would."""
+        ids = [f"{self.ID_PREFIX}{i:04d}" for i in range(self.N)]
+        for extracted in (False, True):  # the first extraction failed; a retry filled it in
+            with self._process(db) as repo, repo.session() as s:
+                for i, sid in enumerate(ids):
+                    extraction = Extraction(
+                        tickers=("META",), macro_topics=("Fed rates",),
+                        stance={"META": "bullish"}, claim_en=f"{self.MARK} {i} " + "m" * 120,
+                        is_promo=False, is_market_content=True,
+                    )
+                    store.upsert_item(
+                        s, source="x", source_id=sid, channel_id="c",
+                        url=f"https://x.com/i/{sid}", published_at=NOW, content_sha256="h",
+                        now=NOW, expires_at=NOW + timedelta(days=8),
+                        extraction=extraction if extracted else None,
+                        extraction_model="m", verified_at=NOW,
+                    )
+        keys = [store.item_key("x", sid) for sid in ids]
+        for hours in (1, 2, 3):  # the deletion check re-verifies them
+            with self._process(db) as repo, repo.session() as s:
+                store.mark_verified(s, keys, NOW + timedelta(hours=hours, microseconds=hours))
+        with self._process(db) as repo:  # the daily run cites them
+            for d in range(10):
+                store.stash_decision_refs(f"dec-{d}", [("x", k) for k in keys[d::10]])
+                repo.save_decision(_decision(f"dec-{d}"))
+
+    @pytest.mark.parametrize("purge", ["deleted", "expired"])
+    def test_nothing_of_a_purged_item_is_left_in_the_file(
+        self, tmp_path: Path, purge: str
+    ) -> None:
+        db = tmp_path / "local.db"
+        self._live_cycle(db)
+        with self._process(db) as repo:
+            with repo.session() as s:
+                if purge == "deleted":
+                    assert store.purge_source(s, "x") == self.N
+                else:
+                    assert store.purge_expired(s, NOW + timedelta(days=9)) == self.N
+            with repo.session() as s:
+                refs = s.scalars(select(DecisionCommentatorRefRow.item_id)).all()
+        assert len(refs) == self.N and set(refs) == {None}
+        raw = db.read_bytes()
+        assert self.MARK.encode() not in raw  # the paraphrase
+        assert self.ID_PREFIX.encode() not in raw  # the post ids, in items and in refs
+
+    def test_the_setting_is_left_alone_while_nothing_touches_the_feed(self) -> None:
+        # Flag off: nothing is stashed and the retention pass finds nothing, so
+        # the trade log's connection is exactly what it was before ADR-009.
+        repo = TradeLogRepository(
+            engine=create_engine("sqlite://", future=True, poolclass=StaticPool)
+        )
+        with repo.engine.connect() as c:
+            before = c.exec_driver_sql("PRAGMA secure_delete").scalar()
+        repo.save_decision(_decision("dec-off"))
+        with repo.session() as s:
+            assert store.purge_expired(s, NOW) == 0
+        with repo.engine.connect() as c:
+            assert c.exec_driver_sql("PRAGMA secure_delete").scalar() == before == 0

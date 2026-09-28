@@ -73,6 +73,8 @@ The scope question is smaller than it looked. In a 15-upload sample (09-18 → 0
 
 Retention also applies to the decision link. When an item is purged, its `item_id` in `decision_commentator_refs` is set to NULL. The fact that the decision read commentator input survives; the id of content that must be gone does not.
 
+A purge removes bytes, not only rows. A plain SQLite DELETE unlinks a row and leaves its bytes in the file's free space. So every write to the feed tables turns on `secure_delete` for its connection, and freed space is overwritten with zeros: the space a purge frees, and the old copies of a row that an earlier update or page split freed. While the tables are empty (the feed off, no evaluation data stored) nothing writes to them, so no connection's setting changes.
+
 ## Measurement gate: before the flag goes on
 
 **A. Sentiment-node-only diff** (`agent/scripts/commentator_sentiment_diff.py`). The script runs only the sentiment analyst node, twice per point, with and without the block. Both calls get identical inputs: every live fetcher the node calls is memoised, and the model runs at temperature 0. The script compares the score in the report header.

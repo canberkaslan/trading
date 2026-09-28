@@ -7,13 +7,14 @@ import {
   markAllRead,
   markRead,
   mergeInbox,
+  migrateRoute,
   parseInbox,
   routeForType,
   serializeInbox,
   toInboxItem,
+  type InboxItem,
   typeLabelTr,
   unreadCount,
-  type InboxItem,
 } from './inbox';
 
 function item(over: Partial<InboxItem> = {}): InboxItem {
@@ -31,7 +32,7 @@ function item(over: Partial<InboxItem> = {}): InboxItem {
 
 describe('routeForType', () => {
   it('deep-links a pending decision to its approve screen', () => {
-    expect(routeForType({ type: 'decision_pending', order_id: 'o-42' })).toBe('/approve/o-42');
+    expect(routeForType({ type: 'decision_pending', order_id: 'o-42' })).toBe('/review/o-42');
   });
 
   it('falls back to the orders tab when the decision push has no order id', () => {
@@ -66,7 +67,7 @@ describe('toInboxItem', () => {
       title: 'Onay bekliyor',
       body: 'NVDA BUY 10',
       receivedAt: '2026-08-01T09:00:00.000Z',
-      route: '/approve/o-7',
+      route: '/review/o-7',
       read: false,
     });
   });
@@ -230,3 +231,20 @@ describe('typeLabelTr', () => {
     expect(typeLabelTr('whatever')).toBe('Bildirim');
   });
 });
+
+describe('entries stored before the order screen moved to /review', () => {
+  it('rehydrates an /approve route as /review, so an old approval push still opens the order', () => {
+    const blob = JSON.stringify([
+      { id: 'old', type: 'decision_pending', title: 'Onay bekliyor', body: 'NVDA BUY 10',
+        receivedAt: '2026-09-20T09:00:00.000Z', route: '/approve/o-9', read: false },
+    ]);
+    expect(parseInbox(blob)[0]?.route).toBe('/review/o-9');
+  });
+
+  it('leaves every other stored route exactly as it was', () => {
+    for (const route of ['/(tabs)/orders', '/review/o-1', '/trade/NVDA', '/queue']) {
+      expect(migrateRoute(route)).toBe(route);
+    }
+  });
+});
+

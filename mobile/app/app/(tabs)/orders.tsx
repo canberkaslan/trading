@@ -222,7 +222,7 @@ export default function OrdersScreen() {
                     key={o.order_id}
                     order={o}
                     decision={decisionById.get(o.decision_id) ?? null}
-                    onPress={() => router.push(`/approve/${o.order_id}` as never)}
+                    onPress={() => router.push(`/review/${o.order_id}` as never)}
                   />
                 ))
               : active.data.map((o) => (

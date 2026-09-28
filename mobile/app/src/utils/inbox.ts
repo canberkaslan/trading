@@ -38,6 +38,26 @@ const TITLE_MAX = 60;
 const BODY_MAX = 120;
 
 /**
+ * The order screen was `/approve/[orderId]` until it moved to `/review/[orderId]`.
+ *
+ * It moved because it could not be reached from any native production build.
+ * The app sets `experiments.baseUrl: '/app'` so the web SPA can sit under /app,
+ * and expo-router strips that base from every path it resolves with an
+ * unanchored regex (`^\/?\/app`, no segment boundary: `stripBaseUrl` in
+ * expo-router's getStateFromPath-forks). `/approve/o-42` loses its first four
+ * characters to it and becomes `rove/o-42`, which matches nothing, so every tap
+ * and every approval push landed on "Unmatched Route". It only runs when
+ * NODE_ENV is not development, which is why no dev build ever showed it.
+ *
+ * Routes are stored on each inbox entry at the moment the push arrives, so an
+ * entry received before the move still says `/approve/...`. Rewrite it on the
+ * way in, or those notifications stay dead after the fix.
+ */
+export function migrateRoute(route: string): string {
+  return route.startsWith('/approve/') ? `/review/${route.slice('/approve/'.length)}` : route;
+}
+
+/**
  * Deep-link target for a push payload. Mirrors the backend's `data.type`
  * contract; unknown types return null (shown in the inbox, not tappable).
  */
@@ -46,7 +66,7 @@ export function routeForType(data: Record<string, unknown> | undefined | null): 
   const type = typeof data.type === 'string' ? data.type : '';
   switch (type) {
     case 'decision_pending':
-      return typeof data.order_id === 'string' && data.order_id ? `/approve/${data.order_id}` : '/(tabs)/orders';
+      return typeof data.order_id === 'string' && data.order_id ? `/review/${data.order_id}` : '/(tabs)/orders';
     case 'order_submitted':
     case 'order_rejected':
       return '/(tabs)/orders';
@@ -196,7 +216,7 @@ export function parseInbox(raw: string | null | undefined): InboxItem[] {
       title: typeof r.title === 'string' ? r.title : '',
       body: typeof r.body === 'string' ? r.body : '',
       receivedAt: r.receivedAt,
-      route: typeof r.route === 'string' ? r.route : null,
+      route: typeof r.route === 'string' ? migrateRoute(r.route) : null,
       read: r.read === true,
     });
   }

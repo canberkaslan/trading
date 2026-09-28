@@ -143,7 +143,11 @@ class TestInstall:
         out = analyst._build_system_message(**KW)
         reddit = out[out.index("<start_of_reddit>"): out.index("<end_of_reddit>")]
         twits = out[out.index("<start_of_stocktwits>"): out.index("<end_of_stocktwits>")]
-        assert "v1" not in reddit and "v1" not in twits
+        assert "[C1, YouTube]" in out  # rendered, so its absence below says where it is not
+        # Items carry labels, never ids, so look for the block itself.
+        for slot in (reddit, twits):
+            assert "### Commentator feed" not in slot
+            assert "<start_of_commentator>" not in slot and "[C1" not in slot
 
     def test_without_the_marker_it_is_appended(self) -> None:
         out = cs.insert("vendor prompt with no marker\n", "### Commentator feed — x")
@@ -253,7 +257,7 @@ class TestNoLookAhead:
         cs.begin_run("META", "2026-09-28", now=at(29, 0, 5))  # this ticker began after 00:00
         out = analyst._build_system_message(**{**KW, "start_date": "2026-09-21",
                                                "end_date": "2026-09-28"})
-        assert "[C1, YouTube]" in out and "today_video" not in out
+        assert "- 2026-09-28T14:00Z [C1, YouTube]" in out  # the trade date's own item
 
     def test_the_window_start_still_applies(self) -> None:
         own, _ = cs.select([item("old", at(14))], "META", "2026-09-15", "2026-09-22",
@@ -312,7 +316,8 @@ class TestSelection:
                                now=TODAY)
         assert own == [] and [i.source_id for i in macro] == ["spy1"]
         out = cs.render("AAPL", own, macro, start_date="s", end_date="e")
-        assert "nvda1" not in out and "broad-market stance: bearish" in out
+        assert "NVDA" not in out and "[C2" not in out  # the NVDA item is not shown
+        assert "broad-market stance: bearish" in out
 
         spy_own, _ = cs.select(items, "SPY", "2026-09-15", "2026-09-22", run_start=None,
                                now=TODAY)

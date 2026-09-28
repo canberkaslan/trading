@@ -197,10 +197,9 @@ class TestTimeExitAttribution:
     prefix-only rule). The first drops the strategy's own exits out of the
     strategy roll-up; the second credits a council decision nobody made.
 
-    Unit tests of two helpers only. No production path sends this stamp yet:
-    the TimeExit is a bare DELETE with a broker id and books as "flatten".
-    test_manage_positions.TestTimeExitAttributionThroughTheLedger follows the
-    real order into reconcile and pins that, with a strict xfail for the fix.
+    Unit tests of two helpers only. The order the position pass really sends
+    (execution.protected_close) is followed into reconcile by
+    test_manage_positions.TestTimeExitAttributionThroughTheLedger.
     """
 
     STAMP = "tr-exit-time-XOM-20260927"
@@ -209,8 +208,8 @@ class TestTimeExitAttribution:
         assert classify_exit(_order("market", self.STAMP)) == "time_exit"
 
     def test_the_id_helper_and_the_classifier_agree(self) -> None:
-        # The two helpers agree on the format. That is all this proves: nothing
-        # in production calls the helper yet (see the class docstring).
+        # The two helpers agree on the format. That is all this proves; the
+        # wiring is proven through the pass (see the class docstring).
         from tradingagents_us.execution.executor import derive_exit_client_order_id
 
         client_id = derive_exit_client_order_id("xom", date(2026, 9, 27), "time")
@@ -218,6 +217,12 @@ class TestTimeExitAttribution:
         assert client_id == self.STAMP
         assert len(client_id) <= 48  # Alpaca's client_order_id cap
         assert classify_exit(_order("market", client_id)) == "time_exit"
+
+    def test_a_retried_exit_still_books_as_a_time_exit(self) -> None:
+        # A retry after a rejected exit needs a fresh id (Alpaca refuses a
+        # reused one even for a dead order), so protected_close appends -rN.
+        # The classifier reads only the reason token, so the suffix is safe.
+        assert classify_exit(_order("market", f"{self.STAMP}-r2")) == "time_exit"
 
     def test_the_executor_refuses_a_reason_the_classifier_cannot_book(self) -> None:
         from tradingagents_us.execution.executor import derive_exit_client_order_id

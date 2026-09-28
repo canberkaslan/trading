@@ -25,6 +25,22 @@ OrderType = Literal["market", "limit", "stop", "stop_limit", "trailing_stop"]
 TimeInForce = Literal["day", "gtc", "opg", "cls", "ioc", "fok"]
 
 
+class AlpacaRequestError(RuntimeError):
+    """The broker answered a write with an HTTP error status.
+
+    Typed so a caller can tell an answer from silence. A 4xx means Alpaca read
+    the request and turned it down, so nothing was done. A timeout or a dropped
+    connection raises httpx's own errors instead, and those can hide a request
+    that was carried out. The message is unchanged from the plain RuntimeError
+    this used to be.
+    """
+
+    def __init__(self, method: str, path: str, status_code: int, body: str) -> None:
+        super().__init__(f"alpaca {method} {path} failed {status_code}: {body}")
+        self.status_code = status_code
+        self.body = body
+
+
 @dataclass(frozen=True)
 class Account:
     account_number: str
@@ -184,18 +200,21 @@ class AlpacaClient:
     # ---------------------- positions ----------------------
 
     def list_positions(self) -> list[Position]:
-        return [
-            Position(
-                symbol=p["symbol"],
-                qty=float(p["qty"]),
-                side=p["side"],
-                avg_entry_price=float(p["avg_entry_price"]),
-                market_value=float(p["market_value"]),
-                unrealized_pl=float(p["unrealized_pl"]),
-                unrealized_plpc=float(p["unrealized_plpc"]),
-            )
-            for p in self._get("/positions")
-        ]
+        return [_position_from_dict(p) for p in self._get("/positions")]
+
+    def get_position(self, symbol: str) -> Position | None:
+        """The live holding in one symbol, or None when there is none.
+
+        None is a real answer, not an error: Alpaca 404s a symbol with no open
+        position, which is exactly what a caller about to size a sell off the
+        holding needs to hear — a stop that filled a moment ago leaves nothing
+        to sell, and a sell sized off an earlier read would open a short.
+        """
+        r = self._http.get(self.base_url + f"/positions/{symbol}")
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        return _position_from_dict(r.json())
 
     def close_position(self, symbol: str) -> dict:
         return self._delete(f"/positions/{symbol}")
@@ -394,24 +413,36 @@ class AlpacaClient:
     def _post(self, path: str, body: dict) -> dict:
         r = self._http.post(self.base_url + path, json=body)
         if r.status_code >= 400:
-            raise RuntimeError(f"alpaca POST {path} failed {r.status_code}: {r.text}")
+            raise AlpacaRequestError("POST", path, r.status_code, r.text)
         return r.json()
 
     def _patch(self, path: str, body: dict) -> dict:
         r = self._http.patch(self.base_url + path, json=body)
         if r.status_code >= 400:
-            raise RuntimeError(f"alpaca PATCH {path} failed {r.status_code}: {r.text}")
+            raise AlpacaRequestError("PATCH", path, r.status_code, r.text)
         return r.json()
 
     def _delete(self, path: str) -> dict | list:
         r = self._http.delete(self.base_url + path)
         # DELETE positions returns 207 multi-status; tolerate
         if r.status_code >= 400 and r.status_code != 207:
-            raise RuntimeError(f"alpaca DELETE {path} failed {r.status_code}: {r.text}")
+            raise AlpacaRequestError("DELETE", path, r.status_code, r.text)
         try:
             return r.json()
         except Exception:
             return {}
+
+
+def _position_from_dict(p: dict) -> Position:
+    return Position(
+        symbol=p["symbol"],
+        qty=float(p["qty"]),
+        side=p["side"],
+        avg_entry_price=float(p["avg_entry_price"]),
+        market_value=float(p["market_value"]),
+        unrealized_pl=float(p["unrealized_pl"]),
+        unrealized_plpc=float(p["unrealized_plpc"]),
+    )
 
 
 def _fill_from_dict(d: dict) -> FillActivity:

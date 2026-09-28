@@ -15,6 +15,28 @@ say exactly that). Without an exit path the freeze is permanent.
 
     python scripts/manage_positions.py                # report only (default)
     python scripts/manage_positions.py --submit       # actually amend/close
+    python scripts/manage_positions.py --refresh-bars # bring held names' bars up to date first
+
+Exit codes, which daily_run.sh turns into pages:
+
+    0  everything planned was done
+    1  something failed, and every lot it touched is as protected as before;
+       or, with --submit, a held name's stop was not maintained because an
+       input was refused (stale bars, a mark the bars do not back, an ATR
+       that is not a measurement, a level at the market), or because the
+       refresh could not fetch bars for a name the cache has none for. The
+       stop stands where it was, and without a page it would stand there
+       every night. Also with --submit, a due time exit the exit budget
+       held back: a bad input that reads the book as due is held to three
+       names only until a person looks.
+    3  a time exit may have left shares with no stop: a close ended `unknown`
+       or `naked`, or the re-cover after it could not place what it had to.
+       A cancel still on its way strips its stop after this run, while the
+       coverage check at the end of the run still sees the stop standing, so
+       this code is the only thing that can say so while the run is on. An
+       `unknown` close can also mean the opposite: a stop that could not be
+       confirmed off a book the exit already sold, which the coverage check
+       never pages on either.
 
 Safety, in the order it matters:
 
@@ -23,24 +45,52 @@ Safety, in the order it matters:
     ratcheting a stop and closing a stale position both REDUCE exposure and
     "pause new entries" is not "stop protecting what is open". FLATTEN_ALL skips
     the pass entirely — the flatten path owns the book at that point and two
-    writers on the same positions is how you get a double sell.
+    writers on the same positions is how you get a double sell. The switch is
+    read again before the first write, so one flipped during the refresh
+    stops the pass too.
   * A stop is only ever amended UP. `plan_actions` refuses to emit anything else.
   * A symbol whose protection is ambiguous is left alone. `stop_coverage` returns
     `indeterminate` for orders in a status it does not recognise, and acting on a
     guess there is how you end up with two stops on one lot — a short position
     waiting for a gap down.
+  * A time exit releases the stop before it sells, because the stop reserves the
+    shares, and it releases it in the one order that cannot double-sell:
+    cancel, confirm the cancel, sell the holding read after that, verify, and
+    re-arm the stop in the same pass if the sell did not go through
+    (`execution.protected_close`).
+  * One pass time-exits at most 3 positions, or 25% of those examined if fewer
+    (`position_manager.exit_budget`), so one bad input cannot liquidate the book
+    through time exits in a single run. The budget is the trade date's: a pass
+    run again the same day counts the exits already stamped today against it.
+    The rest are reported as deferred, keep their stops, and with --submit
+    fail the pass so it pages. Stop maintenance does not count against the
+    budget. A stop moved to the last price is a close all the same, so the
+    claim holds for the whole pass only while the planner refuses such a
+    level.
   * Nothing here opens or grows a position.
 """
 
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import logging
 import os
 import sys
+import time
 from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from tradingagents_us.dataflows.alpaca_broker import AlpacaClient
+from tradingagents_us.dataflows.polygon import PolygonClient
+from tradingagents_us.execution.protected_close import (
+    CLOSED_STATUSES,
+    FAILED_EXIT_STATUSES,
+    RELEASED_STATUSES,
+    CloseOutcome,
+    close_with_protection,
+    cover_beside_exit,
+)
 from tradingagents_us.log_redaction import install as install_log_redaction
 from tradingagents_us.risk.kill_switch import FileKillSwitchReader, default_kill_switch_path
 from tradingagents_us.risk.position_manager import (
@@ -51,9 +101,14 @@ from tradingagents_us.risk.position_manager import (
     ManagementConfig,
     PlaceStop,
     RatchetStop,
+    TimeExit,
+    exit_budget,
     plan_actions,
 )
 from tradingagents_us.risk.stop_coverage import (
+    LIVE_STATUSES,
+    PROTECTIVE_TYPES,
+    QTY_EPSILON,
     OrderView,
     PositionView,
     coverage,
@@ -67,11 +122,42 @@ log = logging.getLogger("manage_positions")
 #: than stop_coverage's LIVE_STATUSES on purpose: this set gates a WRITE.
 LIVE_ORDER_STATUSES = frozenset({"held", "new", "accepted", "pending_new", "partially_filled"})
 
+#: Statuses in which a sell never sold a share and never will.
+_NEVER_SOLD = FAILED_EXIT_STATUSES | {"replaced"}
+
 #: Enough history for a 14-period ATR with room for holidays. Calendar days.
 BAR_LOOKBACK_DAYS = 60
 
+#: Daily bars are dated in the exchange's time zone.
+_EXCHANGE_TZ = ZoneInfo("America/New_York")
 
-def _order_views(client: AlpacaClient) -> tuple[list[OrderView], dict[tuple[str, float], str]]:
+#: Seconds between the refresh's requests. Polygon's plan allows five a minute,
+#: and PolygonClient's own backoff (2+4+8+16 s) spends its retries inside the
+#: minute the first five used, so an unpaced sixth name is never refreshed.
+#: The pace `aggregates` already keeps between pages.
+REFRESH_PACE_S = 12.0
+
+#: Skips that mean a name had no bars to manage it by: no age, no ATR.
+NO_BARS_REASONS = frozenset({"no_bars", "insufficient_bars"})
+
+#: Skips that mean an input was refused, not that nothing needed doing. Each
+#: leaves a held name's stop where it stood, and each repeats every night
+#: until the input changes, so with --submit any one of them fails the pass.
+REFUSAL_REASONS = frozenset({"stale_bars", "mark_disagrees_with_bars", "bad_atr", "stop_at_market"})
+
+EXIT_OK = 0
+EXIT_FAILED = 1
+#: A time exit may have left shares with no stop; see the module docstring.
+EXIT_UNCOVERED = 3
+
+#: Close outcomes after which shares may have no stop, now or once a cancel on
+#: its way lands.
+UNCOVERED_STATUSES = frozenset({"unknown", "naked"})
+
+
+def _order_views(
+    client: AlpacaClient,
+) -> tuple[list[OrderView], dict[tuple[str, float], str], frozenset[tuple[str, str]]]:
     """Every live order as a pure view, plus a map back to the broker order id.
 
     Two things this gets right that the obvious version does not:
@@ -88,6 +174,10 @@ def _order_views(client: AlpacaClient) -> tuple[list[OrderView], dict[tuple[str,
     The id map exists because `OrderView` deliberately carries no id (it is the
     pure view the coverage rules are written against) while amending a stop needs
     one. Keyed on symbol + stop price, which is unique for a live protective leg.
+
+    Last, (symbol, client id) for every sell that sold or may still sell, read
+    off the same listing: what today's time exits have spent of the exit
+    budget is counted from their stamps there (`_exited_on`).
     """
     raw = client.list_orders(status="all", limit=500, nested=True)
     flat = flatten_orders(raw)
@@ -108,22 +198,131 @@ def _order_views(client: AlpacaClient) -> tuple[list[OrderView], dict[tuple[str,
         for o in flat
         if o.stop_price is not None and o.status.lower() in LIVE_ORDER_STATUSES
     }
-    return views, ids
+    sells = frozenset(
+        (o.symbol, o.client_order_id)
+        for o in flat
+        if o.side.lower() == "sell" and o.status.lower() not in _NEVER_SOLD
+    )
+    return views, ids, sells
 
 
-def _bars_for(ticker: str, session, end: date) -> tuple[list[Bar], list[date]]:
-    """Daily bars from the local cache, oldest first, with their dates.
+def _read_book(
+    client: AlpacaClient,
+) -> tuple[list[OrderView], dict[tuple[str, float], str], list, frozenset[tuple[str, str]]]:
+    """The orders, then the holding, in that order and never the other.
+
+    A sell that fills between two reads must show up as fewer shares held,
+    never as a lot whose stop has gone. Read the holding first and a stop that
+    fires in between reads as terminal while its shares still read as held: the
+    lot looks naked, and the back-fill puts a stop on a book that is flat by
+    then, which a margin account takes as a short-sale stop. Read the orders
+    first and the same fill shows as a position that is gone. The same rule as
+    `protected_close._read_truth`.
+    """
+    orders, stop_ids, sells = _order_views(client)
+    return orders, stop_ids, client.list_positions(), sells
+
+
+def _exited_on(sells: frozenset[tuple[str, str]], day: date) -> frozenset[str]:
+    """The names a time exit sold, or is selling, under `day`'s stamp.
+
+    The stamp or a retry of it (`-rN`), in a status that sold or still can:
+    what earlier passes on the same trade date spent of the exit budget.
+    """
+    from tradingagents_us.execution.executor import derive_exit_client_order_id
+
+    out = set()
+    for symbol, coid in sells:
+        stamp = derive_exit_client_order_id(symbol, day, "time")
+        if coid == stamp or coid.startswith(f"{stamp}-r"):
+            out.add(symbol)
+    return frozenset(out)
+
+
+#: Daily bars and their dates, oldest first, as `_bars_for` returns them.
+Series = tuple[list[Bar], list[date]]
+
+
+def _bars_for(
+    ticker: str, session, end: date, fresh: dict[str, Series] | None = None
+) -> Series:
+    """Daily bars, oldest first, with their dates: this pass's fresh ones, or the cache's.
 
     An empty list means "do not act" and never "flat": `average_true_range`
     returns None on short history rather than a partial average, and the caller
     skips the symbol with a reason.
     """
+    if fresh and ticker in fresh:
+        return fresh[ticker]
     from tradingagents_us.storage.price_cache import read_bars
 
     rows = read_bars(session, ticker, end - timedelta(days=BAR_LOOKBACK_DAYS), end)
     bars = [Bar(high=r.high, low=r.low, close=r.close) for r in rows]
     dates = [date.fromisoformat(r.bar_date) for r in rows]
     return bars, dates
+
+
+def _refresh_bars(tickers: list[str], today: date) -> tuple[dict[str, Series], list[str]]:
+    """Fetch each held name's daily bars up to `today` from Polygon, for this pass.
+
+    The bar cache is only written by the prices route, when someone opens a
+    chart. A held name nobody charted kept the bars of the last time someone
+    did, so its age stopped counting (the time exit never came due), and once
+    it moved far enough the mark band refused its stop every night. The whole
+    window is fetched adjusted, so a split's unadjusted rows are not read.
+
+    Held in memory for this pass, never written to the cache. trade.py's BUY
+    checks read that cache (the correlation cap over the held names, the
+    price-anomaly gate, the liquidity floor), and nothing else in the daily
+    run writes it: filling it here, minutes before the councils run, would
+    change what those checks decide on a BUY.
+
+    Paced at REFRESH_PACE_S, so a ten-name book takes about two minutes.
+    Returns the series per name, and the names it could not refresh (or that
+    came back empty). Those are judged by the cache and how far behind its
+    bars are (`MAX_BARS_BEHIND`), and where the cache has none to judge them
+    by, the pass fails (`_report_unrefreshed`).
+    """
+    start = today - timedelta(days=BAR_LOOKBACK_DAYS)
+    fresh: dict[str, Series] = {}
+    failed: list[str] = []
+    try:
+        polygon = PolygonClient()
+    except Exception as exc:  # noqa: BLE001 — no key, no client: judged by the cache's age
+        log.warning("bars not refreshed, no Polygon client: %s", exc)
+        return fresh, list(tickers)
+    with polygon:
+        for n, ticker in enumerate(tickers):
+            if n:
+                time.sleep(REFRESH_PACE_S)
+            try:
+                aggs = polygon.aggregates(ticker, start, today, timespan="day")
+            except Exception as exc:  # noqa: BLE001 — one name must not stop the rest
+                log.warning("%-6s bars not refreshed: %s", ticker, exc)
+                failed.append(ticker)
+                continue
+            dated = sorted(
+                (datetime.fromtimestamp(a.timestamp_ms / 1000, _EXCHANGE_TZ).date(), a)
+                for a in aggs
+            )
+            window = [(d, a) for d, a in dated if start <= d <= today]
+            if not window:
+                log.warning("%-6s bars not refreshed: Polygon returned none", ticker)
+                failed.append(ticker)
+                continue
+            fresh[ticker] = (
+                [Bar(high=a.high, low=a.low, close=a.close) for _, a in window],
+                [d for d, _ in window],
+            )
+    return fresh, failed
+
+
+def _sessions_since(last: date, today: date) -> int:
+    """Weekdays after `last`, up to and including `today`."""
+    return sum(
+        1 for k in range(1, (today - last).days + 1)
+        if (last + timedelta(days=k)).weekday() < 5
+    )
 
 
 def _entry_dates(client: AlpacaClient) -> dict[str, date]:
@@ -177,11 +376,13 @@ def _build_managed(
     stop_ids: dict[tuple[str, float], str],
     entries: dict[str, date],
     today: date,
+    fresh: dict[str, Series] | None = None,
 ) -> tuple[list[ManagedPosition], dict[str, list[Bar]]]:
     """Turn broker state into the pure module's inputs, skipping what it cannot
     describe honestly. Every exclusion is logged with its reason — a position
     that silently vanishes from the pass is indistinguishable from one the pass
-    decided to leave alone."""
+    decided to leave alone. Bars are this pass's `fresh` ones where it has
+    them, and the cache's otherwise."""
     managed: list[ManagedPosition] = []
     bars_by_ticker: dict[str, list[Bar]] = {}
 
@@ -196,7 +397,7 @@ def _build_managed(
                 log.info("%-6s SKIP  protection ambiguous — left alone", p.symbol)
                 continue
 
-            bars, bar_dates = _bars_for(p.symbol, session, today)
+            bars, bar_dates = _bars_for(p.symbol, session, today, fresh)
             bars_by_ticker[p.symbol] = bars
 
             entry = entries.get(p.symbol)
@@ -227,6 +428,7 @@ def _build_managed(
                     current_stop=stop_price,
                     stop_order_id=stop_id,
                     naked_quantity=cov.naked_qty if cov.is_actionable else 0.0,
+                    bars_behind=_sessions_since(bar_dates[-1], today) if bar_dates else None,
                 )
             )
 
@@ -253,8 +455,70 @@ def _describe(act: Action, submitting: bool) -> None:
         )
 
 
-def _execute(client: AlpacaClient, actions: list[Action]) -> int:
-    """Apply the plan. One bad symbol must not stop the rest of the pass."""
+def _naked_now(client: AlpacaClient, ticker: str) -> float:
+    """The shares of `ticker` no stop covers, off the broker's book as it is now.
+
+    The plan's figure comes from a read taken before any of the pass's writes,
+    and a time exit before this one (release, confirm, sell, look up) can take
+    a minute. A lot sold in that time, by a council SELL approved on the phone
+    or by hand, is flat when its back-fill goes, and a margin account takes a
+    sell stop on a flat book as a short-sale stop. So the back-fill is sized
+    off orders read now and the holding read after them, as `_read_book` has
+    it: 0 when the lot is gone or not long. Raises when its protection is
+    ambiguous now, so nothing is placed and the pass fails.
+    """
+    orders = _order_views(client)[0]
+    lot = next((p for p in client.list_positions() if p.symbol == ticker), None)
+    if lot is None or lot.side != "long":
+        return 0.0
+    (row,) = coverage([PositionView(symbol=ticker, qty=lot.qty, side="long")], orders).symbols
+    if row.indeterminate_qty > QTY_EPSILON:
+        raise RuntimeError(
+            f"back-fill not placed: {row.indeterminate_qty:g} shares' protection is ambiguous now"
+        )
+    return row.naked_qty
+
+
+def _place_backfill(client: AlpacaClient, act: PlaceStop) -> None:
+    """One back-fill stop, for no more than the shares `_naked_now` finds naked."""
+    qty = min(act.quantity, _naked_now(client, act.ticker))
+    if qty <= QTY_EPSILON:
+        log.info(
+            "%-6s SKIP  back-fill: no naked shares now, sold or covered since the plan",
+            act.ticker,
+        )
+        return
+    placed = client.submit_order(
+        symbol=act.ticker,
+        qty=qty,
+        side="sell",
+        order_type="stop",
+        # GTC: a day stop expires at the close and leaves the position naked
+        # overnight, which is the window the whole back-fill exists to close.
+        time_in_force="gtc",
+        stop_price=act.stop_price,
+    )
+    log.info("%-6s stop placed, order %s", act.ticker, placed.id)
+
+
+def _execute(
+    client: AlpacaClient,
+    actions: list[Action],
+    trade_date: date | None = None,
+    *,
+    unclosed: list[str] | None = None,
+    uncovered: list[str] | None = None,
+    unsettled: dict[str, str] | None = None,
+) -> int:
+    """Apply the plan. One bad symbol must not stop the rest of the pass.
+
+    `trade_date` dates the time-exit stamp; the pass's UTC date when omitted.
+    Each time exit that did not close its position is appended to `unclosed`,
+    so the caller can cover what it left behind (`_recover_unclosed`), and each
+    one that may have left shares with no stop to `uncovered`, so it can say so.
+    One whose exit was sent and never ruled out goes into `unsettled`, keyed to
+    its stamp: that exit can still land, and a back-fill must look for it.
+    """
     failures = 0
     for act in actions:
         try:
@@ -262,39 +526,265 @@ def _execute(client: AlpacaClient, actions: list[Action]) -> int:
                 replaced = client.replace_order(act.stop_order_id, stop_price=act.new_stop)
                 log.info("%-6s ratcheted, new order %s", act.ticker, replaced.id)
             elif isinstance(act, PlaceStop):
-                placed = client.submit_order(
-                    symbol=act.ticker,
-                    qty=act.quantity,
-                    side="sell",
-                    order_type="stop",
-                    # GTC: a day stop expires at the close and leaves the
-                    # position naked overnight, which is the window the whole
-                    # back-fill exists to close.
-                    time_in_force="gtc",
-                    stop_price=act.stop_price,
-                )
-                log.info("%-6s stop placed, order %s", act.ticker, placed.id)
+                _place_backfill(client, act)
             else:
-                # Still the bare DELETE /positions/{symbol}, deliberately. That
-                # endpoint takes no client_order_id, so the close carries a
-                # broker id and the ledger books it as a flatten, outside the
-                # strategy (exit_quality). Stamping it means submitting our own
-                # sell with `derive_exit_client_order_id`, and that is not a
-                # relabel: sized off a quantity read earlier, with the position
-                # gone by then, it can open a short where this DELETE 404s.
-                # Protective orders are left alone too, so a close on shares a
-                # stop reserves is refused exactly as before. Making the exit
-                # execute is a separate change.
-                resp = client.close_position(act.ticker)
-                order_id = resp.get("id") if isinstance(resp, dict) else None
-                log.info(
-                    "%-6s closed on age, order %s (unstamped: books as a flatten)",
-                    act.ticker, order_id or "?",
+                # Not DELETE /positions/{symbol}: the GTC stop reserves every
+                # share of a protected position, so the broker refused that
+                # close on exactly the positions that have one, and what it did
+                # close carried a broker id and booked as a flatten.
+                # close_with_protection releases the stop, confirms it, sells
+                # the holding read after the release under the time-exit stamp,
+                # and re-arms the stop in the same pass if the sell fails.
+                outcome = close_with_protection(
+                    client, act.ticker, trade_date=trade_date or datetime.now(UTC).date()
                 )
+                if not outcome.ok:
+                    failures += 1
+                    if unclosed is not None:
+                        unclosed.append(act.ticker)
+                    if uncovered is not None and outcome.status in UNCOVERED_STATUSES:
+                        uncovered.append(f"{act.ticker} {outcome.status}")
+                    if unsettled is not None and outcome.client_order_id:
+                        unsettled[act.ticker] = outcome.client_order_id
+                _log_close(outcome)
         except Exception as exc:  # noqa: BLE001 — one bad symbol must not stop the pass
             failures += 1
             log.error("%-6s FAILED: %s", act.ticker, exc)
+            if not isinstance(act, RatchetStop | PlaceStop):
+                # Died somewhere inside the close: nothing says what it released.
+                if unclosed is not None:
+                    unclosed.append(act.ticker)
+                if uncovered is not None:
+                    uncovered.append(f"{act.ticker} close died: {exc}")
     return failures
+
+
+def _report_exit_budget(
+    actions: list[Action],
+    skips: list,
+    examined: list[ManagedPosition],
+    config: ManagementConfig,
+    exited_today: frozenset[str],
+    submitting: bool,
+) -> bool:
+    """Say what the exit budget held back, in one line a person will read.
+
+    A deferred close is still held, its stop is still maintained, and the
+    next pass takes it if it is still due. But the budget is there for the
+    night a bad input reads every name as due at once (a bar cache that ages
+    every name, a mark that reads every position flat), and it holds that
+    fault to three names only until a person looks. A warning line is read
+    by no one, and the nights after would take the rest of the book three
+    names at a time. True when the pass must fail for it, so daily_run pages:
+    with --submit. A dry run only reports.
+    """
+    deferred = [s.ticker for s in skips if s.reason == "exit_budget"]
+    if not deferred:
+        return False
+    closing = sum(1 for a in actions if isinstance(a, TimeExit))
+    book = len({m.ticker for m in examined} | exited_today)
+    log.warning(
+        "exit budget: closing %d of %d due (budget %d of %d positions today, "
+        "%d closed earlier today); deferred: %s",
+        closing,
+        closing + len(deferred),
+        exit_budget(book, config),
+        book,
+        len(exited_today),
+        ", ".join(deferred),
+    )
+    return submitting
+
+
+def _report_refusals(skips: list, submitting: bool) -> bool:
+    """Name the held names whose stops a refused input kept where they were.
+
+    True when the pass must fail for it: with --submit, since the stops were
+    due to be maintained and were not. A dry run only reports.
+    """
+    refused = [s for s in skips if s.reason in REFUSAL_REASONS]
+    if not refused:
+        return False
+    log.warning(
+        "REFUSED: stops left where they stood, an input was refused: %s",
+        ", ".join(f"{s.ticker} ({s.reason})" for s in refused),
+    )
+    return submitting
+
+
+def _report_unrefreshed(skips: list, unrefreshed: list[str], submitting: bool) -> bool:
+    """Name the held names the refresh missed that the cache cannot stand in for.
+
+    A cache that is merely behind is `stale_bars`, a refusal. One that is
+    empty or short is not: the name is skipped with no age for its time exit
+    and no ATR for its stop, and the same name misses the same refresh every
+    night. True when the pass must fail for it: with --submit, as for a
+    refusal. A dry run only reports.
+    """
+    missed = [s for s in skips if s.ticker in unrefreshed and s.reason in NO_BARS_REASONS]
+    if not missed:
+        return False
+    log.warning(
+        "UNREFRESHED: not managed, no bars to manage them by and none could be fetched: %s",
+        ", ".join(f"{s.ticker} ({s.reason})" for s in missed),
+    )
+    return submitting
+
+
+def _log_close(outcome: CloseOutcome) -> None:
+    """One line per time exit, naming the order and what was released or re-armed."""
+    parts = [outcome.status, outcome.detail]
+    if outcome.client_order_id:
+        parts.append(f"order {outcome.exit_order_id or '?'} ({outcome.client_order_id})")
+    if outcome.released:
+        parts.append("released " + ",".join(outcome.released))
+    if outcome.rearmed:
+        parts.append("re-armed " + ",".join(outcome.rearmed))
+    line = " | ".join(parts)
+    if outcome.ok:
+        log.info("%-6s closed on age: %s", outcome.ticker, line)
+    else:
+        log.error("%-6s FAILED time exit: %s", outcome.ticker, line)
+
+
+def _recover_unclosed(
+    client: AlpacaClient,
+    repo,
+    tickers: set[str],
+    entries: dict[str, date],
+    today: date,
+    config: ManagementConfig,
+    uncovered: list[str],
+    unsettled: dict[str, str] | None = None,
+    fresh: dict[str, Series] | None = None,
+) -> int:
+    """Back-fill, from a fresh broker read, the names a time exit left open.
+
+    The plan was made from the book as it stood before the pass, and a name
+    planned for a time exit got no back-fill in it: the close was going to make
+    one moot. A close that did not happen (refused, naked, unknown, or cut short
+    by a crash between the release and the sell) leaves that name exactly where
+    the back-fill exists for, and the next pass would pick it for a time exit
+    again rather than cover it. So those names are planned again here, from
+    positions and orders read now, under a config in which nothing is old
+    enough to exit: all that can come out of it is the back-fill, placed only
+    if --backfill-stops asked for back-fills at all.
+
+    Stricter than the main pass, because a failed close is where the book is
+    least settled: a name is left alone while any sell other than a working
+    stop still stands on it. That covers a stop still in `pending_cancel`, which
+    may yet fill; one in `stopped`, whose fill is on its way; an exit that
+    landed after all; a take-profit. Each reserves the shares or is about to
+    sell them, and a stop placed beside it is refused while the lot is held and
+    becomes a short once that sell fills.
+
+    A name whose exit was sent and never ruled out (`unsettled`) is back-filled
+    all the same, since it may never land, but through
+    `protected_close.cover_beside_exit`: that exit can land between this read
+    and the stop's POST, fill, and leave the stop on a flat book, so the stamp
+    and the book are read again once the stop stands, and it is taken back if
+    the exit got there first. A name it settles either way is off `uncovered`.
+
+    Returns how many placements failed. A book it could not read, or a
+    placement that failed, is also appended to `uncovered`: the names it was
+    handed may have shares with no stop, and it could not put one there.
+    """
+    try:
+        # Orders first, holding last (see `_read_book`).
+        orders, stop_ids, positions, _ = _read_book(client)
+    except Exception as exc:  # noqa: BLE001 — reported and counted, never guessed past
+        log.error("re-cover after failed exits: book unreadable, nothing placed: %s", exc)
+        uncovered.append(f"re-cover could not read the book: {exc}")
+        return 1
+    held = [p for p in positions if p.symbol in tickers]
+    if not held:
+        return 0
+
+    standing: dict[str, str] = {}
+    for o in orders:
+        gone = o.status in RELEASED_STATUSES or o.status == "replaced"
+        a_working_stop = o.order_type in PROTECTIVE_TYPES and o.status in LIVE_STATUSES
+        if o.side == "sell" and o.remaining_qty > QTY_EPSILON and not gone and not a_working_stop:
+            standing.setdefault(o.symbol, f"{o.order_type} sell in {o.status}")
+    for p in held:
+        if p.symbol in standing:
+            log.info("%-6s SKIP  re-cover: a %s still stands on it", p.symbol, standing[p.symbol])
+    held = [p for p in held if p.symbol not in standing]
+
+    report = coverage([PositionView(symbol=p.symbol, qty=p.qty, side="long") for p in held], orders)
+    by_symbol = {row.symbol: row for row in report.symbols}
+    managed, bars_by_ticker = _build_managed(
+        client, repo, held, by_symbol, orders, stop_ids, entries, today, fresh
+    )
+    never_old = dataclasses.replace(config, max_bars=sys.maxsize)
+    actions, skips = plan_actions(managed, bars_by_ticker, never_old)
+    for skip in skips:
+        log.info("%-6s SKIP  re-cover: %-20s %s", skip.ticker, skip.reason, skip.detail)
+    backfills = [a for a in actions if isinstance(a, PlaceStop)]
+    for act in backfills:
+        _describe(act, True)
+    unsettled = unsettled or {}
+    failed = _execute(client, [a for a in backfills if a.ticker not in unsettled], today)
+    if failed:
+        uncovered.append(f"re-cover could not place {failed} back-fill stop(s)")
+    for act in (a for a in backfills if a.ticker in unsettled):
+        failed += _cover_beside_exit(client, act, unsettled[act.ticker], uncovered)
+    return failed
+
+
+def _cover_beside_exit(
+    client: AlpacaClient, act: PlaceStop, stamp: str, uncovered: list[str]
+) -> int:
+    """One back-fill beside an exit that may still land; 1 if it is not settled."""
+    try:
+        outcome = cover_beside_exit(
+            client, act.ticker, stamp=stamp, qty=act.quantity, stop_price=act.stop_price
+        )
+    except Exception as exc:  # noqa: BLE001 — one bad symbol must not stop the pass
+        log.error("%-6s FAILED back-fill beside exit %s: %s", act.ticker, stamp, exc)
+        uncovered.append(f"{act.ticker} back-fill beside exit {stamp} died: {exc}")
+        return 1
+    _log_close(outcome)
+    if outcome.status in CLOSED_STATUSES or outcome.status == "unchanged":
+        # Protected, or gone with nothing standing: the close's doubt is settled.
+        uncovered[:] = [u for u in uncovered if not u.startswith(f"{act.ticker} ")]
+        return 0
+    uncovered.append(f"{act.ticker} {outcome.status} beside exit {stamp}")
+    return 1
+
+
+def _kill_switch() -> str:
+    path = os.environ.get("KILL_SWITCH_FILE", default_kill_switch_path())
+    return FileKillSwitchReader(path).read()
+
+
+def _refresh_held(client: AlpacaClient, today: date) -> tuple[dict[str, Series], list[str]]:
+    """`_refresh_bars` for the names held, run BEFORE the pass reads its book.
+
+    Never between that read and the writes planned off it: at REFRESH_PACE_S a
+    name the refresh takes minutes, and a lot sold in that time (a council
+    SELL approved on the phone, a close by hand) would still have its stop
+    moved, or a back-fill planned for it. A name bought meanwhile is judged by
+    its cache.
+    """
+    held = [p.symbol for p in client.list_positions()]
+    return _refresh_bars(held, today) if held else ({}, [])
+
+
+def _may_write(submitting: bool) -> bool:
+    """Whether the pass may write: with --submit, and the kill switch not flattening.
+
+    Read again here, not only at the start: the refresh alone takes minutes,
+    and a FLATTEN_ALL flipped in that time hands the book to the flatten path.
+    Writing beside it is the double sell the check at the start exists for.
+    """
+    if not submitting:
+        log.info("dry run — pass --submit to act")
+        return False
+    if _kill_switch() == "FLATTEN_ALL":
+        log.info("kill switch FLATTEN_ALL since the pass began — nothing written")
+        return False
+    return True
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -314,12 +804,17 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="override the bar-cache DB (same flag scripts/trade.py takes)",
     )
+    parser.add_argument(
+        "--refresh-bars",
+        action="store_true",
+        help="fetch the held names' daily bars from Polygon for this pass (not into the cache)",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     install_log_redaction()
 
-    ks = FileKillSwitchReader(os.environ.get("KILL_SWITCH_FILE", default_kill_switch_path())).read()
+    ks = _kill_switch()
     if ks == "FLATTEN_ALL":
         log.info(
             "kill switch FLATTEN_ALL — skipped; the flatten path owns the book "
@@ -344,42 +839,69 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     with AlpacaClient() as client:
-        positions_raw = client.list_positions()
+        today = datetime.now(UTC).date()
+        fresh, unrefreshed = _refresh_held(client, today) if args.refresh_bars else ({}, [])
+        orders, stop_ids, positions_raw, sells = _read_book(client)
         if not positions_raw:
             log.info("no open positions")
             return 0
 
-        orders, stop_ids = _order_views(client)
         report = coverage(
             [PositionView(symbol=p.symbol, qty=p.qty, side="long") for p in positions_raw],
             orders,
         )
         by_symbol = {row.symbol: row for row in report.symbols}
         entries = _entry_dates(client)
-        today = datetime.now(UTC).date()
 
         managed, bars_by_ticker = _build_managed(
-            client, repo, positions_raw, by_symbol, orders, stop_ids, entries, today
+            client, repo, positions_raw, by_symbol, orders, stop_ids, entries, today, fresh
         )
 
-        actions, skips = plan_actions(managed, bars_by_ticker, config)
+        exited_today = _exited_on(sells, today)
+        actions, skips = plan_actions(managed, bars_by_ticker, config, exited_today=exited_today)
 
         for skip in skips:
             log.info("%-6s SKIP  %-20s %s", skip.ticker, skip.reason, skip.detail)
+        # Each names what it found in a line of its own; with --submit, any
+        # of them fails the pass, and daily_run pages on that.
+        failing = [
+            _report_exit_budget(actions, skips, managed, config, exited_today, args.submit),
+            _report_refusals(skips, args.submit),
+            _report_unrefreshed(skips, unrefreshed, args.submit),
+        ]
+        refused = any(failing)
 
         if not actions:
             log.info("nothing to do (%d positions examined)", len(managed))
-            return 0
+            return EXIT_FAILED if refused else EXIT_OK
 
         for act in actions:
             _describe(act, args.submit)
 
-        if not args.submit:
-            log.info("dry run — pass --submit to act")
+        if not _may_write(args.submit):
             return 0
 
-        failures = _execute(client, actions)
-        return 1 if failures else 0
+        unclosed: list[str] = []
+        uncovered: list[str] = []
+        unsettled: dict[str, str] = {}
+        failures = _execute(
+            client, actions, today, unclosed=unclosed, uncovered=uncovered, unsettled=unsettled
+        )
+        if unclosed:
+            log.warning(
+                "re-cover: time exits left %s open; re-reading the book", ", ".join(unclosed)
+            )
+            failures += _recover_unclosed(
+                client, repo, set(unclosed), entries, today, config, uncovered, unsettled, fresh
+            )
+        if uncovered:
+            log.error(
+                "UNCOVERED: shares may have no stop, now or once a pending cancel lands, "
+                "or a stop may stand on a lot already sold: %s",
+                "; ".join(uncovered),
+            )
+            return EXIT_UNCOVERED
+        return EXIT_FAILED if failures or refused else EXIT_OK
 
 
 if __name__ == "__main__":

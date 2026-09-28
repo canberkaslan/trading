@@ -31,6 +31,11 @@ Three safety properties are structural rather than conventional:
   the first print of the next session, so it is a close that no close logic
   ever decided. One bad input (a flat tape, bars on the wrong scale) would put
   every stop in the book there in one pass; see MIN_ATR_FRACTION.
+- No stop is set off a mark the bars do not back. The distance to the market
+  is measured from the mark, so it cannot catch a mark that is itself wrong;
+  see MAX_MARK_TO_CLOSE. Inside that band, a stop trails the lower of the
+  mark and the last close, so a mark that is off upward by less than the band
+  still cannot put a stop above the last price the bars recorded.
 """
 
 from __future__ import annotations
@@ -67,6 +72,25 @@ DEFAULT_FLAT_PNL_PCT = 0.03
 #: the market, which is the one direction that must never happen by accident.
 PRICE_DECIMALS = 2
 
+#: The exit budget: one pass closes at most this many positions, and never more
+#: than this fraction of the positions it examined (see `exit_budget`). The pass
+#: acts on whatever it is handed, so without a cap one bad input — a bar cache
+#: that ages every name at once, a mark that reads every position as flat —
+#: liquidates the book in a single run, and nobody sees it until it is done.
+#: With it, the same fault costs at most three names before a person can look.
+#: The budget is a trade date's, not a process's: a pass run again the same day
+#: (a missed run replayed at boot, a re-run by hand) spends what the earlier
+#: ones left of it, counted off the exits they stamped (`plan_actions`).
+#:
+#: It counts time exits, the only closes this module plans. A stop moved to the
+#: market is a close as well, and one it never counts: a flat tape or bars on
+#: the wrong scale put every stop there in the same pass. Rationing stops is not
+#: the answer, since a deferred stop is protection left unmaintained exactly when
+#: the book looks wrong. The stop logic has to refuse such a level outright, and
+#: this cap is the whole story only while it does.
+DEFAULT_MAX_CLOSES_PER_RUN = 3
+DEFAULT_MAX_CLOSE_FRACTION = 0.25
+
 #: ATR multiple for the trailing stop. 3.0 is the `atr_trailing_stop` default
 #: and is deliberately loose: this stop exists to end a broken trade, not to
 #: scalp a wick.
@@ -86,6 +110,68 @@ DEFAULT_ATR_MULT = 3.0
 #: SPY sat at in 2017. A stop closer than that is a bad input showing through,
 #: and it is refused rather than placed (`stop_at_market`).
 MIN_ATR_FRACTION = 0.0025
+
+#: How far the mark may sit from the last cached close before the stop logic
+#: stops trusting the pair: 25% either way (log-symmetric, so 1/1.25 below),
+#: widened to MARK_BAND_ATRS ATRs for a name volatile enough to move that far.
+#:
+#: The stop's distance is measured from the mark, and the ATR from the bars, so
+#: a guard on the distance cannot see either being wrong. A doubled mark (the
+#: broker's last print, doubled) puts every stop a normal distance under a
+#: price that is not real, above the real market. Bars on another scale (1/10
+#: after an unadjusted reverse split, or cents against a dollar mark) give an
+#: ATR that is wrong by the same factor. All of them disagree with the last
+#: close by far more than a session moves: the run is after the close, so the
+#: last cached close is the session just ended, or the one before. A real gap
+#: that large in one of this universe's names is a day not to move stops on
+#: anyway, and refusing only leaves the old stop standing (or, for a
+#: back-fill, the shares naked and paged) until the bars catch up.
+#:
+#: Inside the band a mark can still be wrong: 20% high on a name with a 2%
+#: ATR passes it, and a trail from that mark sits above the last close. So
+#: both stop paths measure from the lower of the two (`_reference`), and the
+#: at-market floor is measured from the same. A real move above the last
+#: close then waits one run for the bars; one below it is followed at once.
+#:
+#: 1.5 (|ln| <= 0.405: +50% / -33%), measured, not guessed. Over five years of
+#: daily bars for this universe the band at 1.25 would have refused real crash
+#: days: META -24.6% (2022-10-27) and UNH -22.4% (2025-04-17), and it cleared UNH
+#: -19.61% (2026-01-27) by 0.005 in log terms. Those are the sessions a naked lot
+#: most needs its stop. At 1.5 no real one-session move in five years is refused,
+#: with the cache fresh or up to ten sessions behind (largest real |ln| 0.39),
+#: while every input this guard exists for still is: a doubled mark, an
+#: unadjusted 2:1 split, 1/10 scale and cents all sit at |ln| >= 0.69.
+MAX_MARK_TO_CLOSE = 1.5
+MARK_BAND_ATRS = 3.0
+
+#: Sessions the bar cache may be behind the run: the session just ended and
+#: the one before, or one and a holiday. The mark band's premise is that the
+#: last cached close is that recent. A cache left weeks behind turns every name
+#: that moved since into a mark the bars "do not back", and leaves a wrong mark
+#: nothing recent to be checked against. The runner fetches fresh bars for the
+#: pass first (`manage_positions --refresh-bars`); this is what happens when it
+#: could not. A refusal on such bars is named `stale_bars`, not blamed on the
+#: mark, and no stop is ratcheted off them. A back-fill still goes out when the
+#: bars pass every other check: shares with no stop are the worse state, and it
+#: is measured from the lower of mark and close, so a rise since the last bar
+#: puts it lower, never higher.
+MAX_BARS_BEHIND = 2
+
+#: A close-to-close move no name in this universe makes in one session, and
+#: that every split does: 2:1 halves the price. Bars on both sides of such a
+#: join are on two scales. It is what a split leaves in the cache when only the
+#: recent rows are fetched again adjusted (a 5-day chart view rewrites about
+#: nine bars of the sixty the stop logic reads): the last close agrees with the
+#: mark, so the mark band passes, and the true range across the join inflates
+#: the ATR to half the price, which floors the back-fill at a cent.
+SCALE_BREAK = 1.75
+
+#: The furthest under the price a back-fill may go: half of it. A 3-ATR stop
+#: that far down needs a daily ATR of a sixth of the price, which no name in
+#: this universe has. A level below it is an ATR that is not this name's range,
+#: and a stop there is worse than none: stop_coverage counts it as protection,
+#: so the naked-book page goes quiet over shares that are naked in practice.
+MIN_STOP_TO_PRICE = 0.5
 
 
 def tick_round_down(price: float, decimals: int = PRICE_DECIMALS) -> float:
@@ -130,6 +216,9 @@ class ManagedPosition:
     #: this and never off `quantity`: sizing off the holding would re-protect
     #: shares that already have a stop, and two stops on one lot is a short.
     naked_quantity: float = 0.0
+    #: Sessions (weekdays) between the last cached bar and the run, which the
+    #: cache may be missing. None when the caller did not measure it.
+    bars_behind: int | None = None
 
 
 @dataclass(frozen=True)
@@ -178,6 +267,7 @@ Action = RatchetStop | PlaceStop | TimeExit
 #: and "could not decide" look identical in a log that only records actions,
 #: and this system has already been bitten by a guard that silently did nothing.
 SkipReason = Literal[
+    "exit_budget",
     "no_stop_order",
     "no_bars",
     "insufficient_bars",
@@ -186,6 +276,8 @@ SkipReason = Literal[
     "non_positive_price",
     "bad_atr",
     "stop_at_market",
+    "mark_disagrees_with_bars",
+    "stale_bars",
 ]
 
 
@@ -210,6 +302,11 @@ class ManagementConfig:
     #: Off by default: placing a stop is an order, and this module's caller
     #: decides when it is allowed to submit one.
     backfill_missing_stops: bool = False
+    #: The per-pass cap on time exits; see DEFAULT_MAX_CLOSES_PER_RUN. Stop
+    #: maintenance never counts against it, which is safe only while no stop is
+    #: moved to the market (see there). 0 closes nothing.
+    max_closes_per_run: int = DEFAULT_MAX_CLOSES_PER_RUN
+    max_close_fraction: float = DEFAULT_MAX_CLOSE_FRACTION
 
 
 def true_range(prev_close: float, high: float, low: float) -> float:
@@ -257,29 +354,130 @@ def _unfit_atr(
     if atr <= 0:
         detail = f"atr={atr:.4f}: a flat tape (every bar h=l=c) or a cache of identical bars"
         return Skip(pos.ticker, "bad_atr", detail)
+    window = bars[-(config.atr_period + 1):]
+    flat = sum(1 for b in window if not b.high > b.low)
+    if flat:
+        # A stale tail of identical bars decays the ATR toward zero without
+        # reaching it, and the trail tightens onto the mark. No name in this
+        # universe prints a full session with no range.
+        detail = (
+            f"{flat} of the last {len(window)} bars have no range (h<=l): a stale or "
+            f"synthetic tail, not a measurement (atr {atr:.4f})"
+        )
+        return Skip(pos.ticker, "bad_atr", detail)
     return None
 
 
-def _at_market(
-    pos: ManagedPosition, level: float, atr: float, config: ManagementConfig
+def _no_stop_basis(
+    pos: ManagedPosition, bars: Sequence[Bar], atr: float | None, config: ManagementConfig
 ) -> Skip | None:
-    """Refuse a stop that would sit at or within the minimum distance of the mark.
+    """Why neither stop path may run for this position, or None when both may.
 
-    The distance is `atr_mult` x MIN_ATR_FRACTION of the price, the closest any
-    real series could put the stop. It is never less than one MIN_ATR_FRACTION,
-    so an --atr-mult of 0 cannot shrink it onto the mark.
+    No usable ATR, or a mark the bars do not back. Both stop paths measure from
+    the mark with the ATR, so a wrong mark puts the stop above the real market,
+    and a wrong scale puts it at the market or at a cent. On bars too far
+    behind the run (`_stale`), the refusal is named for that.
+    """
+    unfit = _unfit_atr(pos, bars, atr, config)
+    if unfit is None and atr is not None:
+        unfit = _scale_break(pos, bars, atr) or _mark_off_bars(pos, bars, atr)
+    stale = _stale(pos)
+    if unfit is None or stale is None:
+        return unfit
+    return Skip(pos.ticker, "stale_bars", f"{stale.detail}; {unfit.reason}: {unfit.detail}")
+
+
+def _stale(pos: ManagedPosition) -> Skip | None:
+    """Why the bars are too far behind the run to move a stop off, or None."""
+    if pos.bars_behind is None or pos.bars_behind <= MAX_BARS_BEHIND:
+        return None
+    detail = f"the bar cache is {pos.bars_behind} sessions behind (at most {MAX_BARS_BEHIND})"
+    return Skip(pos.ticker, "stale_bars", detail)
+
+
+def _scale_break(pos: ManagedPosition, bars: Sequence[Bar], atr: float) -> Skip | None:
+    """Refuse an ATR measured across a join between two price scales.
+
+    See SCALE_BREAK. Every bar the ATR reads is checked, not only the last
+    `atr_period`: Wilder's smoothing carries a true range from anywhere in the
+    series, and one across a join outweighs every real one for weeks.
+    """
+    for prev, bar in zip(bars, bars[1:], strict=False):
+        if not (prev.close > 0 and bar.close > 0):
+            continue
+        if abs(math.log(bar.close / prev.close)) > math.log(SCALE_BREAK):
+            detail = (
+                f"close {prev.close:.2f} -> {bar.close:.2f} in one bar: the series is on "
+                f"two scales (a split re-fetched in part), and atr {atr:.4f} spans the join"
+            )
+            return Skip(pos.ticker, "bad_atr", detail)
+    return None
+
+
+def _mark_off_bars(pos: ManagedPosition, bars: Sequence[Bar], atr: float) -> Skip | None:
+    """Refuse to move a stop when the mark and the bars describe different prices.
+
+    See MAX_MARK_TO_CLOSE. Checked after `_unfit_atr`, so there is a last close
+    and a positive, finite ATR to measure with.
+    """
+    close = bars[-1].close
+    if close > 0 and math.isfinite(close):
+        limit = max(math.log(MAX_MARK_TO_CLOSE), MARK_BAND_ATRS * atr / close)
+        if abs(math.log(pos.current_price / close)) <= limit:
+            return None
+    detail = (
+        f"mark {pos.current_price:.2f} against last cached close {close:.2f} "
+        f"(atr {atr:.4f}): one of them is not this name's price"
+    )
+    return Skip(pos.ticker, "mark_disagrees_with_bars", detail)
+
+
+def _reference(pos: ManagedPosition, bars: Sequence[Bar]) -> float:
+    """The price both stop paths measure from: the mark or the last close, the lower.
+
+    See MAX_MARK_TO_CLOSE. Called once `_no_stop_basis` has passed, so there
+    is a last close, and it is positive and finite.
+    """
+    return min(pos.current_price, bars[-1].close)
+
+
+def _at_market(
+    pos: ManagedPosition, level: float, atr: float, config: ManagementConfig, ref: float
+) -> Skip | None:
+    """Refuse a stop that would sit at or within the minimum distance of `ref`.
+
+    `ref` is `_reference`: the mark, or the last close where that is lower. The
+    distance is `atr_mult` x MIN_ATR_FRACTION of it, the closest any real
+    series could put the stop. It is never less than one MIN_ATR_FRACTION, so
+    an --atr-mult of 0 cannot shrink it onto the price.
     """
     distance = max(config.atr_mult, 1.0) * MIN_ATR_FRACTION
     # A wide multiplier pushes the distance past 100%, which only says "anywhere
     # under the market": floored at the cent the back-fill floors its level at.
-    ceiling = max(0.01, pos.current_price * (1.0 - distance))
-    if level <= ceiling and level < pos.current_price:
+    ceiling = max(0.01, ref * (1.0 - distance))
+    if level <= ceiling and level < ref:
         return None
     detail = (
-        f"level {level:.2f} is not {distance:.2%} under price {pos.current_price:.2f} "
+        f"level {level:.2f} is not {distance:.2%} under price {ref:.2f} "
         f"(at most {ceiling:.2f}; atr {atr:.4f}): closer than any real series puts a stop"
     )
     return Skip(pos.ticker, "stop_at_market", detail)
+
+
+def _too_far(pos: ManagedPosition, level: float, atr: float, ref: float) -> Skip | None:
+    """Refuse a back-fill further under `ref` than any real ATR puts one.
+
+    See MIN_STOP_TO_PRICE. Back-fills only: a ratchet moves a standing stop
+    up, so one from a stop already that low is an improvement, never a harm.
+    """
+    floor = ref * MIN_STOP_TO_PRICE
+    if level >= floor:
+        return None
+    detail = (
+        f"level {level:.2f} is under {MIN_STOP_TO_PRICE:.0%} of price "
+        f"{ref:.2f}: atr {atr:.4f} is not this name's range"
+    )
+    return Skip(pos.ticker, "bad_atr", detail)
 
 
 def _no_atr(pos: ManagedPosition, bars: Sequence[Bar], config: ManagementConfig) -> Skip:
@@ -294,6 +492,75 @@ def _no_atr(pos: ManagedPosition, bars: Sequence[Bar], config: ManagementConfig)
     return Skip(pos.ticker, "insufficient_bars", f"have={len(bars)} need={need}")
 
 
+def exit_budget(n_positions: int, config: ManagementConfig) -> int:
+    """How many positions one pass may close.
+
+    The smaller of the count cap and the fraction of the book, but at least one
+    while the count cap allows any. Without that floor a book of three names
+    could never time-exit at all (25% of 3 rounds down to 0). A book that small
+    is one close from flat whatever the cap says.
+    """
+    if config.max_closes_per_run <= 0 or n_positions <= 0:
+        return 0
+    by_fraction = max(1, math.floor(n_positions * config.max_close_fraction))
+    return min(config.max_closes_per_run, by_fraction)
+
+
+def _unusable(pos: ManagedPosition) -> Skip | None:
+    """Why a position cannot be reasoned about at all, or None when it can."""
+    if pos.current_price <= 0 or pos.avg_entry_price <= 0:
+        return Skip(pos.ticker, "non_positive_price", f"price={pos.current_price}")
+    if pos.bars_held is None:
+        # A held name with no bars at all: its age cannot be read, so the time
+        # exit cannot be evaluated, and there is no ATR for a stop. Said out
+        # loud because the alternative, an age of 0, looks exactly like a
+        # position opened today and never ages out.
+        return Skip(pos.ticker, "no_bars", _NO_BARS_DETAIL)
+    return None
+
+
+def _time_exit_due(pos: ManagedPosition, config: ManagementConfig) -> bool:
+    if _unusable(pos) is not None or pos.bars_held is None:
+        return False
+    pnl_pct = pos.current_price / pos.avg_entry_price - 1.0
+    return time_exit(pos.bars_held, config.max_bars, pnl_pct, config.flat_pnl_pct)
+
+
+def _ration_exits(
+    positions: Sequence[ManagedPosition],
+    config: ManagementConfig,
+    exited_today: frozenset[str] = frozenset(),
+) -> tuple[set[str], dict[str, Skip]]:
+    """Which due time exits this pass takes, and a Skip for each one it defers.
+
+    Most overdue first: the position that has sat longest past its window has
+    the weakest claim on the capital. A deferred close is not dropped. It is
+    reported, it keeps its stop maintenance this pass, and the next pass takes
+    it if it is still due.
+
+    The budget is the trade date's. It is sized off the book as it stood
+    before today's exits, and each name `exited_today` has spent its share. A
+    name among them that is still held and due (an exit queued for the open)
+    is let through again without a second share: its close sends nothing new.
+    """
+    due = sorted(
+        (p for p in positions if _time_exit_due(p, config)),
+        key=lambda p: (-(p.bars_held or 0), p.ticker),
+    )
+    book = len({p.ticker for p in positions} | exited_today)
+    left = max(0, exit_budget(book, config) - len(exited_today))
+    fresh = [p for p in due if p.ticker not in exited_today]
+    detail = (
+        f"close deferred: {left} of {len(fresh)} due this pass "
+        f"(cap {config.max_closes_per_run}, {config.max_close_fraction:.0%} "
+        f"of {book} positions, {len(exited_today)} closed today)"
+    )
+    allowed = {p.ticker for p in due if p.ticker in exited_today}
+    allowed |= {p.ticker for p in fresh[:left]}
+    deferred = {p.ticker: Skip(p.ticker, "exit_budget", detail) for p in fresh[left:]}
+    return allowed, deferred
+
+
 #: The defaults, as a singleton. A dataclass call in a parameter default is
 #: evaluated once at import anyway — naming it says so instead of hiding it.
 DEFAULT_CONFIG = ManagementConfig()
@@ -303,37 +570,41 @@ def plan_actions(
     positions: Sequence[ManagedPosition],
     bars_by_ticker: dict[str, Sequence[Bar]],
     config: ManagementConfig = DEFAULT_CONFIG,
+    *,
+    exited_today: frozenset[str] = frozenset(),
 ) -> tuple[list[Action], list[Skip]]:
     """Decide what to do with every open position.
 
     Pure: no clock, no network, no broker. Returns the actions to take and, for
-    every position NOT acted on, why.
+    every position NOT acted on, why. Time exits are rationed by `exit_budget`;
+    stop maintenance is not, so it must never set a stop at the market (see
+    DEFAULT_MAX_CLOSES_PER_RUN). `exited_today` names the positions a time exit
+    already sold, or is selling, under today's stamp: the budget is the trade
+    date's, and they have spent part of it.
     """
     actions: list[Action] = []
     skips: list[Skip] = []
+    exits, deferred = _ration_exits(positions, config, exited_today)
 
     for pos in positions:
-        if pos.current_price <= 0 or pos.avg_entry_price <= 0:
-            skips.append(Skip(pos.ticker, "non_positive_price", f"price={pos.current_price}"))
+        unusable = _unusable(pos)
+        if unusable is not None:
+            skips.append(unusable)
             continue
-
-        if pos.bars_held is None:
-            # A held name with no bars at all: its age cannot be read, so the
-            # time exit cannot be evaluated, and there is no ATR for a stop.
-            # Said out loud because the alternative, an age of 0, looks exactly
-            # like a position opened today and never ages out.
-            skips.append(Skip(pos.ticker, "no_bars", _NO_BARS_DETAIL))
-            continue
+        assert pos.bars_held is not None  # _unusable skipped the unknown age
 
         pnl_pct = pos.current_price / pos.avg_entry_price - 1.0
 
         # ---- Time exit ----------------------------------------------------
         # Checked first: closing a position makes ratcheting its stop moot, and
         # emitting both would have the runner replace a stop it is about to
-        # cancel.
-        if time_exit(pos.bars_held, config.max_bars, pnl_pct, config.flat_pnl_pct):
+        # cancel. A close the budget deferred is still held tonight, so it goes
+        # on to the stop logic like any other position.
+        if pos.ticker in exits:
             actions.append(TimeExit(pos.ticker, pos.quantity, pos.bars_held, pnl_pct))
             continue
+        if pos.ticker in deferred:
+            skips.append(deferred[pos.ticker])
 
         # Past the age window but still moving is not a skip: the thesis is
         # playing out, so the position simply carries on to the stop logic.
@@ -341,11 +612,12 @@ def plan_actions(
         # ---- Trailing stop ------------------------------------------------
         bars = bars_by_ticker.get(pos.ticker) or []
         atr = average_true_range(bars, config.atr_period)
-        unfit = _unfit_atr(pos, bars, atr, config)
+        unfit = _no_stop_basis(pos, bars, atr, config)
         if unfit is not None:
             skips.append(unfit)
             continue
-        assert atr is not None  # _unfit_atr skipped a missing one
+        assert atr is not None  # _no_stop_basis skipped a missing one
+        ref = _reference(pos, bars)
 
         # ---- Back-fill the naked remainder ---------------------------------
         # Independent of the ratchet below, because a position can need BOTH: a
@@ -361,14 +633,16 @@ def plan_actions(
         if config.backfill_missing_stops and pos.naked_quantity > 0:
             # Seeded from the CURRENT price, not from entry: a name that has
             # doubled since entry would otherwise get a stop far below anything
-            # it has traded at recently, which protects nothing. Floored at a
-            # cent so a violently wide ATR cannot produce a negative stop.
-            level = tick_round_down(max(0.01, pos.current_price - atr * config.atr_mult))
-            at_market = _at_market(pos, level, atr, config)
-            if at_market is not None:
+            # it has traded at recently, which protects nothing. The current
+            # price is `ref`, the mark or the last close, the lower. Floored at
+            # a cent so a violently wide ATR cannot produce a negative stop.
+            level = tick_round_down(max(0.01, ref - atr * config.atr_mult))
+            refused = _at_market(pos, level, atr, config, ref) or _too_far(pos, level, atr, ref)
+            if refused is not None:
                 # A stop at or near the market is a market sell wearing a
-                # stop's clothes: it fires on the first print it sees.
-                skips.append(at_market)
+                # stop's clothes: it fires on the first print it sees. One far
+                # under it is no protection that coverage would still count.
+                skips.append(refused)
             else:
                 actions.append(PlaceStop(pos.ticker, pos.naked_quantity, level, atr))
 
@@ -386,7 +660,7 @@ def plan_actions(
                 )
             continue
 
-        ratchet = _ratchet(pos, pos.current_stop, pos.stop_order_id, atr, config)
+        ratchet = _ratchet(pos, pos.current_stop, pos.stop_order_id, atr, config, ref)
         if isinstance(ratchet, RatchetStop):
             actions.append(ratchet)
         else:
@@ -396,12 +670,22 @@ def plan_actions(
 
 
 def _ratchet(
-    pos: ManagedPosition, stop: float, stop_order_id: str, atr: float, config: ManagementConfig
+    pos: ManagedPosition,
+    stop: float,
+    stop_order_id: str,
+    atr: float,
+    config: ManagementConfig,
+    ref: float,
 ) -> RatchetStop | Skip:
-    """Move the standing stop up the ATR trail, or say why it stays put."""
+    """Move the standing stop up the ATR trail from `ref`, or say why it stays put."""
+    stale = _stale(pos)
+    if stale is not None:
+        # A trail off bars that far behind is a move nothing recent backs. The
+        # standing stop stays, and the runner fails the pass for it.
+        return stale
     candidate = tick_round_down(
         atr_trailing_stop(
-            current_close=pos.current_price,
+            current_close=ref,
             atr=atr,
             previous_stop=stop,
             atr_mult=config.atr_mult,
@@ -423,7 +707,7 @@ def _ratchet(
 
     # Checked on the move itself, after the no-op cases, so a standing stop the
     # price has fallen toward is reported as unchanged rather than as this.
-    at_market = _at_market(pos, candidate, atr, config)
+    at_market = _at_market(pos, candidate, atr, config, ref)
     if at_market is not None:
         return at_market
 

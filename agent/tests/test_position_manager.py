@@ -20,6 +20,7 @@ from tradingagents_us.risk.position_manager import (
     RatchetStop,
     TimeExit,
     average_true_range,
+    exit_budget,
     plan_actions,
     tick_round_down,
     true_range,
@@ -30,6 +31,15 @@ def flat_bars(
     n: int = 30, high: float = 101.0, low: float = 99.0, close: float = 100.0
 ) -> list[Bar]:
     return [Bar(high, low, close) for _ in range(n)]
+
+
+def bars_at(close: float, n: int = 30) -> list[Bar]:
+    """A tape that closed where the mark is, with an ATR of 2.0.
+
+    The stop trails the lower of the mark and the last close, so a position
+    that "has run to 120" needs bars that ran there too.
+    """
+    return flat_bars(n, close + 1.0, close - 1.0, close)
 
 
 class TestTrueRange:
@@ -84,7 +94,7 @@ def position(**kw) -> ManagedPosition:
 class TestRatchet:
     def test_raises_the_stop_when_price_has_run(self) -> None:
         # ATR 2.0, mult 3.0, close 120 -> candidate 114, well above the 90 stop.
-        actions, skips = plan_actions([position()], {"AAPL": flat_bars(30)})
+        actions, skips = plan_actions([position()], {"AAPL": bars_at(120.0)})
         assert len(actions) == 1
         act = actions[0]
         assert isinstance(act, RatchetStop)
@@ -106,7 +116,7 @@ class TestRatchet:
     def test_ignores_a_ratchet_too_small_to_be_worth_an_order(self) -> None:
         # Candidate is 0.1% above the current stop; the floor is 0.2%.
         actions, skips = plan_actions(
-            [position(current_price=120.0, current_stop=113.886)], {"AAPL": flat_bars(30)}
+            [position(current_price=120.0, current_stop=113.886)], {"AAPL": bars_at(120.0)}
         )
         assert actions == []
         assert [s.reason for s in skips] == ["stop_unchanged"]
@@ -212,6 +222,123 @@ class TestTimeExit:
         assert actions[0].pnl_pct < 0
 
 
+def _aged(n: int, *, bars_held: int = 25) -> list[ManagedPosition]:
+    """n positions that are all due a time exit: flat, well past the window."""
+    return [
+        position(ticker=f"T{i}", bars_held=bars_held, current_price=100.5, stop_order_id=f"ord_{i}")
+        for i in range(n)
+    ]
+
+
+class TestExitBudget:
+    """One pass may close only so much of the book.
+
+    The planner acts on whatever it is handed, so a single bad input (a bar
+    cache that ages every name at once, a mark that reads every position as
+    flat) would otherwise close everything in one run.
+    """
+
+    @pytest.mark.parametrize(
+        ("n", "budget"),
+        [(0, 0), (1, 1), (3, 1), (4, 1), (8, 2), (10, 2), (12, 3), (40, 3)],
+    )
+    def test_the_smaller_of_three_and_a_quarter_of_the_book_but_at_least_one(
+        self, n: int, budget: int
+    ) -> None:
+        assert exit_budget(n, ManagementConfig()) == budget
+
+    def test_a_zero_cap_closes_nothing(self) -> None:
+        assert exit_budget(10, ManagementConfig(max_closes_per_run=0)) == 0
+
+    def test_a_pass_where_every_name_is_due_closes_only_the_budget(self) -> None:
+        positions = _aged(10)
+        bars = {p.ticker: flat_bars(30) for p in positions}
+
+        actions, skips = plan_actions(positions, bars)
+
+        closes = [a for a in actions if isinstance(a, TimeExit)]
+        assert len(closes) == 2
+        deferred = [s for s in skips if s.reason == "exit_budget"]
+        assert len(deferred) == 8
+        assert "2 of 10 due" in deferred[0].detail
+
+    def test_the_most_overdue_close_goes_first(self) -> None:
+        positions = [
+            position(ticker="NEW", bars_held=22, current_price=100.5),
+            position(ticker="OLD", bars_held=60, current_price=100.5),
+            position(ticker="MID", bars_held=30, current_price=100.5),
+            position(ticker="HOLD", bars_held=5),
+        ]
+        bars = {p.ticker: flat_bars(30) for p in positions}
+
+        actions, _ = plan_actions(positions, bars)
+
+        assert [a.ticker for a in actions if isinstance(a, TimeExit)] == ["OLD"]
+
+    def test_a_deferred_close_keeps_its_stop_maintained(self) -> None:
+        # Still held tonight, so it is still protected tonight: the ratchet it
+        # would have had without the time exit is emitted.
+        positions = [*_aged(2), position(ticker="AAPL", bars_held=5)]
+        bars = {p.ticker: flat_bars(30) for p in positions}
+
+        actions, skips = plan_actions(positions, bars)
+
+        (deferred,) = [s.ticker for s in skips if s.reason == "exit_budget"]
+        assert any(isinstance(a, RatchetStop) and a.ticker == deferred for a in actions)
+
+    def test_a_deferred_naked_close_still_gets_its_stop_placed(self) -> None:
+        positions = [
+            position(ticker=f"T{i}", bars_held=25, current_price=100.5,
+                     current_stop=None, stop_order_id=None, naked_quantity=10.0)
+            for i in range(2)
+        ]
+        bars = {p.ticker: flat_bars(30) for p in positions}
+
+        actions, _ = plan_actions(positions, bars, ManagementConfig(backfill_missing_stops=True))
+
+        assert sorted(type(a).__name__ for a in actions) == ["PlaceStop", "TimeExit"]
+
+    def test_closes_made_earlier_the_same_trade_date_count_against_it(self) -> None:
+        # A twelve-name book that closed three earlier today: a missed run
+        # replayed at boot in regular hours, then the scheduled run. The
+        # second pass examined nine names and took a fresh budget of two.
+        positions = _aged(9)
+        bars = {p.ticker: flat_bars(30) for p in positions}
+
+        actions, skips = plan_actions(
+            positions, bars, exited_today=frozenset({"X0", "X1", "X2"})
+        )
+
+        assert [a for a in actions if isinstance(a, TimeExit)] == []
+        deferred = [s for s in skips if s.reason == "exit_budget"]
+        assert len(deferred) == 9
+        assert "3 closed today" in deferred[0].detail
+
+    def test_a_name_already_exiting_today_is_not_charged_again(self) -> None:
+        # After hours the first pass's exits are queued for the open: those
+        # names are still held and still due, and their close sends nothing
+        # new (`already_exiting`). They must not take a second share.
+        positions = _aged(8)
+        bars = {p.ticker: flat_bars(30) for p in positions}
+
+        actions, skips = plan_actions(positions, bars, exited_today=frozenset({"T6", "T7"}))
+
+        assert sorted(a.ticker for a in actions if isinstance(a, TimeExit)) == ["T6", "T7"]
+        assert len([s for s in skips if s.reason == "exit_budget"]) == 6
+
+    def test_stop_maintenance_does_not_count_against_the_budget(self) -> None:
+        # Four ratchets and one due close on a five-name book (budget 1): the
+        # close still goes, and so do all four ratchets.
+        positions = [position(ticker=f"R{i}") for i in range(4)] + _aged(1)
+        bars = {p.ticker: flat_bars(30) for p in positions}
+
+        actions, skips = plan_actions(positions, bars)
+
+        assert sum(isinstance(a, RatchetStop) for a in actions) == 4
+        assert sum(isinstance(a, TimeExit) for a in actions) == 1
+        assert not [s for s in skips if s.reason == "exit_budget"]
+
+
 class TestSafetyInvariants:
     def test_no_action_ever_opens_or_grows_a_position(self) -> None:
         # The action union has exactly two members, and neither carries a side,
@@ -254,7 +381,7 @@ class TestSafetyInvariants:
 
     def test_config_is_honoured_rather_than_hardcoded(self) -> None:
         tight = ManagementConfig(atr_mult=1.0)
-        actions, _ = plan_actions([position()], {"AAPL": flat_bars(30)}, tight)
+        actions, _ = plan_actions([position()], {"AAPL": bars_at(120.0)}, tight)
         assert isinstance(actions[0], RatchetStop)
         # close 120 - 2.0 ATR * 1.0 = 118, vs 114 at the default 3.0.
         assert actions[0].new_stop == pytest.approx(118.0)
@@ -282,7 +409,7 @@ class TestStopBackfill:
         cfg = ManagementConfig(backfill_missing_stops=True)
         actions, _ = plan_actions(
             [position(current_stop=None, stop_order_id=None, naked_quantity=10.0)],
-            {"AAPL": flat_bars(30)},
+            {"AAPL": bars_at(120.0)},
             cfg,
         )
         assert len(actions) == 1
@@ -326,16 +453,18 @@ class TestStopBackfill:
         assert actions == []
         assert [s.reason for s in skips] == ["stop_at_market"]
 
-    def test_a_wild_atr_cannot_produce_a_negative_stop(self) -> None:
+    def test_a_wild_atr_places_neither_a_negative_stop_nor_a_one_cent_one(self) -> None:
         cfg = ManagementConfig(backfill_missing_stops=True, atr_mult=1000.0)
         actions, skips = plan_actions(
             [position(current_stop=None, stop_order_id=None, naked_quantity=10.0)],
             {"AAPL": flat_bars(30)},
             cfg,
         )
-        # Floored at a cent, and a cent is below the price, so it is placeable.
-        assert isinstance(actions[0], PlaceStop)
-        assert actions[0].stop_price == 0.01
+        # Floored at a cent it was placeable, and coverage then counted a
+        # one-cent stop as protection: the naked-book page went quiet over
+        # shares that were naked in practice.
+        assert actions == []
+        assert [s.reason for s in skips] == ["bad_atr"]
 
     def test_a_time_exit_still_wins_over_a_backfill(self) -> None:
         cfg = ManagementConfig(backfill_missing_stops=True)

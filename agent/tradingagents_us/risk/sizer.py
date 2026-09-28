@@ -13,6 +13,49 @@ The LLM proposes entry / stop / size %. This module:
 5. Emits a TradeOrder (with risk_approved + rejection_reasons populated)
 
 This module is deterministic and unit-testable. No LLM calls.
+
+Which controls apply to which side
+----------------------------------
+Nearly every control here was written for entries and then applied to both
+sides, which inverts each one: an exit is refused by the machinery meant to
+stop the book getting too big, on the position most in need of exiting. The
+audit, settled once so the branches below can just point at it:
+
+    control                    BUY   SELL   why
+    ------------------------------------------------------------------------
+    single-name cap            yes   no     headroom to ADD; zero at the cap
+    sector cap                 yes   no     a sell relieves concentration
+    gross exposure             yes   no     a sell reduces gross
+    correlation cap            yes   no     a sell uncrowds the book
+    liquidity floor (ADV)      yes   no     else a thin position is permanent
+    cash cap                   yes   no     a sell raises cash, never spends it
+    kill switch PAUSE_NEW      yes   no     "no new entries; manage existing"
+    daily drawdown halt        yes   no     stranding in a drawdown
+    consecutive-loss halt      yes   no     a streak is no reason to hold on
+    price anomaly (z-score)    yes   yes    a bad print misprices either side
+    kill switch FLATTEN_ALL    yes   yes    the flatten owns the book
+
+The anomaly row is the tell: it is the only one that is not about how much risk
+to carry. It asks whether the number in front of us is real, and that question
+has no side. Everything above it bounds risk-taking, and a sell takes none — it
+is bounded by the holding instead (see `_size_for_side`). FLATTEN_ALL is the
+exception on purpose: execution/flatten.py is already selling every lot, and a
+second seller is how one gets sold twice. The kill-switch, drawdown and
+loss-streak rows live in circuit_breaker.py.
+
+Opening those three rows to sells lets a sell through on exactly the days
+stops fire, and it is sized off a holding read before the council ran. So the
+executor reads the holding again just before it submits, and refuses a sell
+the book no longer covers as `position_changed_since_sizing`: one that lands
+after its lot's stop has filled is a short with nothing protecting it.
+
+The anomaly gate needs ten cached closes and is skipped without them. A sell
+whose price is missing altogether is refused here as `no_reference_price`.
+
+There is no API-error-rate row, on purpose. The breaker has that gate, but it
+cannot fire: nothing calls `record_api_call`, and each ticker's trade.py is its
+own process making a handful of calls, never the 21 the gate needs before it
+measures anything. It protects neither side, so it is not counted as a control.
 """
 
 from __future__ import annotations
@@ -135,12 +178,19 @@ def size_from_decision(
     #    then 1.0 and the computed drawdown is always 0.0, so the threshold could
     #    never be crossed. Callers that cannot supply an opening figure leave it
     #    None, and the breaker skips that check rather than pretending to run it.
+    #
+    #    The side goes in too. The breaker's risk-taking gates — kill switch
+    #    PAUSE_NEW, drawdown halt, losing streak — are entry-side, for the same
+    #    reason the exposure caps below are; see circuit_breaker.py. A None side (a
+    #    non-actionable rating) is already rejected above, and defaults to the
+    #    strict BUY reading here.
     cb_ok, cb_reasons = circuit_breaker.check(
         equity_now=account_equity,
         equity_open=session_open_equity if session_open_equity else 0.0,
         price=market_ctx.current_price,
         rolling_mean=market_ctx.rolling_mean,
         rolling_std=market_ctx.rolling_std,
+        side=side or "BUY",
     )
     if not cb_ok:
         rejections.extend(cb_reasons)
@@ -156,6 +206,13 @@ def size_from_decision(
     )
     if side == "SELL" and qty == 0:
         rejections.append("nothing_held_to_sell")
+    # A sell priced at nothing. trade.py passes 0.0 when no entry, no Polygon
+    # print and no broker mark exist, so the refusal still lands as a row; with
+    # too few cached closes the anomaly gate is skipped as well, and without this
+    # the whole holding was approved as a market sell nothing had priced or
+    # checked. `not > 0` so a NaN is refused too.
+    if side == "SELL" and not market_ctx.current_price > 0:
+        rejections.append("no_reference_price")
 
     # 3. Per-position cap trim FIRST (so check_limits sees the actual proposed value)
     #    BUY only. Every cap from here down bounds how much EXPOSURE may be taken
@@ -207,10 +264,17 @@ def size_from_decision(
             )
 
     # 4. Portfolio caps (per-sector + correlation + liquidity + gross exposure)
-    #    BUY only, for the same reason as above: each of these bounds exposure,
-    #    and a sell reduces it. Handing check_limits a sell's notional as
-    #    `new_position_value` had it reject exits for the very sector and gross
-    #    concentration the exit would relieve.
+    #    BUY only. `check_limits` takes the order as `new_position_value` and can
+    #    only ever add it, so a sell arrives as though it grew the book: exits were
+    #    rejected for the very sector and gross concentration they would relieve.
+    #    Auditing the five it enforces, none survives on the sell side:
+    #      - sector / gross / per-name: exposure caps, and a sell reduces exposure.
+    #      - correlation: a cap on how many correlated bets to hold at once. An
+    #        exit makes a crowded book less crowded, not more.
+    #      - liquidity (ADV floor): the one that is not about exposure — but
+    #        refusing to exit a thin name is how a position becomes permanent.
+    #        Thin liquidity is a reason to work the order, which belongs in
+    #        execution, not a reason to keep holding it.
     if qty > 0 and side == "BUY":
         position_value = qty * decision.entry_price  # type: ignore[operator]
         limits_ok, limits_reasons = check_limits(

@@ -390,17 +390,36 @@ def main() -> int:
     else:
         print(f"  ADV:       ${adv:,.0f} (20d average dollar volume)")
 
+    # One Polygon read, used both as the sizing reference below and as the live
+    # price the execution guards check against further down.
+    current_price = _fetch_current_price(args.ticker)
+
     # Use entry as the price proxy for sizing (a live quote would be better, but
     # the entry is what the stop is measured against, so they stay consistent).
-    # A Sell need not carry one — it is sized off the holding — so fall back to
-    # the last close, and only then to the position's own mark, so the circuit
-    # breaker's price check still has something real to work with.
-    ref_price = decision.entry_price or _fetch_current_price(args.ticker)
+    # A Sell is sized off the holding and sent as a market sell, so its entry
+    # prices nothing, and it is never the reference: the last close, and only
+    # then the position's own mark. Taking the model's entry first let it stand
+    # in for a missing print (no_reference_price could not see the gap) and put
+    # the model's number, not the market's, in front of the anomaly gate, which
+    # refused a good exit whenever the entry was off.
+    #
+    # All three can still come up empty, and that is not a run failure: a Sell
+    # for a name with no quote and nothing held, or for a held name whose mark
+    # reads 0. The risk layer refuses a sell at 0.0 as `no_reference_price` (and
+    # the first also as `nothing_held_to_sell`). Let it through at 0.0 so that
+    # refusal is written as an order row. Returning early here is what turned a
+    # dropped exit into a generic ticker failure in daily_run.sh, and left the
+    # run with zero rows — which `actionability` reads as `idle` and the alerter
+    # stays silent on.
+    if decision.rating == "Sell":
+        ref_price = current_price
+    else:
+        ref_price = decision.entry_price or current_price
     if not ref_price and held_qty:
         ref_price = existing_by_ticker.get(args.ticker, 0.0) / held_qty
     if not ref_price:
-        log.warning("no reference price for %s — cannot size", args.ticker)
-        return 1
+        log.warning("no reference price for %s — risk layer will refuse", args.ticker)
+        ref_price = 0.0
 
     # The circuit breaker's price-anomaly check used to be handed
     # `rolling_mean = ref_price` and a 2% band, which makes its z-score
@@ -454,8 +473,9 @@ def main() -> int:
         available_cash=0.0 if spendable is None else spendable,
     )
     # Real mobile kill switch (was a hardcoded RUN stub): the API writes
-    # KILL_SWITCH_PATH; PAUSE_NEW / FLATTEN_ALL blocks this trade at the
-    # circuit breaker. daily_run.sh additionally pre-checks + flattens.
+    # KILL_SWITCH_PATH. At the circuit breaker PAUSE_NEW blocks an entry but
+    # lets an exit through, and FLATTEN_ALL blocks both (the flatten owns the
+    # book). daily_run.sh additionally pre-checks + flattens.
     cb = CircuitBreaker(kill_switch=CachedKillSwitchReader(FileKillSwitchReader()))
     # The consecutive-loss halt counts what `record_trade_result` was told, and
     # nothing ever called it — the counter sat at zero from process start to
@@ -501,7 +521,6 @@ def main() -> int:
         print(f"  Reasons:     {order.rejection_reasons}")
 
     # 5. Submit / hold / dry-run
-    current_price = _fetch_current_price(args.ticker)
     if current_price:
         print(f"\n  Current price (Polygon, delayed): ${current_price:.2f}")
 

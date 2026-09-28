@@ -1,0 +1,145 @@
+"""Commentator storage: new tables, retention, purge, and the decision link (ADR-009)."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+
+import pytest
+from sqlalchemy import create_engine, inspect, select, text
+
+from tradingagents_us.schemas import AgentDecision
+from tradingagents_us.storage import TradeLogRepository
+from tradingagents_us.storage import commentator as store
+from tradingagents_us.storage.commentator import Extraction
+from tradingagents_us.storage.models import CommentatorItemRow, DecisionCommentatorRefRow
+
+NOW = datetime(2026, 9, 28, 22, 30, tzinfo=UTC)
+EXTRACTION = Extraction(
+    tickers=("META",), macro_topics=(), stance={"META": "bullish"},
+    claim_en="META model launch is a catalyst.", is_promo=False, is_market_content=True,
+)
+
+
+@pytest.fixture
+def repo() -> TradeLogRepository:
+    return TradeLogRepository(engine=create_engine("sqlite://", future=True))
+
+
+def _put(repo: TradeLogRepository, source: str, sid: str, *, expires: datetime,
+         extraction: Extraction | None = EXTRACTION) -> None:
+    with repo.session() as s:
+        store.upsert_item(
+            s, source=source, source_id=sid, channel_id="c", url=f"https://e/{sid}",
+            published_at=NOW - timedelta(days=1), content_sha256="h", now=NOW,
+            expires_at=expires, extraction=extraction, extraction_model="m",
+        )
+
+
+def _decision(dec_id: str) -> AgentDecision:
+    return AgentDecision(
+        ticker="META", market="US", quote_currency="USD", rating="Hold",
+        reasoning=[], timestamp_utc=NOW, decision_id=dec_id,
+    )
+
+
+class TestTables:
+    def test_create_all_builds_both(self, repo: TradeLogRepository) -> None:
+        names = set(inspect(repo.engine).get_table_names())
+        assert {"commentator_items", "decision_commentator_refs"} <= names
+
+    def test_a_legacy_database_gets_them_without_touching_agent_decisions(
+        self, tmp_path
+    ) -> None:
+        # The box's DB predates these tables. create_all adds missing TABLES,
+        # which is all this needs: no column is added to an existing table, so
+        # no _ADDITIVE_COLUMNS entry and no migration.
+        engine = create_engine(f"sqlite:///{tmp_path / 'legacy.db'}", future=True)
+        TradeLogRepository(engine=engine)
+        with engine.begin() as conn:
+            conn.execute(text("DROP TABLE commentator_items"))
+            conn.execute(text("DROP TABLE decision_commentator_refs"))
+        before = [c["name"] for c in inspect(engine).get_columns("agent_decisions")]
+        TradeLogRepository(engine=engine)
+        insp = inspect(engine)
+        assert {"commentator_items", "decision_commentator_refs"} <= set(insp.get_table_names())
+        assert [c["name"] for c in insp.get_columns("agent_decisions")] == before
+
+
+class TestRetention:
+    def test_expired_items_go_and_fresh_ones_stay(self, repo: TradeLogRepository) -> None:
+        _put(repo, "youtube", "old", expires=NOW - timedelta(seconds=1))
+        _put(repo, "youtube", "new", expires=NOW + timedelta(days=29))
+        with repo.session() as s:
+            assert store.purge_expired(s, NOW) == 1
+        with repo.session() as s:
+            assert set(s.scalars(select(CommentatorItemRow.source_id))) == {"new"}
+
+    def test_a_retry_does_not_extend_the_deadline(self, repo: TradeLogRepository) -> None:
+        _put(repo, "youtube", "v", expires=NOW + timedelta(days=30), extraction=None)
+        with repo.session() as s:
+            store.upsert_item(
+                s, source="youtube", source_id="v", channel_id="c", url="u",
+                published_at=NOW, content_sha256="h", now=NOW + timedelta(days=5),
+                expires_at=NOW + timedelta(days=35), extraction=EXTRACTION,
+                extraction_model="m",
+            )
+        with repo.session() as s:
+            row = s.get(CommentatorItemRow, "youtube:v")
+            assert row is not None
+            assert store.aware(row.expires_at_utc) == NOW + timedelta(days=30)
+            assert store.aware(row.fetched_at_utc) == NOW  # first seen, never re-dated
+            assert row.extracted_at_utc is not None
+
+    def test_only_extracted_items_are_readable(self, repo: TradeLogRepository) -> None:
+        _put(repo, "youtube", "done", expires=NOW + timedelta(days=1))
+        _put(repo, "youtube", "pending", expires=NOW + timedelta(days=1), extraction=None)
+        with repo.session() as s:
+            got = store.extracted_items_between(s, NOW - timedelta(days=7), NOW)
+        assert [i.source_id for i in got] == ["done"]
+
+
+class TestPurgeAndRefs:
+    def test_a_purged_item_is_scrubbed_from_refs_not_the_decision_record(
+        self, repo: TradeLogRepository
+    ) -> None:
+        _put(repo, "x", "1001", expires=NOW + timedelta(days=8))
+        store.stash_decision_refs("dec-1", [("x", "x:1001")])
+        repo.save_decision(_decision("dec-1"))
+        with repo.session() as s:
+            assert store.purge(s, ["x:1001"]) == 1
+        with repo.session() as s:
+            (ref,) = s.scalars(select(DecisionCommentatorRefRow)).all()
+            assert ref.decision_id == "dec-1"
+            assert ref.source == "x"
+            assert ref.item_id is None  # the post id is gone, the fact of the input stays
+            assert s.get(CommentatorItemRow, "x:1001") is None
+
+    def test_save_decision_writes_stashed_refs_once(self, repo: TradeLogRepository) -> None:
+        store.stash_decision_refs("dec-2", [("youtube", "youtube:a"), ("youtube", "youtube:b")])
+        repo.save_decision(_decision("dec-2"))
+        repo.save_decision(_decision("dec-2"))  # a re-save must not duplicate them
+        with repo.session() as s:
+            refs = s.scalars(select(DecisionCommentatorRefRow.item_id)).all()
+        assert sorted(refs) == ["youtube:a", "youtube:b"]
+
+    def test_with_nothing_stashed_save_decision_writes_no_refs(
+        self, repo: TradeLogRepository
+    ) -> None:
+        repo.save_decision(_decision("dec-3"))
+        with repo.session() as s:
+            assert s.scalars(select(DecisionCommentatorRefRow)).all() == []
+
+    def test_the_stash_is_bounded(self) -> None:
+        for i in range(store._STASH_LIMIT + 10):
+            store.stash_decision_refs(f"bt-{i}", [("youtube", f"youtube:{i}")])
+        assert store.pop_decision_refs("bt-0") == []  # the oldest fell off
+        last = store._STASH_LIMIT + 9
+        assert store.pop_decision_refs(f"bt-{last}") == [("youtube", f"youtube:{last}")]
+        with store._stash_lock:
+            store._stash.clear()
+
+    def test_since_id_is_the_numerically_newest(self, repo: TradeLogRepository) -> None:
+        for sid in ("999", "1000", "99"):
+            _put(repo, "x", sid, expires=NOW + timedelta(days=8))
+        with repo.session() as s:
+            assert store.newest_numeric_id(s, "x") == "1000"  # not "999"

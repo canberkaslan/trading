@@ -17,6 +17,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..schemas import AgentDecision, AgentReasoning, OrderUpdate, TradeOrder
+from .commentator import write_decision_refs
 from .device_tokens import DeviceTokenRow
 from .models import (
     AgentDecisionRow,
@@ -151,6 +152,10 @@ class TradeLogRepository:
                     row.cache_write_tokens = existing.cache_write_tokens
                     row.cost_usd = existing.cost_usd
             s.merge(row)  # idempotent
+            # The commentator items this decision's sentiment analyst read
+            # (ADR-009). Nothing is stashed unless COMMENTATOR_FEED=1, so with
+            # the feed off this writes nothing and the save is unchanged.
+            write_decision_refs(s, decision.decision_id)
 
     def save_order(self, order: TradeOrder, broker_order_id: str | None = None) -> None:
         with self.session() as s:

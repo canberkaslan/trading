@@ -1,6 +1,6 @@
 # ADR-009: Commentator feed as opinion context
 
-**Status:** Accepted — shipped **off** (`COMMENTATOR_FEED=1` enables it). It stays off until the measurement gate below passes. `YOUTUBE_API_KEY` stays unset until the YouTube legal preconditions below are met: the YouTube source, as designed, does what the YouTube Developer Policies prohibit (derived data from API Data), and that is unresolved. The code refuses the key unless `COMMENTATOR_YOUTUBE_CLEARED=1` records that they are.
+**Status:** Accepted — shipped **off** (`COMMENTATOR_FEED=1` enables it). It stays off: the measurement gate below was run on 2026-09-28 and gate B failed its no-harm test (see "Results"). `YOUTUBE_API_KEY` stays unset until the YouTube legal preconditions below are met: the YouTube source, as designed, does what the YouTube Developer Policies prohibit (derived data from API Data), and that is unresolved. The code refuses the key unless `COMMENTATOR_YOUTUBE_CLEARED=1` records that they are.
 **Date:** 2026-09-28
 **Related:** ADR-004 (data providers), ADR-008 (US equities only; unchanged by this ADR)
 
@@ -131,9 +131,31 @@ COMMENTATOR_FEED=1 python -m backtest.llm_backtest --points META:2026-09-22 NVDA
   - the mean rating shift (bullish drift);
   - the cost per node.
 - **Cost:** about $1–2 a decision, so 4 × 25 × 2 comes to roughly $200–400.
-- **What it can establish:** expect 10–30 flips, which is little statistical power. So this is a **no-harm** gate: correct flips ≥ wrong flips, and no systematic bullish drift. If it fails, the feed stays off. No comparison script ships with this ADR; B has not been run.
+- **What it can establish:** expect 10–30 flips, which is little statistical power. So this is a **no-harm** gate: correct flips ≥ wrong flips, and no systematic bullish drift. If it fails, the feed stays off. No comparison script ships with this ADR.
 
 Both A and B must finish within the 29 days that YouTube items are kept; the daily retention pass deletes them then, flag or no flag. That pass reaches one database, the one `TRADE_LOG_DB_URL` names for the retention unit, and the backup scrub reaches only the backup copy. Whatever a gate run keeps outside it is outside every retention path, and whoever made it deletes it by the earliest `expires_at_utc` it holds (fetch + 29 days): a copy of the database made for the run (one per ticker, to run tickers in parallel, or a scratch copy for a backfill), and any output that holds paraphrases. `commentator_sentiment_diff --dry-run` prints every block, paraphrases included, so a saved dry-run dump falls under the same deletion. Its `--out` JSON lines and per-point log lines hold scores, bands and counts only. Descriptions can be edited after publication, and deleted videos are missing from a backfill. This is a small look-ahead and survivorship effect: `fetched_at_utc` marks when each item was first seen, and a later edit never replaces the first extraction.
+
+### Results, 2026-09-28
+
+Both gates ran once, under the owner's evaluation exception below.
+
+**Gate A** (125 points: SPY, META, NVDA, AMZN, AAPL × 25 dates; temperature 0; noise floor 0.0):
+
+| Points | n | mean \|Δ\| | moved (\|Δ\| > 0.5) |
+|---|---|---|---|
+| prompt lines all `unstated` | 103 | 0.01 | 0 (no tone leak) |
+| a stated stance shown | 22 | 0.53 | 13, every one in the stated direction |
+
+The baselines sat at 5.0 because Reddit returned 429 and the diff script does not install the Reddit/ApeWisdom supplement, so the block had little to compete with. Movement existed, so B ran.
+
+**Gate B** (100 points: SPY, META, NVDA, AMZN × 25 dates from 2026-06-10 to 2026-09-11, 50 of them with a stated stance; both arms from the same starting memory; Polymarket and Reddit RSS failed fast in both arms, as they were failing anyway):
+
+- 8 of 100 ratings flipped, 4 more bullish and 4 more bearish: **no drift**.
+- Against the 21-day forward return the flips were **2 correct, 5 wrong** (1 unscorable); against 10 days, 2 correct and 6 wrong. Among points with a stated stance: 0 correct, 5 wrong at 21 days.
+- Directional calls stayed rare (most points are Hold in both arms): 2 of 4 hit with the feed off, 1 of 5 with it on.
+- Cost: about $265 for the 200 decisions, estimated from token counts (the usage collector does not price the models in use).
+
+**Verdict: the no-harm gate fails** (correct flips < wrong flips). The feed stays off. Eight flips is little power, so this does not show that the commentator is wrong; it shows that adding him did not help these decisions. Re-running needs a new decision and a new exception.
 
 ## Enabling YouTube — preconditions
 
@@ -145,12 +167,13 @@ Both A and B must finish within the 29 days that YouTube items are kept; the dai
 
 The code enforces this. `config.youtube_api_key()` refuses the key, with a warning, unless `COMMENTATOR_YOUTUBE_CLEARED=1` is also set, whatever `COMMENTATOR_FEED` or `--ignore-flag` says; the fetch then skips YouTube and its summary names the missing clearance. That variable is the record that all three conditions above are true in writing. Set it only then, never to make a run work. A key alone never reaches the API, so it never creates derived data. The `.env.example` and `deploy/hetzner/install.sh` templates carry the warning next to the variable.
 
-### Evaluation exception, 2026-09-28 (gate A only)
+### Evaluation exception, 2026-09-28 (gates A and B)
 
-Canberk (owner) accepted the derived-data risk for one run of gate A, knowing the clause above. This is an exception for a measurement. It is not a clearance, and none of the three conditions above is met by it.
+Canberk (owner) accepted the derived-data risk for one run of gate A and, afterwards, one run of gate B, knowing the clause above. This is an exception for a measurement. It is not a clearance, and none of the three conditions above is met by it.
 
 - **Key:** `trading-commentator-youtube` in the `fusapp-trader` project, restricted to the YouTube Data API v3. It is held in the laptop's `agent/.env`, not on any box. `COMMENTATOR_YOUTUBE_CLEARED` is not set persistently anywhere.
 - **Data:** a 60-day backfill of 61 videos, fetched 2026-09-28 13:39 UTC into a scratch SQLite database outside the repository, plus one copy per ticker for the parallel run. The run used the code as of `e96beec`, before the key gate existed.
+- **Gate B data:** a 125-day backfill of 73 videos into a second scratch database, one copy per ticker and arm, and per-process memory and state logs, run with `COMMENTATOR_YOUTUBE_CLEARED=1` set for that process only. All of it was deleted after scoring on 2026-09-29; the ratings and forward returns are kept.
 - **Deletion:** the scratch databases and the dry-run dump are deleted once the per-point scores are summarised, and in any case by 2026-10-27 13:39 UTC, the earliest `expires_at_utc` they hold. Only scores, bands and counts are kept.
 - **Production:** unchanged. The flag stays off, and the key does not go on a box until the preconditions above are met in writing.
 

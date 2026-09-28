@@ -108,6 +108,31 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - 7e Charts, 7f Analiz-Et deep-link, 7g Settings kill-switch+health, snapshot logger
 - cost-opt routing on branch (opt-in, not deployed)
 
+## Daily loop 2026-09-28 (🔴 BROKER 401 15. gün; backtest motoru çok-isimli portföyü ticker ortalamasıyla skorluyormuş)
+- **Canlı durum alınamadı (broker 401, gün 15).** trader-stg: `/readyz` degraded `alpaca:false`,
+  `/v1/eval` **500**, snapshot **502** (box hâlâ eski commit'te — 503 mapping'i deploy edilmedi).
+  `trader.fusapp.com` başka origin'e gidiyor (`alpaca:true`, dev token "invalid token").
+- [x] **`summary_stats` mean-aggregation'ı ölçüldü ve düzeltildi** (09-09'daki yan bulgu (d)).
+  Ungrouped çok kolonlu `vbt.Portfolio` = N bağımsız tek-isim defteri; düz `stats()` her metriği
+  ticker'lar arasında **ortalıyor**. 3 isimlik seed'li kitapta ölçüm:
+  | metrik | raporlanan (mean) | gerçek kitap (summed equity) |
+  |---|---|---|
+  | Sharpe | −0.21 | −0.57 |
+  | MaxDD % | 17.6 | 12.7 |
+  | Total Trades | 9.67 | 29 |
+  Sharpe ~2.8× daha "iyi" görünüyordu. Fix: `engine.portfolio_stats()` → `stats(group_by=True)`
+  (equity_curve ile aynı toplam eğri); `BacktestResult.stats` de artık aynı kaynaktan.
+- [x] **Annualization 365 → 252.** vectorbt default `year_freq="365 days"`; business-day bar'larda
+  Sharpe'ı √(365/252) ≈ **1.20×** şişiriyor, ve bu sayılar canlı gate'e (Sharpe>1.0, 252 bazlı)
+  karşı okunuyor. `TRADING_YEAR="252 days"` motorda sabitlendi.
+  2 yeni offline test (hand-computed Sharpe/MaxDD/trade sayısına karşı + "Aggregating using"
+  uyarısı yok); eski motorda ikisi de KIRMIZI, yenide yeşil. 1230 passed; 2 fail =
+  `test_dataflows_smoke` canlı Alpaca **401** (log'da doğrulandı, beklenen). Ruff temiz.
+  Deploy YOK/gerek yok — backtest kodu, karar ve eval yolunda çalışmıyor.
+- **Açık kalan (fix EDİLMEDİ):** `backtest/run.py` ve `backtest/optimize.py` `pf.sharpe_ratio()`'yu
+  hâlâ 365 bazında çağırıyor — baseline'lar SPY ile aynı bazda kıyaslandığı için sıralama doğru,
+  ama mutlak Sharpe 1.20× şişik. Aynı `TRADING_YEAR`'a bağlamak bir sonraki küçük iş.
+
 ## Daily loop 2026-09-09 (🟢 BOX GERİ DÖNDÜ; "S3'te düşüyor, normal" dediğimiz test 16 gündür başka bir şeyde düşüyormuş)
 - **Box canlı, 16 günlük karanlık bitti.** `trader.fusapp.com` cevap veriyor: `/healthz` ok
   (`trading_mode: paper`), `/readyz` `alpaca:true db:true`. Ajan **08-09'da koşmuş** — DB'de

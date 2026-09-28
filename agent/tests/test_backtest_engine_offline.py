@@ -144,3 +144,79 @@ def test_shape_mismatch_is_refused() -> None:
     entries, exits = _sma_crossover(prices)
     with pytest.raises(ValueError, match="shape mismatch"):
         run_signal_backtest(prices, entries.iloc[:-1], exits)
+
+
+def _three_name_book() -> pd.DataFrame:
+    """Three deterministic paths that disagree: one rallies, two bleed.
+
+    Disagreement is the point. When every name has the same shape, the mean of
+    per-name metrics and the metric of the summed book coincide, and a test
+    built on that would pass against the bug it is meant to catch.
+    """
+    days = 300
+    index = pd.bdate_range("2022-01-03", periods=days, name="timestamp")
+
+    def zigzag(start: float, drift: float, swing: float, period: int) -> list[float]:
+        return [
+            start * (1 + drift * i) + swing * (1 if (i // period) % 2 else -1)
+            for i in range(days)
+        ]
+
+    return pd.DataFrame(
+        {
+            "UP": zigzag(100.0, 0.0020, 3.0, 23),
+            "DOWN": zigzag(100.0, -0.0015, 6.0, 17),
+            "CHOP": zigzag(100.0, 0.0, 8.0, 11),
+        },
+        index=index,
+    )
+
+
+def test_multi_name_summary_scores_the_book_not_the_mean_of_names() -> None:
+    """Sharpe, MaxDD and trade count are the summed book's, on a 252-day year.
+
+    Before 2026-09-28 `summary_stats` called plain `stats()`, which on an
+    ungrouped multi-column portfolio averages each metric across tickers (the
+    "Aggregating using mean" warning). Checked here against the equity curve
+    the result already exposes, computed by hand.
+    """
+    import numpy as np
+
+    from tradingagents_us.backtest import run_signal_backtest
+
+    prices = _three_name_book()
+    entries, exits = _sma_crossover(prices)
+    result = run_signal_backtest(prices, entries, exits)
+    summary = result.summary()
+
+    equity = result.equity_curve
+    # vectorbt counts the first bar as a 0% return; drop it and the hand
+    # figure drifts by ~0.2%, which reads as a failure of the thing under test.
+    returns = result.returns
+    sharpe = returns.mean() / returns.std() * np.sqrt(252)
+    max_dd = -((equity / equity.cummax()) - 1).min() * 100
+    trades = sum(
+        int(result.portfolio.trades[c].count()) for c in prices.columns
+    )
+
+    assert trades >= 3, "each path should force at least one crossover"
+    assert summary["total_trades"] == trades
+    assert summary["max_drawdown_pct"] == pytest.approx(max_dd, rel=1e-6)
+    assert summary["sharpe_ratio"] == pytest.approx(sharpe, rel=1e-6)
+    assert result.stats["Sharpe Ratio"] == pytest.approx(sharpe, rel=1e-6)
+
+
+def test_multi_name_summary_does_not_mean_aggregate() -> None:
+    """The vectorbt warning that marks the averaging path must not fire."""
+    import warnings
+
+    from tradingagents_us.backtest import run_signal_backtest
+
+    prices = _three_name_book()
+    entries, exits = _sma_crossover(prices)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        run_signal_backtest(prices, entries, exits).summary()
+
+    averaged = [w for w in caught if "Aggregating using" in str(w.message)]
+    assert not averaged, f"stats were mean-aggregated across tickers: {averaged[0].message}"

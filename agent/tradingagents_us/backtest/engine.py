@@ -18,6 +18,12 @@ import vectorbt as vbt
 
 log = logging.getLogger(__name__)
 
+#: Annualisation basis for Sharpe/Sortino/Calmar. vectorbt defaults to
+#: "365 days", which on business-day bars inflates Sharpe by sqrt(365/252)
+#: ≈ 1.20x — and the numbers this engine produces get read against the live
+#: eval gate (Sharpe > 1.0), which is computed on 252.
+TRADING_YEAR = "252 days"
+
 
 @dataclass(frozen=True)
 class BacktestConfig:
@@ -81,17 +87,30 @@ def run_signal_backtest(
         equity = equity.sum(axis=1)
     returns = equity.pct_change().fillna(0.0)
     return BacktestResult(
-        portfolio=portfolio, stats=portfolio.stats(), equity_curve=equity, returns=returns
+        portfolio=portfolio,
+        stats=portfolio_stats(portfolio),
+        equity_curve=equity,
+        returns=returns,
     )
+
+
+def portfolio_stats(portfolio: vbt.Portfolio) -> pd.Series:
+    """vectorbt stats for the book as ONE portfolio, annualised on 252 days.
+
+    An ungrouped multi-column Portfolio is N independent single-name books.
+    Plain ``stats()`` then reduces each metric with a mean across tickers:
+    the reported Sharpe is the average of per-ticker Sharpes, MaxDD the
+    average of per-ticker drawdowns, and Total Trades a fraction. Measured on
+    a 3-name book (2026-09-28): Sharpe -0.21 reported vs -0.57 on the summed
+    equity, MaxDD 17.6% vs 12.7%, 9.67 trades vs 29. ``group_by=True`` scores
+    the summed equity curve instead — the same curve ``equity_curve`` holds.
+    """
+    return portfolio.stats(group_by=True, settings={"year_freq": TRADING_YEAR})
 
 
 def summary_stats(portfolio: vbt.Portfolio) -> dict[str, float | int | str]:
     """Extract the core numbers from a vectorbt Portfolio."""
-    stats = portfolio.stats()
-    # vbt stats may be a Series or a DataFrame depending on portfolio shape;
-    # flatten to a dict of scalars where possible.
-    if isinstance(stats, pd.DataFrame):
-        stats = stats.iloc[:, 0]
+    stats = portfolio_stats(portfolio)
 
     def _g(key: str, default: float = float("nan")) -> float:
         v = stats.get(key, default)

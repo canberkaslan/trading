@@ -298,6 +298,12 @@ class CommentatorStatusRow(Base):
     fetch reads it: it stores no new post unless that pass ran recently, because
     that pass is what checks X deletions on the days the trading run does not.
 
+    `read:<source>` is the last successful read of a source, and
+    `covered_since_utc` how far back the unbroken run of reads saw everything
+    published. The prompt says "no commentary" only for a window such a read
+    covers; otherwise it says the feed is unavailable, because an empty table
+    after a missing key or a failed fetch is not an observed absence.
+
     Timestamps only. Nothing here is API data.
 
     New table — created by create_all().
@@ -307,3 +313,6 @@ class CommentatorStatusRow(Base):
 
     name: Mapped[str] = mapped_column(String(32), primary_key=True)
     at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    covered_since_utc: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

@@ -174,6 +174,53 @@ class TestRetention:
         assert report.new_items == 0 and ext.calls == []
 
 
+class TestReadsRecorded:
+    """What each successful read proves it saw — the basis for any "no commentary"."""
+
+    def _reads(self, repo: TradeLogRepository) -> dict[str, store.SourceRead]:
+        with repo.session() as s:
+            return {r.source: r for r in store.source_reads(s)}
+
+    def test_a_youtube_read_covers_its_lookback(self, repo: TradeLogRepository) -> None:
+        _run(repo, yt=FakeYouTubeAPI(_videos()).client())
+        r = self._reads(repo)["youtube"]
+        assert r.read_at == NOW and r.covered_since == NOW - config.ingest_lookback()
+
+    def test_a_youtube_read_cut_short_by_the_page_cap_covers_what_it_saw(
+        self, repo: TradeLogRepository
+    ) -> None:
+        vids = [video(f"v{i}", (NOW - timedelta(days=i)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                      f"Video {i}") for i in range(1, 7)]
+        _run(repo, yt=FakeYouTubeAPI(vids, page_size=2).client(), youtube_max_pages=1)
+        assert self._reads(repo)["youtube"].covered_since == NOW - timedelta(days=2)
+
+    def test_a_failed_or_missing_source_records_no_read(self, repo: TradeLogRepository) -> None:
+        yt = FakeYouTubeAPI(_videos())
+        yt.fail_with = 403
+        _run(repo, yt=yt.client())
+        _run(repo, yt=None)
+        assert self._reads(repo) == {}
+
+    def test_x_reads_chain_through_since_id(self, repo: TradeLogRepository) -> None:
+        api = FakeXAPI([post("1001", "2026-09-24T12:00:00Z", "a"),
+                        post("1002", "2026-09-26T12:00:00Z", "b")])
+        _run(repo, x=api.client())
+        first = self._reads(repo)["x"]
+        assert first.covered_since == datetime(2026, 9, 24, 12, tzinfo=UTC)
+        api.posts["1003"] = post("1003", "2026-09-28T23:00:00Z", "c")
+        _run(repo, x=api.client(), now=NOW + timedelta(hours=1))
+        second = self._reads(repo)["x"]
+        assert second.read_at == NOW + timedelta(hours=1)
+        assert second.covered_since == first.covered_since
+
+    def test_a_failed_deletion_check_forgets_the_x_read(self, repo: TradeLogRepository) -> None:
+        api = FakeXAPI([post("1001", "2026-09-26T12:00:00Z", "a")])
+        _run(repo, x=api.client())
+        api.fail_lookup_with = 402
+        ingest.enforce_retention(repo.session, x=api.client(), now=NOW + timedelta(hours=12))
+        assert "x" not in self._reads(repo)
+
+
 class TestMissingCredentials:
     def test_no_youtube_key_is_a_logged_skip(self, repo: TradeLogRepository) -> None:
         report = _run(repo, yt=None, x=None)

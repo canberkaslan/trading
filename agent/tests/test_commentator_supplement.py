@@ -23,7 +23,7 @@ from tradingagents_us.graph import pipeline  # noqa: E402
 from tradingagents_us.schemas import AgentDecision  # noqa: E402
 from tradingagents_us.storage import TradeLogRepository  # noqa: E402
 from tradingagents_us.storage import commentator as store  # noqa: E402
-from tradingagents_us.storage.commentator import StoredItem  # noqa: E402
+from tradingagents_us.storage.commentator import SourceRead, StoredItem  # noqa: E402
 from tradingagents_us.storage.models import DecisionCommentatorRefRow  # noqa: E402
 
 KW = {
@@ -312,10 +312,85 @@ class TestSelection:
         assert [i.source_id for i in own] == ["m1", "m2"] and macro == []
 
 
-class TestRender:
-    def test_empty_says_so(self) -> None:
+def read(source: str, at_: datetime, since: datetime) -> SourceRead:
+    return SourceRead(source=source, read_at=at_, covered_since=since)
+
+
+class TestAbsenceNeedsARead:
+    """ "No commentary" is a claim; it is made only when a read saw the window."""
+
+    def test_empty_with_a_covering_read_says_so_and_names_it(self) -> None:
+        r = read("youtube", at(28, 22, 35), at(14))
+        out = cs.render("META", [], [], start_date="2026-09-21", end_date="2026-09-28",
+                        observed=[r])
+        assert "No commentary in window (2026-09-21 to 2026-09-28) for META" in out
+        assert "read from YouTube at 2026-09-28T22:35Z" in out
+
+    def test_empty_without_a_read_says_unavailable(self) -> None:
         out = cs.render("META", [], [], start_date="2026-09-15", end_date="2026-09-22")
-        assert "No commentary in window" in out
+        assert "No commentary" not in out
+        assert "Commentator feed unavailable" in out and "not an absence of commentary" in out
+
+    def test_flag_on_with_no_keys_claims_no_absence(self) -> None:
+        # The fetch no-op'd: nothing stored, nothing read. The block must not
+        # tell the analyst there was no commentary.
+        block, used = cs.build_block("NVDA", "2026-09-21", "2026-09-28",
+                                     run_start=at(28, 22, 40), now=at(28, 22, 41),
+                                     load=lambda *a: [], load_reads=lambda: [])
+        assert used == [] and "No commentary" not in block
+        assert "not an absence of commentary" in block
+
+    def test_a_fresh_live_read_proves_an_empty_window(self) -> None:
+        reads = [read("youtube", at(28, 22, 35), at(14, 22, 35))]
+        block, _ = cs.build_block("NVDA", "2026-09-21", "2026-09-28",
+                                  live_anchor=at(28, 22, 35), now=at(28, 23),
+                                  load=lambda *a: [], load_reads=lambda: reads)
+        assert "No commentary in window" in block
+
+    def test_a_failed_fetch_today_leaves_only_yesterdays_read(self) -> None:
+        # Today's fetch hit the quota or the 600s timeout; the last good read
+        # is yesterday's, which saw nothing of today.
+        reads = [read("youtube", at(25, 22, 35), at(11, 22, 35))]
+        observed = cs.covering_reads(reads, start=at(21, 0), limit=at(28, 22, 35), live=True,
+                                     now=at(28, 23))
+        assert observed == []
+
+    def test_a_read_that_does_not_reach_the_window_start(self) -> None:
+        reads = [read("youtube", at(28, 22, 35), at(23))]
+        assert cs.covering_reads(reads, start=at(21, 0), limit=at(28, 22, 35), live=True,
+                                 now=at(28, 23)) == []
+
+    def test_a_backtest_window_the_reads_saw(self) -> None:
+        reads = [read("youtube", at(28, 22, 35), at(1))]
+        got = cs.covering_reads(reads, start=at(15, 0), limit=at(22, 0), live=False,
+                                now=at(28, 23))
+        assert got == reads
+
+    def test_a_window_older_than_retention_is_not_proven(self) -> None:
+        # Items published that early may already have been purged.
+        reads = [read("youtube", datetime(2026, 10, 30, tzinfo=UTC), at(1))]
+        assert cs.covering_reads(reads, start=at(15, 0), limit=at(22, 0), live=False,
+                                 now=datetime(2026, 10, 30, 1, tzinfo=UTC)) == []
+
+    def test_an_x_read_older_than_a_day_proves_nothing(self) -> None:
+        # Its posts would already be hidden by the deletion-check rule.
+        reads = [read("x", at(26, 22, 35), at(18))]
+        assert cs.covering_reads(reads, start=at(21, 0), limit=at(22, 0), live=False,
+                                 now=at(28, 23)) == []
+        assert cs.covering_reads(reads, start=at(21, 0), limit=at(22, 0), live=False,
+                                 now=at(27, 12)) == reads
+
+    def test_the_wrapper_says_unavailable_when_nothing_was_read(
+        self, analyst, feed_on, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(cs, "_load_items", lambda *a: [])
+        monkeypatch.setattr(cs, "_load_reads", lambda: [])
+        cs.install()
+        out = analyst._build_system_message(**KW)
+        assert "No commentary" not in out and "not an absence of commentary" in out
+
+
+class TestRender:
 
     def test_it_is_labelled_as_one_commentators_opinion(self) -> None:
         out = cs.render("META", [item("v1", at(20))], [], start_date="s", end_date="e")

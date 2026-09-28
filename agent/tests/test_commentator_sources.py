@@ -23,6 +23,7 @@ from tradingagents_us.dataflows.commentator.x_source import fetch_new
 from tradingagents_us.dataflows.commentator.youtube_source import (
     boilerplate_lines,
     fetch_recent,
+    fetch_window,
     split_description,
 )
 
@@ -128,6 +129,22 @@ class TestYouTubeFetch:
         fetch_recent(api.client(), CHANNEL, since=datetime(2026, 9, 24, tzinfo=UTC), max_pages=5)
         playlist_calls = [r for r in api.requests if r.url.path.endswith("/playlistItems")]
         assert len(playlist_calls) == 2  # page 2 reaches 09-22, before the horizon
+
+    def test_a_read_that_reaches_the_horizon_covers_it(self) -> None:
+        since = datetime(2026, 9, 24, tzinfo=UTC)
+        _, covered = fetch_window(FakeYouTubeAPI(_channel(), page_size=2).client(), CHANNEL,
+                                  since=since, max_pages=5)
+        assert covered == since
+
+    def test_a_read_cut_short_covers_only_back_to_the_oldest_upload_seen(self) -> None:
+        _, covered = fetch_window(FakeYouTubeAPI(_channel(), page_size=2).client(), CHANNEL,
+                                  since=SINCE, max_pages=1)
+        assert covered == datetime(2026, 9, 25, 9, tzinfo=UTC)
+
+    def test_the_end_of_the_playlist_covers_the_horizon(self) -> None:
+        _, covered = fetch_window(FakeYouTubeAPI(_channel()[:3]).client(), CHANNEL,
+                                  since=SINCE, max_pages=1)
+        assert covered == SINCE
 
     def test_a_quota_refusal_raises_for_the_ingest_step_to_report(self) -> None:
         api = FakeYouTubeAPI(_channel())

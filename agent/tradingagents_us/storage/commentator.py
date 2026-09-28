@@ -52,6 +52,9 @@ _STASH_LIMIT = 256
 #: `commentator_status` name of the flag-independent daily retention pass.
 RETENTION_PASS = "retention"
 
+#: `commentator_status` names of the last successful read of each source.
+_READ_PREFIX = "read:"
+
 #: Sources whose deletions must be honoured (X Developer Agreement). A row
 #: from one of these is readable only while its last liveness check is fresh.
 DELETION_CHECKED_SOURCES = frozenset({"x"})
@@ -101,6 +104,19 @@ class StoredItem:
     claim_en: str = ""
     is_promo: bool = False
     is_market_content: bool = False
+
+
+@dataclass(frozen=True)
+class SourceRead:
+    """The last successful read of a source, and how far back reads saw everything.
+
+    Every item the source published in `[covered_since, read_at]` was read —
+    by this read or by the unbroken run of reads before it.
+    """
+
+    source: str
+    read_at: datetime
+    covered_since: datetime
 
 
 def _to_stored(row: CommentatorItemRow) -> StoredItem:
@@ -175,6 +191,21 @@ def extracted_items_between(
         .order_by(CommentatorItemRow.published_at_utc.desc())
     )
     return [_to_stored(r) for r in rows]
+
+
+def source_reads(session: Session) -> list[SourceRead]:
+    rows = session.scalars(
+        select(CommentatorStatusRow).where(CommentatorStatusRow.name.startswith(_READ_PREFIX))
+    )
+    return [
+        SourceRead(
+            source=r.name.removeprefix(_READ_PREFIX),
+            read_at=aware(r.at_utc),
+            covered_since=aware(r.covered_since_utc),
+        )
+        for r in rows
+        if r.covered_since_utc is not None
+    ]
 
 
 def status_at(session: Session, name: str) -> datetime | None:
@@ -284,8 +315,34 @@ def record_status(session: Session, name: str, at: datetime) -> None:
         row.at_utc = aware(at)
 
 
+def record_read(
+    session: Session, source: str, *, at: datetime, covered_since: datetime
+) -> None:
+    """Record a successful read that saw everything published in `[covered_since, at]`.
+
+    Chained: when this read reaches back to the previous one's time, the
+    stretch the earlier reads proved is kept; after a gap, it starts afresh.
+    """
+    name = _READ_PREFIX + source
+    at, lower = aware(at), aware(covered_since)
+    row = session.get(CommentatorStatusRow, name)
+    if row is None:
+        session.add(CommentatorStatusRow(name=name, at_utc=at, covered_since_utc=lower))
+        return
+    if row.covered_since_utc is not None and lower <= aware(row.at_utc):
+        lower = min(lower, aware(row.covered_since_utc))
+    row.at_utc, row.covered_since_utc = at, lower
+
+
 def purge_source(session: Session, source: str) -> int:
-    """Delete every item from one source (used when its deletions can no longer be checked)."""
+    """Delete every item from one source (used when its deletions can no longer be checked).
+
+    Its read record goes too: what those reads saw is no longer stored, so
+    they no longer prove an empty window empty.
+    """
+    session.execute(
+        delete(CommentatorStatusRow).where(CommentatorStatusRow.name == _READ_PREFIX + source)
+    )
     return purge(
         session,
         list(

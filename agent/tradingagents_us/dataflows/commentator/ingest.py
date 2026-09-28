@@ -32,7 +32,7 @@ from tradingagents_us.storage.commentator import Extraction
 from . import config
 from .items import YOUTUBE, RawItem, X
 from .x_source import XClient, fetch_new, to_raw_item
-from .youtube_source import YouTubeClient, fetch_recent
+from .youtube_source import YouTubeClient, fetch_window
 
 log = logging.getLogger(__name__)
 
@@ -126,7 +126,7 @@ def _youtube_step(
     max_pages: int,
     report: IngestReport,
 ) -> None:
-    items = fetch_recent(
+    items, covered_since = fetch_window(
         client, config.YOUTUBE_CHANNEL_ID, since=now - lookback, max_pages=max_pages
     )
     report.fetched[YOUTUBE] = len(items)
@@ -135,6 +135,8 @@ def _youtube_step(
             s, items, extractor=extractor, model=model, now=now,
             expires_at=now + config.YOUTUBE_RETENTION, report=report,
         )
+        # Committed with the items, so a read is recorded only if it landed.
+        store.record_read(s, YOUTUBE, at=now, covered_since=covered_since or now)
 
 
 def _x_check_deletions(
@@ -236,18 +238,31 @@ def _x_fetch(
 ) -> None:
     with sessions() as s:
         since_id = store.newest_numeric_id(s, X)
+        since_row = store.get_rows(s, [store.item_key(X, since_id)]) if since_id else {}
+        since_published = next(
+            (store.aware(r.published_at_utc) for r in since_row.values()), None
+        )
     items = fetch_new(
         client, user_id, since_id=since_id,
         first_run_max=config.X_FIRST_RUN_MAX,
         expected_username=config.X_EXPECTED_USERNAME,
     )
     report.fetched[X] = len(items)
+    # What this read proves it saw: everything after the since_id post (the
+    # earlier reads saw that one), or on a first run the newest posts back to
+    # the oldest returned. A since_id is at most a retention window old, so
+    # the page cap (300 posts) is never what ends a read of this account.
+    if since_id is not None:
+        covered_since = since_published or now
+    else:
+        covered_since = min((i.published_at for i in items), default=now)
     with sessions() as s:
         _store(
             s, items, extractor=extractor, model=model, now=now,
             expires_at=now + config.x_retention(), report=report,
             verified_at=now,  # X served it just now
         )
+        store.record_read(s, X, at=now, covered_since=covered_since)
 
 
 def run(

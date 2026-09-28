@@ -28,6 +28,14 @@ decision would have been made. So on top of it:
     that day is unknown.
 An undated item is refused outright, backtest or live.
 
+Absence. "No commentary in window" is said only when a recorded successful
+read covers the window (`commentator_status`): its reads reach back to the
+window's start, it happened no earlier than the cutoff (a live run: at most
+LIVE_READ_MAX_AGE before), and nothing it read can have been purged since.
+Otherwise — no key, a failed or timed-out fetch, a window older than the
+reads or than retention — the block says the feed is unavailable. An empty
+table is not an observed absence.
+
 The seam is the same one `sentiment_supplement` uses: the analyst node resolves
 `_build_system_message` from its module globals at call time, so rebinding that
 name wraps it with no vendor file edited. The wrapper checks the flag on every
@@ -46,9 +54,10 @@ from functools import lru_cache
 from typing import Any
 
 from tradingagents_us.dataflows.commentator import config
+from tradingagents_us.dataflows.commentator.items import YOUTUBE, X
 from tradingagents_us.storage import TradeLogRepository
 from tradingagents_us.storage import commentator as store
-from tradingagents_us.storage.commentator import StoredItem
+from tradingagents_us.storage.commentator import SourceRead, StoredItem
 
 log = logging.getLogger(__name__)
 
@@ -65,6 +74,10 @@ LIVE_AS_OF_ENV = "COMMENTATOR_LIVE_AS_OF"
 #: How long after its trade date a live anchor may fall: a run starts at
 #: 22:30 UTC and its fetch can slip past midnight, never past the next day.
 _LIVE_ANCHOR_MAX_LAG = timedelta(days=1)
+
+#: A live run reads before its tickers start; a read this long before the
+#: cutoff still counts as having seen the window. The daily run's systemd cap.
+LIVE_READ_MAX_AGE = timedelta(hours=6)
 
 #: Market-wide items are keyed as SPY by the extractor; an item with macro
 #: topics and no ticker at all is market-wide too. SPY's own analyst reads
@@ -226,6 +239,46 @@ def select(
     return own, macro
 
 
+def _retention(source: str) -> timedelta:
+    if source == YOUTUBE:
+        return config.YOUTUBE_RETENTION
+    if source == X:
+        return config.x_retention()
+    return timedelta(0)
+
+
+def covering_reads(
+    reads: Sequence[SourceRead],
+    *,
+    start: datetime,
+    limit: datetime,
+    live: bool,
+    now: datetime,
+) -> list[SourceRead]:
+    """The reads that prove an empty window `[start, limit]` really was empty.
+
+    A read counts when it reaches back to `start`, happened no earlier than
+    `limit` (in a live run, at most LIVE_READ_MAX_AGE before it: the fetch
+    precedes the tickers), and everything it read is still stored: an item
+    published at `start` or later cannot have reached its retention deadline
+    before `start` + retention. An X read also has to be recent enough that
+    its posts still pass the read path's deletion-check rule.
+    """
+    grace = LIVE_READ_MAX_AGE if live else timedelta(0)
+    out = []
+    for r in reads:
+        if r.covered_since > start or r.read_at < limit - grace:
+            continue
+        if now >= start + _retention(r.source):
+            continue
+        if r.source in store.DELETION_CHECKED_SOURCES and (
+            now - r.read_at > store.DELETION_CHECK_MAX_AGE
+        ):
+            continue
+        out.append(r)
+    return sorted(out, key=lambda r: r.source, reverse=True)  # YouTube, then X
+
+
 # ------------------------------------------------------------------ rendering
 
 
@@ -262,15 +315,27 @@ def render(
     *,
     start_date: str,
     end_date: str,
+    observed: Sequence[SourceRead] = (),
 ) -> str:
+    """The section. With no items, absence is claimed only on `observed` reads."""
     sym = ticker.upper()
     lines = [_line(i, sym, market_wide=sym == MARKET_KEY and sym not in i.tickers)
              for i in ticker_items]
     lines += [_line(i, sym, market_wide=True) for i in macro_items]
-    body = "\n".join(lines) if lines else (
-        f"No commentary in window ({start_date} to {end_date}) for {sym} or the broad market."
+    if lines:
+        return _wrap("\n".join(lines))
+    if not observed:
+        return unavailable(
+            f"no successful read of his channels covers {start_date} to {end_date}"
+        )
+    reads = ", ".join(
+        f"{_SOURCE_LABEL.get(r.source, r.source)} at {r.read_at.strftime('%Y-%m-%dT%H:%MZ')}"
+        for r in observed
     )
-    return _wrap(body)
+    return _wrap(
+        f"No commentary in window ({start_date} to {end_date}) for {sym} or the broad "
+        f"market (read from {reads})."
+    )
 
 
 def _wrap(body: str) -> str:
@@ -309,6 +374,11 @@ def _repo() -> TradeLogRepository:
     return TradeLogRepository(engine=create_engine(url, future=True))
 
 
+def _load_reads() -> list[SourceRead]:
+    with _repo().session() as s:
+        return store.source_reads(s)
+
+
 def _load_items(start: datetime, end: datetime) -> list[StoredItem]:
     # The wall clock, even on a backtest: an item past its retention deadline
     # is never shown, whenever the purge last ran.
@@ -325,6 +395,7 @@ def build_block(
     now: datetime | None = None,
     live_anchor: datetime | None = None,
     load: Callable[[datetime, datetime], list[StoredItem]] | None = None,
+    load_reads: Callable[[], list[SourceRead]] | None = None,
 ) -> tuple[str, list[StoredItem]]:
     """The rendered section and the items in it."""
     now = now or datetime.now(UTC)
@@ -332,7 +403,16 @@ def build_block(
     items = loader(_day(start_date), _day(end_date) + timedelta(days=1))
     own, macro = select(items, ticker, start_date, end_date, run_start=run_start, now=now,
                         live_anchor=live_anchor)
-    return render(ticker, own, macro, start_date=start_date, end_date=end_date), own + macro
+    observed: list[SourceRead] = []
+    if not own and not macro:  # only an empty block makes a claim that needs proof
+        limit, live = cutoff(end_date, run_start=run_start, now=now, live_anchor=live_anchor)
+        observed = covering_reads(
+            (load_reads or _load_reads)(), start=_day(start_date), limit=limit, live=live,
+            now=now,
+        )
+    block = render(ticker, own, macro, start_date=start_date, end_date=end_date,
+                   observed=observed)
+    return block, own + macro
 
 
 # ------------------------------------------------------------------ install

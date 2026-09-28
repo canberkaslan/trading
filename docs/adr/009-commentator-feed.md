@@ -38,7 +38,7 @@ The scope question is smaller than it looked. In a 15-upload sample (09-18 → 0
   `- 2026-09-22T09:30Z [YouTube iIVDlDLd9yk] also on: NVDA; topics: Nasdaq rally breadth; stance on META: unstated; paraphrase: …`
   - At most 5 items about the ticker itself.
   - Market-wide items are keyed as SPY, or carry macro topics and no ticker at all. A single-name item with a macro topic (NVDA with "AI capex") is not market-wide. The SPY analyst reads market-wide items as its own. Every other ticker gets at most one market-wide line.
-  - With nothing in the window, the block says "No commentary in window".
+  - With nothing in the window, the block says "No commentary in window" only when a recorded successful read covers it, and names that read (`read from YouTube at …`). A read covers the window when the unbroken run of reads reaches back to its start, it happened no earlier than the cutoff (a live run: at most 6 hours before, the fetch comes first), and nothing it read can have been purged since. Otherwise — no key, a failed or timed-out fetch, a window older than the reads or than retention — the block says the feed is unavailable, not that there was no commentary. An empty table is not an observed absence.
   - Promo-first items and off-topic items (mindset, crypto-only, BIST) are dropped. This is scope option A: ADR-008 stands, and the universe is not widened to his names.
 - **Language.** Each item is read once by the same cheap tier `translate.py` uses (Haiku) and reduced to English fields:
   - `tickers[]`
@@ -141,7 +141,7 @@ Whether sending X post text to an LLM API for extraction is compatible with the 
 - A reusable once-per-run, per-item cache pattern. Every other social source still re-fetches per ticker.
 
 **Costs**
-- About $0.002 of Haiku per new item (an estimate, not measured), a few X posts at $0.005 each when X is enabled, and extra prompt tokens on every sentiment call while the feed is on: about 850 characters (~200 tokens) for an empty block and about 2,500 (~600 tokens) for a full one.
+- About $0.002 of Haiku per new item (an estimate, not measured), a few X posts at $0.005 each when X is enabled, and extra prompt tokens on every sentiment call while the feed is on: about 900 characters (~220 tokens) for an empty or unavailable block and about 2,500 (~600 tokens) for a full one.
 
 **Accepted risks**
 - **Stance is mostly `unstated` on YouTube,** because the view is spoken and transcripts are off-limits. The block will often carry topics rather than views. That is accurate: it is all that can be known.

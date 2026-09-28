@@ -224,10 +224,14 @@ def to_raw_item(
     )
 
 
-def fetch_recent(
+def fetch_window(
     client: YouTubeClient, channel_id: str, *, since: datetime, max_pages: int = 1
-) -> list[RawItem]:
-    """Uploads published at or after `since`, newest first.
+) -> tuple[list[RawItem], datetime | None]:
+    """`(items, covered_since)`: uploads published at or after `since`, newest first.
+
+    `covered_since` is how far back this read saw every upload: `since` when
+    the pages reached it (or the playlist ended), the oldest upload seen when
+    `max_pages` ran out first, None when nothing dated was seen at all.
 
     Always reads at least one full page (fifty uploads) even when only a few
     are new: the boilerplate filter needs a batch to see what repeats, and the
@@ -236,14 +240,20 @@ def fetch_recent(
     playlist = client.uploads_playlist_id(channel_id)
     videos: list[dict[str, Any]] = []
     token: str | None = None
+    oldest: datetime | None = None
+    reached = False
     for _ in range(max(1, max_pages)):
         ids, token = client.playlist_page(playlist, page_token=token)
         if not ids:
+            reached = True
             break
         page = client.videos(ids)
         videos.extend(page)
         dates = [d for d in (published_at(v) for v in page) if d is not None]
+        if dates:
+            oldest = min([*dates, oldest]) if oldest else min(dates)
         if token is None or (dates and min(dates) < since):
+            reached = True
             break
 
     boilerplate = boilerplate_lines(
@@ -251,4 +261,11 @@ def fetch_recent(
     )
     items = [to_raw_item(v, channel_id, boilerplate) for v in videos]
     fresh = [i for i in items if i is not None and i.published_at >= since]
-    return sorted(fresh, key=lambda i: i.published_at, reverse=True)
+    return sorted(fresh, key=lambda i: i.published_at, reverse=True), since if reached else oldest
+
+
+def fetch_recent(
+    client: YouTubeClient, channel_id: str, *, since: datetime, max_pages: int = 1
+) -> list[RawItem]:
+    """Uploads published at or after `since`, newest first (see `fetch_window`)."""
+    return fetch_window(client, channel_id, since=since, max_pages=max_pages)[0]

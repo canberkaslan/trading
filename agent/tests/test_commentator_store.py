@@ -127,6 +127,35 @@ class TestRetention:
 
         assert frozenset({X}) == store.DELETION_CHECKED_SOURCES
 
+    def test_reads_chain_while_each_reaches_back_to_the_last(
+        self, repo: TradeLogRepository
+    ) -> None:
+        with repo.session() as s:
+            store.record_read(s, "youtube", at=NOW, covered_since=NOW - timedelta(days=120))
+        with repo.session() as s:  # the next day's routine read overlaps: the backfill holds
+            store.record_read(s, "youtube", at=NOW + timedelta(days=1),
+                              covered_since=NOW - timedelta(days=13))
+        with repo.session() as s:
+            (r,) = store.source_reads(s)
+        assert r.source == "youtube" and r.read_at == NOW + timedelta(days=1)
+        assert r.covered_since == NOW - timedelta(days=120)
+
+        with repo.session() as s:  # a read that starts after the last one: a gap
+            store.record_read(s, "youtube", at=NOW + timedelta(days=30),
+                              covered_since=NOW + timedelta(days=16))
+        with repo.session() as s:
+            (r,) = store.source_reads(s)
+        assert r.covered_since == NOW + timedelta(days=16)
+
+    def test_purging_a_source_forgets_its_reads(self, repo: TradeLogRepository) -> None:
+        with repo.session() as s:
+            store.record_read(s, "x", at=NOW, covered_since=NOW - timedelta(days=5))
+            store.record_read(s, "youtube", at=NOW, covered_since=NOW - timedelta(days=5))
+        with repo.session() as s:
+            store.purge_source(s, "x")
+        with repo.session() as s:
+            assert [r.source for r in store.source_reads(s)] == ["youtube"]
+
     def test_a_status_is_recorded_and_overwritten(self, repo: TradeLogRepository) -> None:
         with repo.session() as s:
             assert store.status_at(s, store.RETENTION_PASS) is None

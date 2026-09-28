@@ -214,6 +214,31 @@ class TestSelection:
                                now=TODAY)
         assert own == [] and [i.source_id for i in macro] == ["m1"]
 
+    def test_a_single_name_item_with_a_macro_topic_is_not_market_wide(self) -> None:
+        # The extractor tags themes such as "AI capex" on any item. An NVDA-only
+        # claim must not reach other tickers as the broad-market line, nor push
+        # out the real market item.
+        items = [
+            item("nvda1", at(21), tickers=("NVDA",), topics=("AI capex",),
+                 stance={"NVDA": "bullish"}, claim="NVDA will break out on China chip sales."),
+            item("spy1", at(20), tickers=("SPY",), topics=("Fed rates",),
+                 stance={"SPY": "bearish"}),
+        ]
+        own, macro = cs.select(items, "AAPL", "2026-09-15", "2026-09-22", run_start=None,
+                               now=TODAY)
+        assert own == [] and [i.source_id for i in macro] == ["spy1"]
+        out = cs.render("AAPL", own, macro, start_date="s", end_date="e")
+        assert "nvda1" not in out and "broad-market stance: bearish" in out
+
+        spy_own, _ = cs.select(items, "SPY", "2026-09-15", "2026-09-22", run_start=None,
+                               now=TODAY)
+        assert [i.source_id for i in spy_own] == ["spy1"]
+
+        nvda_own, nvda_macro = cs.select(items, "NVDA", "2026-09-15", "2026-09-22",
+                                         run_start=None, now=TODAY)
+        assert [i.source_id for i in nvda_own] == ["nvda1"]
+        assert [i.source_id for i in nvda_macro] == ["spy1"]
+
     def test_spy_reads_market_wide_items_as_its_own(self) -> None:
         items = [item("m1", at(21), tickers=("SPY",), topics=("Fed rates",)),
                  item("m2", at(20), tickers=(), topics=("Oil",))]

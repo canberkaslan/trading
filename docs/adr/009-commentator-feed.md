@@ -37,7 +37,7 @@ The scope question is smaller than it looked. In a 15-upload sample (09-18 → 0
 - **Item format.** An item shows only derived fields and an id, like this:
   `- 2026-09-22T09:30Z [YouTube iIVDlDLd9yk] also on: NVDA; topics: Nasdaq rally breadth; stance on META: unstated; paraphrase: …`
   - At most 5 items about the ticker itself.
-  - Market-wide items are keyed as SPY. The SPY analyst reads them as its own items. Every other ticker gets at most one market-wide line.
+  - Market-wide items are keyed as SPY, or carry macro topics and no ticker at all. A single-name item with a macro topic (NVDA with "AI capex") is not market-wide. The SPY analyst reads market-wide items as its own. Every other ticker gets at most one market-wide line.
   - With nothing in the window, the block says "No commentary in window".
   - Promo-first items and off-topic items (mindset, crypto-only, BIST) are dropped. This is scope option A: ADR-008 stands, and the universe is not widened to his names.
 - **Language.** Each item is read once by the same cheap tier `translate.py` uses (Haiku) and reduced to English fields:

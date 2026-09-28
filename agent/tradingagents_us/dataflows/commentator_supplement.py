@@ -52,7 +52,8 @@ MARKER = "## How to analyze this data"
 #: At most this many items about the ticker itself.
 MAX_ITEMS_PER_TICKER = 5
 
-#: Market-wide items are keyed as SPY by the extractor. SPY's own analyst reads
+#: Market-wide items are keyed as SPY by the extractor; an item with macro
+#: topics and no ticker at all is market-wide too. SPY's own analyst reads
 #: them as ticker items; every other ticker gets at most this many.
 MARKET_KEY = "SPY"
 MAX_MACRO_LINES = 1
@@ -159,7 +160,10 @@ def select(
     sym = ticker.upper()
 
     def is_market_wide(item: StoredItem) -> bool:
-        return MARKET_KEY in item.tickers or bool(item.macro_topics)
+        # A macro topic alone does not make it market-wide: the extractor tags
+        # themes like "AI capex" on single-name items, and an NVDA-only claim
+        # must not reach AAPL's analyst as broad-market commentary.
+        return MARKET_KEY in item.tickers or (bool(item.macro_topics) and not item.tickers)
 
     if sym == MARKET_KEY:
         return [i for i in pool if is_market_wide(i)][:MAX_ITEMS_PER_TICKER], []

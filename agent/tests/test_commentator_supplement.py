@@ -254,8 +254,18 @@ class TestNoLookAhead:
     def test_an_undated_item_is_refused(self) -> None:
         # Undated cannot be kept out of a backtest, so it is refused on live
         # runs too — unlike the vendor's in_window, which keeps it live.
-        own, macro = cs.select([item("nodate", None)], "META", "2026-09-21", "2026-09-28",
-                               run_start=at(28, 22), now=at(28, 22, 5))
+        # in_window decides "live" by the wall clock, not by `now`, so the
+        # window is built from the real date: a fixed one would stop being
+        # live for in_window a day later, and the test would pass with the
+        # refusal deleted.
+        from tradingagents.dataflows.date_window import in_window
+
+        started = datetime.now(UTC)
+        end = started.date()
+        start, end_date = (end - timedelta(days=7)).isoformat(), end.isoformat()
+        assert in_window(None, cs._day(start), cs._day(end_date))  # the vendor keeps it
+        own, macro = cs.select([item("nodate", None)], "META", start, end_date,
+                               run_start=started, now=started + timedelta(minutes=5))
         assert own == [] and macro == []
 
 

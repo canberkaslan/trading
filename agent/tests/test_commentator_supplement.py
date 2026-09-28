@@ -574,10 +574,25 @@ class TestRender:
 
 
 class TestDecisionLink:
+    @staticmethod
+    def _repo_holding(items: list[StoredItem]) -> TradeLogRepository:
+        """A trade log holding the items the prompt shows, as the fetch left them."""
+        repo = TradeLogRepository(engine=create_engine("sqlite://", future=True))
+        with repo.session() as s:
+            for it in items:
+                store.upsert_item(
+                    s, source=it.source, source_id=it.source_id, channel_id="c",
+                    url=f"https://e/{it.source_id}", published_at=it.published_at,
+                    content_sha256="h", now=TODAY, expires_at=TODAY + timedelta(days=8),
+                    extraction=None, extraction_model=None,
+                )
+        return repo
+
     def test_bind_then_save_writes_the_refs(self, analyst, feed_on,
                                             monkeypatch: pytest.MonkeyPatch) -> None:
-        repo = TradeLogRepository(engine=create_engine("sqlite://", future=True))
-        monkeypatch.setattr(cs, "_load_items", lambda *a: [item("v1", at(20))])
+        shown = [item("v1", at(20))]
+        repo = self._repo_holding(shown)
+        monkeypatch.setattr(cs, "_load_items", lambda *a: shown)
         cs.install()
         cs.begin_run("META", "2026-09-22")
         analyst._build_system_message(**KW)
@@ -595,9 +610,9 @@ class TestDecisionLink:
     def test_the_nth_ref_is_the_item_labelled_cn(self, analyst, feed_on,
                                                   monkeypatch: pytest.MonkeyPatch) -> None:
         # The report cites [C2]; the refs table is where that resolves.
-        repo = TradeLogRepository(engine=create_engine("sqlite://", future=True))
         items = [item("v1", at(21)), item("v2", at(20)), item("x9", at(19), source="x"),
                  item("m1", at(18), tickers=(), topics=("Fed rates",))]
+        repo = self._repo_holding(items)
         monkeypatch.setattr(cs, "_load_items", lambda *a: items)
         cs.install()
         prompt = analyst._build_system_message(**KW)

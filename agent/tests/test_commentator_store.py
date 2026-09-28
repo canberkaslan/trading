@@ -187,12 +187,38 @@ class TestPurgeAndRefs:
             assert s.get(CommentatorItemRow, "x:1001") is None
 
     def test_save_decision_writes_stashed_refs_once(self, repo: TradeLogRepository) -> None:
+        _put(repo, "youtube", "a", expires=NOW + timedelta(days=29))
+        _put(repo, "youtube", "b", expires=NOW + timedelta(days=29))
         store.stash_decision_refs("dec-2", [("youtube", "youtube:a"), ("youtube", "youtube:b")])
         repo.save_decision(_decision("dec-2"))
         repo.save_decision(_decision("dec-2"))  # a re-save must not duplicate them
         with repo.session() as s:
             refs = s.scalars(select(DecisionCommentatorRefRow.item_id)).all()
         assert sorted(refs) == ["youtube:a", "youtube:b"]
+
+    def test_an_item_purged_before_the_save_is_cited_with_no_id(self, tmp_path: Path) -> None:
+        # The refs are stashed when the prompt is built; the decision is saved
+        # minutes later. A retention pass in between (an X deletion found) has
+        # nothing to scrub yet, so the save itself must not write the id.
+        db = tmp_path / "local.db"
+        repo = TradeLogRepository(engine=create_engine(f"sqlite:///{db}", future=True))
+        _put(repo, "x", "1790000000000000001", expires=NOW + timedelta(days=8))
+        _put(repo, "youtube", "v1", expires=NOW + timedelta(days=29))
+        store.stash_decision_refs(
+            "dec-race", [("x", "x:1790000000000000001"), ("youtube", "youtube:v1")]
+        )
+        with repo.session() as s:
+            assert store.purge(s, ["x:1790000000000000001"]) == 1
+        repo.save_decision(_decision("dec-race"))
+        with repo.session() as s:
+            refs = s.execute(
+                select(DecisionCommentatorRefRow.source, DecisionCommentatorRefRow.item_id)
+                .order_by(DecisionCommentatorRefRow.id)
+            ).all()
+        repo.engine.dispose()
+        # [C1] still resolves to "an X post", [C2] to its video.
+        assert [tuple(r) for r in refs] == [("x", None), ("youtube", "youtube:v1")]
+        assert b"1790000000000000001" not in db.read_bytes()
 
     def test_with_nothing_stashed_save_decision_writes_no_refs(
         self, repo: TradeLogRepository

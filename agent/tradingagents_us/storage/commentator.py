@@ -328,15 +328,17 @@ def purge(session: Session, item_ids: Sequence[str]) -> int:
     if not ids:
         return 0
     _zero_freed_space(session)
+    # Delete, then scrub: a save that checked an item under its row lock
+    # (`write_decision_refs`) has committed its refs before this scrub reads.
+    deleted = session.execute(
+        delete(CommentatorItemRow).where(CommentatorItemRow.item_id.in_(ids))
+    ).rowcount
     session.execute(
         update(DecisionCommentatorRefRow)
         .where(DecisionCommentatorRefRow.item_id.in_(ids))
         .values(item_id=None)
     )
-    result = session.execute(
-        delete(CommentatorItemRow).where(CommentatorItemRow.item_id.in_(ids))
-    )
-    return int(result.rowcount or 0)
+    return int(deleted or 0)
 
 
 def purge_expired(session: Session, now: datetime) -> int:
@@ -429,11 +431,28 @@ def write_decision_refs(session: Session, decision_id: str) -> int:
         return 0
     _zero_freed_space(session)
     session.flush()
+    # The refs were stashed when the prompt was built, minutes before this
+    # save; a retention pass in between may have purged an item. Its scrub
+    # only reached refs that existed then, so a purged item's ref is written
+    # with no id. Checked inside the save's transaction, after the flush wrote
+    # the decision row: on SQLite that write holds the database's write lock,
+    # so no purge can commit until this save has; on Postgres the row locks
+    # taken here do the same, because `purge` deletes before it scrubs.
+    live = set(
+        session.scalars(
+            select(CommentatorItemRow.item_id)
+            .where(CommentatorItemRow.item_id.in_([key for _, key in refs]))
+            .with_for_update()
+        )
+    )
     now = datetime.now(UTC)
     for source, key in refs:
         session.add(
             DecisionCommentatorRefRow(
-                decision_id=decision_id, source=source, item_id=key, created_at_utc=now
+                decision_id=decision_id,
+                source=source,
+                item_id=key if key in live else None,
+                created_at_utc=now,
             )
         )
     return len(refs)

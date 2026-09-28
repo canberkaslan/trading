@@ -38,13 +38,22 @@ TODAY = datetime(2026, 9, 28, 12, 0, tzinfo=UTC)
 
 
 def item(sid: str, when: datetime | None, *, tickers=("META",), topics=(), stance=None,
-         promo=False, market=True, source="youtube", claim="A paraphrase.") -> StoredItem:
+         promo=False, market=True, source="youtube", claim="A paraphrase.",
+         extracted=True) -> StoredItem:
     return StoredItem(
         item_id=f"{source}:{sid}", source=source, source_id=sid,
         published_at=when,  # type: ignore[arg-type] — None exercises the refusal
         tickers=tuple(tickers), macro_topics=tuple(topics),
         stance=stance or {t: "unstated" for t in tickers}, claim_en=claim,
-        is_promo=promo, is_market_content=market,
+        is_promo=promo, is_market_content=market, extracted=extracted,
+    )
+
+
+def unread_item(sid: str, when: datetime, *, source="youtube") -> StoredItem:
+    """As `store.items_between` returns a row whose extraction never succeeded."""
+    return StoredItem(
+        item_id=f"{source}:{sid}", source=source, source_id=sid, published_at=when,
+        tickers=(), macro_topics=(), extracted=False,
     )
 
 
@@ -398,6 +407,84 @@ class TestAbsenceNeedsARead:
         cs.install()
         out = analyst._build_system_message(**KW)
         assert "No commentary" not in out and "not an absence of commentary" in out
+
+
+class TestAnUnreadItemIsNotAnAbsence:
+    """A fetch that landed but whose extraction failed saw an item, not silence."""
+
+    READS = [read("youtube", at(28, 22, 35), at(14, 22, 35))]
+
+    def _block(self, items: list[StoredItem], ticker: str = "NVDA") -> tuple[str, list]:
+        return cs.build_block(ticker, "2026-09-21", "2026-09-28",
+                              live_anchor=at(28, 22, 35), now=at(28, 22, 45),
+                              load=lambda *a: items, load_reads=lambda: self.READS)
+
+    def test_with_nothing_else_in_the_window_the_feed_is_unavailable(self) -> None:
+        block, used = self._block([unread_item("nvda1", at(28, 14))])
+        assert used == [] and "No commentary" not in block
+        assert "1 item(s) published between 2026-09-21 and 2026-09-28 could not be read" in block
+        assert "not an absence of commentary" in block
+
+    def test_beside_shown_items_the_list_says_it_may_be_incomplete(self) -> None:
+        shown = item("nvda0", at(27), tickers=("NVDA",))
+        block, used = self._block([unread_item("nvda1", at(28, 14)), shown])
+        assert used == [shown]
+        assert "(Not shown: 1 item(s) from this window that could not be read yet" in block
+
+    def test_it_is_never_shown_whatever_its_fields_say(self) -> None:
+        half = item("nvda1", at(28, 14), tickers=("NVDA",), extracted=False)
+        own, macro = cs.select([half], "NVDA", "2026-09-21", "2026-09-28",
+                               run_start=None, now=at(28, 22, 45), live_anchor=at(28, 22, 35))
+        assert own == [] and macro == []
+
+    @pytest.mark.parametrize("when", [at(20, 23), at(28, 23)], ids=["before", "after-cutoff"])
+    def test_one_outside_the_window_leaves_the_absence_claim_alone(
+        self, when: datetime
+    ) -> None:
+        block, _ = self._block([unread_item("elsewhere", when)])
+        assert "No commentary in window (2026-09-21 to 2026-09-28) for NVDA" in block
+
+    def test_end_to_end_a_failed_extraction_then_a_retry(self) -> None:
+        # The fetch lands and records its read; the extractor is down all night.
+        from tests.commentator_fakes import FakeYouTubeAPI, video
+        from tradingagents_us.dataflows.commentator import ingest
+
+        repo = TradeLogRepository(engine=create_engine("sqlite://", future=True))
+        now = at(28, 22, 35)
+        api = FakeYouTubeAPI([video("nvda1", "2026-09-28T14:00:00Z", "NVDA hedefim 250")])
+
+        def block_at(when: datetime) -> str:
+            def load(start: datetime, end: datetime) -> list[StoredItem]:
+                with repo.session() as s:
+                    return store.items_between(s, start, end, now=when)
+
+            def reads() -> list[SourceRead]:
+                with repo.session() as s:
+                    return store.source_reads(s)
+
+            block, _ = cs.build_block("NVDA", "2026-09-21", "2026-09-28", live_anchor=when,
+                                      now=when, load=load, load_reads=reads)
+            return block
+
+        report = ingest.run(repo.session, youtube=api.client(), x=None, x_user_id=None,
+                            extractor=lambda text: None, model="haiku", now=now)
+        assert report.extraction_failed == 1
+        with repo.session() as s:
+            assert store.source_reads(s)  # the read was recorded: the fetch did land
+        down = block_at(now)
+        assert "No commentary" not in down and "not an absence of commentary" in down
+
+        from tradingagents_us.storage.commentator import Extraction
+
+        later = now + timedelta(minutes=30)
+        ingest.run(repo.session, youtube=api.client(), x=None, x_user_id=None,
+                   extractor=lambda text: Extraction(
+                       tickers=("NVDA",), macro_topics=(), stance={"NVDA": "bullish"},
+                       claim_en="Targets 250 for NVDA.", is_promo=False,
+                       is_market_content=True),
+                   model="haiku", now=later)
+        up = block_at(later)
+        assert "stance on NVDA: bullish" in up and "could not be read" not in up
 
 
 class TestRender:

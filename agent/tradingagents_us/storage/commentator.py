@@ -95,7 +95,12 @@ class Extraction:
 
 @dataclass(frozen=True)
 class StoredItem:
-    """What the sentiment supplement reads: derived fields, never source text."""
+    """What the sentiment supplement reads: derived fields, never source text.
+
+    `extracted` False is an item fetched but not yet read by the extractor: it
+    has no fields and is never shown, but it is there, so a window holding it
+    is not an empty window.
+    """
 
     item_id: str
     source: str
@@ -107,6 +112,7 @@ class StoredItem:
     claim_en: str = ""
     is_promo: bool = False
     is_market_content: bool = False
+    extracted: bool = True
 
 
 @dataclass(frozen=True)
@@ -134,6 +140,7 @@ def _to_stored(row: CommentatorItemRow) -> StoredItem:
         claim_en=row.claim_en or "",
         is_promo=bool(row.is_promo),
         is_market_content=bool(row.is_market_content),
+        extracted=row.extracted_at_utc is not None,
     )
 
 
@@ -168,21 +175,24 @@ def newest_numeric_id(session: Session, source: str) -> str | None:
     return max(ids, key=int) if ids else None
 
 
-def extracted_items_between(
+def items_between(
     session: Session, start: datetime, end: datetime, *, now: datetime
 ) -> list[StoredItem]:
-    """Extracted items published in `[start, end)` and still keepable at `now`, newest first.
+    """Items published in `[start, end)` and still keepable at `now`, newest first.
 
     Keepable: not past the retention deadline, and — for a source whose
     deletions must be honoured — confirmed live within the last day. `now` is
     the wall clock even on a backtest: these are rules about the real world,
     not a point-in-time filter.
+
+    Extracted or not: an item whose extraction has not succeeded comes back
+    with `extracted=False` and no fields, so a reader can tell a window with
+    nothing in it from one holding an item nobody has read.
     """
     now = aware(now)
     rows = session.scalars(
         select(CommentatorItemRow)
         .where(
-            CommentatorItemRow.extracted_at_utc.is_not(None),
             CommentatorItemRow.published_at_utc >= start,
             CommentatorItemRow.published_at_utc < end,
             CommentatorItemRow.expires_at_utc > now,
@@ -194,6 +204,13 @@ def extracted_items_between(
         .order_by(CommentatorItemRow.published_at_utc.desc())
     )
     return [_to_stored(r) for r in rows]
+
+
+def extracted_items_between(
+    session: Session, start: datetime, end: datetime, *, now: datetime
+) -> list[StoredItem]:
+    """The extracted ones among `items_between`: what an analyst may be shown."""
+    return [i for i in items_between(session, start, end, now=now) if i.extracted]
 
 
 def source_reads(session: Session) -> list[SourceRead]:

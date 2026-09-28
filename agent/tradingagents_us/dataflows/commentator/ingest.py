@@ -136,6 +136,10 @@ def _youtube_step(
             expires_at=now + config.YOUTUBE_RETENTION, report=report,
         )
         # Committed with the items, so a read is recorded only if it landed.
+        # It proves what was fetched, not what was extracted: an item the
+        # extractor failed on stays unextracted, and while it is in a window
+        # the prompt calls that window unavailable, not empty
+        # (commentator_supplement.unread).
         store.record_read(s, YOUTUBE, at=now, covered_since=covered_since or now)
 
 
@@ -262,6 +266,8 @@ def _x_fetch(
             expires_at=now + config.x_retention(), report=report,
             verified_at=now,  # X served it just now
         )
+        # As for YouTube: a fetched post whose extraction failed is not an
+        # absence; the prompt reads it as unavailable until a retry lands.
         store.record_read(s, X, at=now, covered_since=covered_since)
 
 

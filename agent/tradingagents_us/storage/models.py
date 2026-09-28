@@ -230,7 +230,8 @@ class CommentatorItemRow(Base):
     the moment a reconcile finds the post gone.
 
     `extracted_at_utc` NULL means the extraction has not succeeded yet, so the
-    item is retried rather than silently shown to the analyst empty.
+    item is retried rather than silently shown to the analyst empty, and a
+    window that holds it reads as unavailable, not as one with no commentary.
 
     `verified_at_utc` is the last time the source confirmed the item is still
     public — for X, the fetch and every deletion check. X rows are shown only

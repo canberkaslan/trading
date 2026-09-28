@@ -31,10 +31,12 @@ An undated item is refused outright, backtest or live.
 Absence. "No commentary in window" is said only when a recorded successful
 read covers the window (`commentator_status`): its reads reach back to the
 window's start, it happened no earlier than the cutoff (a live run: at most
-LIVE_READ_MAX_AGE before), and nothing it read can have been purged since.
-Otherwise — no key, a failed or timed-out fetch, a window older than the
-reads or than retention — the block says the feed is unavailable. An empty
-table is not an observed absence.
+LIVE_READ_MAX_AGE before), nothing it read can have been purged since, and
+no item it fetched in the window is still waiting for extraction. Otherwise —
+no key, a failed or timed-out fetch, a window older than the reads or than
+retention, an item the extractor could not read — the block says the feed is
+unavailable. An empty table is not an observed absence, and neither is an
+empty selection over an item nobody read.
 
 The seam is the same one `sentiment_supplement` uses: the analyst node resolves
 `_build_system_message` from its module globals at call time, so rebinding that
@@ -197,6 +199,51 @@ def cutoff(
     return started, True
 
 
+def _in_reach(
+    items: Sequence[StoredItem],
+    start_date: str,
+    end_date: str,
+    *,
+    run_start: datetime | None,
+    now: datetime,
+    live_anchor: datetime | None,
+) -> list[StoredItem]:
+    """Items published inside the window and no later than the cutoff, extracted or not."""
+    from tradingagents.dataflows.date_window import in_window
+
+    start_dt, end_dt = _day(start_date), _day(end_date)
+    limit, inclusive = cutoff(end_date, run_start=run_start, now=now, live_anchor=live_anchor)
+
+    def reachable(item: StoredItem) -> bool:
+        pub = item.published_at
+        if pub is None:  # refused: an undated item cannot be kept out of a backtest
+            return False
+        if not in_window(pub, start_dt, end_dt):
+            return False
+        return not (pub > limit or (pub == limit and not inclusive))
+
+    return [i for i in items if reachable(i)]
+
+
+def unread(
+    items: Sequence[StoredItem],
+    start_date: str,
+    end_date: str,
+    *,
+    run_start: datetime | None,
+    now: datetime,
+    live_anchor: datetime | None = None,
+) -> list[StoredItem]:
+    """Items the window holds that the extractor has not read (a 529, unparseable JSON).
+
+    Nothing is known of them, so they may concern any ticker; while one is in
+    the window, an empty selection is not an observed absence.
+    """
+    reach = _in_reach(items, start_date, end_date, run_start=run_start, now=now,
+                      live_anchor=live_anchor)
+    return [i for i in reach if not i.extracted]
+
+
 def select(
     items: Sequence[StoredItem],
     ticker: str,
@@ -208,22 +255,13 @@ def select(
     live_anchor: datetime | None = None,
 ) -> tuple[list[StoredItem], list[StoredItem]]:
     """`(ticker_items, macro_items)` the analyst for `ticker` may see, newest first."""
-    from tradingagents.dataflows.date_window import in_window
-
-    start_dt, end_dt = _day(start_date), _day(end_date)
-    limit, inclusive = cutoff(end_date, run_start=run_start, now=now, live_anchor=live_anchor)
-
-    def admissible(item: StoredItem) -> bool:
-        pub = item.published_at
-        if pub is None:  # refused: an undated item cannot be kept out of a backtest
-            return False
-        if not in_window(pub, start_dt, end_dt):
-            return False
-        if pub > limit or (pub == limit and not inclusive):
-            return False
-        return item.is_market_content and not item.is_promo
-
-    pool = sorted((i for i in items if admissible(i)), key=lambda i: i.published_at, reverse=True)
+    reach = _in_reach(items, start_date, end_date, run_start=run_start, now=now,
+                      live_anchor=live_anchor)
+    pool = sorted(
+        (i for i in reach if i.extracted and i.is_market_content and not i.is_promo),
+        key=lambda i: i.published_at,
+        reverse=True,
+    )
     sym = ticker.upper()
 
     def is_market_wide(item: StoredItem) -> bool:
@@ -316,14 +354,30 @@ def render(
     start_date: str,
     end_date: str,
     observed: Sequence[SourceRead] = (),
+    unread: int = 0,
 ) -> str:
-    """The section. With no items, absence is claimed only on `observed` reads."""
+    """The section. With no items, absence is claimed only on `observed` reads.
+
+    `unread` items are in the window but were never extracted: with nothing
+    else to show, the feed is unavailable; beside shown items, the list is
+    said to be incomplete.
+    """
     sym = ticker.upper()
     lines = [_line(i, sym, market_wide=sym == MARKET_KEY and sym not in i.tickers)
              for i in ticker_items]
     lines += [_line(i, sym, market_wide=True) for i in macro_items]
     if lines:
+        if unread:
+            lines.append(
+                f"(Not shown: {unread} item(s) from this window that could not be read "
+                "yet; this list may be incomplete.)"
+            )
         return _wrap("\n".join(lines))
+    if unread:
+        return unavailable(
+            f"{unread} item(s) published between {start_date} and {end_date} "
+            "could not be read yet"
+        )
     if not observed:
         return unavailable(
             f"no successful read of his channels covers {start_date} to {end_date}"
@@ -381,9 +435,10 @@ def _load_reads() -> list[SourceRead]:
 
 def _load_items(start: datetime, end: datetime) -> list[StoredItem]:
     # The wall clock, even on a backtest: an item past its retention deadline
-    # is never shown, whenever the purge last ran.
+    # is never shown, whenever the purge last ran. Unextracted items come too:
+    # never shown, but they keep their window from reading as empty.
     with _repo().session() as s:
-        return store.extracted_items_between(s, start, end, now=datetime.now(UTC))
+        return store.items_between(s, start, end, now=datetime.now(UTC))
 
 
 def build_block(
@@ -403,15 +458,17 @@ def build_block(
     items = loader(_day(start_date), _day(end_date) + timedelta(days=1))
     own, macro = select(items, ticker, start_date, end_date, run_start=run_start, now=now,
                         live_anchor=live_anchor)
+    pending = unread(items, start_date, end_date, run_start=run_start, now=now,
+                     live_anchor=live_anchor)
     observed: list[SourceRead] = []
-    if not own and not macro:  # only an empty block makes a claim that needs proof
+    if not own and not macro and not pending:  # only this makes a claim that needs proof
         limit, live = cutoff(end_date, run_start=run_start, now=now, live_anchor=live_anchor)
         observed = covering_reads(
             (load_reads or _load_reads)(), start=_day(start_date), limit=limit, live=live,
             now=now,
         )
     block = render(ticker, own, macro, start_date=start_date, end_date=end_date,
-                   observed=observed)
+                   observed=observed, unread=len(pending))
     return block, own + macro
 
 

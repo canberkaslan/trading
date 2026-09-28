@@ -218,6 +218,21 @@ else
   echo "  -> position management failed (non-fatal) — continuing to decisions" | tee -a "$RUN_LOG"
 fi
 
+# Commentator feed (ADR-009): fetch and extract ONCE, before the tickers, so
+# every sentiment analyst reads the same cached items and none of them fetches.
+# Off unless COMMENTATOR_FEED=1; with it off this block prints nothing and runs
+# nothing. Best-effort: the script exits 0 on its own failures, and a hang is
+# cut short rather than eating the post-close window.
+if [[ "${COMMENTATOR_FEED:-0}" == "1" ]]; then
+  echo "" | tee -a "$RUN_LOG"
+  echo "--- commentator feed ---" | tee -a "$RUN_LOG"
+  if timeout -k 30 "${COMMENTATOR_TIMEOUT_S:-600}" env PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.commentator_fetch 2>&1 | tee -a "$RUN_LOG"; then
+    :
+  else
+    echo "  -> commentator fetch failed (non-fatal) — tickers run without new items" | tee -a "$RUN_LOG"
+  fi
+fi
+
 rc_total=0
 failed_tickers=""
 for TICKER in $UNIVERSE; do

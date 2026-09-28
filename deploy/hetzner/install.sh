@@ -116,6 +116,15 @@ KILL_SWITCH_PATH=/opt/ai-trader/agent/kill_switch.state
 # Trading mode the preflight canary asserts against ('paper' | 'live').
 # Flip to live TOGETHER with ALPACA_BASE_URL on go-live day.
 EXPECTED_TRADING_MODE=paper
+
+# Commentator feed (docs/adr/009-commentator-feed.md). Off unless exactly 1;
+# each source is skipped, with a log line, while its key is blank. X also needs
+# a numeric user id pinned once (never a handle), and a daily deletion check
+# before it is switched on — see the ADR.
+#COMMENTATOR_FEED=1
+#YOUTUBE_API_KEY=
+#X_BEARER_TOKEN=
+#COMMENTATOR_X_USER_ID=
 EOF
   chmod 600 "${APP_DIR}/secrets.env"
 else

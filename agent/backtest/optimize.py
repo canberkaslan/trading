@@ -21,6 +21,7 @@ import vectorbt as vbt
 
 from backtest.data import load_ohlcv
 from backtest.strategies import STRATEGIES
+from tradingagents_us.backtest.engine import TRADING_YEAR
 
 UNIVERSE = ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "JPM", "V", "XOM", "UNH"]
 
@@ -39,7 +40,7 @@ def _sharpe(close, entries, exits, sl, tp) -> float:
         kw["tp_stop"] = tp
     pf = vbt.Portfolio.from_signals(close, entries, exits, **kw)
     try:
-        s = float(pf.sharpe_ratio())
+        s = float(pf.sharpe_ratio(year_freq=TRADING_YEAR))
         return s if math.isfinite(s) else float("nan")
     except Exception:
         return float("nan")

@@ -220,3 +220,49 @@ def test_multi_name_summary_does_not_mean_aggregate() -> None:
 
     averaged = [w for w in caught if "Aggregating using" in str(w.message)]
     assert not averaged, f"stats were mean-aggregated across tickers: {averaged[0].message}"
+
+
+def test_baseline_runners_annualise_on_252_days() -> None:
+    """`backtest.run` and `backtest.optimize` score on the same year as the engine.
+
+    Both called bare `pf.sharpe_ratio()`, which vectorbt annualises on 365 days;
+    on business-day bars that reads ~1.20x high against a live gate computed on
+    252. Checked against a hand-computed daily-returns Sharpe, not against vbt.
+    """
+    import numpy as np
+
+    from backtest import optimize, run
+
+    idx = pd.bdate_range("2024-01-01", periods=_DAYS)
+    rng = np.random.default_rng(7)
+    close = pd.DataFrame(
+        {"SYN": 100.0 * np.cumprod(1.0 + rng.normal(0.0005, 0.01, _DAYS))}, index=idx
+    )
+    entries = pd.DataFrame(False, index=idx, columns=close.columns)
+    entries.iloc[0] = True
+    exits = pd.DataFrame(False, index=idx, columns=close.columns)
+
+    def hand_sharpe(**kw: float) -> float:
+        pf = run.vbt.Portfolio.from_signals(
+            close, entries, exits, group_by=True, cash_sharing=True, freq="1D", **kw
+        )
+        value = pf.value()
+        # The first bar's return is measured against starting cash, so an
+        # entry fee lands on day one rather than being dropped with it.
+        rets = value / value.shift(1).fillna(kw["init_cash"]) - 1.0
+        return float(rets.mean() / rets.std(ddof=1) * math.sqrt(252))
+
+    pf = run.vbt.Portfolio.from_signals(
+        close, entries, exits, init_cash=run.INIT_CASH, group_by=True,
+        cash_sharing=True, freq="1D",
+    )
+    assert run._metrics(pf)["sharpe"] == pytest.approx(
+        hand_sharpe(init_cash=run.INIT_CASH), rel=1e-6
+    )
+    assert optimize._sharpe(close, entries, exits, sl=0.99, tp=None) == pytest.approx(
+        hand_sharpe(
+            sl_stop=0.99, fees=optimize.FEES, slippage=optimize.SLIPPAGE,
+            init_cash=optimize.INIT,
+        ),
+        rel=1e-6,
+    )

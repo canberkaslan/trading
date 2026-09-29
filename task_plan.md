@@ -129,9 +129,12 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
   uyarısı yok); eski motorda ikisi de KIRMIZI, yenide yeşil. 1230 passed; 2 fail =
   `test_dataflows_smoke` canlı Alpaca **401** (log'da doğrulandı, beklenen). Ruff temiz.
   Deploy YOK/gerek yok — backtest kodu, karar ve eval yolunda çalışmıyor.
-- **Açık kalan (fix EDİLMEDİ):** `backtest/run.py` ve `backtest/optimize.py` `pf.sharpe_ratio()`'yu
-  hâlâ 365 bazında çağırıyor — baseline'lar SPY ile aynı bazda kıyaslandığı için sıralama doğru,
-  ama mutlak Sharpe 1.20× şişik. Aynı `TRADING_YEAR`'a bağlamak bir sonraki küçük iş.
+- [x] **`backtest/run.py` + `backtest/optimize.py` de 252 bazlı (2026-09-29).** İkisi de
+  `pf.sharpe_ratio(year_freq=TRADING_YEAR)` çağırıyor. Test elle hesaplanmış günlük-getiri Sharpe'ına
+  karşı (vbt'ye karşı değil); eski kodda KIRMIZI (−2.10 vs −1.74 = 1.20×), yenide yeşil.
+  Yan bulgu: `test_commentator_ingest::test_no_youtube_key_is_a_logged_skip` tam suite'te düşüyordu —
+  başka bir test `agent/.env`'i `os.environ`'a yüklüyor, gerçek `YOUTUBE_API_KEY` sızıyor (tek
+  başına geçiyor, CI'da .env yok). Test artık iki env'i `monkeypatch.delenv` ile temizliyor.
 
 ## Daily loop 2026-09-09 (🟢 BOX GERİ DÖNDÜ; "S3'te düşüyor, normal" dediğimiz test 16 gündür başka bir şeyde düşüyormuş)
 - **Box canlı, 16 günlük karanlık bitti.** `trader.fusapp.com` cevap veriyor: `/healthz` ok

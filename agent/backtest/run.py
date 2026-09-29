@@ -19,6 +19,7 @@ import vectorbt as vbt
 
 from backtest.data import REGIMES, load_ohlcv
 from backtest.strategies import STRATEGIES
+from tradingagents_us.backtest.engine import TRADING_YEAR
 
 UNIVERSE = ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "JPM", "V", "XOM", "UNH"]
 BENCHMARK = "SPY"
@@ -33,7 +34,7 @@ INIT_CASH = 100_000.0
 
 def _metrics(pf: vbt.Portfolio) -> dict:
     try:
-        sharpe = float(pf.sharpe_ratio())
+        sharpe = float(pf.sharpe_ratio(year_freq=TRADING_YEAR))
     except Exception:
         sharpe = float("nan")
     return {

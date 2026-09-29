@@ -20,8 +20,11 @@ import { Card } from '@/components/Card';
 import { Sheet } from '@/components/Sheet';
 import { StatCell } from '@/components/StatCell';
 import { Tag } from '@/components/Tag';
+import { RatingTag } from '@/components/RatingTag';
+import { CapsText } from '@/components/CapsText';
+import { formatHorizon } from '@/i18n/horizon';
 import { toast } from '@/stores/toast';
-import { ratingVariant, modelBadge } from '@/theme/rating';
+import { modelBadge } from '@/theme/rating';
 import { formatUsd, formatPct, relativeAgeTr, parseUtc } from '@/utils/format';
 import { rejectionReasonTr } from '@/utils/orders';
 import { topWeightTone } from '@/utils/concentration';
@@ -373,9 +376,9 @@ export default function ApproveOrderScreen() {
   /* The three figures the decision turns on, repeated inside the sheet so the
      operator is not asked to remember what they tapped. */
   const sheetSummary = [
-    { label: 'Tutar', value: formatUsd(notional) },
-    { label: 'Stop', value: formatUsd(target.stop_loss) },
-    { label: 'Portföy %', value: formatPct(weight), color: weightColor },
+    { label: tr('stat.amount'), value: formatUsd(notional) },
+    { label: tr('stat.stop'), value: formatUsd(target.stop_loss) },
+    { label: tr('stat.portfolioPct'), value: formatPct(weight), color: weightColor },
   ];
 
   return (
@@ -393,7 +396,7 @@ export default function ApproveOrderScreen() {
 
         <View style={styles.modeRow}>
           <Tag
-            label={mode == null ? 'MOD ?' : isLive ? 'LIVE — GERÇEK PARA' : 'PAPER'}
+            label={tr(mode == null ? 'mode.unknown' : isLive ? 'mode.live' : 'mode.paper')}
             variant={mode == null ? 'outlineMuted' : isLive ? 'down' : 'neutral'}
             caps
           />
@@ -408,7 +411,7 @@ export default function ApproveOrderScreen() {
                 {target.ticker}
               </Text>
               {decision ? (
-                <Tag label={decision.rating} variant={ratingVariant(decision.rating)} size="sm" caps />
+                <RatingTag rating={decision.rating} size="sm" />
               ) : null}
             </View>
             <Text style={styles.subtitle}>
@@ -435,15 +438,15 @@ export default function ApproveOrderScreen() {
         <Card style={styles.grid}>
           {/* No null guards: `formatUsd`/`formatPct` own what a missing figure
               looks like, and every cell in the grid must miss the same way. */}
-          <StatCell size="sm" style={styles.cell} label="Tutar" value={formatUsd(notional)} />
+          <StatCell size="sm" style={styles.cell} label={tr('stat.amount')} value={formatUsd(notional)} />
           <StatCell
             size="sm"
             style={styles.cell}
-            label="Portföy %"
+            label={tr('stat.portfolioPct')}
             value={formatPct(weight)}
             valueColor={weightColor}
           />
-          <StatCell size="sm" style={styles.cell} label="Stop" value={formatUsd(target.stop_loss)} />
+          <StatCell size="sm" style={styles.cell} label={tr('stat.stop')} value={formatUsd(target.stop_loss)} />
           {/* `take_profit` is dead on the wire: it exists in the schema and the
               DB row, and nothing ever writes it — the pipeline never sets it, so
               this cell rendered an em dash on every order while the take-profit
@@ -458,13 +461,13 @@ export default function ApproveOrderScreen() {
           <StatCell
             size="sm"
             style={styles.cell}
-            label="Kâr al (broker)"
+            label={tr('stat.takeProfitBroker')}
             value={legs.includes('kâr al') ? formatUsd(decision?.price_target) : '—'}
           />
-          <StatCell size="sm" style={styles.cell} label="Giriş" value={formatUsd(decision?.entry_price)} />
-          <StatCell size="sm" style={styles.cell} label="Hedef" value={formatUsd(decision?.price_target)} />
-          <StatCell size="sm" style={styles.cell} label="Vade" value={decision?.time_horizon ?? '—'} />
-          <StatCell size="sm" style={styles.cell} label="Süre" value={age} />
+          <StatCell size="sm" style={styles.cell} label={tr('stat.entry')} value={formatUsd(decision?.entry_price)} />
+          <StatCell size="sm" style={styles.cell} label={tr('stat.target')} value={formatUsd(decision?.price_target)} />
+          <StatCell size="sm" style={styles.cell} label={tr('stat.horizon')} value={formatHorizon(decision?.time_horizon, tr)} />
+          <StatCell size="sm" style={styles.cell} label={tr('stat.age')} value={age} />
         </Card>
 
         <View style={styles.actions}>
@@ -514,7 +517,7 @@ export default function ApproveOrderScreen() {
               } · ${legsNote}`}
         </Text>
 
-        <Text style={styles.kicker}>Portföy yöneticisi gerekçesi</Text>
+        <CapsText style={styles.kicker}>{tr('kicker.pmRationale')}</CapsText>
         {decisionError ? (
           <Text style={styles.err}>{decisionError}</Text>
         ) : decision ? (

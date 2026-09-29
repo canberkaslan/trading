@@ -29,6 +29,7 @@ import { useTheme } from '@/theme/useTheme';
 import { useShape, type Shape } from '@/theme/shape';
 import type { Palette } from '@/theme/colors';
 import { font, TABULAR } from '@/theme/type';
+import { useCaps } from '@/i18n/useCaps';
 
 export type TagVariant =
   | 'accent'
@@ -78,8 +79,13 @@ export function Tag({
   label,
   variant = 'neutral',
   size = 'md',
-  /** Uppercase + tracked, for rating and status stamps. */
+  /**
+   * Uppercase + tracked, for rating and status stamps. Cased in JS with the
+   * label's language — `labelLang`, else the UI language — never with
+   * `textTransform`, which uses the device locale (see i18n/caps.ts).
+   */
   caps,
+  labelLang,
   /** Tabular figures, for a chip whose text is mostly a number. */
   numeric,
   style,
@@ -88,6 +94,7 @@ export function Tag({
   variant?: TagVariant;
   size?: TagSize;
   caps?: boolean;
+  labelLang?: string;
   numeric?: boolean;
   style?: StyleProp<ViewStyle>;
 }) {
@@ -101,6 +108,7 @@ export function Tag({
   // because they depend on the variant.
   const styles = useMemo(() => makeStyles(t, sh), [t, sh]);
   const c = tagColors(t, variant);
+  const toCaps = useCaps();
   return (
     <View
       style={[styles.tag, size === 'sm' && styles.tagSm, { backgroundColor: c.backgroundColor, borderColor: c.borderColor }, style]}
@@ -113,8 +121,9 @@ export function Tag({
           numeric && TABULAR,
           { color: c.color },
         ]}
+        accessibilityLabel={caps ? label : undefined}
       >
-        {label}
+        {caps ? toCaps(label, labelLang) : label}
       </Text>
     </View>
   );
@@ -132,5 +141,5 @@ const makeStyles = (_palette: TagPalette, sh: Shape) =>
     tagSm: { paddingHorizontal: 6, paddingVertical: 2 },
     label: { fontSize: 11, letterSpacing: 0.22, ...font(600) },
     labelSm: { fontSize: 10 },
-    caps: { textTransform: 'uppercase', letterSpacing: 0.6 },
+    caps: { letterSpacing: 0.6 },
   });

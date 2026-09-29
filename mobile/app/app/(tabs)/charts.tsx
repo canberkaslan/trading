@@ -44,7 +44,6 @@ import Svg, { G, Line, Path, Rect } from 'react-native-svg';
 import { usePortfolio, useDecisions, usePrices } from '@/api/hooks';
 import { useTheme } from '@/theme/useTheme';
 import { useShape, type Shape } from '@/theme/shape';
-import { ratingVariant } from '@/theme/rating';
 import { hitSlopFor, MIN_TOUCH_TARGET } from '@/utils/a11y';
 import { font, TABULAR, TYPE } from '@/theme/type';
 import { positionStop } from '@/utils/positions';
@@ -53,7 +52,8 @@ import { isAuthError } from '@/utils/apiError';
 import { pnlTone, type Tone } from '@/utils/realized';
 import { Seg, type SegOption } from '@/components/Seg';
 import { Card } from '@/components/Card';
-import { Tag } from '@/components/Tag';
+import { CapsText } from '@/components/CapsText';
+import { RatingTag } from '@/components/RatingTag';
 import { useWatchStore, WATCH_CAP } from '@/stores/watchlist';
 import { toast } from '@/stores/toast';
 import { dayChange, windowChange } from '@/utils/priceChange';
@@ -474,7 +474,7 @@ export default function ChartsScreen() {
             yok" are answers, and a missing card would read as a missing fetch. */}
         <View style={styles.grid}>
           <Card style={styles.gridCard}>
-            <Text style={styles.cellLabel}>Pozisyon</Text>
+            <CapsText style={styles.cellLabel}>{tr('kicker.position')}</CapsText>
             {position ? (
               <Text style={styles.cellValue}>
                 {position.quantity} lot · ort. {formatUsd(position.avg_entry_price)}
@@ -490,10 +490,10 @@ export default function ChartsScreen() {
           </Card>
 
           <Card style={styles.gridCard}>
-            <Text style={styles.cellLabel}>Son karar</Text>
+            <CapsText style={styles.cellLabel}>{tr('kicker.lastDecision')}</CapsText>
             {decision ? (
               <View style={styles.cellStack}>
-                <Tag label={decision.rating} variant={ratingVariant(decision.rating)} size="sm" caps />
+                <RatingTag rating={decision.rating} size="sm" />
                 <Text style={styles.cellMuted}>
                   {decisionAge(decision.timestamp_utc)} · hedef {formatUsd(decision.price_target)}
                 </Text>
@@ -506,7 +506,7 @@ export default function ChartsScreen() {
 
         {decision?.final_decision_text ? (
           <Card>
-            <Text style={styles.cellLabel}>Gerekçe</Text>
+            <CapsText style={styles.cellLabel}>{tr('kicker.rationale')}</CapsText>
             <Text style={styles.decisionText}>{decision.final_decision_text}</Text>
             <Text style={styles.disclaimer}>{tr('disclaimer.short')}</Text>
           </Card>

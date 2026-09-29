@@ -43,6 +43,10 @@ import { ErrorState } from '@/components/ErrorState';
 import { Card } from '@/components/Card';
 import { DataRow } from '@/components/DataRow';
 import { StatCell } from '@/components/StatCell';
+import { CapsText } from '@/components/CapsText';
+import { useCaps } from '@/i18n/useCaps';
+import { formatHorizon } from '@/i18n/horizon';
+import { ratingLabel } from '@/i18n/labels';
 import { statusLine } from '@/utils/askStatus';
 import type { AgentDecision, } from '@/api/types';
 import { useTheme } from '@/theme/useTheme';
@@ -331,7 +335,7 @@ export default function AskScreen() {
         >
           {isEmpty ? (
             <>
-              <Text style={styles.emptyKicker}>Sık kullanılanlar</Text>
+              <CapsText style={styles.emptyKicker}>{tr('kicker.frequent')}</CapsText>
               <View style={styles.chips}>
                 {CHIPS.map((c) => (
                   <Pressable
@@ -630,14 +634,16 @@ function AgentMessage({
   const chip = decision ? ratingChip(theme, decision.rating) : null;
 
   const { t: tr } = useTranslation();
+  const caps = useCaps();
 
   return (
     <Card>
       <View style={styles.agentBlock}>
         <Text style={styles.kicker}>
-          PORTFOLIO MANAGER
+          {caps(tr('kicker.portfolioManager'))}
           {badge ? (
-            <Text style={{ color: badge.color }}>{` · ${badge.label.toUpperCase()}`}</Text>
+            // Model names are English product names: cased as English.
+            <Text style={{ color: badge.color }}>{` · ${caps(badge.label, 'en')}`}</Text>
           ) : null}
         </Text>
 
@@ -654,7 +660,7 @@ function AgentMessage({
                   },
                 ]}
               >
-                <Text style={[styles.ratingText, { color: chip.color }]}>{decision.rating}</Text>
+                <Text style={[styles.ratingText, { color: chip.color }]}>{ratingLabel(tr, decision.rating)}</Text>
               </View>
             </View>
             {/* The four figures that make the verdict actionable, on the
@@ -664,26 +670,26 @@ function AgentMessage({
               <View style={styles.stripGrid}>
                 <StatCell
                   size="sm"
-                  label="Giriş"
+                  label={tr('stat.entry')}
                   value={formatUsd(decision.entry_price)}
                   style={styles.stripCell}
                 />
                 <StatCell
                   size="sm"
-                  label="Stop"
+                  label={tr('stat.stop')}
                   value={formatUsd(decision.stop_loss)}
                   style={styles.stripCell}
                 />
                 <StatCell
                   size="sm"
-                  label="Hedef"
+                  label={tr('stat.target')}
                   value={formatUsd(decision.price_target)}
                   style={styles.stripCell}
                 />
                 <StatCell
                   size="sm"
-                  label="Vade"
-                  value={decision.time_horizon ?? '—'}
+                  label={tr('stat.horizon')}
+                  value={formatHorizon(decision.time_horizon, tr)}
                   style={styles.stripCell}
                 />
               </View>

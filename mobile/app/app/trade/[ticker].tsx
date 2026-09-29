@@ -44,9 +44,13 @@ import { Card } from '@/components/Card';
 import { SectionHeader } from '@/components/SectionHeader';
 import { StatCell } from '@/components/StatCell';
 import { Tag } from '@/components/Tag';
+import { RatingTag } from '@/components/RatingTag';
+import { CapsText } from '@/components/CapsText';
+import { formatHorizon } from '@/i18n/horizon';
+import { debateRoleText } from '@/i18n/labels';
 import { useTheme } from '@/theme/useTheme';
 import { useShape, type Shape } from '@/theme/shape';
-import { ratingVariant, modelBadge } from '@/theme/rating';
+import { modelBadge } from '@/theme/rating';
 import { formatUsd, formatPct } from '@/utils/format';
 import {
   formatTokens,
@@ -70,7 +74,7 @@ type Palette = ReturnType<typeof useTheme>;
 const TAB_BAR_CLEARANCE = 72;
 
 export default function DecisionDetailScreen() {
-  const { t: tr } = useTranslation();
+  const { t: tr, i18n } = useTranslation();
   const t = useTheme();
   const sh = useShape();
   const styles = useMemo(() => makeStyles(t, sh), [t, sh]);
@@ -102,12 +106,12 @@ export default function DecisionDetailScreen() {
   // the same four lines of JSX — the grid is the point, not the markup.
   const cells: [string, string][] = decision
     ? [
-        ['Giriş', formatUsd(decision.entry_price)],
-        ['Stop', formatUsd(decision.stop_loss)],
-        ['Kâr al', formatUsd(decision.take_profit)],
-        ['Hedef', formatUsd(decision.price_target)],
-        ['Vade', decision.time_horizon ?? '—'],
-        ['Boyut', formatPct(decision.suggested_size_pct)],
+        [tr('stat.entry'), formatUsd(decision.entry_price)],
+        [tr('stat.stop'), formatUsd(decision.stop_loss)],
+        [tr('stat.takeProfit'), formatUsd(decision.take_profit)],
+        [tr('stat.target'), formatUsd(decision.price_target)],
+        [tr('stat.horizon'), formatHorizon(decision.time_horizon, tr)],
+        [tr('stat.size'), formatPct(decision.suggested_size_pct)],
       ]
     : [];
 
@@ -163,7 +167,7 @@ export default function DecisionDetailScreen() {
                   dropped the buy/hold/sell encoding. Same chip as everywhere —
                   and via `Tag`, so the fill/ink pairing lives in one place
                   rather than being mapped by hand on five screens. */}
-              <Tag label={decision.rating} variant={ratingVariant(decision.rating)} caps />
+              <RatingTag rating={decision.rating} />
               <Pressable
                 onPress={() => router.push(`/(tabs)/charts?ticker=${shown}` as never)}
                 style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
@@ -251,12 +255,17 @@ export default function DecisionDetailScreen() {
               <>
                 <SectionHeader title="Tartışma" />
                 <View style={styles.debateList}>
-                  {debate.map((entry) => (
-                    <Card key={entry.role}>
-                      <Text style={styles.debateRole}>{debateRoleLabel(entry.role)}</Text>
-                      <Text style={styles.body}>{entry.text}</Text>
-                    </Card>
-                  ))}
+                  {debate.map((entry) => {
+                    const role = debateRoleText(tr, (k) => i18n.exists(k), entry.role, debateRoleLabel);
+                    return (
+                      <Card key={entry.role}>
+                        <CapsText style={styles.debateRole} lang={role.lang}>
+                          {role.label}
+                        </CapsText>
+                        <Text style={styles.body}>{entry.text}</Text>
+                      </Card>
+                    );
+                  })}
                 </View>
               </>
             ) : null}

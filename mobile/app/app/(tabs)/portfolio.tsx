@@ -40,6 +40,7 @@ import { hitSlopFor } from '@/utils/a11y';
 import { ErrorState } from '@/components/ErrorState';
 import { EquityChart } from '@/components/EquityChart';
 import { Card } from '@/components/Card';
+import { CapsText } from '@/components/CapsText';
 import { SectionHeader } from '@/components/SectionHeader';
 import { StatCell } from '@/components/StatCell';
 import { Seg, type SegOption } from '@/components/Seg';
@@ -254,8 +255,9 @@ export default function PortfolioScreen() {
   const badgeQualifier = verdictQualifier(flow);
   const mode = readiness?.trading_mode;
   const isLive = mode === 'live';
-  const accountLabel =
-    mode == null ? 'Alpaca hesabı' : isLive ? 'Alpaca LIVE hesabı' : 'Alpaca paper hesabı';
+  const accountLabel = tr(
+    mode == null ? 'account.alpaca' : isLive ? 'account.alpacaLive' : 'account.alpacaPaper',
+  );
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
@@ -267,15 +269,15 @@ export default function PortfolioScreen() {
       >
         {/* ── Value header ─────────────────────────────────────── */}
         <View style={styles.headRow}>
-          <Text style={styles.kicker} numberOfLines={1}>
-            Portföy değeri · {accountLabel}
-          </Text>
+          <CapsText style={styles.kicker} numberOfLines={1}>
+            {tr('kicker.portfolioValue', { account: accountLabel })}
+          </CapsText>
           {/* Tri-state, matching StatusBanner: PAPER is a claim about where
               real money goes, and `mode` is null whenever readiness AND health
               both failed — including a plain 401. Collapsing null to PAPER
               would let an unauthenticated app assert the account is on paper. */}
           <Tag
-            label={mode == null ? 'MOD ?' : isLive ? 'LIVE' : 'PAPER'}
+            label={tr(mode == null ? 'mode.unknown' : isLive ? 'mode.liveShort' : 'mode.paper')}
             variant={isLive ? 'down' : 'neutral'}
             size="sm"
             caps
@@ -377,7 +379,7 @@ export default function PortfolioScreen() {
                 <StatCell
                   style={styles.gridCell}
                   size="sm"
-                  label="Durum"
+                  label={tr('stat.status')}
                   value={meta.label}
                   hint={`${flow.run_days} çalışma günü`}
                   valueColor={FLOW_TONE_COLORS[meta.tone]}
@@ -386,14 +388,14 @@ export default function PortfolioScreen() {
                 <StatCell
                   style={styles.gridCell}
                   size="sm"
-                  label="Broker'a giden"
+                  label={tr('stat.sentToBroker')}
                   value={submitRatioLabel(flow)}
                   hint={rate == null ? 'emir yok' : formatPct(rate)}
                 />
                 <StatCell
                   style={styles.gridCell}
                   size="sm"
-                  label="Son gönderim"
+                  label={tr('stat.lastSubmit')}
                   value={lastSubmitLabel(flow.last_submitted_at_utc, new Date())}
                   hint="broker onayı"
                   // "Donmuş is a warning" is `actionabilityVerdictMeta`'s rule.
@@ -470,7 +472,7 @@ export default function PortfolioScreen() {
                 <StatCell
                   style={styles.gridCell}
                   size="sm"
-                  label="Kazanma"
+                  label={tr('stat.winRate')}
                   value={formatWinRate(s)}
                   hint="oranı"
                   valueColor={PNL_TONE_COLORS[sampleTone(s.win_rate - 0.5, s.trades)]}
@@ -478,7 +480,7 @@ export default function PortfolioScreen() {
                 <StatCell
                   style={styles.gridCell}
                   size="sm"
-                  label="Beklenti"
+                  label={tr('stat.expectancy')}
                   value={formatUsd(s.expectancy, { signed: true })}
                   // Named as a blend the moment the split exists, so this
                   // number stops standing in for the agent's exit record.
@@ -488,7 +490,7 @@ export default function PortfolioScreen() {
                 <StatCell
                   style={styles.gridCell}
                   size="sm"
-                  label="Kâr faktörü"
+                  label={tr('stat.profitFactor')}
                   value={formatProfitFactor(s.profit_factor)}
                   hint="brüt K/Z"
                   valueColor={
@@ -536,7 +538,7 @@ export default function PortfolioScreen() {
                     <StatCell
                       style={styles.gridCell}
                       size="sm"
-                      label="Net"
+                      label={tr('stat.net')}
                       value={formatUsd(strat.bucket.net_pnl, { signed: true })}
                       valueColor={
                         PNL_TONE_COLORS[sampleTone(strat.bucket.net_pnl, strat.bucket.trades)]
@@ -545,7 +547,7 @@ export default function PortfolioScreen() {
                     <StatCell
                       style={styles.gridCell}
                       size="sm"
-                      label="Kazanma"
+                      label={tr('stat.winRate')}
                       value={formatWinRate({
                         win_rate: strat.bucket.win_rate,
                         trades: strat.bucket.trades,
@@ -557,7 +559,7 @@ export default function PortfolioScreen() {
                     <StatCell
                       style={styles.gridCell}
                       size="sm"
-                      label="Beklenti"
+                      label={tr('stat.expectancy')}
                       value={formatUsd(strat.bucket.avg_pnl, { signed: true })}
                       valueColor={
                         PNL_TONE_COLORS[sampleTone(strat.bucket.avg_pnl, strat.bucket.trades)]
@@ -613,7 +615,7 @@ export default function PortfolioScreen() {
                   <StatCell
                     style={styles.gridCell}
                     size="sm"
-                    label="Çeşitlilik"
+                    label={tr('stat.diversity')}
                     value={div ? div.label : '—'}
                     hint={`${concentration.effective_n.toFixed(1)} etkin isim`}
                     valueColor={div ? TONE_COLORS[div.tone] : undefined}
@@ -621,7 +623,7 @@ export default function PortfolioScreen() {
                   <StatCell
                     style={styles.gridCell}
                     size="sm"
-                    label="En yüksek"
+                    label={tr('stat.largest')}
                     value={formatPct(concentration.top_weight_pct / 100)}
                     // The cap's percentage is `topWeightTone`'s to know; naming
                     // it here would be a second copy of it, free to drift.
@@ -631,7 +633,7 @@ export default function PortfolioScreen() {
                   <StatCell
                     style={styles.gridCell}
                     size="sm"
-                    label="İlk 3"
+                    label={tr('stat.top3')}
                     value={formatPct(concentration.top3_weight_pct / 100)}
                     hint="toplam ağırlık"
                   />
@@ -750,6 +752,7 @@ function EvalCard({
   qualifier: string | null;
   inertRunDays?: number | null;
 }) {
+  const { t: tr } = useTranslation();
   const t = useTheme();
   const sh = useShape();
   const styles = useMemo(() => makeStyles(t, sh), [t, sh]);
@@ -766,7 +769,7 @@ function EvalCard({
     <Card style={styles.card}>
       <View style={styles.evalHead}>
         <View style={styles.evalHeadText}>
-          <Text style={styles.kickerPlain}>Eval kararı</Text>
+          <CapsText style={styles.kickerPlain}>{tr('kicker.evalVerdict')}</CapsText>
           <Text style={styles.meta}>
             {data.days} / {data.days_required} işlem günü
           </Text>
@@ -795,7 +798,7 @@ function EvalCard({
         <StatCell
           style={styles.gridCell}
           size="sm"
-          label="Sharpe"
+          label={tr('stat.sharpe')}
           value={fixed(data.sharpe, 2)}
           hint={`> ${data.gate_sharpe}`}
           valueColor={sharpeColor}
@@ -803,14 +806,14 @@ function EvalCard({
         <StatCell
           style={styles.gridCell}
           size="sm"
-          label="Sortino"
+          label={tr('stat.sortino')}
           value={fixed(data.sortino, 2)}
           hint="aşağı yön"
         />
         <StatCell
           style={styles.gridCell}
           size="sm"
-          label="Maks. düşüş"
+          label={tr('stat.maxDd')}
           value={`${fixed(data.max_dd_pct, 1)}%`}
           hint={`< ${data.gate_max_dd_pct}%`}
           valueColor={ddColor}
@@ -820,14 +823,14 @@ function EvalCard({
         <StatCell
           style={styles.gridCell}
           size="sm"
-          label="Calmar"
+          label={tr('stat.calmar')}
           value={fixed(data.calmar, 2)}
           hint="getiri / düşüş"
         />
         <StatCell
           style={styles.gridCell}
           size="sm"
-          label="Getiri"
+          label={tr('stat.return')}
           value={signedPctPoints(data.total_return_pct)}
           hint={`${data.days} g`}
           valueColor={PNL[pnlTone(data.total_return_pct)]}
@@ -836,7 +839,7 @@ function EvalCard({
           <StatCell
             style={styles.gridCell}
             size="sm"
-            label="α vs SPY"
+            label={tr('stat.alphaVsSpy')}
             value={signedPctPoints(alpha)}
             hint={`SPY ${signedPctPoints(data.spy_return_pct)}`}
             valueColor={PNL[pnlTone(alpha)]}
@@ -908,6 +911,7 @@ function PositionRow({
   onAnalyze: () => void;
   onChart: () => void;
 }) {
+  const { t: tr } = useTranslation();
   const t = useTheme();
   const sh = useShape();
   const styles = useMemo(() => makeStyles(t, sh), [t, sh]);
@@ -932,7 +936,7 @@ function PositionRow({
         <View style={styles.posMain}>
           <View style={styles.posTitleRow}>
             <Text style={styles.posTicker} numberOfLines={1}>{p.ticker}</Text>
-            {overCap ? <Tag label="tavan" variant="down" size="sm" caps /> : null}
+            {overCap ? <Tag label={tr('tag.overCap')} variant="down" size="sm" caps /> : null}
           </View>
           <Text style={styles.posMeta} numberOfLines={1}>
             {sectorLabelTr(p.sector)} · {p.quantity} lot · ort. {formatUsd(p.avg_entry_price)}

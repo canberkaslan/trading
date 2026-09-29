@@ -40,5 +40,127 @@
     "takeaway": "Akılda kalsın",
     "correct": "Doğru",
     "wrong": "Yanlış"
+  },
+  "rating": {
+    "Buy": "Al",
+    "Overweight": "Ağırlık artır",
+    "Hold": "Tut",
+    "Underweight": "Ağırlık azalt",
+    "Sell": "Sat"
+  },
+  "mode": {
+    "unknown": "Mod ?",
+    "live": "Live — gerçek para",
+    "liveShort": "Live",
+    "paper": "Paper"
+  },
+  "account": {
+    "alpaca": "Alpaca hesabı",
+    "alpacaLive": "Alpaca LIVE hesabı",
+    "alpacaPaper": "Alpaca paper hesabı"
+  },
+  "tag": {
+    "overCap": "tavan"
+  },
+  "stat": {
+    "entry": "Giriş",
+    "stop": "Stop",
+    "takeProfit": "Kâr al",
+    "takeProfitBroker": "Kâr al (broker)",
+    "target": "Hedef",
+    "horizon": "Vade",
+    "size": "Boyut",
+    "amount": "Tutar",
+    "portfolioPct": "Portföy %",
+    "age": "Süre",
+    "duration": "Süre",
+    "exit": "Çıkış",
+    "qty": "Adet",
+    "lots": "Lot",
+    "opened": "Açılış",
+    "closed": "Kapanış",
+    "decisions": "Karar",
+    "tokens": "Token",
+    "agentTime": "Ajan süresi",
+    "cost": "Maliyet",
+    "status": "Durum",
+    "sentToBroker": "Broker'a giden",
+    "lastSubmit": "Son gönderim",
+    "winRate": "Kazanma",
+    "expectancy": "Beklenti",
+    "profitFactor": "Kâr faktörü",
+    "net": "Net",
+    "netTrades_one": "Net · {{count}} işlem",
+    "netTrades_other": "Net · {{count}} işlem",
+    "diversity": "Çeşitlilik",
+    "largest": "En yüksek",
+    "top3": "İlk 3",
+    "sharpe": "Sharpe",
+    "sortino": "Sortino",
+    "maxDd": "Maks. düşüş",
+    "calmar": "Calmar",
+    "return": "Getiri",
+    "alphaVsSpy": "α vs SPY",
+    "killSwitch": "Kill switch",
+    "mode": "Mod",
+    "thisSession": "Bu oturum",
+    "backend": "Backend",
+    "brokerDb": "Broker · DB",
+    "lastAgentDecision": "Son ajan kararı",
+    "appVersion": "Uygulama sürümü",
+    "riskPerTrade": "Risk / işlem",
+    "run": "Koşu"
+  },
+  "kicker": {
+    "strategy": "Strateji",
+    "window": "Pencere",
+    "universe": "Evren",
+    "exitPath": "Çıkış yolu",
+    "frequent": "Sık kullanılanlar",
+    "portfolioManager": "Portföy yöneticisi",
+    "position": "Pozisyon",
+    "lastDecision": "Son karar",
+    "rationale": "Gerekçe",
+    "portfolioValue": "Portföy değeri · {{account}}",
+    "evalVerdict": "Eval kararı",
+    "pmRationale": "Portföy yöneticisi gerekçesi"
+  },
+  "debateRole": {
+    "bull": "Boğa",
+    "bear": "Ayı",
+    "bull_researcher": "Boğa araştırmacı",
+    "bear_researcher": "Ayı araştırmacı",
+    "research_manager": "Araştırma yöneticisi",
+    "trader": "Trader",
+    "risk_manager": "Risk yöneticisi",
+    "portfolio_manager": "Portföy yöneticisi"
+  },
+  "settings": {
+    "group": {
+      "account": "Hesap & mod",
+      "eval": "Eval scorecard",
+      "risk": "Risk & uyarılar",
+      "orders": "Emir gönderimi",
+      "notifications": "Bildirimler",
+      "appearance": "Görünüm",
+      "system": "Sistem"
+    }
+  },
+  "horizon": {
+    "unit": {
+      "day_one": "gün",
+      "day_other": "gün",
+      "week_one": "hafta",
+      "week_other": "hafta",
+      "month_one": "ay",
+      "month_other": "ay",
+      "year_one": "yıl",
+      "year_other": "yıl"
+    },
+    "term": {
+      "short": "Kısa vade",
+      "medium": "Orta vade",
+      "long": "Uzun vade"
+    }
   }
 }

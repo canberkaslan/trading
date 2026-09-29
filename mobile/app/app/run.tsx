@@ -51,6 +51,7 @@
 import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useRouter } from 'expo-router';
 import Svg, { Path, Rect, Defs, RadialGradient, Stop, Circle } from 'react-native-svg';
 
@@ -221,6 +222,7 @@ function PauseMark({ color }: { color: string }) {
 }
 
 export default function RunScreen() {
+  const { t: tr } = useTranslation();
   const router = useRouter();
   const t = useTheme();
   const sh = useShape();
@@ -438,20 +440,20 @@ export default function RunScreen() {
           <View style={styles.statRow}>
             <StatCell
               size="sm"
-              label="Ajan süresi"
+              label={tr('stat.agentTime')}
               value={formatLatency(elapsedMs)}
               hint="toplam, eşzamanlı"
               accessibilityLabel={`Toplam ajan süresi ${formatLatency(elapsedMs)}, ajanlar eşzamanlı çalışır`}
             />
             <StatCell
               size="sm"
-              label="Token"
+              label={tr('stat.tokens')}
               value={formatTokens(runTokens)}
               hint={`${run.length} karar`}
             />
             <StatCell
               size="sm"
-              label="Maliyet"
+              label={tr('stat.cost')}
               value={runCost == null ? '—' : `$${runCost.toFixed(2)}`}
               hint={runCost == null ? 'sunucu bildirmiyor' : 'alt sınır, fiyatlı modeller'}
               accessibilityLabel={

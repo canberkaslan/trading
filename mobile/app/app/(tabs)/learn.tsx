@@ -10,6 +10,7 @@ import { LESSONS, type LessonText } from '@/content/lessons';
 import { useTheme } from '@/theme/useTheme';
 import { useShape, type Shape } from '@/theme/shape';
 import { Card } from '@/components/Card';
+import { CapsText } from '@/components/CapsText';
 import { MIN_TOUCH_TARGET } from '@/utils/a11y';
 import { font, TABULAR, TYPE } from '@/theme/type';
 
@@ -343,7 +344,7 @@ function LessonCard({
           ))}
 
           <View style={styles.takeaway}>
-            <Text style={styles.takeawayLabel}>{takeawayLabel}</Text>
+            <CapsText style={styles.takeawayLabel}>{takeawayLabel}</CapsText>
             <Text style={styles.takeawayText}>{text.takeaway}</Text>
           </View>
 

@@ -113,8 +113,13 @@ const SCALE = {
   body: () => ({ fontSize: 13, ...font(400) }),
   bodyStrong: () => ({ fontSize: 13, ...font(600) }),
   helper: () => ({ fontSize: 11, ...font(400) }),
-  /** 11px uppercase, .1em tracking. The colour is accent-700 wherever it is used. */
-  kicker: () => ({ fontSize: 11, letterSpacing: 1.1, textTransform: 'uppercase', ...font(600) }),
+  /**
+   * 11px uppercase, .1em tracking. The colour is accent-700 wherever it is used.
+   * The uppercase is NOT a style: render the text through `CapsText` (or
+   * `useCaps`), which cases it with the string's language. `textTransform`
+   * uses the device locale and produced "GIRIŞ" / "UNDERWEİGHT".
+   */
+  kicker: () => ({ fontSize: 11, letterSpacing: 1.1, ...font(600) }),
 } satisfies Record<string, () => TextStyle>;
 
 export const TYPE = new Proxy({} as Record<keyof typeof SCALE, TextStyle>, {

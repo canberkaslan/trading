@@ -17,6 +17,7 @@ import { useMemo } from 'react';
 import { useTheme } from '@/theme/useTheme';
 import { useShape, type Shape } from '@/theme/shape';
 import { TYPE, TABULAR, font } from '@/theme/type';
+import { useCaps } from '@/i18n/useCaps';
 
 type Palette = ReturnType<typeof useTheme>;
 
@@ -25,8 +26,10 @@ export type StatSize = 'sm' | 'md' | 'lg';
 const VALUE_SIZE: Record<StatSize, number> = { sm: 13, md: 18, lg: 26 };
 
 export interface StatCellProps {
-  /** The 11px uppercase kicker. */
+  /** The 11px uppercase kicker. Pass it in sentence case, from `t()`. */
   label: string;
+  /** The label's language when it did not come from `t()`. */
+  labelLang?: string;
   value: string;
   /** What makes the value mean something: a gate, a unit, a timestamp. */
   hint?: string;
@@ -41,6 +44,7 @@ export interface StatCellProps {
 
 export function StatCell({
   label,
+  labelLang,
   value,
   hint,
   valueColor,
@@ -52,6 +56,7 @@ export function StatCell({
   const t = useTheme();
   const sh = useShape();
   const styles = useMemo(() => makeStyles(t, sh), [t, sh]);
+  const caps = useCaps();
 
   return (
     <View
@@ -60,7 +65,7 @@ export function StatCell({
       accessibilityLabel={accessibilityLabel ?? [label, value, hint].filter(Boolean).join(', ')}
     >
       <Text style={styles.label} numberOfLines={1}>
-        {label}
+        {caps(label, labelLang)}
       </Text>
       <Text
         style={[styles.value, { fontSize: VALUE_SIZE[size] }, valueColor ? { color: valueColor } : null]}

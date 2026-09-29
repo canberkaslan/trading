@@ -170,7 +170,7 @@ export default function LoginScreen() {
    */
   const { data: readiness, isError: readinessFailed } = useReadiness();
   const mode = readiness?.trading_mode;
-  const modeLabel = mode === 'live' ? 'LIVE — GERÇEK PARA' : mode === 'paper' ? 'PAPER' : 'MOD ?';
+  const modeLabel = t(mode === 'live' ? 'mode.live' : mode === 'paper' ? 'mode.paper' : 'mode.unknown');
   /*
    * The prototype tints the chip rather than filling it: rose-300 on LIVE,
    * indigo-200 otherwise. Aurora already owns both as soft-ground variants, so

@@ -49,9 +49,9 @@ import { useShape, type Shape } from '@/theme/shape';
 import { TYPE, TABULAR, font } from '@/theme/type';
 import { Card } from '@/components/Card';
 import { Tag } from '@/components/Tag';
+import { RatingTag } from '@/components/RatingTag';
 import { Sheet } from '@/components/Sheet';
 import { ErrorState } from '@/components/ErrorState';
-import { ratingVariant } from '@/theme/rating';
 import { authenticate } from '@/auth/biometric';
 import { publicErrorDetail } from '@/utils/apiError';
 import { approvalGateFor } from '@/auth/authPolicy';
@@ -383,13 +383,13 @@ export default function QueueScreen() {
               Onay kuyruğu <Text style={styles.titleCount}>{rows.length}</Text>
             </Text>
             <Tag
-              label={
+              label={tr(
                 readiness?.trading_mode == null
-                  ? 'MOD ?'
+                  ? 'mode.unknown'
                   : readiness.trading_mode === 'live'
-                    ? 'LIVE — GERÇEK PARA'
-                    : 'PAPER'
-              }
+                    ? 'mode.live'
+                    : 'mode.paper',
+              )}
               variant={readiness?.trading_mode === 'live' ? 'down' : 'neutral'}
               size="sm"
               caps
@@ -437,7 +437,7 @@ export default function QueueScreen() {
                     style={styles.rowHead}
                   >
                     <Text style={styles.ticker}>{o.ticker}</Text>
-                    {d ? <Tag label={d.rating} variant={ratingVariant(d.rating)} size="sm" caps /> : null}
+                    {d ? <RatingTag rating={d.rating} size="sm" /> : null}
                     <Text
                       style={[styles.side, { color: buy ? t.up : (t.downText ?? t.down) }]}
                       numberOfLines={1}
@@ -574,9 +574,9 @@ export default function QueueScreen() {
         summary={
           flow.step === 'auth' || flow.step === 'verifying'
             ? [
-                { label: 'Tutar', value: formatUsd(notionalOf(flow.target)) },
-                { label: 'Stop', value: formatUsd(flow.target.stop_loss) },
-                { label: 'Lot', value: String(flow.target.quantity) },
+                { label: tr('stat.amount'), value: formatUsd(notionalOf(flow.target)) },
+                { label: tr('stat.stop'), value: formatUsd(flow.target.stop_loss) },
+                { label: tr('stat.lots'), value: String(flow.target.quantity) },
               ]
             : undefined
         }

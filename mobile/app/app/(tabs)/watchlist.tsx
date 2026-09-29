@@ -20,9 +20,9 @@ import { ErrorState } from '@/components/ErrorState';
 import type { AgentDecision, Bar, OrderListItem, Position } from '@/api/types';
 import { Card } from '@/components/Card';
 import { Tag } from '@/components/Tag';
+import { RatingTag } from '@/components/RatingTag';
 import { useTheme } from '@/theme/useTheme';
 import { useShape, type Shape } from '@/theme/shape';
-import { ratingVariant } from '@/theme/rating';
 import { font, TABULAR, TYPE } from '@/theme/type';
 import { formatOrderDate } from '@/utils/orders';
 import { formatPct, formatUsd, parseUtc } from '@/utils/format';
@@ -379,7 +379,7 @@ function WatchRow({
 
       <View style={styles.meta}>
         {decision ? (
-          <Tag label={decision.rating} variant={ratingVariant(decision.rating)} size="sm" caps />
+          <RatingTag rating={decision.rating} size="sm" />
         ) : (
           <Tag label="—" variant="neutral" size="sm" />
         )}

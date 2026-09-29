@@ -33,10 +33,10 @@ import { ErrorState } from '@/components/ErrorState';
 import { Card } from '@/components/Card';
 import { DataRow } from '@/components/DataRow';
 import { Tag, type TagVariant } from '@/components/Tag';
+import { RatingTag } from '@/components/RatingTag';
 import { Seg } from '@/components/Seg';
 import { Sheet } from '@/components/Sheet';
 import { toast } from '@/stores/toast';
-import { ratingVariant } from '@/theme/rating';
 import { formatUsd, relativeAgeTr, parseUtc } from '@/utils/format';
 import {
   orderStatusMeta,
@@ -330,7 +330,7 @@ function PendingRow({
         chevron
         title={o.ticker}
         titleAfter={
-          decision ? <Tag label={decision.rating} variant={ratingVariant(decision.rating)} size="sm" caps /> : null
+          decision ? <RatingTag rating={decision.rating} size="sm" /> : null
         }
         subtitle={meta}
         value={notional != null ? formatUsd(notional) : undefined}

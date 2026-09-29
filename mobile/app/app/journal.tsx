@@ -41,10 +41,12 @@ import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl } from 'r
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import { useTrades } from '@/api/hooks';
 import type { ClosedTrade } from '@/api/types';
 import { Card } from '@/components/Card';
+import { CapsText } from '@/components/CapsText';
 import { SectionHeader } from '@/components/SectionHeader';
 import { DataRow } from '@/components/DataRow';
 import { StatCell } from '@/components/StatCell';
@@ -137,6 +139,7 @@ export function journalDayLabel(iso: string | null | undefined): string {
 }
 
 export default function JournalScreen() {
+  const { t: tr } = useTranslation();
   const t = useTheme();
   const sh = useShape();
   const router = useRouter();
@@ -216,7 +219,7 @@ export default function JournalScreen() {
           <StatCell
             align="right"
             size="md"
-            label={`Net · ${stats.trades} işlem`}
+            label={tr('stat.netTrades', { count: stats.trades })}
             value={formatUsd(stats.net_pnl, { signed: true })}
             valueColor={toneColor(t, netTone)}
             accessibilityLabel={`Gerçekleşen net kâr zarar ${formatUsd(stats.net_pnl, {
@@ -393,30 +396,30 @@ export default function JournalScreen() {
                   {open ? (
                     <View style={[styles.detail, i < rows.length - 1 && styles.detailDivider]}>
                       <View style={styles.grid}>
-                        <StatCell style={styles.gridCell} size="sm" label="Giriş" value={formatUsd(row.entry_price)} />
-                        <StatCell style={styles.gridCell} size="sm" label="Çıkış" value={formatUsd(row.exit_price)} />
-                        <StatCell style={styles.gridCell} size="sm" label="Adet" value={String(row.quantity)} />
+                        <StatCell style={styles.gridCell} size="sm" label={tr('stat.entry')} value={formatUsd(row.entry_price)} />
+                        <StatCell style={styles.gridCell} size="sm" label={tr('stat.exit')} value={formatUsd(row.exit_price)} />
+                        <StatCell style={styles.gridCell} size="sm" label={tr('stat.qty')} value={String(row.quantity)} />
                         <StatCell
                           style={styles.gridCell}
                           size="sm"
-                          label="Süre"
+                          label={tr('stat.duration')}
                           value={`${row.holding_days} gün`}
                         />
                         <StatCell
                           style={styles.gridCell}
                           size="sm"
-                          label="Açılış"
+                          label={tr('stat.opened')}
                           value={formatOrderDate(row.opened_at_utc)}
                         />
                         <StatCell
                           style={styles.gridCell}
                           size="sm"
-                          label="Kapanış"
+                          label={tr('stat.closed')}
                           value={formatOrderDate(row.closed_at_utc)}
                         />
                       </View>
 
-                      <Text style={styles.detailKicker}>Çıkış yolu</Text>
+                      <CapsText style={styles.detailKicker}>{tr('kicker.exitPath')}</CapsText>
                       <Text style={styles.detailNote}>{exitNote(row.exit_class)}</Text>
 
                       <Pressable

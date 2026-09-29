@@ -47,9 +47,12 @@ import { todaysCalls, summaryLine } from '@/utils/todaysCalls';
 import { useTheme } from '@/theme/useTheme';
 import { useShape, type Shape } from '@/theme/shape';
 import { TYPE, TABULAR, font } from '@/theme/type';
-import { ratingVariant, modelBadge } from '@/theme/rating';
+import { modelBadge } from '@/theme/rating';
 import { Card } from '@/components/Card';
 import { Tag } from '@/components/Tag';
+import { RatingTag } from '@/components/RatingTag';
+import { formatHorizon } from '@/i18n/horizon';
+import { ratingLabel } from '@/i18n/labels';
 import { StatCell } from '@/components/StatCell';
 import { SectionHeader } from '@/components/SectionHeader';
 import { ErrorState } from '@/components/ErrorState';
@@ -263,19 +266,19 @@ export default function AgentsScreen() {
             >
               <View style={styles.statRow}>
                 <StatCell
-                  label="Karar"
+                  label={tr('stat.decisions')}
                   value={String(lastRun.count)}
                   hint="isim üzerine hüküm"
                   style={styles.stat}
                 />
                 <StatCell
-                  label="Token"
+                  label={tr('stat.tokens')}
                   value={lastRun.tokens == null ? '—' : `~${formatTokens(lastRun.tokens)}`}
                   hint="girdi + çıktı"
                   style={styles.stat}
                 />
                 <StatCell
-                  label="Ajan süresi"
+                  label={tr('stat.agentTime')}
                   value={formatLatency(lastRun.latency)}
                   hint="eş zamanlı, duvar saati değil"
                   style={styles.stat}
@@ -314,11 +317,11 @@ export default function AgentsScreen() {
                   key={`today-${d.decision_id}`}
                   onPress={() => openDetail(d.ticker, d.decision_id)}
                   style={styles.todayCard}
-                  accessibilityLabel={`${d.ticker}, ${d.rating}`}
+                  accessibilityLabel={`${d.ticker}, ${ratingLabel(tr, d.rating)}`}
                   accessibilityHint="Karar detayını açar"
                 >
                   <Text style={styles.todayTicker}>{d.ticker}</Text>
-                  <Tag label={d.rating} variant={ratingVariant(d.rating)} size="sm" caps />
+                  <RatingTag rating={d.rating} size="sm" />
                 </Card>
               ))}
             </ScrollView>
@@ -365,12 +368,12 @@ export default function AgentsScreen() {
                       style={({ pressed }) => [styles.rowBody, pressed && styles.rowPressed]}
                       onPress={() => openDetail(d.ticker, d.decision_id)}
                       accessibilityRole="button"
-                      accessibilityLabel={`${d.ticker} kararı, ${d.rating}`}
+                      accessibilityLabel={`${d.ticker} kararı, ${ratingLabel(tr, d.rating)}`}
                       accessibilityHint="Karar detayını açar"
                     >
                       <View style={styles.rowHead}>
                         <Text style={styles.ticker}>{d.ticker}</Text>
-                        <Tag label={d.rating} variant={ratingVariant(d.rating)} size="sm" caps />
+                        <RatingTag rating={d.rating} size="sm" />
                         {gap ? <Tag label="eksik" variant="warn" size="sm" /> : null}
                       </View>
 
@@ -390,7 +393,7 @@ export default function AgentsScreen() {
                       </View>
 
                       <Text style={styles.rowMeta}>
-                        {formatOrderDate(d.timestamp_utc)} · {d.time_horizon ?? '—'}
+                        {formatOrderDate(d.timestamp_utc)} · {formatHorizon(d.time_horizon, tr)}
                         {gap ? ` · ${gap}` : ''}
                       </Text>
                     </Pressable>

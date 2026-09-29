@@ -39,11 +39,12 @@ import { useTheme } from '@/theme/useTheme';
 import { useShape, type Shape } from '@/theme/shape';
 import { TYPE, TABULAR, font } from '@/theme/type';
 import { Card } from '@/components/Card';
+import { CapsText } from '@/components/CapsText';
 import { DataRow } from '@/components/DataRow';
 import { SectionHeader } from '@/components/SectionHeader';
 import { Tag } from '@/components/Tag';
+import { RatingTag } from '@/components/RatingTag';
 import { ErrorState } from '@/components/ErrorState';
-import { ratingVariant } from '@/theme/rating';
 import { formatUsd, formatPct, relativeAgeTr, parseUtc } from '@/utils/format';
 import { orderActionLabel } from '@/utils/a11y';
 import { isAuthError, publicErrorDetail } from '@/utils/apiError';
@@ -231,7 +232,7 @@ export default function TodayScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={t.textSecondary} />
         }
       >
-        <Text style={styles.dateKicker}>{todayLabel(now)}</Text>
+        <CapsText style={styles.dateKicker} lang="tr">{todayLabel(now)}</CapsText>
         <Text style={styles.greeting} accessibilityRole="header">
           {greetingTr(now)}
         </Text>
@@ -355,7 +356,7 @@ export default function TodayScreen() {
                     chevron={false}
                     title={o.ticker}
                     titleAfter={
-                      d ? <Tag label={d.rating} variant={ratingVariant(d.rating)} size="sm" caps /> : null
+                      d ? <RatingTag rating={d.rating} size="sm" /> : null
                     }
                     subtitle={`${o.side} ${o.quantity} · ${o.order_type} · stop ${formatUsd(o.stop_loss)}`}
                     value={formatUsd(notional)}

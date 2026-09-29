@@ -40,5 +40,127 @@
     "takeaway": "Takeaway",
     "correct": "Correct",
     "wrong": "Not quite"
+  },
+  "rating": {
+    "Buy": "Buy",
+    "Overweight": "Overweight",
+    "Hold": "Hold",
+    "Underweight": "Underweight",
+    "Sell": "Sell"
+  },
+  "mode": {
+    "unknown": "Mode ?",
+    "live": "Live — real money",
+    "liveShort": "Live",
+    "paper": "Paper"
+  },
+  "account": {
+    "alpaca": "Alpaca account",
+    "alpacaLive": "Alpaca live account",
+    "alpacaPaper": "Alpaca paper account"
+  },
+  "tag": {
+    "overCap": "over cap"
+  },
+  "stat": {
+    "entry": "Entry",
+    "stop": "Stop",
+    "takeProfit": "Take profit",
+    "takeProfitBroker": "Take profit (broker)",
+    "target": "Target",
+    "horizon": "Horizon",
+    "size": "Size",
+    "amount": "Amount",
+    "portfolioPct": "Portfolio %",
+    "age": "Age",
+    "duration": "Duration",
+    "exit": "Exit",
+    "qty": "Qty",
+    "lots": "Lots",
+    "opened": "Opened",
+    "closed": "Closed",
+    "decisions": "Decisions",
+    "tokens": "Tokens",
+    "agentTime": "Agent time",
+    "cost": "Cost",
+    "status": "Status",
+    "sentToBroker": "Sent to broker",
+    "lastSubmit": "Last submitted",
+    "winRate": "Win rate",
+    "expectancy": "Expectancy",
+    "profitFactor": "Profit factor",
+    "net": "Net",
+    "netTrades_one": "Net · {{count}} trade",
+    "netTrades_other": "Net · {{count}} trades",
+    "diversity": "Diversity",
+    "largest": "Largest",
+    "top3": "Top 3",
+    "sharpe": "Sharpe",
+    "sortino": "Sortino",
+    "maxDd": "Max DD",
+    "calmar": "Calmar",
+    "return": "Return",
+    "alphaVsSpy": "α vs SPY",
+    "killSwitch": "Kill switch",
+    "mode": "Mode",
+    "thisSession": "This session",
+    "backend": "Backend",
+    "brokerDb": "Broker · DB",
+    "lastAgentDecision": "Last agent decision",
+    "appVersion": "App version",
+    "riskPerTrade": "Risk / trade",
+    "run": "Run"
+  },
+  "kicker": {
+    "strategy": "Strategy",
+    "window": "Window",
+    "universe": "Universe",
+    "exitPath": "Exit path",
+    "frequent": "Frequently used",
+    "portfolioManager": "Portfolio manager",
+    "position": "Position",
+    "lastDecision": "Latest decision",
+    "rationale": "Rationale",
+    "portfolioValue": "Portfolio value · {{account}}",
+    "evalVerdict": "Eval verdict",
+    "pmRationale": "Portfolio manager's rationale"
+  },
+  "debateRole": {
+    "bull": "Bull",
+    "bear": "Bear",
+    "bull_researcher": "Bull researcher",
+    "bear_researcher": "Bear researcher",
+    "research_manager": "Research manager",
+    "trader": "Trader",
+    "risk_manager": "Risk manager",
+    "portfolio_manager": "Portfolio manager"
+  },
+  "settings": {
+    "group": {
+      "account": "Account & mode",
+      "eval": "Eval scorecard",
+      "risk": "Risk & alerts",
+      "orders": "Order routing",
+      "notifications": "Notifications",
+      "appearance": "Appearance",
+      "system": "System"
+    }
+  },
+  "horizon": {
+    "unit": {
+      "day_one": "day",
+      "day_other": "days",
+      "week_one": "week",
+      "week_other": "weeks",
+      "month_one": "month",
+      "month_other": "months",
+      "year_one": "year",
+      "year_other": "years"
+    },
+    "term": {
+      "short": "Short term",
+      "medium": "Medium term",
+      "long": "Long term"
+    }
   }
 }

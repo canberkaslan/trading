@@ -27,6 +27,7 @@ import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import { useAudit, useKillSwitch, useReadiness } from '@/api/hooks';
 import type { AuditLogEntry } from '@/api/types';
@@ -167,6 +168,7 @@ function ageTr(iso: string): string {
 }
 
 export default function AuditScreen() {
+  const { t: tr } = useTranslation();
   const router = useRouter();
   const t = useTheme();
   const sh = useShape();
@@ -244,7 +246,7 @@ export default function AuditScreen() {
           <Card tone="recessed" style={styles.nowCard}>
             <View style={styles.nowRow}>
               <StatCell
-                label="Kill switch"
+                label={tr('stat.killSwitch')}
                 value={kill.isLoading ? '…' : (killState ?? '—')}
                 hint={killState ? killSwitchLabel(killState) : 'durum bilinmiyor'}
                 valueColor={killColor}
@@ -255,7 +257,7 @@ export default function AuditScreen() {
                 }
               />
               <StatCell
-                label="Mod"
+                label={tr('stat.mode')}
                 value={readiness.isLoading ? '…' : modeLabel}
                 hint={mode === 'live' ? 'gerçek para' : mode === 'paper' ? 'sanal hesap' : 'sunucu yanıt vermedi'}
                 accessibilityLabel={`İşlem modu: ${modeLabel}`}
@@ -263,7 +265,7 @@ export default function AuditScreen() {
             </View>
             <View style={styles.nowDivider} />
             <StatCell
-              label="Bu oturum"
+              label={tr('stat.thisSession')}
               value={who}
               hint={whoHint}
               size="sm"

@@ -90,6 +90,7 @@ import { unreadCount } from '@/utils/inbox';
 import { MIN_TOUCH_TARGET, hitSlopFor } from '@/utils/a11y';
 import { relativeAgeTr, parseUtc } from '@/utils/format';
 import { Card } from '@/components/Card';
+import { CapsText } from '@/components/CapsText';
 import { DataRow } from '@/components/DataRow';
 import { StatCell } from '@/components/StatCell';
 import { Tag } from '@/components/Tag';
@@ -176,9 +177,9 @@ function GroupTitle({ title, right }: { title: string; right?: React.ReactNode }
   const styles = useMemo(() => makeStyles(t, sh), [t, sh]);
   return (
     <View style={styles.groupTitleRow}>
-      <Text style={styles.groupTitle} accessibilityRole="header">
+      <CapsText style={styles.groupTitle} accessibilityRole="header">
         {title}
-      </Text>
+      </CapsText>
       {right}
     </View>
   );
@@ -557,26 +558,26 @@ export default function SettingsScreen() {
 
   const systemFields: { label: string; value: string; color?: string }[] = [
     {
-      label: 'Backend',
+      label: tr('stat.backend'),
       value: healthError ? '● offline' : health?.status === 'ok' ? '● online' : '…',
       color: healthError ? theme.downText : theme.up,
     },
     {
-      label: 'Broker · DB',
+      label: tr('stat.brokerDb'),
       value: readiness
         ? `Alpaca ${readiness.alpaca ? '✓' : '✗'} · DB ${readiness.db ? '✓' : '✗'}`
         : '…',
       color: readiness && (!readiness.alpaca || !readiness.db) ? theme.downText : undefined,
     },
-    { label: 'Son ajan kararı', value: lastRun },
-    { label: 'Uygulama sürümü', value: APP_VERSION },
+    { label: tr('stat.lastAgentDecision'), value: lastRun },
+    { label: tr('stat.appVersion'), value: APP_VERSION },
   ];
 
   const strategyFields = [
-    { label: 'Risk / işlem', value: '%0.5 equity' },
-    { label: 'Stop', value: 'Ajan kararında gelir' },
-    { label: 'Evren', value: 'SPY + 10 isim' },
-    { label: 'Koşu', value: 'Hafta içi 22:30 UTC' },
+    { label: tr('stat.riskPerTrade'), value: '%0.5 equity' },
+    { label: tr('stat.stop'), value: 'Ajan kararında gelir' },
+    { label: tr('kicker.universe'), value: 'SPY + 10 isim' },
+    { label: tr('stat.run'), value: 'Hafta içi 22:30 UTC' },
   ];
 
   return (
@@ -585,7 +586,7 @@ export default function SettingsScreen() {
         <Text style={styles.heading}>{tr('tabs.settings')}</Text>
 
         {/* ── Hesap & mod ───────────────────────────────────────── */}
-        <GroupTitle title="Hesap & mod" />
+        <GroupTitle title={tr('settings.group.account')} />
         <Card>
           <View style={styles.modeRow}>
             {/* Tri-state, matching StatusBanner: PAPER is a claim about where
@@ -594,7 +595,7 @@ export default function SettingsScreen() {
                 meant an unauthenticated app asserted the account was on paper.
                 After go-live that is the one lie this screen must never tell. */}
             <Tag
-              label={mode == null ? 'MOD ?' : isLive ? 'LIVE — GERÇEK PARA' : 'PAPER'}
+              label={tr(mode == null ? 'mode.unknown' : isLive ? 'mode.live' : 'mode.paper')}
               variant="outline"
               caps
             />
@@ -660,7 +661,7 @@ export default function SettingsScreen() {
 
         {/* ── Eval scorecard ────────────────────────────────────── */}
         <GroupTitle
-          title="Eval scorecard"
+          title={tr('settings.group.eval')}
           right={
             evalData ? (
               <Text style={[styles.verdict, { color: VERDICT_COLOR[evalData.verdict] ?? theme.ink2 ?? theme.textSecondary }]}>
@@ -691,7 +692,7 @@ export default function SettingsScreen() {
                 <StatCell
                   style={styles.evalCell}
                   size="sm"
-                  label="Sharpe"
+                  label={tr('stat.sharpe')}
                   value={fixed(evalData.sharpe, 2)}
                   hint={`> ${evalData.gate_sharpe}`}
                   valueColor={sharpeFail ? failColor : undefined}
@@ -699,14 +700,14 @@ export default function SettingsScreen() {
                 <StatCell
                   style={styles.evalCell}
                   size="sm"
-                  label="Sortino"
+                  label={tr('stat.sortino')}
                   value={fixed(evalData.sortino, 2)}
                   hint="downside"
                 />
                 <StatCell
                   style={styles.evalCell}
                   size="sm"
-                  label="Max DD"
+                  label={tr('stat.maxDd')}
                   value={`${fixed(evalData.max_dd_pct, 1)}%`}
                   hint={`< ${evalData.gate_max_dd_pct}%`}
                   valueColor={ddFail ? failColor : undefined}
@@ -714,14 +715,14 @@ export default function SettingsScreen() {
                 <StatCell
                   style={styles.evalCell}
                   size="sm"
-                  label="Calmar"
+                  label={tr('stat.calmar')}
                   value={fixed(evalData.calmar, 2)}
                   hint="getiri/DD"
                 />
                 <StatCell
                   style={styles.evalCell}
                   size="sm"
-                  label="Getiri"
+                  label={tr('stat.return')}
                   value={`${evalData.total_return_pct >= 0 ? '+' : MINUS}${Math.abs(evalData.total_return_pct).toFixed(1)}%`}
                   hint={`${evalData.days}g`}
                 />
@@ -729,7 +730,7 @@ export default function SettingsScreen() {
                   <StatCell
                     style={styles.evalCell}
                     size="sm"
-                    label="α vs SPY"
+                    label={tr('stat.alphaVsSpy')}
                     value={`${evalData.total_return_pct - evalData.spy_return_pct >= 0 ? '+' : MINUS}${Math.abs(evalData.total_return_pct - evalData.spy_return_pct).toFixed(1)}%`}
                     hint={`SPY ${evalData.spy_return_pct >= 0 ? '+' : MINUS}${Math.abs(evalData.spy_return_pct).toFixed(1)}%`}
                   />
@@ -773,7 +774,7 @@ export default function SettingsScreen() {
         </Card>
 
         {/* ── Risk: the kill switch's new home ──────────────────── */}
-        <GroupTitle title="Risk & uyarılar" />
+        <GroupTitle title={tr('settings.group.risk')} />
         <Card padded={false} clip>
           <DataRow
             title="Kill switch ve limitler"
@@ -785,7 +786,7 @@ export default function SettingsScreen() {
         </Card>
 
         {/* ── Emir gönderimi ────────────────────────────────────── */}
-        <GroupTitle title="Emir gönderimi" />
+        <GroupTitle title={tr('settings.group.orders')} />
         <Card>
           <Text style={styles.noteFirst}>
             Bu üç ayar sunucudaki ExecutionConfig&apos;ten gelir. Uygulama bunları yazamaz; API bir okuma
@@ -805,7 +806,7 @@ export default function SettingsScreen() {
         </Card>
 
         {/* ── Strateji ──────────────────────────────────────────── */}
-        <GroupTitle title="Strateji" />
+        <GroupTitle title={tr('kicker.strategy')} />
         <Card>
           <Text style={styles.noteFirst}>
             Boyutlama yöntemi ve tek isim tavanı sunucudaki risk yapılandırmasıdır
@@ -865,7 +866,7 @@ export default function SettingsScreen() {
 
         {/* ── Bildirimler ───────────────────────────────────────── */}
         <GroupTitle
-          title="Bildirimler"
+          title={tr('settings.group.notifications')}
           right={
             <Text style={[styles.permission, { color: PERMISSION_COPY[permission ?? 'undetermined'].color }]}>
               {permission ? PERMISSION_COPY[permission].text : '…'}
@@ -923,7 +924,7 @@ export default function SettingsScreen() {
         {/* Language and palette were both settable only by the device: the app
             followed the phone's locale and opened in whichever palette the
             build defaulted to. Both are reader choices, and both persist. */}
-        <GroupTitle title="Görünüm" />
+        <GroupTitle title={tr('settings.group.appearance')} />
         <Card>
           <Text style={styles.fieldLabelFirst}>Dil / Language</Text>
           <Seg
@@ -957,7 +958,7 @@ export default function SettingsScreen() {
         </Card>
 
         {/* ── Sistem ────────────────────────────────────────────── */}
-        <GroupTitle title="Sistem" />
+        <GroupTitle title={tr('settings.group.system')} />
         <Card>
           <View style={styles.gridFirst}>
             {systemFields.map((f) => (

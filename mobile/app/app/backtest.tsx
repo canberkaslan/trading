@@ -31,9 +31,11 @@
 import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import { useTranslation } from 'react-i18next';
 import { useMemo, useState } from 'react';
 
 import { Card } from '@/components/Card';
+import { CapsText } from '@/components/CapsText';
 import { SectionHeader } from '@/components/SectionHeader';
 import { Seg, type SegOption } from '@/components/Seg';
 import { Tag } from '@/components/Tag';
@@ -87,6 +89,7 @@ const RESULT_FIELDS: readonly { label: string; hint: string }[] = [
 ];
 
 export default function BacktestScreen() {
+  const { t: tr } = useTranslation();
   const router = useRouter();
   const t = useTheme();
   const sh = useShape();
@@ -122,14 +125,14 @@ export default function BacktestScreen() {
 
         <Card>
           <View style={styles.kickerRow}>
-            <Text style={styles.kicker}>Strateji</Text>
+            <CapsText style={styles.kicker}>{tr('kicker.strategy')}</CapsText>
             {leaky ? <Tag label="sızıntı riski" variant="warn" size="sm" /> : null}
           </View>
           <Seg options={STRATEGIES} value={strategy} onChange={setStrategy} block style={styles.seg} />
 
           <View style={styles.pickerGrid}>
             <View style={styles.picker}>
-              <Text style={styles.kicker}>Pencere</Text>
+              <CapsText style={styles.kicker}>{tr('kicker.window')}</CapsText>
               <View style={styles.chipRow}>
                 {WINDOWS.map((w) => (
                   <Chip
@@ -144,7 +147,7 @@ export default function BacktestScreen() {
             </View>
 
             <View style={styles.picker}>
-              <Text style={styles.kicker}>Evren</Text>
+              <CapsText style={styles.kicker}>{tr('kicker.universe')}</CapsText>
               <View style={styles.chipRow}>
                 {UNIVERSES.map((u) => (
                   <Chip

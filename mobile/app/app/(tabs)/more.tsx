@@ -39,6 +39,7 @@ import { useTheme } from '@/theme/useTheme';
 import { useShape, type Shape } from '@/theme/shape';
 import { TYPE, TABULAR, font } from '@/theme/type';
 import { Card } from '@/components/Card';
+import { CapsText } from '@/components/CapsText';
 import { badgeLabel } from '@/utils/inbox';
 import { MIN_TOUCH_TARGET } from '@/utils/a11y';
 
@@ -142,7 +143,7 @@ export default function MoreScreen() {
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
       <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.kicker}>{tr('tabs.more').toUpperCase()}</Text>
+        <CapsText style={styles.kicker}>{tr('tabs.more')}</CapsText>
         <Text style={styles.title} accessibilityRole="header">
           Tüm ekranlar
         </Text>

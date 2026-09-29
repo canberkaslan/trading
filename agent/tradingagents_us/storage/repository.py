@@ -12,13 +12,14 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import create_engine, func, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..schemas import AgentDecision, AgentReasoning, OrderUpdate, TradeOrder
 from .commentator import write_decision_refs
 from .device_tokens import DeviceTokenRow
+from .engine import make_engine
 from .models import (
     AgentDecisionRow,
     Base,
@@ -36,11 +37,6 @@ if TYPE_CHECKING:  # avoids a storage → execution import at runtime
 #: event itself (state/source/timestamp) stays for the shared audit trail;
 #: only the identifying actor value is scrubbed.
 _DELETED_ACTOR = "deleted-user"
-
-
-def make_engine(database_url: str | None = None) -> Engine:
-    url = database_url or os.environ.get("DATABASE_URL", "sqlite:///./local.db")
-    return create_engine(url, future=True)
 
 
 #: Columns added to a table that already exists in a deployed database.
@@ -94,7 +90,9 @@ def ensure_additive_columns(engine: Engine) -> list[str]:
 
 class TradeLogRepository:
     def __init__(self, engine: Engine | None = None) -> None:
-        self.engine = engine or make_engine()
+        self.engine = engine or make_engine(
+            os.environ.get("DATABASE_URL", "sqlite:///./local.db")
+        )
         Base.metadata.create_all(self.engine)
         ensure_additive_columns(self.engine)
         # expire_on_commit=False so detached objects retain their column

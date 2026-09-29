@@ -479,10 +479,10 @@ def insert(system_message: str, block: str) -> str:
 @lru_cache(maxsize=1)
 def _repo() -> TradeLogRepository:
     """One repository per process, as `sector_map` does: this runs once per ticker."""
-    from sqlalchemy import create_engine
+    from tradingagents_us.storage import make_engine
 
     url = os.environ.get("TRADE_LOG_DB_URL", "sqlite:///./local.db")
-    return TradeLogRepository(engine=create_engine(url, future=True))
+    return TradeLogRepository(engine=make_engine(url))
 
 
 def _load_reads() -> list[SourceRead]:

@@ -830,12 +830,10 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # Local import: keeps the DB engine (and create_all) off the --help path.
-    from sqlalchemy import create_engine
-
-    from tradingagents_us.storage import TradeLogRepository
+    from tradingagents_us.storage import TradeLogRepository, make_engine
 
     repo = TradeLogRepository(
-        engine=create_engine(args.db_url, future=True) if args.db_url else None
+        engine=make_engine(args.db_url) if args.db_url else None
     )
 
     with AlpacaClient() as client:

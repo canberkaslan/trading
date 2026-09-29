@@ -154,8 +154,10 @@ def _check_fred() -> None:
 
 def _check_db(failures: list[Failure]) -> None:
     try:
-        from sqlalchemy import create_engine, text
+        from sqlalchemy import text
         from sqlalchemy.engine import make_url
+
+        from tradingagents_us.storage import make_engine
 
         url = os.environ.get("TRADE_LOG_DB_URL", "sqlite:///./local.db")
         u = make_url(url)
@@ -169,7 +171,7 @@ def _check_db(failures: list[Failure]) -> None:
                 return
             if not os.access(db_path, os.W_OK):
                 failures.append(("db", f"{db_path} not writable"))
-        engine = create_engine(url, future=True)
+        engine = make_engine(url)
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
     except Exception as exc:

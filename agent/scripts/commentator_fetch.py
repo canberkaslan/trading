@@ -135,14 +135,12 @@ def _dry_run(lookback: timedelta, pages: int) -> int:
 
 
 def _repo() -> TradeLogRepository:
-    from sqlalchemy import create_engine
-
-    from tradingagents_us.storage import TradeLogRepository
+    from tradingagents_us.storage import TradeLogRepository, make_engine
 
     url = os.environ.get("TRADE_LOG_DB_URL", "sqlite:///./local.db")
     # A failed statement's message would otherwise carry its parameters, the
     # item ids, into the traceback this script logs.
-    return TradeLogRepository(engine=create_engine(url, future=True, hide_parameters=True))
+    return TradeLogRepository(engine=make_engine(url, hide_parameters=True))
 
 
 def _retain() -> int:

@@ -222,7 +222,13 @@ class TestReadsRecorded:
 
 
 class TestMissingCredentials:
-    def test_no_youtube_key_is_a_logged_skip(self, repo: TradeLogRepository) -> None:
+    def test_no_youtube_key_is_a_logged_skip(
+        self, repo: TradeLogRepository, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Another test loads agent/.env into os.environ; a real key there must
+        # not decide what "missing" means here.
+        monkeypatch.delenv("YOUTUBE_API_KEY", raising=False)
+        monkeypatch.delenv("X_BEARER_TOKEN", raising=False)
         report = _run(repo, yt=None, x=None)
         assert any("YOUTUBE_API_KEY" in n for n in report.notes)
         assert any("X_BEARER_TOKEN" in n for n in report.notes)

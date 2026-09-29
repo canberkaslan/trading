@@ -102,3 +102,31 @@ class TestRunBreaker:
     def test_a_zero_limit_is_refused(self) -> None:
         with pytest.raises(ValueError, match="at least 1"):
             RunBreaker("t-src", 0)
+
+
+def test_an_in_process_breaker_reopens_after_its_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The API process lives for weeks: an open breaker there must not switch a
+    # source off until the next restart.
+    now = [1000.0]
+    monkeypatch.setattr(fail_fast.time, "monotonic", lambda: now[0])
+    b = RunBreaker("t-ttl", limit=1)
+    b.reset()
+    assert b.record(success=False) is True
+    now[0] += fail_fast.MEMORY_OPEN_TTL_S - 1
+    assert b.is_open()
+    now[0] += 2
+    assert not b.is_open()
+    assert b.record(success=False) is True  # and it can open again
+    b.reset()
+
+
+def test_a_run_state_breaker_stays_open_for_the_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    now = [1000.0]
+    monkeypatch.setattr(fail_fast.time, "monotonic", lambda: now[0])
+    monkeypatch.setenv(RUN_STATE_DIR_ENV, str(tmp_path))
+    b = RunBreaker("t-ttl", limit=1)
+    b.record(success=False)
+    now[0] += 10 * fail_fast.MEMORY_OPEN_TTL_S
+    assert b.is_open()

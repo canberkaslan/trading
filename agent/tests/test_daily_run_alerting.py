@@ -15,6 +15,7 @@ from __future__ import annotations
 import shutil
 import stat
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -115,6 +116,7 @@ def run_daily(
     healthcheck: str | None = HC,
     precreate_log_dir_as_file: bool = False,
     dotenv: str | None = None,
+    during: Callable[[subprocess.Popen[str]], None] | None = None,
     **env_extra: str,
 ) -> Run:
     real_date = shutil.which("date")
@@ -169,15 +171,18 @@ def run_daily(
     if healthcheck is not None:
         env["HEALTHCHECK_URL"] = healthcheck
 
-    proc = subprocess.run(
+    with subprocess.Popen(
         ["bash", str(script)],
         env=env,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
-        timeout=120,
-        check=False,
-    )
+    ) as popen:
+        if during is not None:
+            during(popen)
+        out, err = popen.communicate(timeout=120)
+    proc = subprocess.CompletedProcess(popen.args, popen.returncode, out, err)
 
     def read(d: Path) -> list[list[str]]:
         return [f.read_text(encoding="utf-8").splitlines() for f in sorted(d.iterdir())]

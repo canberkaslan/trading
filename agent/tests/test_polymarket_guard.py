@@ -176,3 +176,14 @@ def test_a_client_error_is_not_retried(
     assert len(http.calls) == 1
     assert sleeps == []
     assert "unavailable" in out.lower()
+
+
+def test_client_errors_never_open_the_breaker(
+    monkeypatch: pytest.MonkeyPatch, sleeps: list[float]
+) -> None:
+    # A 400/404 is our query being refused, not Gamma being down.
+    http = _http(monkeypatch, _Resp(404))
+    for topic in ("a", "b", "c", "d"):
+        vendor.get_prediction_markets(topic)
+    assert len(http.calls) == 4
+    assert not polymarket_guard.BREAKER.is_open()

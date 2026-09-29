@@ -47,25 +47,45 @@ def exclusive(path: str | os.PathLike[str], timeout_s: float | None = None) -> I
     """Hold an exclusive lock on ``path`` (created if missing) for the block.
 
     ``timeout_s=None`` waits for as long as it takes. A number gives up with
-    `LockTimeoutError` once that long has passed without the lock.
+    `LockTimeoutError` once that long has passed without the lock. A lock file
+    that cannot be opened (a symlink, a permission problem) raises `OSError`.
     """
     lock_path = Path(path)
-    key = str(lock_path.resolve())
+    key = str(lock_path.absolute())
     held = _held_paths()
     if key in held:
         yield
         return
 
+    fd = acquire(lock_path, timeout_s)
+    held.add(key)
+    try:
+        yield
+    finally:
+        held.discard(key)
+        release(fd)
+
+
+def acquire(lock_path: Path, timeout_s: float | None) -> int:
+    """Open and lock ``lock_path``; returns the descriptor to pass to `release`.
+
+    ``O_NOFOLLOW``: the lock lives in a directory other users of the box may be
+    able to write, and a lock file swapped for a symlink must not turn this
+    process into one that creates or truncates a file somewhere else.
+    """
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
         _acquire(fd, lock_path, timeout_s)
-        held.add(key)
-        try:
-            yield
-        finally:
-            held.discard(key)
-            fcntl.flock(fd, fcntl.LOCK_UN)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def release(fd: int) -> None:
+    try:
+        fcntl.flock(fd, fcntl.LOCK_UN)
     finally:
         os.close(fd)
 

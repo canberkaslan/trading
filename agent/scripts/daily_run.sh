@@ -271,10 +271,11 @@ fi
 # hours, and nearly all of it is waiting on model and data APIs rather than
 # computing. Each ticker is still its own process with its own timeout, so one
 # ticker failing or hanging costs that ticker only. What the processes share
-# is coordinated elsewhere: sizing and submitting take a lock in trade.py (each
-# order sizes against the cash the others left), the vendor memory log takes
-# one around its file operations, and the fail-fast source breakers count per
-# run in TRADINGAGENTS_RUN_STATE_DIR.
+# is coordinated elsewhere: a BUY is sized and submitted under the submit lock
+# (tradingagents_us/execution/submit_lock.py), so each sizes against the cash
+# the others left, while an exit never waits on it for long; the vendor memory
+# log takes a lock around its file operations; and the fail-fast source
+# breakers count per run in TRADINGAGENTS_RUN_STATE_DIR.
 #
 # The bound is small on purpose: every council in flight is a stream of model
 # calls against one API key's rate limit, and a 429 storm there costs more than
@@ -297,16 +298,53 @@ if ! [[ "$COUNCIL_STAGGER_S" =~ ^[0-9]+$ ]]; then
   COUNCIL_STAGGER_S=5
 fi
 
+# The breaker state is throwaway and removed at exit. The ticker logs are not:
+# they sit beside the run log, one directory per day, one prefix per run.
 RUN_STATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tradingagents-run.XXXXXX")"
 export TRADINGAGENTS_RUN_STATE_DIR="$RUN_STATE_DIR"
+TICKER_LOG_DIR="${LOG_DIR}/daily_${DATE}.d"
+RUN_TAG="$(date -u +%H%M%S)-$$"
+mkdir -p "$TICKER_LOG_DIR"
+slot_for() {
+  printf '%s/%s-%03d-%s' "$TICKER_LOG_DIR" "$RUN_TAG" "$1" "$2"
+}
+
+progress() {
+  echo "  [council] $*" | tee -a "$RUN_LOG" >&2
+}
 
 run_ticker() {
   local ticker="$1" slot="$2" rc=0
   timeout -k 30 "$TICKER_TIMEOUT_S" env PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.trade \
       --ticker "$ticker" --date "$DATE" $SUBMIT_FLAG >"${slot}.log" 2>&1 || rc=$?
   echo "$rc" >"${slot}.rc"
-  echo "  [council] $ticker finished rc=$rc" >&2
+  progress "$ticker finished rc=$rc"
 }
+
+# A stop (systemctl stop, a unit timeout, Ctrl-C) must stop the councils too.
+# Left alone, the background tickers outlive this script and keep trading with
+# nobody collecting their results. Each job's children (timeout, and through
+# it the python) get the signal, the partial logs go into the run log, and the
+# run exits 143 so the dead-man's switch hears a failure, not a clean run.
+on_signal() {
+  trap - TERM INT
+  echo "" | tee -a "$RUN_LOG"
+  echo "SIGNAL received — stopping councils in flight" | tee -a "$RUN_LOG"
+  local pid
+  for pid in $(jobs -p); do
+    pkill -TERM -P "$pid" 2>/dev/null || true
+    kill -TERM "$pid" 2>/dev/null || true
+  done
+  wait 2>/dev/null || true
+  local log
+  for log in "$TICKER_LOG_DIR/$RUN_TAG"-*.log; do
+    [[ -f "$log" ]] || continue
+    echo "--- partial: $(basename "$log") ---" | tee -a "$RUN_LOG"
+    tee -a "$RUN_LOG" <"$log"
+  done
+  exit 143
+}
+trap on_signal TERM INT
 
 echo "" | tee -a "$RUN_LOG"
 echo "--- councils: parallelism=$COUNCIL_PARALLELISM ---" | tee -a "$RUN_LOG"
@@ -319,18 +357,19 @@ for TICKER in $UNIVERSE; do
   if [[ "$_idx" -gt 1 && "$_idx" -le "$COUNCIL_PARALLELISM" && "$COUNCIL_STAGGER_S" -gt 0 ]]; then
     sleep "$COUNCIL_STAGGER_S"
   fi
-  echo "  [council] $TICKER started" >&2
+  progress "$TICKER started"
   # Fresh decision (no --use-cached). Guards + bracket are on by default.
-  run_ticker "$TICKER" "$RUN_STATE_DIR/$(printf '%03d' "$_idx")-$TICKER" &
+  run_ticker "$TICKER" "$(slot_for "$_idx" "$TICKER")" &
 done
 wait
+trap - TERM INT
 
 rc_total=0
 failed_tickers=""
 _idx=0
 for TICKER in $UNIVERSE; do
   _idx=$((_idx + 1))
-  _slot="$RUN_STATE_DIR/$(printf '%03d' "$_idx")-$TICKER"
+  _slot="$(slot_for "$_idx" "$TICKER")"
   echo "" | tee -a "$RUN_LOG"
   echo "--- $TICKER @ $DATE ---" | tee -a "$RUN_LOG"
   if [[ -f "${_slot}.log" ]]; then

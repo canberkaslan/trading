@@ -84,6 +84,10 @@ def fail_fast_request(base: str, path: str, params: dict[str, Any]) -> Any:
             )
             _sleep(wait)
             continue
+        if 400 <= response.status_code < 500 and response.status_code != 429:
+            # Our request was refused, not the source down: a bad query from
+            # one ticker must not switch Polymarket off for the others.
+            response.raise_for_status()
         try:
             response.raise_for_status()
             data = response.json()

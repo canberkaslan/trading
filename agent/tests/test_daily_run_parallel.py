@@ -7,9 +7,13 @@ tickers were in flight when it started, and fails where a test says so.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
+import signal
 import stat
+import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -24,7 +28,8 @@ UNIVERSE = "AAPL MSFT NVDA GOOGL AMZN"
 # many were running, prints a marker, sleeps, and exits with FAIL_<T> or 0.
 HOOK = r"""#!/usr/bin/env bash
 ticker="$2"
-mkdir -p "$HOOK_DIR/running" "$HOOK_DIR/peaks" "$HOOK_DIR/state"
+mkdir -p "$HOOK_DIR/running" "$HOOK_DIR/peaks" "$HOOK_DIR/state" "$HOOK_DIR/pids"
+echo $$ > "$HOOK_DIR/pids/$ticker"
 : > "$HOOK_DIR/running/$ticker"
 ls "$HOOK_DIR/running" | wc -l | tr -d ' ' > "$HOOK_DIR/peaks/$ticker"
 printf '%s\n' "$TRADINGAGENTS_RUN_STATE_DIR" > "$HOOK_DIR/state/$ticker"
@@ -109,6 +114,70 @@ def test_one_tickers_failure_does_not_touch_the_others(tmp_path: Path) -> None:
     assert "2 ticker(s) errored" in run.output
     [alert] = run.alerts("daily_run")
     assert alert["--body"].startswith("Failed: MSFT NVDA")
+
+
+def _run_log(tmp_path: Path) -> str:
+    return (tmp_path / "logs" / f"daily_{RUN_DATE}.log").read_text(encoding="utf-8")
+
+
+def test_ticker_logs_are_kept_beside_the_run_log(tmp_path: Path) -> None:
+    run, _ = _run(tmp_path)
+    assert run.rc == 0, run.output
+    kept = {
+        p.name.rsplit("-", 1)[-1].removesuffix(".log"): p
+        for p in (tmp_path / "logs" / f"daily_{RUN_DATE}.d").glob("*.log")
+    }
+    assert sorted(kept) == sorted(UNIVERSE.split())
+    assert "council output for NVDA" in kept["NVDA"].read_text(encoding="utf-8")
+
+
+def test_progress_lines_reach_the_run_log(tmp_path: Path) -> None:
+    run, _ = _run(tmp_path)
+    assert run.rc == 0, run.output
+    log = _run_log(tmp_path)
+    for ticker in UNIVERSE.split():
+        assert f"[council] {ticker} started" in log
+        assert f"[council] {ticker} finished rc=0" in log
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def test_sigterm_stops_the_councils_and_pages(tmp_path: Path) -> None:
+    hook_dir = tmp_path / "hook"
+
+    def terminate_mid_council(proc: subprocess.Popen[str]) -> None:
+        deadline = time.monotonic() + 30
+        pids = hook_dir / "pids"
+        while time.monotonic() < deadline:
+            if pids.exists() and len(list(pids.iterdir())) >= 2:
+                break
+            time.sleep(0.1)
+        time.sleep(0.3)  # let the stand-ins print their first line
+        proc.send_signal(signal.SIGTERM)
+
+    run, _ = _run(
+        tmp_path, during=terminate_mid_council, SLEEP_AAPL="60", SLEEP_MSFT="60"
+    )
+    assert run.rc == 143, run.output
+    # Nothing outlives the run: the stand-ins were killed, not orphaned.
+    time.sleep(0.5)
+    for pid_file in (hook_dir / "pids").iterdir():
+        assert not _alive(int(pid_file.read_text())), f"{pid_file.name} still running"
+    # Not the rest of the universe either.
+    assert sorted(p.name for p in (hook_dir / "pids").iterdir()) == ["AAPL", "MSFT"]
+    # The dead-man's switch hears a failure.
+    assert run.ping_urls and run.ping_urls[-1].endswith("/fail")
+    # What the councils had said is kept, in the ticker logs and the run log.
+    log = _run_log(tmp_path)
+    assert "SIGNAL received" in log
+    assert "council output for AAPL" in log
+    assert list((tmp_path / "logs" / f"daily_{RUN_DATE}.d").glob("*-AAPL.log"))
 
 
 def test_the_run_shares_one_state_dir_and_cleans_it_up(tmp_path: Path) -> None:

@@ -13,6 +13,10 @@ from sqlalchemy import select
 from tradingagents_us.dataflows.alpaca_broker import AlpacaClient
 from tradingagents_us.execution import ExecutionConfig, submit_order
 from tradingagents_us.execution.flatten import flatten_all
+from tradingagents_us.execution.submit_lock import (
+    SubmitLockUnavailableError,
+    submit_section,
+)
 from tradingagents_us.risk.kill_switch import FileKillSwitchReader, default_kill_switch_path
 from tradingagents_us.schemas import KillSwitchState, OrderUpdate, TradeOrder
 from tradingagents_us.storage import TradeLogRepository
@@ -134,6 +138,10 @@ async def list_pending_orders(
     return out
 
 
+#: A tap waits this long for a daily-run ticker to finish sizing, then 503s.
+APPROVE_LOCK_TIMEOUT_S = 15.0
+
+
 @router.post("/{order_id}/approve")
 async def approve_order(
     order_id: str,
@@ -191,10 +199,22 @@ async def approve_order(
     except Exception:
         pass
 
-    result = submit_order(
-        order, config=ExecutionConfig(dry_run=False),
-        decision=decision, current_price=current_price,
-    )
+    # The daily run may be sizing BUYs right now against the same cash; take
+    # the lock every order path takes (execution/submit_lock.py). A SELL goes
+    # ahead without it rather than wait on a run; a BUY is refused, and the
+    # held order stays PENDING for another tap.
+    try:
+        with submit_section(
+            exit_only=order.side == "SELL", timeout_s=APPROVE_LOCK_TIMEOUT_S
+        ):
+            result = submit_order(
+                order, config=ExecutionConfig(dry_run=False),
+                decision=decision, current_price=current_price,
+            )
+    except SubmitLockUnavailableError as exc:
+        raise HTTPException(
+            503, f"another order path is sizing against this account; retry shortly ({exc})"
+        ) from exc
     repo.save_order(order, broker_order_id=result.broker_order_id)
     repo.append_update(result.update)
 

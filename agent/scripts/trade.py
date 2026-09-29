@@ -23,8 +23,9 @@ import logging
 import math
 import os
 import sys
-import tempfile
+import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -41,7 +42,10 @@ from tradingagents_us.dataflows.alpaca_broker import AlpacaClient  # noqa: E402
 from tradingagents_us.dataflows.polygon import PolygonClient  # noqa: E402
 from tradingagents_us.dataflows.sector_map import sector_for  # noqa: E402
 from tradingagents_us.execution import ExecutionConfig, submit_order  # noqa: E402
-from tradingagents_us.file_lock import LockTimeoutError, exclusive  # noqa: E402
+from tradingagents_us.execution.submit_lock import (  # noqa: E402
+    SubmitLockUnavailableError,
+    submit_section,
+)
 from tradingagents_us.graph.pipeline import (  # noqa: E402
     _parse_pm_output,
     _parse_trader_output,
@@ -223,7 +227,13 @@ class _Book:
     spendable: float | None
 
 
-def _read_book(ticker: str, limits: PortfolioLimits, *, verbose: bool) -> _Book:
+def _read_book(
+    ticker: str,
+    limits: PortfolioLimits,
+    *,
+    verbose: bool,
+    price_of: Callable[[str], float | None] = _fetch_current_price,
+) -> _Book:
     """Equity, positions and open BUYs from Alpaca, and the cash they leave.
 
     Called twice per ticker: before the council, for the pre-council gate, and
@@ -299,7 +309,7 @@ def _read_book(ticker: str, limits: PortfolioLimits, *, verbose: bool) -> _Book:
               f"sector {limits.max_sector_pct * 100:g}% / "
               f"cash {limits.max_cash_utilization * 100:g}% of spendable")
 
-    reserved = reserved_cash_for_open_buys(open_buys, _fetch_current_price)
+    reserved = reserved_cash_for_open_buys(open_buys, price_of)
     spendable = spendable_cash(acct.cash, reserved)
     if verbose:
         if reserved is None:
@@ -308,25 +318,6 @@ def _read_book(ticker: str, limits: PortfolioLimits, *, verbose: bool) -> _Book:
             print(f"  Open BUYs: {len(open_buys)} reserving ${reserved:,.2f} "
                   f"-> spendable ${spendable:,.2f}")
     return _Book(acct, existing_by_ticker, held_qty, open_buys, reserved, spendable)
-
-
-#: Where every ticker process of a run serialises "read the book, size, submit".
-SUBMIT_LOCK_ENV = "TRADE_SUBMIT_LOCK_PATH"
-#: Longest a ticker waits for the submit lock before failing loudly.
-SUBMIT_LOCK_TIMEOUT_S = 600.0
-
-
-def _submit_lock_path() -> Path:
-    """One lock per host unless `SUBMIT_LOCK_ENV` names another.
-
-    Per host rather than per run on purpose: two runs trading the same account
-    at once (a manual run during the timer's) race for the same cash just as
-    two tickers of one run do.
-    """
-    configured = os.environ.get(SUBMIT_LOCK_ENV)
-    if configured:
-        return Path(configured)
-    return Path(tempfile.gettempdir()) / "tradingagents-trade-submit.lock"
 
 
 def main() -> int:
@@ -365,7 +356,17 @@ def main() -> int:
     except ValueError:
         run_date = datetime.now(UTC).date()
 
-    book = _read_book(args.ticker, limits, verbose=True)
+    # Prices are fetched once per process: the book is read twice, and the
+    # second read happens under the submit lock, where a slow Polygon call
+    # would hold every other ticker up.
+    prices: dict[str, float | None] = {}
+
+    def price_of(symbol: str) -> float | None:
+        if symbol not in prices:
+            prices[symbol] = _fetch_current_price(symbol)
+        return prices[symbol]
+
+    book = _read_book(args.ticker, limits, verbose=True, price_of=price_of)
     held_qty, spendable = book.held_qty, book.spendable
 
     # 2. Can this name possibly be acted on today? Asked BEFORE the council.
@@ -384,7 +385,7 @@ def main() -> int:
         args.ticker,
         held_qty=held_qty,
         spendable=spendable,
-        price=_fetch_current_price(args.ticker),
+        price=price_of(args.ticker),
         max_cash_utilization=limits.max_cash_utilization,
     )
     if not _gate.run:
@@ -407,29 +408,129 @@ def main() -> int:
         decision = propagate(args.ticker, args.date)
     _print_decision(decision)
 
+    # Recorded before anything below can fail: fifteen minutes of council is
+    # the expensive part, and a lock or broker problem must not lose it.
+    if repo is not None:
+        repo.save_decision(decision)
+        log.info("persisted decision %s", decision.decision_id)
+
+    # Market inputs for sizing, fetched OUTSIDE the submit lock: each can be a
+    # slow Polygon call, and every other ticker waits while the lock is held.
+    market = _market_inputs(args.ticker, repo, book, price_of, prices)
+
     # 4. Size and submit, one ticker at a time.
     #
     # The daily run councils several tickers at once. Everything up to here is
-    # independent per ticker; what follows is not. Each order is sized against
-    # the cash the others left, so the book is read again under a lock every
-    # ticker process takes, and nobody else can submit between that read and
-    # this ticker's order. The pre-council read above only decided whether a
-    # council was worth paying for.
+    # independent per ticker; what follows is not. A BUY is sized against the
+    # cash the others left, so the book is read again under a lock every order
+    # path takes, and nobody else can submit between that read and this order.
+    # An exit spends no cash and must not be lost to a lock problem, so it
+    # goes ahead without the lock when it cannot have it (submit_lock.py).
+    exit_only = decision.rating not in _CASH_SPENDING_RATINGS
     try:
-        with exclusive(_submit_lock_path(), timeout_s=SUBMIT_LOCK_TIMEOUT_S):
-            fresh = _read_book(args.ticker, limits, verbose=False)
+        with submit_section(exit_only=exit_only) as locked:
+            fresh = _fresh_book(args.ticker, limits, price_of)
+            if fresh is None:
+                if not exit_only:
+                    log.error("%s: the book could not be re-read; no BUY is sized "
+                              "from a stale one", args.ticker)
+                    return 1
+                log.warning("%s: the book could not be re-read; sizing the exit "
+                            "from the pre-council read", args.ticker)
+                fresh = book
             if fresh.spendable != spendable or fresh.held_qty != held_qty:
                 print(f"  Book moved during the council: spendable "
                       f"{_money(spendable)} -> {_money(fresh.spendable)}, "
                       f"held {held_qty} -> {fresh.held_qty} shares")
-            return _act_on_decision(args, limits, repo, run_date, decision, fresh)
-    except LockTimeoutError as exc:
-        log.error("%s: %s — nothing sized or submitted", args.ticker, exc)
+            if not locked:
+                print("  Submit lock NOT held: exit sent unordered")
+            return _act_on_decision(args, limits, repo, run_date, decision, fresh, market)
+    except SubmitLockUnavailableError as exc:
+        log.error("%s: %s — decision recorded, nothing sized or submitted", args.ticker, exc)
         return 1
+
+
+#: Ratings whose order spends cash. Everything else sells or does nothing.
+_CASH_SPENDING_RATINGS = ("Buy", "Overweight")
+#: Pause before the one retry of a failed account read.
+_BOOK_RETRY_PAUSE_S = 2.0
+
+
+def _fresh_book(
+    ticker: str, limits: PortfolioLimits, price_of: Callable[[str], float | None]
+) -> _Book | None:
+    """The book as it stands now, printed for the audit trail; None if unreadable."""
+    for attempt in (1, 2):
+        try:
+            print("\n=== BOOK AT SIZING (under the submit lock) ===")
+            return _read_book(ticker, limits, verbose=True, price_of=price_of)
+        except Exception as exc:  # noqa: BLE001 — any read failure: retry once, then report
+            log.warning("%s: account re-read failed (attempt %d): %s", ticker, attempt, exc)
+            if attempt == 1:
+                time.sleep(_BOOK_RETRY_PAUSE_S)
+    return None
+
+
+@dataclass(frozen=True)
+class _Market:
+    """Per-ticker market inputs to sizing, gathered before the submit lock."""
+
+    adv: float | None
+    current_price: float | None
+    stats: tuple[float, float] | None
+    sectors: dict[str, str | None]
+    prices: dict[str, float | None]
+
+
+def _market_inputs(
+    ticker: str,
+    repo: TradeLogRepository | None,
+    book: _Book,
+    price_of: Callable[[str], float | None],
+    prices: dict[str, float | None],
+) -> _Market:
+    symbols = {ticker, *book.existing_by_ticker, *(b.symbol for b in book.open_buys)}
+    return _Market(
+        adv=average_dollar_volume(ticker),
+        current_price=price_of(ticker),
+        stats=rolling_price_stats(ticker, repo=repo),
+        sectors={sym: sector_for(sym) for sym in sorted(symbols)},
+        prices=prices,
+    )
+
+
+def _sector_of(symbol: str, known: dict[str, str | None]) -> str | None:
+    """Sector from the pre-lock lookups; a symbol new since then is looked up."""
+    if symbol not in known:
+        known[symbol] = sector_for(symbol)
+    return known[symbol]
+
+
+def _known_price(symbol: str, market: _Market) -> float | None:
+    """A price already in hand, never a fetch: this runs under the submit lock."""
+    return market.prices.get(symbol)
 
 
 def _money(value: float | None) -> str:
     return "unpriceable" if value is None else f"${value:,.2f}"
+
+
+def _pending_buy_exposure(
+    open_buys: list[PendingBuy], price_of: Callable[[str], float | None]
+) -> dict[str, float]:
+    """Notional of open BUYs per symbol: exposure the book is about to hold.
+
+    Tonight's earlier tickers' BUYs have not filled yet, so the positions list
+    does not show them, and the single-name and sector caps would let several
+    BUYs into one sector that together break it. An unpriceable one is left
+    out here; the cash budget already refuses new exposure in that case.
+    """
+    exposure: dict[str, float] = {}
+    for buy in open_buys:
+        price = buy.limit_price or price_of(buy.symbol)
+        if price and buy.unfilled_qty > 0:
+            exposure[buy.symbol] = exposure.get(buy.symbol, 0.0) + buy.unfilled_qty * price
+    return exposure
 
 
 def _act_on_decision(
@@ -439,16 +540,13 @@ def _act_on_decision(
     run_date: date,
     decision: AgentDecision,
     book: _Book,
+    market: _Market,
 ) -> int:
-    """Persist the decision, size it against ``book`` and submit (or hold/dry-run)."""
+    """Size the decision against ``book`` and submit (or hold/dry-run)."""
     acct = book.acct
     existing_by_ticker = book.existing_by_ticker
     held_qty = book.held_qty
     spendable = book.spendable
-
-    if repo is not None:
-        repo.save_decision(decision)
-        log.info("persisted decision %s", decision.decision_id)
 
     # An entry and a stop are what size a BUY. A Sell closes a position and is
     # sized off the holding, so requiring them there discarded exit signals: the
@@ -470,7 +568,7 @@ def _act_on_decision(
     # Real liquidity, from the bars the price cache already holds. The old
     # hardcoded $1B meant the $100k floor could never reject anything, so a
     # thinly traded name looked as liquid as SPY to the risk layer.
-    adv = average_dollar_volume(args.ticker)
+    adv = market.adv
     if adv is None:
         # No bars is not "infinitely liquid". Fall back to the floor itself so
         # the check neither waves the order through nor blocks on a data gap.
@@ -481,7 +579,7 @@ def _act_on_decision(
 
     # One Polygon read, used both as the sizing reference below and as the live
     # price the execution guards check against further down.
-    current_price = _fetch_current_price(args.ticker)
+    current_price = market.current_price
 
     # Use entry as the price proxy for sizing (a live quote would be better, but
     # the entry is what the stop is measured against, so they stay consistent).
@@ -520,7 +618,7 @@ def _act_on_decision(
     # given a fabricated band: rolling_std=0.0 makes the breaker's own
     # `if rolling_std > 0` guard skip it, which is the honest branch. Inventing
     # a width is what made this inert in the first place.
-    stats = rolling_price_stats(args.ticker, repo=repo)
+    stats = market.stats
     if stats is None:
         rolling_mean, rolling_std = ref_price, 0.0
         log.info("price-anomaly check skipped for %s — not enough bars", args.ticker)
@@ -535,7 +633,7 @@ def _act_on_decision(
         # distance itself, and a proxy here is what made positions 2.5x.
         atr=None,
         avg_daily_volume_usd=adv,
-        sector=sector_for(args.ticker),
+        sector=_sector_of(args.ticker, market.sectors),
     )
     # Sector exposure from the live book. `sector_for` resolves through the
     # static map, the DB cache and Polygon's reference data, then falls back to
@@ -543,17 +641,27 @@ def _act_on_decision(
     # skipped for them entirely, which is unlimited concentration in the names
     # we know least about. The cost is a false positive when that bucket fills
     # with unrelated names.
+    #
+    # Exposure counts open BUYs as well as positions: with tickers sized one
+    # after another in the same night, the earlier ones' orders have not filled,
+    # and the caps must see them. Priced from the limit (no Polygon call here,
+    # under the lock) and, failing that, from the prices already fetched.
+    exposure_by_ticker = dict(existing_by_ticker)
+    for sym, value in _pending_buy_exposure(
+        book.open_buys, lambda s: _known_price(s, market)
+    ).items():
+        exposure_by_ticker[sym] = exposure_by_ticker.get(sym, 0.0) + value
     existing_by_sector: dict[str, float] = {}
-    for sym, value in existing_by_ticker.items():
-        sec = sector_for(sym)
+    for sym, value in exposure_by_ticker.items():
+        sec = _sector_of(sym, market.sectors)
         if sec:
             existing_by_sector[sec] = existing_by_sector.get(sec, 0.0) + value
 
     portfolio_ctx = PortfolioContext(
         equity=acct.portfolio_value,
-        existing_position_values_by_ticker=existing_by_ticker,
+        existing_position_values_by_ticker=exposure_by_ticker,
         existing_position_values_by_sector=existing_by_sector,
-        high_correlation_count=count_correlated(args.ticker, list(existing_by_ticker)),
+        high_correlation_count=count_correlated(args.ticker, list(exposure_by_ticker)),
         # Settled cash net of pending BUYs, so an order can't be sized off
         # appreciating equity and borrow. The live paper book already drifted to
         # negative cash on equity-only sizing (2026-08-13: -$856 on $108k).

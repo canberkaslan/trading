@@ -20,7 +20,9 @@ So the policy is to give up quickly and say so:
 process, so a breaker held in memory would reset for every ticker and never
 save anything; the daily run sets `RUN_STATE_DIR_ENV` to a directory of its
 own, and the breaker keeps its count in a file there. Without it (the API, a
-one-off CLI run) the count lives in the process, which is the whole run anyway.
+one-off CLI run) the count lives in the process. The API process lives for
+weeks, so there an open breaker closes again after `MEMORY_OPEN_TTL_S`
+rather than switching a source off until the next restart.
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ import logging
 import os
 import random
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -51,6 +54,9 @@ RETRY_AFTER_CAP_S = 5.0
 RETRY_BASE_S = 1.0
 #: +/- fraction of jitter, so concurrent tickers do not retry in lockstep.
 JITTER_FRACTION = 0.2
+#: How long an in-process breaker stays open. A daily run's breaker needs no
+#: expiry: its state directory is deleted with the run.
+MEMORY_OPEN_TTL_S = 600.0
 
 
 def jittered(seconds: float, frac: float = JITTER_FRACTION) -> float:
@@ -79,6 +85,8 @@ def retry_delay(retry_after: str | None, cap_s: float = RETRY_AFTER_CAP_S) -> fl
 class _Count:
     consecutive: int = 0
     open: bool = False
+    #: `time.monotonic()` when it opened; used only for the in-process count.
+    opened_at: float = 0.0
 
 
 class RunBreaker:
@@ -151,9 +159,16 @@ class RunBreaker:
                     self.source, path, exc,
                 )
         with self._memory_lock:
-            state = self._apply(self._memory.get(self.source, _Count()), success)
-            self._memory[self.source] = state
-            return state
+            state = self._memory.get(self.source, _Count())
+            if state.open and time.monotonic() - state.opened_at >= MEMORY_OPEN_TTL_S:
+                log.info("%s: breaker open for %.0fs, trying the source again",
+                         self.source, MEMORY_OPEN_TTL_S)
+                state = _Count()
+            new = self._apply(state, success)
+            if new.open and not state.open:
+                new = _Count(new.consecutive, True, time.monotonic())
+            self._memory[self.source] = new
+            return new
 
     def _update_file(self, path: Path, success: bool | None) -> _Count:
         with exclusive(path.with_suffix(".lock")):
@@ -165,7 +180,7 @@ class RunBreaker:
                 except (ValueError, TypeError, AttributeError):
                     state = _Count()
             new = self._apply(state, success)
-            if new != state:
+            if (new.consecutive, new.open) != (state.consecutive, state.open):
                 tmp = path.with_suffix(".tmp")
                 tmp.write_text(
                     json.dumps({"consecutive": new.consecutive, "open": new.open}),

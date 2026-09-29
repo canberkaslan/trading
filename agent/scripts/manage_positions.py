@@ -91,6 +91,7 @@ from tradingagents_us.execution.protected_close import (
     close_with_protection,
     cover_beside_exit,
 )
+from tradingagents_us.execution.submit_lock import submit_section
 from tradingagents_us.log_redaction import install as install_log_redaction
 from tradingagents_us.risk.kill_switch import FileKillSwitchReader, default_kill_switch_path
 from tradingagents_us.risk.position_manager import (
@@ -884,16 +885,22 @@ def main(argv: list[str] | None = None) -> int:
         unclosed: list[str] = []
         uncovered: list[str] = []
         unsettled: dict[str, str] = {}
-        failures = _execute(
-            client, actions, today, unclosed=unclosed, uncovered=uncovered, unsettled=unsettled
-        )
-        if unclosed:
-            log.warning(
-                "re-cover: time exits left %s open; re-reading the book", ", ".join(unclosed)
+        # Every order this pass sends is a stop or a close, so it spends no
+        # cash: it takes the lock the BUY paths take when it can (so a BUY is
+        # never sized mid-pass), and goes ahead without it when it cannot.
+        with submit_section(exit_only=True):
+            failures = _execute(
+                client, actions, today, unclosed=unclosed, uncovered=uncovered,
+                unsettled=unsettled,
             )
-            failures += _recover_unclosed(
-                client, repo, set(unclosed), entries, today, config, uncovered, unsettled, fresh
-            )
+            if unclosed:
+                log.warning(
+                    "re-cover: time exits left %s open; re-reading the book", ", ".join(unclosed)
+                )
+                failures += _recover_unclosed(
+                    client, repo, set(unclosed), entries, today, config, uncovered, unsettled,
+                    fresh,
+                )
         if uncovered:
             log.error(
                 "UNCOVERED: shares may have no stop, now or once a pending cancel lands, "

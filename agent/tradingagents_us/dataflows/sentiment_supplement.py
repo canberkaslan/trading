@@ -27,18 +27,24 @@ instrument on different days, which is worse than reading a consistent one.
 
 from __future__ import annotations
 
+import inspect
 import logging
-import threading
 from collections.abc import Callable
 from typing import Any
 
 from tradingagents_us.dataflows.apewisdom import apewisdom_block
+from tradingagents_us.dataflows.fail_fast import (
+    HTTP_READ_TIMEOUT_S,
+    RETRY_BASE_S,
+    RunBreaker,
+    retry_delay,
+)
 
 log = logging.getLogger(__name__)
 
 # After this many consecutive failures, stop calling Reddit for the rest of the
-# process. Measured: last night's run logged nineteen 429s, each backing off
-# about a minute — roughly twenty minutes of a one-hour-fifty run spent asleep
+# run. Measured: last night's run logged nineteen 429s, each backing off about
+# a minute — roughly twenty minutes of a one-hour-fifty run spent asleep
 # waiting for a source that was refusing us on every single ticker.
 #
 # Two is not impatience. One failure is a blip; two in a row from a per-IP rate
@@ -46,23 +52,55 @@ log = logging.getLogger(__name__)
 # ApeWisdom aggregates the same corpus keylessly, so the wait buys nothing that
 # is not already in the block beside it.
 #
-# It resets per process, so tomorrow's run tries Reddit again from scratch —
-# the limiter forgets, and a permanent giving-up would be a different decision
-# from the one being made here.
+# "The run" is every ticker of one daily run. The count used to live in this
+# process, and daily_run.sh starts one process per ticker, so it reset for
+# every ticker and never skipped anything; `RunBreaker` keeps it in the run's
+# state directory instead. Tomorrow's run gets a fresh directory and tries
+# Reddit again from scratch — the limiter forgets, and a permanent giving-up
+# would be a different decision from the one being made here.
 _FAILURE_LIMIT = 2
 
-_state_lock = threading.Lock()
-_consecutive_failures = {"n": 0}
+_BREAKER = RunBreaker("reddit", limit=_FAILURE_LIMIT)
 
 
 def _record(success: bool) -> None:
-    with _state_lock:
-        _consecutive_failures["n"] = 0 if success else _consecutive_failures["n"] + 1
+    _BREAKER.record(success=success)
 
 
 def _reddit_is_giving_up() -> bool:
-    with _state_lock:
-        return _consecutive_failures["n"] >= _FAILURE_LIMIT
+    return _BREAKER.is_open()
+
+
+def _tune_vendor_backoff() -> bool:
+    """Bound the vendored Reddit client's own 429 back-off to the fail-fast cap.
+
+    It waits out a headerless 429 for about a minute and honours
+    ``Retry-After`` up to sixty seconds, before its one retry, because its own
+    measurements found a sooner retry still 429s. That is a minute per ticker
+    spent on one optional subreddit, which a council cannot afford. The retry
+    stays, bounded by `RETRY_AFTER_CAP_S`; a limiter that refuses it is left to
+    the breaker, which spares the next tickers even that.
+    """
+    try:
+        from tradingagents.dataflows import reddit as vendor
+    except ImportError:
+        return False
+    if not hasattr(vendor, "_RETRY_FALLBACK_SECONDS") or not hasattr(
+        vendor, "_retry_after_seconds"
+    ):
+        return False
+    vendor._RETRY_FALLBACK_SECONDS = RETRY_BASE_S
+    current = vendor._retry_after_seconds
+    if getattr(current, "_fail_fast", False):
+        return True
+
+    def capped(exc: Any) -> float | None:
+        header = exc.headers.get("Retry-After") if getattr(exc, "headers", None) else None
+        return None if header is None else retry_delay(header)
+
+    capped._fail_fast = True  # type: ignore[attr-defined]
+    vendor._retry_after_seconds = capped
+    return True
 
 
 def supplement(reddit_block: str, ticker: str) -> str:
@@ -72,6 +110,14 @@ def supplement(reddit_block: str, ticker: str) -> str:
     except Exception:  # noqa: BLE001 — a supplement must never cost the report
         return reddit_block
     return f"{reddit_block}\n\n{extra}"
+
+
+def _accepts_timeout(fn: Callable[..., Any]) -> bool:
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return "timeout" in params
 
 
 def install() -> bool:
@@ -91,6 +137,8 @@ def install() -> bool:
         return False
     if getattr(original, "_supplemented", False):
         return True
+    _tune_vendor_backoff()
+    takes_timeout = _accepts_timeout(original)
 
     def supplemented(ticker: str, *args: Any, **kwargs: Any) -> str:
         if _reddit_is_giving_up():
@@ -103,6 +151,9 @@ def install() -> bool:
                 ticker,
             )
 
+        if takes_timeout:
+            # The vendor's default is 10 s per subreddit request.
+            kwargs.setdefault("timeout", HTTP_READ_TIMEOUT_S)
         try:
             block = original(ticker, *args, **kwargs)
         except Exception:

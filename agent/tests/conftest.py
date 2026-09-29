@@ -40,3 +40,14 @@ def fake_github(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Fak
     monkeypatch.setenv("TRADE_LOG_DB_URL", f"sqlite:///{tmp_path / 'alerts.db'}")
     monkeypatch.setenv("PUSH_DISABLED", "1")
     yield fake
+
+
+@pytest.fixture(autouse=True)
+def _isolated_run_coordination(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Keep the run-wide breakers and the host-wide submit lock out of the suite.
+
+    A developer box can be mid daily run: its breaker files and its submit lock
+    must neither leak into a test nor be taken by one.
+    """
+    monkeypatch.delenv("TRADINGAGENTS_RUN_STATE_DIR", raising=False)
+    monkeypatch.setenv("TRADE_SUBMIT_LOCK_PATH", str(tmp_path / "trade-submit.lock"))

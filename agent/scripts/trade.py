@@ -23,9 +23,12 @@ import logging
 import math
 import os
 import sys
+import tempfile
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Any
 
 # Make package + vendor importable when running as a script
 _AGENT_ROOT = Path(__file__).resolve().parent.parent
@@ -38,6 +41,7 @@ from tradingagents_us.dataflows.alpaca_broker import AlpacaClient  # noqa: E402
 from tradingagents_us.dataflows.polygon import PolygonClient  # noqa: E402
 from tradingagents_us.dataflows.sector_map import sector_for  # noqa: E402
 from tradingagents_us.execution import ExecutionConfig, submit_order  # noqa: E402
+from tradingagents_us.file_lock import LockTimeoutError, exclusive  # noqa: E402
 from tradingagents_us.graph.pipeline import (  # noqa: E402
     _parse_pm_output,
     _parse_trader_output,
@@ -207,42 +211,26 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> int:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s | %(message)s",
-    )
-    # httpx logs every request URL at INFO, and Polygon carries its key in the
-    # query string — so a correctly-configured run writes a live credential
-    # into its own log, once per call. Installed immediately after
-    # basicConfig so it covers the handler basicConfig just created.
-    install_log_redaction()
-    _load_env()
+@dataclass(frozen=True)
+class _Book:
+    """What the account holds and has committed, read in one pass."""
 
-    args = build_parser().parse_args()
-    # One set of caps for the whole run. The pre-council gate and the sizer must
-    # budget with the same cash utilization, or the gate councils names the
-    # sizer then cannot afford (or skips names it could).
-    limits = PortfolioLimits(
-        max_position_pct=args.max_position_pct,
-        max_sector_pct=args.max_sector_pct,
-        max_cash_utilization=args.max_cash_utilization,
-    )
+    acct: Any
+    existing_by_ticker: dict[str, float]
+    held_qty: int
+    open_buys: list[PendingBuy]
+    reserved: float | None
+    spendable: float | None
 
-    from sqlalchemy import create_engine
-    repo = (
-        None if args.no_persist
-        else TradeLogRepository(engine=create_engine(args.db_url, future=True))
-    )
 
-    # The RUN's trading date anchors the idempotency key. Decisions finishing
-    # after midnight UTC must not shift the key to the next day (silent
-    # duplicate-block tomorrow / missed dedupe on retry).
-    try:
-        run_date = date.fromisoformat(args.date)
-    except ValueError:
-        run_date = datetime.now(UTC).date()
+def _read_book(ticker: str, limits: PortfolioLimits, *, verbose: bool) -> _Book:
+    """Equity, positions and open BUYs from Alpaca, and the cash they leave.
 
+    Called twice per ticker: before the council, for the pre-council gate, and
+    again under the submit lock, for the sizer. The daily run councils several
+    tickers at once, so what the first read saw can be minutes stale by the time
+    the order is sized; another ticker may have spent the cash in between.
+    """
     # 1. Live Alpaca context (equity + CURRENT positions so we don't re-buy
     #    a name we already hold up to its cap — the daily run would otherwise
     #    accumulate the same Overweight ticker every day).
@@ -252,7 +240,7 @@ def main() -> int:
         acct = ac.account()
         for p in ac.list_positions():
             existing_by_ticker[p.symbol] = abs(p.market_value)
-            if p.symbol == args.ticker:
+            if p.symbol == ticker:
                 held_qty = int(p.qty)
         # daily_run.sh runs this script once per ticker as a separate process, all
         # before any of the post-close orders fill. Without reserving what earlier
@@ -298,25 +286,87 @@ def main() -> int:
             # Next page starts BEFORE the oldest (last in desc order) of this page
             if fetched_count >= page_limit and page:
                 until_timestamp = page[-1]["submitted_at"]
+    if verbose:
         print("\n=== ALPACA ACCOUNT ===")
         print(f"  Number:    {acct.account_number} ({acct.status})")
         print(f"  Equity:    ${acct.portfolio_value:,.2f}")
         print(f"  Cash:      ${acct.cash:,.2f}")
         print(f"  Buying pw: ${acct.buying_power:,.2f}")
         print(f"  PDT:       {acct.pattern_day_trader}")
-        print(f"  Already holding {args.ticker}: {held_qty} shares "
-              f"(${existing_by_ticker.get(args.ticker, 0.0):,.0f})")
+        print(f"  Already holding {ticker}: {held_qty} shares "
+              f"(${existing_by_ticker.get(ticker, 0.0):,.0f})")
         print(f"  Caps:      name {limits.max_position_pct * 100:g}% / "
               f"sector {limits.max_sector_pct * 100:g}% / "
               f"cash {limits.max_cash_utilization * 100:g}% of spendable")
 
     reserved = reserved_cash_for_open_buys(open_buys, _fetch_current_price)
     spendable = spendable_cash(acct.cash, reserved)
-    if reserved is None:
-        print(f"  Open BUYs: {len(open_buys)} — UNPRICEABLE, refusing new exposure")
-    else:
-        print(f"  Open BUYs: {len(open_buys)} reserving ${reserved:,.2f} "
-              f"-> spendable ${spendable:,.2f}")
+    if verbose:
+        if reserved is None:
+            print(f"  Open BUYs: {len(open_buys)} — UNPRICEABLE, refusing new exposure")
+        else:
+            print(f"  Open BUYs: {len(open_buys)} reserving ${reserved:,.2f} "
+                  f"-> spendable ${spendable:,.2f}")
+    return _Book(acct, existing_by_ticker, held_qty, open_buys, reserved, spendable)
+
+
+#: Where every ticker process of a run serialises "read the book, size, submit".
+SUBMIT_LOCK_ENV = "TRADE_SUBMIT_LOCK_PATH"
+#: Longest a ticker waits for the submit lock before failing loudly.
+SUBMIT_LOCK_TIMEOUT_S = 600.0
+
+
+def _submit_lock_path() -> Path:
+    """One lock per host unless `SUBMIT_LOCK_ENV` names another.
+
+    Per host rather than per run on purpose: two runs trading the same account
+    at once (a manual run during the timer's) race for the same cash just as
+    two tickers of one run do.
+    """
+    configured = os.environ.get(SUBMIT_LOCK_ENV)
+    if configured:
+        return Path(configured)
+    return Path(tempfile.gettempdir()) / "tradingagents-trade-submit.lock"
+
+
+def main() -> int:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s | %(message)s",
+    )
+    # httpx logs every request URL at INFO, and Polygon carries its key in the
+    # query string — so a correctly-configured run writes a live credential
+    # into its own log, once per call. Installed immediately after
+    # basicConfig so it covers the handler basicConfig just created.
+    install_log_redaction()
+    _load_env()
+
+    args = build_parser().parse_args()
+    # One set of caps for the whole run. The pre-council gate and the sizer must
+    # budget with the same cash utilization, or the gate councils names the
+    # sizer then cannot afford (or skips names it could).
+    limits = PortfolioLimits(
+        max_position_pct=args.max_position_pct,
+        max_sector_pct=args.max_sector_pct,
+        max_cash_utilization=args.max_cash_utilization,
+    )
+
+    from sqlalchemy import create_engine
+    repo = (
+        None if args.no_persist
+        else TradeLogRepository(engine=create_engine(args.db_url, future=True))
+    )
+
+    # The RUN's trading date anchors the idempotency key. Decisions finishing
+    # after midnight UTC must not shift the key to the next day (silent
+    # duplicate-block tomorrow / missed dedupe on retry).
+    try:
+        run_date = date.fromisoformat(args.date)
+    except ValueError:
+        run_date = datetime.now(UTC).date()
+
+    book = _read_book(args.ticker, limits, verbose=True)
+    held_qty, spendable = book.held_qty, book.spendable
 
     # 2. Can this name possibly be acted on today? Asked BEFORE the council.
     #
@@ -356,6 +406,45 @@ def main() -> int:
         )
         decision = propagate(args.ticker, args.date)
     _print_decision(decision)
+
+    # 4. Size and submit, one ticker at a time.
+    #
+    # The daily run councils several tickers at once. Everything up to here is
+    # independent per ticker; what follows is not. Each order is sized against
+    # the cash the others left, so the book is read again under a lock every
+    # ticker process takes, and nobody else can submit between that read and
+    # this ticker's order. The pre-council read above only decided whether a
+    # council was worth paying for.
+    try:
+        with exclusive(_submit_lock_path(), timeout_s=SUBMIT_LOCK_TIMEOUT_S):
+            fresh = _read_book(args.ticker, limits, verbose=False)
+            if fresh.spendable != spendable or fresh.held_qty != held_qty:
+                print(f"  Book moved during the council: spendable "
+                      f"{_money(spendable)} -> {_money(fresh.spendable)}, "
+                      f"held {held_qty} -> {fresh.held_qty} shares")
+            return _act_on_decision(args, limits, repo, run_date, decision, fresh)
+    except LockTimeoutError as exc:
+        log.error("%s: %s — nothing sized or submitted", args.ticker, exc)
+        return 1
+
+
+def _money(value: float | None) -> str:
+    return "unpriceable" if value is None else f"${value:,.2f}"
+
+
+def _act_on_decision(
+    args: argparse.Namespace,
+    limits: PortfolioLimits,
+    repo: TradeLogRepository | None,
+    run_date: date,
+    decision: AgentDecision,
+    book: _Book,
+) -> int:
+    """Persist the decision, size it against ``book`` and submit (or hold/dry-run)."""
+    acct = book.acct
+    existing_by_ticker = book.existing_by_ticker
+    held_qty = book.held_qty
+    spendable = book.spendable
 
     if repo is not None:
         repo.save_decision(decision)

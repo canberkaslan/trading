@@ -129,6 +129,9 @@ ping_healthcheck() {
 # than leave the check to notice only when its grace period runs out.
 on_exit() {
   local rc=$?
+  if [[ -n "${RUN_STATE_DIR:-}" && -d "$RUN_STATE_DIR" ]]; then
+    rm -rf "$RUN_STATE_DIR"
+  fi
   if [[ "$rc" -ne 0 && "$HC_PINGED" -eq 0 ]]; then
     ping_healthcheck fail "daily_run.sh exited rc=$rc before reporting an outcome @ ${DATE}"
   fi
@@ -262,18 +265,83 @@ if [[ "${COMMENTATOR_FEED:-0}" == "1" ]]; then
   fi
 fi
 
+# Councils run side by side, COUNCIL_PARALLELISM at a time.
+#
+# Run one after another, eleven councils at ~14.5 min each are most of three
+# hours, and nearly all of it is waiting on model and data APIs rather than
+# computing. Each ticker is still its own process with its own timeout, so one
+# ticker failing or hanging costs that ticker only. What the processes share
+# is coordinated elsewhere: sizing and submitting take a lock in trade.py (each
+# order sizes against the cash the others left), the vendor memory log takes
+# one around its file operations, and the fail-fast source breakers count per
+# run in TRADINGAGENTS_RUN_STATE_DIR.
+#
+# The bound is small on purpose: every council in flight is a stream of model
+# calls against one API key's rate limit, and a 429 storm there costs more than
+# the parallelism saves. Raise it after watching a run's rate-limit headroom.
+# COUNCIL_PARALLELISM=1 is the old sequential run. Output stays in universe
+# order: each ticker writes its own log, printed in order once all are done.
+COUNCIL_PARALLELISM="${COUNCIL_PARALLELISM:-3}"
+MAX_COUNCIL_PARALLELISM=6
+if ! [[ "$COUNCIL_PARALLELISM" =~ ^[0-9]+$ ]] || [[ "$COUNCIL_PARALLELISM" -lt 1 ]]; then
+  echo "WARNING: COUNCIL_PARALLELISM='$COUNCIL_PARALLELISM' is not a positive integer — running one ticker at a time" | tee -a "$RUN_LOG"
+  COUNCIL_PARALLELISM=1
+elif [[ "$COUNCIL_PARALLELISM" -gt "$MAX_COUNCIL_PARALLELISM" ]]; then
+  echo "WARNING: COUNCIL_PARALLELISM=$COUNCIL_PARALLELISM above $MAX_COUNCIL_PARALLELISM — capped" | tee -a "$RUN_LOG"
+  COUNCIL_PARALLELISM=$MAX_COUNCIL_PARALLELISM
+fi
+# Seconds between the first wave's launches, so the councils do not hit the
+# same data sources and the model API in the same second.
+COUNCIL_STAGGER_S="${COUNCIL_STAGGER_S:-5}"
+if ! [[ "$COUNCIL_STAGGER_S" =~ ^[0-9]+$ ]]; then
+  COUNCIL_STAGGER_S=5
+fi
+
+RUN_STATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tradingagents-run.XXXXXX")"
+export TRADINGAGENTS_RUN_STATE_DIR="$RUN_STATE_DIR"
+
+run_ticker() {
+  local ticker="$1" slot="$2" rc=0
+  timeout -k 30 "$TICKER_TIMEOUT_S" env PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.trade \
+      --ticker "$ticker" --date "$DATE" $SUBMIT_FLAG >"${slot}.log" 2>&1 || rc=$?
+  echo "$rc" >"${slot}.rc"
+  echo "  [council] $ticker finished rc=$rc" >&2
+}
+
+echo "" | tee -a "$RUN_LOG"
+echo "--- councils: parallelism=$COUNCIL_PARALLELISM ---" | tee -a "$RUN_LOG"
+_idx=0
+for TICKER in $UNIVERSE; do
+  _idx=$((_idx + 1))
+  while [[ "$(jobs -rp | wc -l | tr -d ' ')" -ge "$COUNCIL_PARALLELISM" ]]; do
+    sleep 0.2
+  done
+  if [[ "$_idx" -gt 1 && "$_idx" -le "$COUNCIL_PARALLELISM" && "$COUNCIL_STAGGER_S" -gt 0 ]]; then
+    sleep "$COUNCIL_STAGGER_S"
+  fi
+  echo "  [council] $TICKER started" >&2
+  # Fresh decision (no --use-cached). Guards + bracket are on by default.
+  run_ticker "$TICKER" "$RUN_STATE_DIR/$(printf '%03d' "$_idx")-$TICKER" &
+done
+wait
+
 rc_total=0
 failed_tickers=""
+_idx=0
 for TICKER in $UNIVERSE; do
+  _idx=$((_idx + 1))
+  _slot="$RUN_STATE_DIR/$(printf '%03d' "$_idx")-$TICKER"
   echo "" | tee -a "$RUN_LOG"
   echo "--- $TICKER @ $DATE ---" | tee -a "$RUN_LOG"
-  # Fresh decision (no --use-cached). Guards + bracket are on by default.
-  if timeout -k 30 "$TICKER_TIMEOUT_S" env PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.trade \
-        --ticker "$TICKER" --date "$DATE" $SUBMIT_FLAG 2>&1 | tee -a "$RUN_LOG"; then
+  if [[ -f "${_slot}.log" ]]; then
+    tee -a "$RUN_LOG" <"${_slot}.log"
+  fi
+  # No rc file means the ticker's job died before it could write one.
+  rc="$(cat "${_slot}.rc" 2>/dev/null || echo 1)"
+  if [[ "$rc" == "0" ]]; then
     echo "  -> $TICKER done" | tee -a "$RUN_LOG"
   else
-    rc=$?
-    if [[ "$rc" -eq 124 ]]; then
+    if [[ "$rc" == "124" ]]; then
       echo "  -> $TICKER TIMED OUT after ${TICKER_TIMEOUT_S}s — continuing" | tee -a "$RUN_LOG"
     else
       echo "  -> $TICKER FAILED (rc=$rc) — continuing" | tee -a "$RUN_LOG"

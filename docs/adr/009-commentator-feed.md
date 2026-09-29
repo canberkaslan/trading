@@ -177,6 +177,24 @@ Canberk (owner) accepted the derived-data risk for one run of gate A and, afterw
 - **Deletion:** the scratch databases and the dry-run dump are deleted once the per-point scores are summarised, and in any case by 2026-10-27 13:39 UTC, the earliest `expires_at_utc` they hold. Only scores, bands and counts are kept.
 - **Production:** unchanged. The flag stays off, and the key does not go on a box until the preconditions above are met in writing.
 
+## Operator steps on the box — the retention timer
+
+The daily retention pass ships as `deploy/hetzner/ai-trader-commentator-retention.{service,timer}`. `install.sh` copies both and its closing checklist enables the timer, but the box is deployed by hand (`git pull` in `/opt/ai-trader`), and a pull installs no unit. Enable it once, before the feed or an `--ignore-flag` backfill ever writes to `local.db`. With nothing stored it makes no network call and deletes nothing, so enabling it early costs nothing:
+
+```bash
+ssh <box>
+cd /opt/ai-trader && git pull --ff-only origin main
+sudo cp deploy/hetzner/ai-trader-commentator-retention.service \
+        deploy/hetzner/ai-trader-commentator-retention.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now ai-trader-commentator-retention.timer
+systemctl list-timers 'ai-trader-commentator*'        # next run 11:00 UTC
+sudo systemctl start ai-trader-commentator-retention.service   # one pass now
+journalctl -u ai-trader-commentator-retention.service -n 20    # "commentator retention: purged_expired=0 ..."
+```
+
+Until this pass has run in the last 26 hours, the X fetch stores nothing new, and its summary says `enable ai-trader-commentator-retention.timer`. As of 2026-09-29 the timer is **not** enabled on the box. The feed is off and nothing is stored, so nothing is waiting on it.
+
 ## Enabling X (phase 2) — preconditions
 
 The code is complete and tested, but inert until all of the following are true:

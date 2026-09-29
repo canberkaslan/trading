@@ -5,9 +5,18 @@
 #   ssh deploy@<box>
 #   curl -fsSL https://raw.githubusercontent.com/canberkaslan/trading/main/deploy/hetzner/install.sh | bash
 #   # then: edit /opt/ai-trader/secrets.env, fill in the keys
-#   sudo systemctl enable --now ai-trader.timer
+#   sudo systemctl enable --now ai-trader.timer ai-trader-preflight.timer \
+#     ai-trader-backup.timer ai-trader-reconcile.timer \
+#     ai-trader-commentator-retention.timer
 #
 # Idempotent: re-running pulls latest code and re-installs units.
+#
+# A box updated by hand (`git pull` in /opt/ai-trader) gets no new or changed
+# unit: only this script copies them into /etc/systemd/system. After a pull
+# that touches deploy/hetzner/*.service|*.timer, re-run this script, or copy
+# the changed units, `sudo systemctl daemon-reload`, and enable any new timer.
+# The commentator retention timer runs whatever COMMENTATOR_FEED says and must
+# be enabled before the feed is ever switched on (ADR-009, "Operator steps").
 
 set -euo pipefail
 

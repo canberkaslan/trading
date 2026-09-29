@@ -338,3 +338,28 @@ class TestRetentionTimer:
         install = (_DEPLOY / "install.sh").read_text()
         assert "ai-trader-commentator-retention.service" in install
         assert install.count("ai-trader-commentator-retention.timer") >= 2  # copied + enabled
+
+    def test_install_header_enables_the_retention_timer(self) -> None:
+        install = (_DEPLOY / "install.sh").read_text()
+        header = install.split("set -euo pipefail", 1)[0]
+        assert "enable --now" in header
+        assert "ai-trader-commentator-retention.timer" in header
+
+    def test_every_unit_install_copies_exists(self) -> None:
+        install = (_DEPLOY / "install.sh").read_text()
+        loop = install.split("for unit in", 1)[1].split("; do", 1)[0]
+        units = [u for u in loop.replace("\\", " ").split() if u.startswith(("ai-", "eval-"))]
+        assert "ai-trader-commentator-retention.timer" in units
+        for unit in units:
+            assert (_DEPLOY / unit).is_file(), unit
+
+    def test_the_manual_deploy_operator_step_is_documented(self) -> None:
+        adr = (_DEPLOY.parent.parent / "docs" / "adr" / "009-commentator-feed.md").read_text()
+        section = adr.split("## Operator steps on the box", 1)[1].split("\n## ", 1)[0]
+        for step in (
+            "ai-trader-commentator-retention.service",
+            "sudo systemctl daemon-reload",
+            "sudo systemctl enable --now ai-trader-commentator-retention.timer",
+            "systemctl list-timers",
+        ):
+            assert step in section, step

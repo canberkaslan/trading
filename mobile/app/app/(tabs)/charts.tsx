@@ -56,11 +56,17 @@ import { Card } from '@/components/Card';
 import { Tag } from '@/components/Tag';
 import { useWatchStore, WATCH_CAP } from '@/stores/watchlist';
 import { toast } from '@/stores/toast';
+import { dayChange, windowChange } from '@/utils/priceChange';
 
 type RangeKey = '1A' | '3A' | '6A';
 type Mode = 'area' | 'candle';
 
-const RANGE_DAYS: Record<RangeKey, number> = { '1A': 30, '3A': 90, '6A': 180 };
+/**
+ * TRADING bars per range — the server slices `bars[-days:]`, so `days` is a bar
+ * count, not calendar days. 30/90/180 drew ~6 weeks / ~4.3 / ~8.6 months under
+ * labels that say 1/3/6 months. Same counts as the design (22/62/126).
+ */
+const RANGE_DAYS: Record<RangeKey, number> = { '1A': 22, '3A': 63, '6A': 126 };
 
 const RANGE_OPTIONS: readonly SegOption<RangeKey>[] = [
   { value: '1A', label: '1A', accessibilityLabel: 'Son 1 ay' },
@@ -179,7 +185,12 @@ export default function ChartsScreen() {
   // Memoized so the `?? []` fallback does not hand a fresh array identity to
   // the geometry useMemo below on every render.
   const bars = useMemo(() => data?.bars ?? [], [data?.bars]);
-  const changePct = data?.change_pct ?? null;
+  /*
+   * The session move, from the last two daily closes. NOT `change_pct`: the
+   * server computes that over the whole window, so it is the same number as
+   * "Dönem" below and moved whenever the range was toggled.
+   */
+  const changePct = useMemo(() => dayChange(bars), [bars]);
   /**
    * Sign -> tone is `pnlTone`'s job — the one rule the position P&L below, the
    * İzleme row and the realized card all read from — so this screen only picks
@@ -241,17 +252,10 @@ export default function ChartsScreen() {
 
   /**
    * The prototype's second figure: how the name moved across the WINDOW on
-   * screen, as opposed to `change_pct`, which is the session. Derived from the
-   * bars already drawn — last close over first close — so it can never disagree
-   * with the plot beside it.
+   * screen, as opposed to `changePct` above, which is the session. Derived from
+   * the bars already drawn so it can never disagree with the plot beside it.
    */
-  const windowPct = useMemo(() => {
-    if (bars.length < 2) return null;
-    const first = bars[0]?.c;
-    const last = data?.last ?? bars[bars.length - 1]?.c;
-    if (first == null || last == null || first === 0) return null;
-    return last / first - 1;
-  }, [bars, data?.last]);
+  const windowPct = useMemo(() => windowChange(bars), [bars]);
   const windowTone = pnlTone(windowPct);
 
   // Guarded by ticker rather than trusting position 0: a deployment that
@@ -364,7 +368,7 @@ export default function ChartsScreen() {
               <Text style={styles.price}>{formatUsd(data.last)}</Text>
               <Text style={styles.changeLine}>
                 <Text style={{ color: textTone[changeTone] }}>
-                  {formatPct(changePct == null ? null : changePct / 100, { signed: true })}
+                  {formatPct(changePct, { signed: true })}
                 </Text>
                 {windowPct != null ? (
                   <>

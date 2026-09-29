@@ -56,6 +56,27 @@ def test_save_and_load_decision(repo: TradeLogRepository) -> None:
     assert converted.reasoning[0].agent == "pm"
 
 
+def test_row_to_decision_returns_metered_usage(repo: TradeLogRepository) -> None:
+    """The council's usage is written with the decision; the read must carry it back."""
+    d = _decision().model_copy(
+        update={"tokens_in": 41_200, "tokens_out": 3_100, "cache_read_tokens": 9_000,
+                "cache_write_tokens": 1_500, "cost_usd": 0.4213}
+    )
+    repo.save_decision(d)
+    converted = row_to_decision(repo.get_decision("dec-1"))
+    assert (converted.tokens_in, converted.tokens_out) == (41_200, 3_100)
+    assert (converted.cache_read_tokens, converted.cache_write_tokens) == (9_000, 1_500)
+    assert converted.cost_usd == pytest.approx(0.4213)
+
+
+def test_row_to_decision_keeps_unmetered_usage_null(repo: TradeLogRepository) -> None:
+    """A decision from before the accounting must read as not measured, never as free."""
+    repo.save_decision(_decision())
+    converted = row_to_decision(repo.get_decision("dec-1"))
+    assert converted.tokens_in is None
+    assert converted.cost_usd is None
+
+
 def test_save_decision_is_idempotent(repo: TradeLogRepository) -> None:
     repo.save_decision(_decision())
     repo.save_decision(_decision())  # merge, no duplicate

@@ -55,7 +55,16 @@ import { SectionHeader } from '@/components/SectionHeader';
 import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
 import { formatUsd, parseUtc } from '@/utils/format';
-import { formatTokens, formatLatency, councilChips, decisionRoute } from '@/utils/decision';
+import {
+  formatTokens,
+  formatLatency,
+  councilChips,
+  agentMetaLine,
+  decisionTokenTotal,
+  decisionLatencyTotal,
+  sumMeasured,
+  decisionRoute,
+} from '@/utils/decision';
 import { formatOrderDate } from '@/utils/orders';
 import { hitSlopFor, MIN_TOUCH_TARGET } from '@/utils/a11y';
 
@@ -74,19 +83,12 @@ const TAB_BAR_CLEARANCE = 72;
 /** The Canlı koşu screen — the prototype's `openRun`. */
 const RUN_ROUTE = '/run';
 
-/** Every token this decision's agents burned, in and out. */
-function decisionTokens(d: AgentDecision): number {
-  return (d.reasoning ?? []).reduce((sum, r) => sum + (r.tokens_in ?? 0) + (r.tokens_out ?? 0), 0);
-}
-
-/**
- * Summed agent latency — deliberately labelled "ajan süresi" rather than run
- * duration wherever it is shown. The agents run concurrently, so this is the
- * work done, not the wall clock, and the two are not the same number.
+/*
+ * Summed agent latency is labelled "ajan süresi" rather than run duration
+ * wherever it is shown: the agents run concurrently, so it is work done, not
+ * the wall clock. Token and latency totals are null when nothing was measured
+ * (see `measured`), and render as "—" rather than as a measured zero.
  */
-function decisionLatency(d: AgentDecision): number {
-  return (d.reasoning ?? []).reduce((sum, r) => sum + (r.latency_ms ?? 0), 0);
-}
 
 /**
  * What the pipeline failed to write for this decision, in TR, or `null` when
@@ -183,8 +185,8 @@ export default function AgentsScreen() {
     return {
       count: rows.length,
       when: rows[rows.length - 1]?.timestamp_utc ?? null,
-      tokens: rows.reduce((sum, d) => sum + decisionTokens(d), 0),
-      latency: rows.reduce((sum, d) => sum + decisionLatency(d), 0),
+      tokens: sumMeasured(rows.map(decisionTokenTotal)),
+      latency: sumMeasured(rows.map(decisionLatencyTotal)),
       gaps: rows.filter((d) => decisionGap(d) !== null).length,
     };
   }, [decisions]);
@@ -268,7 +270,7 @@ export default function AgentsScreen() {
                 />
                 <StatCell
                   label="Token"
-                  value={`~${formatTokens(lastRun.tokens)}`}
+                  value={lastRun.tokens == null ? '—' : `~${formatTokens(lastRun.tokens)}`}
                   hint="girdi + çıktı"
                   style={styles.stat}
                 />
@@ -428,10 +430,9 @@ export default function AgentsScreen() {
                                 <ModelTag model={r.model} />
                               </View>
                               <Text style={styles.agentBody}>{r.summary}</Text>
-                              <Text style={styles.agentMeta}>
-                                {formatTokens(r.tokens_in)}↓ / {formatTokens(r.tokens_out)}↑ token ·{' '}
-                                {formatLatency(r.latency_ms)}
-                              </Text>
+                              {agentMetaLine(r) ? (
+                                <Text style={styles.agentMeta}>{agentMetaLine(r)}</Text>
+                              ) : null}
                             </View>
                           ))
                         )}

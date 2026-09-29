@@ -43,6 +43,13 @@ export interface AgentDecision {
   final_decision_text_tr: string | null;
   timestamp_utc: string;
   decision_id: string;
+  /**
+   * What the whole council run cost, as the usage callback metered it. Null
+   * (or absent, on an older server) means not measured — never "free".
+   */
+  tokens_in?: number | null;
+  tokens_out?: number | null;
+  cost_usd?: number | null;
 }
 
 export interface Bar {

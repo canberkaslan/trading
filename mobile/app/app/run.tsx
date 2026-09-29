@@ -69,6 +69,9 @@ import { EmptyState } from '@/components/EmptyState';
 import {
   formatTokens,
   formatLatency,
+  measured,
+  sumMeasured,
+  decisionTokenTotal,
   councilChips,
   debateEntries,
   debateRoleLabel,
@@ -161,8 +164,9 @@ function buildStages(d: AgentDecision | null, labelFor: (m: string) => string): 
       agent: r.agent,
       model: r.model ? labelFor(r.model) : null,
       summary: summary || 'Bu aşama için özet yazılmadı.',
-      tokens: (r.tokens_in ?? 0) + (r.tokens_out ?? 0) || null,
-      latencyMs: r.latency_ms ?? null,
+      // 0 is what the pipeline writes when it did not meter the agent.
+      tokens: sumMeasured([r.tokens_in, r.tokens_out]),
+      latencyMs: measured(r.latency_ms),
       warn: summary.length === 0,
     };
   });
@@ -293,23 +297,15 @@ export default function RunScreen() {
 
   /** Cumulative summed agent latency up to and including the current stage. */
   const elapsedMs = useMemo(
-    () =>
-      stages
-        .slice(0, Math.min(stage, total))
-        .reduce((sum, s) => sum + (s.latencyMs ?? 0), 0),
+    () => sumMeasured(stages.slice(0, Math.min(stage, total)).map((s) => s.latencyMs)),
     [stages, stage, total],
   );
 
   /** Tokens burned by the whole logged run, across every name in it. */
-  const runTokens = useMemo(
-    () =>
-      run.reduce(
-        (sum, d) =>
-          sum + (d.reasoning ?? []).reduce((s, r) => s + (r.tokens_in ?? 0) + (r.tokens_out ?? 0), 0),
-        0,
-      ),
-    [run],
-  );
+  const runTokens = useMemo(() => sumMeasured(run.map(decisionTokenTotal)), [run]);
+
+  /** What the logged run cost, as the server metered it; null = not reported. */
+  const runCost = useMemo(() => sumMeasured(run.map((d) => d.cost_usd)), [run]);
 
   const council = useMemo(
     () => councilChips(selected?.reasoning, labelFor),
@@ -456,9 +452,13 @@ export default function RunScreen() {
             <StatCell
               size="sm"
               label="Maliyet"
-              value="—"
-              hint="sunucu bildirmiyor"
-              accessibilityLabel="Maliyet bilinmiyor, sunucu koşu maliyeti bildirmiyor"
+              value={runCost == null ? '—' : `$${runCost.toFixed(2)}`}
+              hint={runCost == null ? 'sunucu bildirmiyor' : 'alt sınır, fiyatlı modeller'}
+              accessibilityLabel={
+                runCost == null
+                  ? 'Maliyet bilinmiyor, sunucu koşu maliyeti bildirmiyor'
+                  : `Koşu maliyeti ${runCost.toFixed(2)} dolar`
+              }
             />
           </View>
 

@@ -46,6 +46,71 @@ export function formatLatency(ms: number | null | undefined): string {
   return `${(ms / 1000).toFixed(1)} sn`;
 }
 
+/**
+ * A counter as the pipeline wrote it, or null when it was never measured.
+ *
+ * The pipeline writes every per-agent `tokens_in`, `tokens_out` and
+ * `latency_ms` as 0 — it has no per-agent meter. No LLM call takes 0 ms or 0
+ * tokens, so a 0 is "not measured", and rendering it ("0 ms", "Token 0")
+ * presents a placeholder as a measurement.
+ */
+export function measured(n: number | null | undefined): number | null {
+  return n != null && Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** Sum of the measured values, or null when none of them was measured. */
+export function sumMeasured(values: readonly (number | null | undefined)[]): number | null {
+  let total: number | null = null;
+  for (const v of values) {
+    const m = measured(v);
+    if (m != null) total = (total ?? 0) + m;
+  }
+  return total;
+}
+
+interface Metered {
+  tokens_in?: number | null;
+  tokens_out?: number | null;
+  reasoning?: readonly {
+    tokens_in?: number | null;
+    tokens_out?: number | null;
+    latency_ms?: number | null;
+  }[];
+}
+
+/**
+ * Tokens one decision burned, in + out. The decision-level total is what the
+ * usage callback actually metered for the whole council, so it wins; the
+ * per-agent sum is the fallback for rows that carry one. Null = not measured.
+ */
+export function decisionTokenTotal(d: Metered): number | null {
+  const top = sumMeasured([d.tokens_in, d.tokens_out]);
+  if (top != null) return top;
+  return sumMeasured((d.reasoning ?? []).flatMap((r) => [r.tokens_in, r.tokens_out]));
+}
+
+/** Summed per-agent latency, or null when no agent's latency was measured. */
+export function decisionLatencyTotal(d: Metered): number | null {
+  return sumMeasured((d.reasoning ?? []).map((r) => r.latency_ms));
+}
+
+/**
+ * The "12.3k↓ / 1.1k↑ token · 4.2 sn" line under one agent's analysis, or null
+ * when none of the three was measured — the line is then left out, rather than
+ * printing "0↓ / 0↑ token · 0 ms" as if the agent had been timed.
+ */
+export function agentMetaLine(r: {
+  tokens_in?: number | null;
+  tokens_out?: number | null;
+  latency_ms?: number | null;
+}): string | null {
+  const tin = measured(r.tokens_in);
+  const tout = measured(r.tokens_out);
+  const ms = measured(r.latency_ms);
+  if (tin == null && tout == null && ms == null) return null;
+  return `${formatTokens(tin)}↓ / ${formatTokens(tout)}↑ token · ${formatLatency(ms)}`;
+}
+
 export interface DebateEntry {
   role: string;
   text: string;

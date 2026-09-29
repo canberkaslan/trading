@@ -144,7 +144,7 @@ Bu Lehman, Bear Stearns, WaMu gibi batıkları geri getirir — yfinance'in "bug
 
 ### Bir karar üretmek ne kadar?
 - Tek ticker, full pipeline (Opus + Sonnet, 17 LLM call): **~$0.50-1.50**
-- Phase 3b prompt caching aktif olunca: ~%70-85 input cost cut → **~$0.10-0.30**
+- Prompt caching aktif, ama kazancı küçük: ölçülen SPY council (2026-09-29) hit rate ~%12, caching input maliyetinin ~%7'sini kurtarıyor (~$0.04, council'in ~%4'ü). Input'un %73'ü tek seferlik debater/manager prompt'larında ve bunların ortak bir prefix'i yok; asıl kaldıraç prompt layout (bkz. `agent/tradingagents_us/llm/prompt_cache.py`)
 - Phase 3c 3-tier routing (Haiku risk debators): ek %20-30 cut
 
 ### "Use cached" nedir?

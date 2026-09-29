@@ -39,7 +39,7 @@ Full technical architecture for the AI trading agent system. Companion to [RESEA
    │  │  Phase 6: Portfolio Manager → 5-tier decision           │    │
    │  └─────────────────────────────────────────────────────────┘    │
    │  Per-agent LLM routing: Opus 4.7 (managers) / Sonnet 4.6 / Haiku│
-   │  Prompt caching: ~80% input cost reduction within 5-min TTL      │
+   │  Prompt caching: analyst tool loops only, ~7% of input cost      │
    └──────────────────────────┬──────────────────────────────────────┘
                               │
    ┌──────────────────────────▼──────────────────────────────────────┐

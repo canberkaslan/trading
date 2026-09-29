@@ -19,7 +19,7 @@ from tests.commentator_fakes import (
     video,
 )
 from tradingagents_us.dataflows.commentator import config
-from tradingagents_us.dataflows.commentator.x_source import fetch_new
+from tradingagents_us.dataflows.commentator.x_source import fetch_new, post_text
 from tradingagents_us.dataflows.commentator.youtube_source import (
     boilerplate_lines,
     fetch_recent,
@@ -193,9 +193,33 @@ class TestXFetch:
         p = req.url.params
         assert p["since_id"] == "1001"
         assert p["exclude"] == "replies,retweets"
-        assert p["tweet.fields"] == "created_at,entities,lang"
+        assert p["tweet.fields"] == "created_at,entities,lang,note_tweet"
         assert req.headers["Authorization"] == f"Bearer {X_TOKEN}"
         assert X_TOKEN not in str(req.url)
+
+    def test_a_long_post_is_read_from_note_tweet_not_the_truncated_text(self) -> None:
+        head = "Nasdaq " * 40
+        full = head + "ve NVDA için hedefim yukarı yönlü."
+        long_post = post("1004", "2026-09-28T12:00:00.000Z", head[:280])
+        long_post["note_tweet"] = {"text": full, "entities": {}}
+        api = FakeXAPI([long_post])
+        (item,) = fetch_new(api.client(), X_USER, since_id=None, first_run_max=20,
+                            expected_username="BoraOzkentNSDQ")
+        assert item.text == full.strip()
+
+    def test_the_deletion_check_also_asks_for_note_tweet(self) -> None:
+        # The retry of a failed extraction reads its text from this answer.
+        api = self._api()
+        api.client().lookup_alive(["1001"])
+        (req,) = api.requests
+        assert "note_tweet" in req.url.params["tweet.fields"].split(",")
+
+    @pytest.mark.parametrize("note", [None, {}, {"text": ""}, {"text": "   "}, "junk"])
+    def test_without_a_usable_note_tweet_the_text_is_used(self, note: object) -> None:
+        p = post("1005", "2026-09-28T12:00:00.000Z", "Kısa bir gönderi")
+        if note is not None:
+            p["note_tweet"] = note
+        assert post_text(p) == "Kısa bir gönderi"
 
     def test_only_posts_after_since_id_newest_first(self) -> None:
         items = fetch_new(self._api().client(), X_USER, since_id="1001", first_run_max=20,

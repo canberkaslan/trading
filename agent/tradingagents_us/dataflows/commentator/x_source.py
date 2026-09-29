@@ -38,7 +38,9 @@ _BASE = "https://api.x.com/2"
 _TIMEOUT = 10.0
 _MAX_RESULTS = 100  # API maximum per page for both endpoints used here
 _MIN_RESULTS = 5  # API minimum for /users/{id}/tweets
-_TWEET_FIELDS = "created_at,entities,lang"
+#: `note_tweet` carries the full text of a long post (over 280 characters);
+#: without it `text` is only the truncated head.
+_TWEET_FIELDS = "created_at,entities,lang,note_tweet"
 
 #: With a since_id, how many pages one run may buy. Three pages is 300 posts,
 #: far beyond this account's two or three a day; the cap is there so a bad
@@ -129,11 +131,26 @@ def _parse_ts(value: object) -> datetime | None:
     return dt.astimezone(UTC)
 
 
+def post_text(post: dict[str, Any]) -> str:
+    """The post's full text: `note_tweet.text` for a long post, else `text`.
+
+    X returns a long post's `text` truncated to its first 280 characters and
+    puts the whole of it in `note_tweet.text` (when `note_tweet` is requested
+    in `tweet.fields`). Extracting the truncated head would read half a claim.
+    """
+    note = post.get("note_tweet")
+    if isinstance(note, dict):
+        full = str(note.get("text") or "").strip()
+        if full:
+            return full
+    return str(post.get("text") or "").strip()
+
+
 def to_raw_item(post: dict[str, Any], user_id: str) -> RawItem | None:
     """A RawItem, or None for a post that must not be ingested (no id, no date, no text)."""
     pid = str(post.get("id") or "")
     when = _parse_ts(post.get("created_at"))
-    text = str(post.get("text") or "").strip()
+    text = post_text(post)
     if not pid or not text:
         return None
     if when is None:

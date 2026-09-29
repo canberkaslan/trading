@@ -135,6 +135,20 @@ class TestToolLoopConversation:
         assert last["type"] == "tool_result"
         assert _cc(last) == {"type": "ephemeral"}
 
+    def test_the_marker_goes_on_the_last_of_several_tool_results(self) -> None:
+        # langchain-anthropic folds consecutive ToolMessages into one user turn,
+        # and the market analyst asks for up to eight indicators at once. A
+        # marker on the first result would read only that far next call and
+        # pay full price for the rest.
+        payload = _tool_loop_payload()
+        payload["messages"][-1]["content"] = [
+            {"type": "tool_result", "tool_use_id": f"t{i}", "content": f"r{i}"} for i in range(4)
+        ]
+        out = apply_cache_control(payload)
+        blocks = out["messages"][-1]["content"]
+        assert _cc(blocks[-1]) == {"type": "ephemeral"}
+        assert not any(_cc(b) for b in blocks[:-1])
+
     def test_only_one_message_block_is_marked(self) -> None:
         # Earlier turns keep no marker of their own: the previous call's
         # breakpoint is still a valid read point without being re-sent.

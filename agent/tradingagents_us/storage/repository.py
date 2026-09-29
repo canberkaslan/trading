@@ -400,4 +400,13 @@ def row_to_decision(row: AgentDecisionRow) -> AgentDecision:
         final_decision_text_tr=row.final_decision_text_tr,
         timestamp_utc=row.timestamp_utc,
         decision_id=row.decision_id,
+        # The council's metered usage, written by save_decision and — like the
+        # translation above once was — never read back, so every client showed
+        # "Token 0" for runs whose cost was sitting in these columns. None stays
+        # None: a decision from before the accounting was not free.
+        tokens_in=row.tokens_in,
+        tokens_out=row.tokens_out,
+        cache_read_tokens=row.cache_read_tokens,
+        cache_write_tokens=row.cache_write_tokens,
+        cost_usd=row.cost_usd,
     )

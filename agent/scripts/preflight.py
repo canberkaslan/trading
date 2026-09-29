@@ -174,8 +174,36 @@ def _check_db(failures: list[Failure]) -> None:
         engine = make_engine(url)
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
+        if u.get_backend_name() == "sqlite" and u.database:
+            _check_db_writable(engine, failures)
     except Exception as exc:
         failures.append(("db", f"connect failed: {exc}"))
+
+
+def _check_db_writable(engine, failures: list[Failure]) -> None:
+    """Take the write lock once, then give it back.
+
+    In WAL mode a writer also needs local.db-wal and local.db-shm. If those
+    were left owned by another user (a one-off run as root), a SELECT still
+    passes and every write fails. BEGIN IMMEDIATE takes the lock a write would
+    take without changing anything.
+    """
+    raw = engine.raw_connection()
+    try:
+        db = raw.driver_connection
+        previous = db.isolation_level
+        db.isolation_level = None  # BEGIN/ROLLBACK are ours, not the driver's
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("ROLLBACK")
+        finally:
+            db.isolation_level = previous
+    except Exception as exc:  # noqa: BLE001 — reported, never raised
+        failures.append(
+            ("db", f"not writable (check local.db-wal / local.db-shm ownership): {exc}")
+        )
+    finally:
+        raw.close()
 
 
 def _check_disk(failures: list[Failure], min_free_gb: float = 5.0) -> None:

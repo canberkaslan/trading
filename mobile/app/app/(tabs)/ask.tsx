@@ -51,6 +51,7 @@ import { ratingChip, modelBadge } from '@/theme/rating';
 import { font, TABULAR, TYPE } from '@/theme/type';
 import { formatPct, formatUsd } from '@/utils/format';
 import { MIN_TOUCH_TARGET, hitSlopFor } from '@/utils/a11y';
+import { decisionRoute } from '@/utils/decision';
 import { BlinkSquare } from '@/components/BlinkSquare';
 
 /** The six symbols the prototype offers before the first question. */
@@ -518,7 +519,7 @@ export default function AskScreen() {
                 message={m}
                 styles={styles}
                 theme={t}
-                onOpenDetail={(ticker) => router.push(`/trade/${ticker}` as never)}
+                onOpenDetail={(ticker, decisionId) => router.push(decisionRoute(ticker, decisionId) as never)}
               />
             ),
           )}
@@ -621,7 +622,7 @@ function AgentMessage({
   message: ChatMessage;
   styles: Styles;
   theme: Palette;
-  onOpenDetail: (ticker: string) => void;
+  onOpenDetail: (ticker: string, decisionId?: string) => void;
 }) {
   const decision = message.decision ?? null;
   const model = pmModel(decision);
@@ -695,7 +696,7 @@ function AgentMessage({
 
         {decision ? (
           <Pressable
-            onPress={() => onOpenDetail(decision.ticker)}
+            onPress={() => onOpenDetail(decision.ticker, decision.decision_id)}
             hitSlop={hitSlopFor(LINK_HEIGHT)}
             style={styles.detailLink}
             accessibilityRole="link"

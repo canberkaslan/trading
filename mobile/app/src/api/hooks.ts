@@ -69,10 +69,14 @@ export function useActionability(days = 30) {
   });
 }
 
-export function useDecisions(params?: { ticker?: string; limit?: number }) {
+export function useDecisions(
+  params?: { ticker?: string; limit?: number },
+  options?: { enabled?: boolean },
+) {
   return useQuery({
     queryKey: ['agents', 'decisions', params],
     queryFn: () => api.listDecisions(params),
+    enabled: options?.enabled ?? true,
     refetchInterval: REFETCH_INTERVAL_MS * 3, // decisions move slower than portfolio
     staleTime: 15_000,
   });

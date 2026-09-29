@@ -13,7 +13,7 @@
  * rules rather than decoration:
  *
  *  - Two separate affordances on one row, because they do two different things:
- *    tapping the row OPENS the decision (`/trade/<ticker>`), and the "N ajan +"
+ *    tapping the row OPENS that decision (`/trade/<ticker>?decisionId=`), and the "N ajan +"
  *    target on the right EXPANDS the agent summaries in place. They are
  *    SIBLINGS rather than one nested in the other — a Pressable is `accessible`
  *    by default, so nesting the expand button inside the row button hides it
@@ -55,7 +55,7 @@ import { SectionHeader } from '@/components/SectionHeader';
 import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
 import { formatUsd, parseUtc } from '@/utils/format';
-import { formatTokens, formatLatency, councilChips } from '@/utils/decision';
+import { formatTokens, formatLatency, councilChips, decisionRoute } from '@/utils/decision';
 import { formatOrderDate } from '@/utils/orders';
 import { hitSlopFor, MIN_TOUCH_TARGET } from '@/utils/a11y';
 
@@ -191,7 +191,7 @@ export default function AgentsScreen() {
 
   const toggle = (id: string) => setExpanded((e) => ({ ...e, [id]: !e[id] }));
   const openDetail = useCallback(
-    (ticker: string) => router.push(`/trade/${ticker}` as never),
+    (ticker: string, decisionId: string) => router.push(decisionRoute(ticker, decisionId) as never),
     [router],
   );
   const openRun = useCallback(() => router.push(RUN_ROUTE as never), [router]);
@@ -310,7 +310,7 @@ export default function AgentsScreen() {
               {today.items.map((d) => (
                 <Card
                   key={`today-${d.decision_id}`}
-                  onPress={() => openDetail(d.ticker)}
+                  onPress={() => openDetail(d.ticker, d.decision_id)}
                   style={styles.todayCard}
                   accessibilityLabel={`${d.ticker}, ${d.rating}`}
                   accessibilityHint="Karar detayını açar"
@@ -361,7 +361,7 @@ export default function AgentsScreen() {
                   <View style={styles.rowInner}>
                     <Pressable
                       style={({ pressed }) => [styles.rowBody, pressed && styles.rowPressed]}
-                      onPress={() => openDetail(d.ticker)}
+                      onPress={() => openDetail(d.ticker, d.decision_id)}
                       accessibilityRole="button"
                       accessibilityLabel={`${d.ticker} kararı, ${d.rating}`}
                       accessibilityHint="Karar detayını açar"
@@ -438,7 +438,7 @@ export default function AgentsScreen() {
                       </Card>
 
                       <Pressable
-                        onPress={() => openDetail(d.ticker)}
+                        onPress={() => openDetail(d.ticker, d.decision_id)}
                         style={styles.detailBtn}
                         hitSlop={hitSlopFor(24)}
                         accessibilityRole="button"

@@ -46,6 +46,7 @@ import { useTheme } from '@/theme/useTheme';
 import { useShape, type Shape } from '@/theme/shape';
 import { hitSlopFor, MIN_TOUCH_TARGET } from '@/utils/a11y';
 import { font, TABULAR, TYPE } from '@/theme/type';
+import { useNow } from '@/utils/useNow';
 import { positionStop } from '@/utils/positions';
 import { formatUsd, formatPct, parseUtc, relativeAgeTr } from '@/utils/format';
 import { isAuthError } from '@/utils/apiError';
@@ -120,13 +121,14 @@ function barDateTr(iso: string | null | undefined): string {
  * When the decision was taken, on the app's one freshness ladder rather than a
  * second date format invented here.
  */
-function decisionAge(iso: string): string {
+function decisionAge(iso: string, now: number): string {
   const d = parseUtc(iso);
-  return d ? relativeAgeTr(Date.now() - d.getTime()) : '—';
+  return d ? relativeAgeTr(now - d.getTime()) : '—';
 }
 
 export default function ChartsScreen() {
   const { t: tr } = useTranslation();
+  const now = useNow();
   const t = useTheme();
   const sh = useShape();
   const styles = useMemo(() => makeStyles(t, sh), [t, sh]);
@@ -495,7 +497,7 @@ export default function ChartsScreen() {
               <View style={styles.cellStack}>
                 <RatingTag rating={decision.rating} size="sm" />
                 <Text style={styles.cellMuted}>
-                  {decisionAge(decision.timestamp_utc)} · hedef {formatUsd(decision.price_target)}
+                  {decisionAge(decision.timestamp_utc, now)} · hedef {formatUsd(decision.price_target)}
                 </Text>
               </View>
             ) : (

@@ -250,16 +250,21 @@ export default function RunScreen() {
    * is "finished" and `stages[stage]` is the one currently playing — the same
    * indexing the prototype's `r.stage` uses.
    */
-  const [stage, setStage] = useState(0);
+  const [stage, setStage] = useState(total);
   const [playing, setPlaying] = useState(false);
 
   // Switching names, or the query returning a different run, restarts the
   // replay at the top rather than leaving the cursor pointing into a log that
-  // no longer has that many stages.
-  useEffect(() => {
+  // no longer has that many stages. Adjusted during render (React's "reset
+  // state when a prop changes" pattern) instead of in an effect, which painted
+  // one frame with the old cursor first.
+  const runKey = `${selected?.decision_id ?? ''}:${total}`;
+  const [shownRunKey, setShownRunKey] = useState(runKey);
+  if (runKey !== shownRunKey) {
+    setShownRunKey(runKey);
     setStage(total);
     setPlaying(false);
-  }, [selected?.decision_id, total]);
+  }
 
   useEffect(() => {
     if (!playing) return;

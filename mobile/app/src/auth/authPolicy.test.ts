@@ -1,6 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 
-import { resolveAuthMode, SECURITY_LEVEL } from './authPolicy';
+import { approvalGateFor, resolveAuthMode, SECURITY_LEVEL } from './authPolicy';
 
 describe('resolveAuthMode', () => {
   it('uses biometric when hardware present and enrolled at biometric level', () => {
@@ -20,5 +20,16 @@ describe('resolveAuthMode', () => {
   it('returns none only when the device has no lock at all', () => {
     expect(resolveAuthMode(false, SECURITY_LEVEL.NONE)).toBe('none');
     expect(resolveAuthMode(true, SECURITY_LEVEL.NONE)).toBe('none');
+  });
+});
+
+describe('approvalGateFor', () => {
+  it('uses press-and-hold only on web, where no device lock API exists', () => {
+    expect(approvalGateFor('web')).toBe('hold');
+  });
+
+  it('keeps the OS device lock on every native platform', () => {
+    expect(approvalGateFor('ios')).toBe('device');
+    expect(approvalGateFor('android')).toBe('device');
   });
 });

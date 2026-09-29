@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useIsAdmin } from '@/api/useMe';
 import { ErrorState } from '@/components/ErrorState';
@@ -13,6 +13,9 @@ import { api } from '@/api/endpoints';
 import { useTheme } from '@/theme/useTheme';
 import { useShape, type Shape } from '@/theme/shape';
 import { authenticate } from '@/auth/biometric';
+import { publicErrorDetail } from '@/utils/apiError';
+import { approvalGateFor } from '@/auth/authPolicy';
+import { HoldToConfirm } from '@/components/HoldToConfirm';
 import { Card } from '@/components/Card';
 import { Sheet } from '@/components/Sheet';
 import { StatCell } from '@/components/StatCell';
@@ -25,6 +28,7 @@ import { topWeightTone } from '@/utils/concentration';
 import { MIN_TOUCH_TARGET, hitSlopFor, orderActionLabel } from '@/utils/a11y';
 import type { AgentDecision, OrderListItem } from '@/api/types';
 import { font, TYPE } from '@/theme/type';
+import { decisionRoute } from '@/utils/decision';
 
 /**
  * The approval flow, as one state machine.
@@ -44,6 +48,12 @@ type Flow =
   | { step: 'failed'; title: string; message: string }
   | { step: 'rejectConfirm' }
   | { step: 'rejecting' };
+
+/**
+ * How this platform confirms an approval: the OS device lock on native, the
+ * design's press-and-hold on web (see `approvalGateFor`).
+ */
+const GATE = approvalGateFor(Platform.OS);
 
 /** Lucide `scan-face` — the handoff's mark for "this asks for the device lock". */
 function ScanFace({ color, size = 18 }: { color: string; size?: number }) {
@@ -95,7 +105,7 @@ async function errorDetail(res: Response): Promise<unknown> {
  */
 async function approveFailure(e: unknown): Promise<Flow> {
   if (!(e instanceof HTTPError)) {
-    return { step: 'failed', title: 'Gönderilemedi', message: String(e) };
+    return { step: 'failed', title: 'Gönderilemedi', message: publicErrorDetail(e) };
   }
   const detail = await errorDetail(e.response);
 
@@ -128,7 +138,7 @@ async function approveFailure(e: unknown): Promise<Flow> {
     };
   }
 
-  return { step: 'failed', title: 'Gönderilemedi', message: String(e) };
+  return { step: 'failed', title: 'Gönderilemedi', message: publicErrorDetail(e) };
 }
 
 export default function ApproveOrderScreen() {
@@ -182,7 +192,7 @@ export default function ApproveOrderScreen() {
     api
       .getDecision(decisionId)
       .then((d) => { if (!cancelled) setDecision(d); })
-      .catch((e) => { if (!cancelled) setDecisionError(String(e)); });
+      .catch((e) => { if (!cancelled) setDecisionError(publicErrorDetail(e)); });
     return () => { cancelled = true; };
   }, [decisionId]);
 
@@ -314,7 +324,9 @@ export default function ApproveOrderScreen() {
    */
   const runApproval = async () => {
     setFlow({ step: 'verifying' });
-    const { success, mode: authMode } = await authenticate(label);
+    // On web the completed hold IS the confirmation; there is no OS lock to ask.
+    const { success, mode: authMode } =
+      GATE === 'hold' ? { success: true, mode: 'none' as const } : await authenticate(label);
     if (!success) {
       setFlow({
         step: 'authFailed',
@@ -340,7 +352,7 @@ export default function ApproveOrderScreen() {
       router.back();
       toast(`${target.ticker} ${target.side} ${target.quantity} reddedildi — bugün yeniden önerilmez`);
     } catch (e) {
-      setFlow({ step: 'failed', title: 'Reddedilemedi', message: String(e) });
+      setFlow({ step: 'failed', title: 'Reddedilemedi', message: publicErrorDetail(e) });
     }
   };
 
@@ -407,7 +419,7 @@ export default function ApproveOrderScreen() {
             </Text>
           </View>
           <Pressable
-            onPress={() => router.push(`/trade/${target.ticker}` as never)}
+            onPress={() => router.push(decisionRoute(target.ticker, target.decision_id) as never)}
             style={({ pressed }) => [styles.iconBtn, pressed && styles.pressed]}
             accessibilityRole="button"
             accessibilityLabel={`${target.ticker} grafiğini ve analizlerini aç`}
@@ -439,7 +451,16 @@ export default function ApproveOrderScreen() {
               (executor.py:301, `config.take_profit_price or decision.price_target`).
               An approval screen must show the number that will be placed, so
               this cell reads that field and says whose it is. */}
-          <StatCell size="sm" style={styles.cell} label="Kâr al (broker)" value={formatUsd(decision?.price_target)} />
+          {/* Only when the executor will actually attach the leg — i.e. read
+              from the same `legs` the subtitle and helper use. The executor
+              brackets BUY orders only, so a SELL showed a take-profit price the
+              broker never receives. */}
+          <StatCell
+            size="sm"
+            style={styles.cell}
+            label="Kâr al (broker)"
+            value={legs.includes('kâr al') ? formatUsd(decision?.price_target) : '—'}
+          />
           <StatCell size="sm" style={styles.cell} label="Giriş" value={formatUsd(decision?.entry_price)} />
           <StatCell size="sm" style={styles.cell} label="Hedef" value={formatUsd(decision?.price_target)} />
           <StatCell size="sm" style={styles.cell} label="Vade" value={decision?.time_horizon ?? '—'} />
@@ -474,19 +495,23 @@ export default function ApproveOrderScreen() {
             onPress={askForAuth}
             accessibilityRole="button"
             accessibilityLabel={orderActionLabel(target, 'approve')}
-            accessibilityHint="Cihaz kilidi ile doğrulama ister"
+            accessibilityHint={GATE === 'hold' ? 'Basılı tutarak onay ister' : 'Cihaz kilidi ile doğrulama ister'}
             accessibilityState={{ disabled, busy }}
           >
             <Text style={[styles.btnPrimaryText, disabled && styles.btnPrimaryTextDisabled]}>
-              Doğrula ve onayla
+              {GATE === 'hold' ? 'Basılı tutarak onayla' : 'Doğrula ve onayla'}
             </Text>
-            <ScanFace color={disabled ? t.ink3 ?? t.textMuted : t.inkInv ?? t.background} />
+            {GATE === 'device' ? (
+              <ScanFace color={disabled ? t.ink3 ?? t.textMuted : t.inkInv ?? t.background} />
+            ) : null}
           </Pressable>
         </View>
         <Text style={styles.helper}>
           {blocked
             ? 'Bu hesapta emir onaylama yetkisi yok — onay ve red yöneticiye açıktır.'
-            : `${age} onaya düştü · cihaz kilidi ile doğrulama ister · ${legsNote}`}
+            : `${age} onaya düştü · ${
+                GATE === 'hold' ? 'bu cihazda kilit yok, basılı tutarak onay' : 'cihaz kilidi ile doğrulama ister'
+              } · ${legsNote}`}
         </Text>
 
         <Text style={styles.kicker}>Portföy yöneticisi gerekçesi</Text>
@@ -514,7 +539,7 @@ export default function ApproveOrderScreen() {
 
         {decision ? (
           <Pressable
-            onPress={() => router.push(`/trade/${decision.ticker}` as never)}
+            onPress={() => router.push(decisionRoute(decision.ticker, decision.decision_id) as never)}
             hitSlop={hitSlopFor(24)}
             style={styles.detailLink}
             accessibilityRole="button"
@@ -528,20 +553,37 @@ export default function ApproveOrderScreen() {
         <Text style={styles.footNote}>Reddedilen emir bugün yeniden önerilmez.</Text>
       </ScrollView>
 
-      {/* Step 1 + 2: the ask, then the same sheet in its busy state. */}
+      {/* Step 1 + 2: the ask, then the same sheet in its busy state. Native
+          asks the OS lock; web has none, so the design's hold variant confirms. */}
       <Sheet
         visible={flow.step === 'auth' || flow.step === 'verifying'}
-        title="Cihaz kilidi ile doğrula"
-        message={`${label} — Face ID / parmak izi / şifre olmadan emir onaylanamaz.`}
+        title={GATE === 'hold' ? 'Emri onayla' : 'Cihaz kilidi ile doğrula'}
+        message={
+          GATE === 'hold'
+            ? `${orderText} — bu cihazda ekran kilidi yok. Onaylamak için butonu basılı tutun.`
+            : `${label} — Face ID / parmak izi / şifre olmadan emir onaylanamaz.`
+        }
         summary={sheetSummary}
         busy={flow.step === 'verifying'}
-        busyLabel="Doğrulanıyor…"
+        busyLabel={GATE === 'hold' ? 'Gönderiliyor…' : 'Doğrulanıyor…'}
         onDismiss={flow.step === 'auth' ? () => setFlow({ step: 'idle' }) : undefined}
-        actions={[
-          { label: 'Vazgeç', onPress: () => setFlow({ step: 'idle' }) },
-          { label: 'Doğrula', primary: true, onPress: () => void runApproval() },
-        ]}
-      />
+        actions={
+          GATE === 'hold'
+            ? [{ label: 'Vazgeç', onPress: () => setFlow({ step: 'idle' }) }]
+            : [
+                { label: 'Vazgeç', onPress: () => setFlow({ step: 'idle' }) },
+                { label: 'Doğrula', primary: true, onPress: () => void runApproval() },
+              ]
+        }
+      >
+        {GATE === 'hold' && flow.step === 'auth' ? (
+          <HoldToConfirm
+            label="Basılı tutarak onayla"
+            accessibilityLabel={orderActionLabel(target, 'approve')}
+            onConfirm={() => void runApproval()}
+          />
+        ) : null}
+      </Sheet>
 
       <Sheet
         visible={flow.step === 'authFailed'}

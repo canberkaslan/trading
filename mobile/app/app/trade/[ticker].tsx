@@ -1,7 +1,8 @@
 /**
  * Karar detayı — one decision, in full, in Aurora.
  *
- * Reached by tapping a row on Ajanlar (or "Tam detay →" from Sor / Emirler).
+ * Reached by tapping a row on Ajanlar (or "Tam detay →" from Sor / Emirler),
+ * always with `?decisionId=` when the caller knows which decision it means.
  * Read-only by design: approving or rejecting happens on Emirler, where the
  * order — not the decision — lives.
  *
@@ -72,17 +73,26 @@ export default function DecisionDetailScreen() {
   const t = useTheme();
   const sh = useShape();
   const styles = useMemo(() => makeStyles(t, sh), [t, sh]);
-  const { ticker } = useLocalSearchParams<{ ticker: string }>();
+  const { ticker, decisionId } = useLocalSearchParams<{ ticker: string; decisionId?: string }>();
   const router = useRouter();
-  const { data, isLoading, isError, error, refetch } = useDecisions({ ticker, limit: 1 });
+  /*
+   * A caller that knows WHICH decision was tapped passes its id, and that exact
+   * record is what this screen shows. Resolving by ticker returned the newest
+   * decision for the symbol, so an older row on Ajanlar — or the decision behind
+   * the order being approved — opened a different rating, entry, stop and
+   * reasoning. The ticker lookup survives only for callers without an id.
+   */
+  const byId = !!decisionId;
+  const latest = useDecisions({ ticker, limit: 1 }, { enabled: !byId });
   // The list carries previews; this screen is where the reasoning is actually
   // read, so it asks for the untrimmed record by id.
-  const listed = data?.[0];
-  const { data: full } = useDecision(listed?.decision_id);
+  const listed = byId ? undefined : latest.data?.[0];
+  const exact = useDecision(decisionId ?? listed?.decision_id);
 
   // Prefer the untrimmed record; fall back to the listed preview while it
   // loads, so the screen renders immediately rather than blanking and filling.
-  const decision = full ?? listed;
+  const decision = exact.data ?? listed;
+  const { isLoading, isError, error, refetch } = byId ? exact : latest;
   const debate = debateEntries(decision?.debate_transcript);
   const totalTokens = (decision?.reasoning ?? []).reduce(
     (sum, r) => sum + (r.tokens_in ?? 0) + (r.tokens_out ?? 0),

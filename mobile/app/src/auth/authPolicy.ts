@@ -30,3 +30,24 @@ export function resolveAuthMode(hasHardware: boolean, enrolledLevel: number): Au
   }
   return 'none';
 }
+
+/**
+ * How an order approval is confirmed on this platform.
+ *
+ * `device` — the OS lock (Face/Touch ID or passcode) via expo-local-authentication.
+ * `hold`   — the design's no-device-lock variant: a deliberate 1.2 s press-and-hold.
+ *
+ * Only web gets `hold`. expo-local-authentication's web build hard-codes "no
+ * hardware, nothing enrolled", so on web every approval ended in "set up a
+ * device lock" — advice a browser user cannot follow. A native device with no
+ * lock keeps being refused: there the OS lock exists and the user can set it.
+ * The server-side gate (signed-in admin) is the same on both.
+ */
+export type ApprovalGate = 'device' | 'hold';
+
+export function approvalGateFor(os: string): ApprovalGate {
+  return os === 'web' ? 'hold' : 'device';
+}
+
+/** The design's hold duration for the no-device-lock confirmation. */
+export const HOLD_TO_CONFIRM_MS = 1200;

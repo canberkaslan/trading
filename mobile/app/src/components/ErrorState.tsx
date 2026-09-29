@@ -20,9 +20,9 @@
  * else keeps the connection message and the retry, which is the right pair
  * when nothing answered.
  *
- * The raw error is deliberately suppressed for auth failures. ky's HTTPError
- * message embeds the full request URL, so rendering it puts the API host and
- * path on screen to say something the headline already says better.
+ * The raw error is never rendered. ky's HTTPError message embeds the full
+ * request URL, so it put the API host and path on screen; the detail line is
+ * now `publicErrorDetail` (status + meaning), and nothing at all for auth.
  */
 
 import { View, Text, StyleSheet, Pressable } from 'react-native';
@@ -33,7 +33,7 @@ import { useMemo } from 'react';
 import { useApiTokenStore } from '@/stores/apiToken';
 import { useTheme } from '@/theme/useTheme';
 import { MIN_TOUCH_TARGET } from '@/utils/a11y';
-import { authErrorKind } from '@/utils/apiError';
+import { authErrorKind, publicErrorDetail } from '@/utils/apiError';
 import { font } from '@/theme/type';
 
 type Props = {
@@ -96,7 +96,8 @@ export function ErrorState({ title, detail, onRetry }: Props) {
       <Text style={styles.hint}>Bağlantını kontrol edip tekrar dene.</Text>
       {detail != null ? (
         <Text style={styles.detail} numberOfLines={2}>
-          {String(detail)}
+          {/* Never the raw error: ky's message carries the request URL. */}
+          {publicErrorDetail(detail)}
         </Text>
       ) : null}
       {onRetry ? (

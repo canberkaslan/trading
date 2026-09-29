@@ -53,6 +53,9 @@ import { Sheet } from '@/components/Sheet';
 import { ErrorState } from '@/components/ErrorState';
 import { ratingVariant } from '@/theme/rating';
 import { authenticate } from '@/auth/biometric';
+import { publicErrorDetail } from '@/utils/apiError';
+import { approvalGateFor } from '@/auth/authPolicy';
+import { HoldToConfirm } from '@/components/HoldToConfirm';
 import { toast } from '@/stores/toast';
 import { formatUsd, relativeAgeTr, parseUtc } from '@/utils/format';
 import { rejectionReasonTr } from '@/utils/orders';
@@ -62,6 +65,8 @@ import { orderActionLabel, hitSlopFor } from '@/utils/a11y';
 const TAB_BAR_CLEARANCE = 72;
 
 const IS_WEB = Platform.OS === 'web';
+/** OS device lock on native; the design's press-and-hold on web (no lock API there). */
+const GATE = approvalGateFor(Platform.OS);
 
 /**
  * One value, so exactly one sheet is on screen — the same state machine the
@@ -102,7 +107,7 @@ async function errorDetail(res: Response): Promise<unknown> {
  */
 async function approveFailure(e: unknown): Promise<Flow> {
   if (!(e instanceof HTTPError)) {
-    return { step: 'failed', title: 'Gönderilemedi', message: String(e) };
+    return { step: 'failed', title: 'Gönderilemedi', message: publicErrorDetail(e) };
   }
   const detail = await errorDetail(e.response);
 
@@ -135,7 +140,7 @@ async function approveFailure(e: unknown): Promise<Flow> {
     };
   }
 
-  return { step: 'failed', title: 'Gönderilemedi', message: String(e) };
+  return { step: 'failed', title: 'Gönderilemedi', message: publicErrorDetail(e) };
 }
 
 /** The prototype's key caps. Web only — a phone has no J key to press. */
@@ -240,7 +245,9 @@ export default function QueueScreen() {
     async (target: OrderListItem) => {
       const label = `${target.side} ${target.quantity} ${target.ticker} onayla`;
       setFlow({ step: 'verifying', target });
-      const { success, mode } = await authenticate(label);
+      // On web the completed hold IS the confirmation; there is no OS lock to ask.
+      const { success, mode } =
+        GATE === 'hold' ? { success: true, mode: 'none' as const } : await authenticate(label);
       if (!success) {
         setFlow({
           step: 'authFailed',
@@ -274,7 +281,7 @@ export default function QueueScreen() {
         setFlow({ step: 'idle' });
         toast(`${target.ticker} ${target.side} ${target.quantity} reddedildi — bugün yeniden önerilmez`);
       } catch (e) {
-        setFlow({ step: 'failed', title: 'Reddedilemedi', message: String(e) });
+        setFlow({ step: 'failed', title: 'Reddedilemedi', message: publicErrorDetail(e) });
       }
     },
     [reject],
@@ -556,10 +563,12 @@ export default function QueueScreen() {
           rather than the buttons they just dismissed. */}
       <Sheet
         visible={flow.step === 'auth' || flow.step === 'verifying'}
-        title="Cihaz kilidi ile doğrula"
+        title={GATE === 'hold' ? 'Emri onayla' : 'Cihaz kilidi ile doğrula'}
         message={
           flow.step === 'auth' || flow.step === 'verifying'
-            ? `${flow.target.side} ${flow.target.quantity} ${flow.target.ticker} onayla — Face ID / parmak izi / şifre olmadan emir onaylanamaz.`
+            ? GATE === 'hold'
+              ? `${flow.target.side} ${flow.target.quantity} ${flow.target.ticker} — bu cihazda ekran kilidi yok. Onaylamak için butonu basılı tutun.`
+              : `${flow.target.side} ${flow.target.quantity} ${flow.target.ticker} onayla — Face ID / parmak izi / şifre olmadan emir onaylanamaz.`
             : ''
         }
         summary={
@@ -572,19 +581,31 @@ export default function QueueScreen() {
             : undefined
         }
         busy={flow.step === 'verifying'}
-        busyLabel="Doğrulanıyor…"
+        busyLabel={GATE === 'hold' ? 'Gönderiliyor…' : 'Doğrulanıyor…'}
         onDismiss={flow.step === 'auth' ? () => setFlow({ step: 'idle' }) : undefined}
         actions={[
           { label: 'Vazgeç', onPress: () => setFlow({ step: 'idle' }) },
-          {
-            label: 'Doğrula',
-            primary: true,
-            onPress: () => {
-              if (flow.step === 'auth') void runApproval(flow.target);
-            },
-          },
+          ...(GATE === 'hold'
+            ? []
+            : [
+                {
+                  label: 'Doğrula',
+                  primary: true,
+                  onPress: () => {
+                    if (flow.step === 'auth') void runApproval(flow.target);
+                  },
+                },
+              ]),
         ]}
-      />
+      >
+        {GATE === 'hold' && flow.step === 'auth' ? (
+          <HoldToConfirm
+            label="Basılı tutarak onayla"
+            accessibilityLabel={orderActionLabel(flow.target, 'approve')}
+            onConfirm={() => void runApproval(flow.target)}
+          />
+        ) : null}
+      </Sheet>
 
       <Sheet
         visible={flow.step === 'authFailed'}

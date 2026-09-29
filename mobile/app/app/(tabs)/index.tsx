@@ -46,6 +46,7 @@ import { ErrorState } from '@/components/ErrorState';
 import { ratingVariant } from '@/theme/rating';
 import { formatUsd, formatPct, relativeAgeTr, parseUtc } from '@/utils/format';
 import { orderActionLabel } from '@/utils/a11y';
+import { isAuthError, publicErrorDetail } from '@/utils/apiError';
 
 /**
  * The floating tab bar's height plus air. Stated here rather than imported from
@@ -183,6 +184,15 @@ export default function TodayScreen() {
 
   const pendingRows: OrderListItem[] = pending.data ?? [];
 
+  /* Sections that failed to load, in TR, for the band. Pending approvals have
+     their own inline error below, so they are not repeated here. */
+  const failed: [string, unknown][] = [];
+  if (portfolio.isError) failed.push(['Portföy değeri', portfolio.error]);
+  if (history.isError) failed.push(['Getiri eğrisi', history.error]);
+  if (decisions.isError) failed.push(['Karar etiketleri', decisions.error]);
+  const degraded = failed.map(([label]) => label);
+  const firstError = failed[0]?.[1];
+
   // The portfolio query is the only one this screen cannot render without.
   // A failed spark or a missing rating degrades; a missing equity figure is
   // the screen.
@@ -196,7 +206,16 @@ export default function TodayScreen() {
     );
   }
 
-  if (portfolio.isError && !snapshot) {
+  /*
+   * Only a refused credential takes the whole screen: then nothing on it can
+   * load, and ErrorState's job is to send the operator to the fix. Any other
+   * failure is ONE section going dark — a broker 503 on /v1/portfolio used to
+   * replace the pending-approval list (the one thing here that asks for action)
+   * with a full-screen error printing the raw HTTPError, API URL included.
+   * The design's answer is "data + band": render what did load, and say in a
+   * band which parts did not.
+   */
+  if (portfolio.isError && !snapshot && isAuthError(portfolio.error)) {
     return (
       <SafeAreaView style={styles.screen} edges={['top']}>
         <ErrorState detail={portfolio.error} onRetry={() => void portfolio.refetch()} />
@@ -216,6 +235,21 @@ export default function TodayScreen() {
         <Text style={styles.greeting} accessibilityRole="header">
           {greetingTr(now)}
         </Text>
+
+        {degraded.length > 0 ? (
+          <Pressable
+            onPress={() => void onRefresh()}
+            style={({ pressed }) => [styles.band, pressed && styles.bandPressed]}
+            accessibilityRole="button"
+            accessibilityLabel={`Bazı veriler alınamadı: ${degraded.join(', ')}. Tekrar dene.`}
+          >
+            <Text style={styles.bandText}>
+              <Text style={styles.bandStrong}>Bazı veriler alınamadı · </Text>
+              {degraded.join(' · ')} — {publicErrorDetail(firstError)}. Diğer bölümler güncel.
+            </Text>
+            <Text style={styles.bandAction}>Tekrar dene</Text>
+          </Pressable>
+        ) : null}
 
         {/* The hero. A button in the prototype too: the front page summarises,
             the Portföy tab explains. */}
@@ -407,6 +441,23 @@ const makeStyles = (t: Palette, sh: Shape) =>
     sideText: { fontSize: 12, ...font(600), ...TABULAR },
 
     slot: { paddingVertical: sh.space[4], alignItems: 'center' },
+
+    band: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: sh.space[2],
+      marginBottom: sh.space[2],
+      paddingVertical: sh.space[2],
+      paddingHorizontal: sh.space[2],
+      borderRadius: sh.radius,
+      backgroundColor: t.warnSoft ?? t.surface,
+      borderWidth: sh.hairline,
+      borderColor: t.warning,
+    },
+    bandPressed: { opacity: 0.8 },
+    bandText: { ...TYPE.helper, flex: 1, color: t.warning, lineHeight: 17 },
+    bandStrong: { ...font(700) },
+    bandAction: { ...TYPE.helper, ...font(700), color: t.warning },
     slotText: { ...TYPE.body, color: t.ink2 ?? t.textSecondary, textAlign: 'center' },
 
     disclaimer: {

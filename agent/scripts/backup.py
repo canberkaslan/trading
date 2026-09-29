@@ -6,6 +6,11 @@ the equity snapshots, and the agent's learned reflections) lives on a single
 Hetzner disk. This ships a dated copy to S3 daily so a dead box can't erase
 the eval evidence.
 
+Restoring local.db: stop the ai-trader services, delete local.db-wal and
+local.db-shm, then put the restored file in place. The live DB runs in WAL
+mode (storage/engine.py); a leftover -wal beside a replaced local.db belongs to
+the old file, and SQLite reads it as "database disk image is malformed".
+
 Targets (each best-effort; missing files are skipped with a note):
   - TRADE_LOG_DB_URL sqlite file  -> sqlite3 online .backup (reads through
                                      the WAL) -> commentator feed scrubbed

@@ -6,6 +6,7 @@ import {
   authErrorKind,
   isPartialFlatten,
   PARTIAL_FLATTEN_TR,
+  publicErrorDetail,
 } from './apiError';
 
 /** The shape ky throws: an Error carrying the Response. */
@@ -111,5 +112,26 @@ describe('a partial flatten is not a connection problem', () => {
   it('the message names the actual danger, not a generic failure', () => {
     expect(PARTIAL_FLATTEN_TR).toContain('stop koruması kaldırıldı');
     expect(PARTIAL_FLATTEN_TR).not.toContain('sunucuya ulaşılamadı');
+  });
+});
+
+describe('publicErrorDetail', () => {
+  it('never prints the request URL of an HTTP error', () => {
+    const detail = publicErrorDetail(httpError(503));
+    expect(detail).toBe('servis geçici olarak kullanılamıyor (HTTP 503)');
+    expect(detail).not.toMatch(/https?:|\/v1\//);
+  });
+
+  it('keeps an unknown status as a bare code', () => {
+    expect(publicErrorDetail(httpError(418))).toBe('HTTP 418');
+  });
+
+  it('reads a transport failure as no answer', () => {
+    expect(publicErrorDetail(new TypeError('Failed to fetch'))).toBe('sunucu yanıt vermedi');
+  });
+
+  it('cuts URLs out of any other message', () => {
+    const detail = publicErrorDetail(new Error('boom at https://api.internal.example/v1/x'));
+    expect(detail).toBe('boom at');
   });
 });

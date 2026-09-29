@@ -77,3 +77,44 @@ export function isPartialFlatten(err: unknown): boolean {
 /** Deliberately alarming, and deliberately specific about what to do. */
 export const PARTIAL_FLATTEN_TR =
   'FLATTEN_ALL KISMEN GERÇEKLEŞTİ — bazı pozisyonlar kapanmadı ve stop koruması kaldırıldı. Broker hesabını hemen kontrol et.';
+
+/** What each server status means to the operator, in TR. */
+const STATUS_TR: Record<number, string> = {
+  400: 'istek geçersiz',
+  404: 'kayıt bulunamadı',
+  409: 'çakışma',
+  422: 'sunucu isteği reddetti',
+  429: 'çok fazla istek',
+  500: 'sunucu hatası',
+  502: 'ağ geçidi hatası',
+  503: 'servis geçici olarak kullanılamıyor',
+  504: 'sunucu zaman aşımı',
+};
+
+const URL_RE = /\b(?:https?|wss?):\/\/\S+/gi;
+
+/**
+ * A one-line, operator-safe description of a failed request.
+ *
+ * `String(err)` on a ky HTTPError is "Request failed with status code 503:
+ * GET https://<api-host>/v1/portfolio" — the API host and route, printed on
+ * screen. This keeps what helps (the status and what it means) and never the
+ * URL. A plain Error keeps its message with any URL cut out.
+ */
+export function publicErrorDetail(err: unknown): string {
+  const status = statusOf(err);
+  if (status != null) {
+    const meaning = STATUS_TR[status];
+    return meaning ? `${meaning} (HTTP ${status})` : `HTTP ${status}`;
+  }
+  const message =
+    typeof err === 'object' && err !== null && typeof (err as { message?: unknown }).message === 'string'
+      ? (err as { message: string }).message
+      : typeof err === 'string'
+        ? err
+        : '';
+  if (!message || /failed to fetch|network request failed|timed? ?out/i.test(message)) {
+    return 'sunucu yanıt vermedi';
+  }
+  return message.replace(URL_RE, '').replace(/[:\s]+$/, '').trim() || 'bilinmeyen hata';
+}

@@ -11,6 +11,20 @@
 const EM_DASH = '—';
 
 /**
+ * The detail route for ONE decision.
+ *
+ * The screen used to be reached by ticker alone and then loaded the newest
+ * decision for that symbol, so tapping yesterday's NVDA row (or the order under
+ * approval) showed today's rating, prices and reasoning. Every caller that holds
+ * a decision id passes it; the ticker stays in the path for the header and as
+ * the fallback for callers that have none.
+ */
+export function decisionRoute(ticker: string, decisionId?: string | null): string {
+  const base = `/trade/${encodeURIComponent(ticker)}`;
+  return decisionId ? `${base}?decisionId=${encodeURIComponent(decisionId)}` : base;
+}
+
+/**
  * Compact a token count for a badge (1234 -> "1.2k", 980 -> "980"). Null/NaN
  * render as an em dash so a decision logged before token accounting existed
  * doesn't show "NaN".

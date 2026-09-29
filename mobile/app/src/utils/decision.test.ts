@@ -5,6 +5,7 @@ import {
   formatLatency,
   debateEntries,
   debateRoleLabel,
+  decisionRoute,
 } from './decision';
 
 describe('formatTokens', () => {
@@ -91,5 +92,20 @@ describe('debateRoleLabel', () => {
     expect(debateRoleLabel('bull_researcher')).toBe('Bull Researcher');
     expect(debateRoleLabel('trader')).toBe('Trader');
     expect(debateRoleLabel('risk_manager')).toBe('Risk Manager');
+  });
+});
+
+describe('decisionRoute', () => {
+  it('carries the decision id so the detail opens THAT decision', () => {
+    expect(decisionRoute('NVDA', 'dec-17')).toBe('/trade/NVDA?decisionId=dec-17');
+  });
+
+  it('falls back to the ticker alone when no id is known', () => {
+    expect(decisionRoute('NVDA')).toBe('/trade/NVDA');
+    expect(decisionRoute('NVDA', null)).toBe('/trade/NVDA');
+  });
+
+  it('encodes both parts', () => {
+    expect(decisionRoute('BF.B', 'a/b c')).toBe('/trade/BF.B?decisionId=a%2Fb%20c');
   });
 });

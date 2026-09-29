@@ -6,6 +6,7 @@ import { apiClient } from './client';
 import type {
   Actionability,
   AgentDecision,
+  AuditLog,
   AnalyzeJob,
   Concentration,
   EquityHistory,
@@ -121,6 +122,10 @@ export const api = {
       .json<{ order_id: string; status: string }>(),
   cancelOrder: (orderId: string) =>
     apiClient.post(`v1/orders/${orderId}/cancel`).json<{ status: string }>(),
+
+  // Audit trail — kill-switch flips, operator rejects/cancels, risk refusals.
+  getAudit: (limit = 100) =>
+    apiClient.get('v1/audit', { searchParams: { limit } }).json<AuditLog>(),
 
   // Kill switch
   getKillSwitch: () =>

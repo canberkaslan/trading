@@ -390,3 +390,22 @@ export interface Mover {
   sector: string | null;
   in_sp500: boolean;
 }
+
+/** One row of `GET /v1/audit` — only what a table actually recorded. */
+export interface AuditLogEntry {
+  id: string;
+  ts: string;
+  actor: 'operator' | 'system' | 'risk';
+  action: 'kill' | 'reject' | 'cancel' | 'refuse';
+  detail: string;
+  where: string;
+  /** Machine-keyed refusal reasons, on `refuse` rows. */
+  reasons: string[];
+}
+
+export interface AuditLog {
+  entries: AuditLogEntry[];
+  /** Action kinds the server does not record yet (approve, login, …). */
+  not_recorded: string[];
+}
+

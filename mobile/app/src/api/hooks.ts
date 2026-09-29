@@ -167,6 +167,14 @@ export function useAnalysisJob(jobId: string | null) {
   });
 }
 
+export function useAudit() {
+  return useQuery({
+    queryKey: ['audit'],
+    queryFn: () => api.getAudit(),
+    refetchInterval: 60_000,
+  });
+}
+
 export function useKillSwitch() {
   return useQuery({
     queryKey: ['orders', 'kill-switch'],

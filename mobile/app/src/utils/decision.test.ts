@@ -6,6 +6,11 @@ import {
   debateEntries,
   debateRoleLabel,
   decisionRoute,
+  measured,
+  sumMeasured,
+  decisionTokenTotal,
+  decisionLatencyTotal,
+  agentMetaLine,
 } from './decision';
 
 describe('formatTokens', () => {
@@ -107,5 +112,35 @@ describe('decisionRoute', () => {
 
   it('encodes both parts', () => {
     expect(decisionRoute('BF.B', 'a/b c')).toBe('/trade/BF.B?decisionId=a%2Fb%20c');
+  });
+});
+
+describe('measured counters', () => {
+  const unmetered = { tokens_in: 0, tokens_out: 0, latency_ms: 0 };
+
+  it('reads a pipeline 0 as not measured', () => {
+    expect(measured(0)).toBeNull();
+    expect(measured(null)).toBeNull();
+    expect(measured(1200)).toBe(1200);
+    expect(sumMeasured([0, 0, null])).toBeNull();
+    expect(sumMeasured([0, 5, 7])).toBe(12);
+  });
+
+  it('prefers the decision-level metered total over per-agent zeros', () => {
+    expect(decisionTokenTotal({ tokens_in: 4000, tokens_out: 500, reasoning: [unmetered] })).toBe(4500);
+    expect(decisionTokenTotal({ tokens_in: null, tokens_out: null, reasoning: [unmetered] })).toBeNull();
+    expect(decisionTokenTotal({ reasoning: [{ tokens_in: 10, tokens_out: 5, latency_ms: 0 }] })).toBe(15);
+  });
+
+  it('has no latency total when no agent was timed', () => {
+    expect(decisionLatencyTotal({ reasoning: [unmetered, unmetered] })).toBeNull();
+    expect(decisionLatencyTotal({ reasoning: [{ latency_ms: 800 }, unmetered] })).toBe(800);
+  });
+
+  it('drops the per-agent meta line instead of printing zeros', () => {
+    expect(agentMetaLine(unmetered)).toBeNull();
+    expect(agentMetaLine({ tokens_in: 1200, tokens_out: 0, latency_ms: 4200 })).toBe(
+      '1.2k↓ / —↑ token · 4.2 sn',
+    );
   });
 });

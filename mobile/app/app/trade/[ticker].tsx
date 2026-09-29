@@ -50,7 +50,8 @@ import { ratingVariant, modelBadge } from '@/theme/rating';
 import { formatUsd, formatPct } from '@/utils/format';
 import {
   formatTokens,
-  formatLatency,
+  agentMetaLine,
+  decisionTokenTotal,
   debateEntries,
   debateRoleLabel,
   councilChips,
@@ -94,10 +95,8 @@ export default function DecisionDetailScreen() {
   const decision = exact.data ?? listed;
   const { isLoading, isError, error, refetch } = byId ? exact : latest;
   const debate = debateEntries(decision?.debate_transcript);
-  const totalTokens = (decision?.reasoning ?? []).reduce(
-    (sum, r) => sum + (r.tokens_in ?? 0) + (r.tokens_out ?? 0),
-    0,
-  );
+  // Null when the run was not metered — the header then says so instead of "~0".
+  const totalTokens = decision ? decisionTokenTotal(decision) : null;
 
   // The six cells, in the handoff's order. An array rather than six copies of
   // the same four lines of JSX — the grid is the point, not the markup.
@@ -216,7 +215,7 @@ export default function DecisionDetailScreen() {
               <>
                 <SectionHeader
                   title="Ajan analizleri"
-                  count={`~${formatTokens(totalTokens)} token`}
+                  count={totalTokens == null ? 'token ölçülmedi' : `~${formatTokens(totalTokens)} token`}
                 />
                 <Card padded={false} style={styles.listCard}>
                   {decision.reasoning.map((r, i) => {
@@ -238,10 +237,9 @@ export default function DecisionDetailScreen() {
                           </View>
                         </View>
                         <Text style={styles.agentBody}>{r.summary}</Text>
-                        <Text style={styles.agentMeta}>
-                          {formatTokens(r.tokens_in)}↓ / {formatTokens(r.tokens_out)}↑ token ·{' '}
-                          {formatLatency(r.latency_ms)}
-                        </Text>
+                        {agentMetaLine(r) ? (
+                          <Text style={styles.agentMeta}>{agentMetaLine(r)}</Text>
+                        ) : null}
                       </View>
                     );
                   })}

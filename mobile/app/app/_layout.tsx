@@ -72,7 +72,9 @@ export default function RootLayout() {
       <I18nextProvider i18n={i18n}>
         <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
         <Stack screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="(auth)" />
+          {/* `(auth)` has no _layout, so its only route is `(auth)/login`;
+              naming the group logged "No route named (auth)" on every launch. */}
+          <Stack.Screen name="(auth)/login" />
           <Stack.Screen name="(tabs)" />
         </Stack>
       </I18nextProvider>

@@ -76,11 +76,24 @@ def test_a_bound_of_one_is_the_old_sequential_run(tmp_path: Path) -> None:
     assert set(_peaks(hook_dir).values()) == {1}
 
 
-def test_the_default_bound_is_three(tmp_path: Path) -> None:
-    env = {"COUNCIL_PARALLELISM": ""}
-    run, hook_dir = _run(tmp_path, **env)
-    assert "parallelism=3" in run.output
-    assert max(_peaks(hook_dir).values()) <= 3
+def test_the_default_is_the_sequential_run(tmp_path: Path) -> None:
+    # A box that pulls this without touching its config must trade as before.
+    run, hook_dir = _run(tmp_path, COUNCIL_PARALLELISM="")
+    assert run.rc == 0, run.output
+    assert "parallelism=1" in run.output
+    assert set(_peaks(hook_dir).values()) == {1}
+
+
+def test_the_universe_reaches_each_ticker(tmp_path: Path) -> None:
+    hook = tmp_path / "env_hook.sh"
+    hook.write_text(
+        '#!/usr/bin/env bash\nprintf "%s\\n" "$UNIVERSE" > "$HOOK_DIR/universe-$2"\n',
+        encoding="utf-8",
+    )
+    hook.chmod(0o755)
+    run, hook_dir = _run(tmp_path, FAKE_TRADE_HOOK=str(hook), UNIVERSE="AAPL MSFT")
+    assert run.rc == 0, run.output
+    assert (hook_dir / "universe-AAPL").read_text().split() == ["AAPL", "MSFT"]
 
 
 @pytest.mark.parametrize(("value", "expected"), [("zero", "1"), ("0", "1"), ("50", "6")])

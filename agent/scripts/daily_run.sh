@@ -277,12 +277,14 @@ fi
 # log takes a lock around its file operations; and the fail-fast source
 # breakers count per run in TRADINGAGENTS_RUN_STATE_DIR.
 #
-# The bound is small on purpose: every council in flight is a stream of model
-# calls against one API key's rate limit, and a 429 storm there costs more than
-# the parallelism saves. Raise it after watching a run's rate-limit headroom.
-# COUNCIL_PARALLELISM=1 is the old sequential run. Output stays in universe
-# order: each ticker writes its own log, printed in order once all are done.
-COUNCIL_PARALLELISM="${COUNCIL_PARALLELISM:-3}"
+# The default is 1, the old sequential run, so a box that pulls this without
+# touching its config trades exactly as before. Every council in flight is a
+# stream of model calls against one API key's rate limit, and a 429 storm there
+# costs more than the parallelism saves. To raise it, watch one run's
+# rate-limit headroom, then set COUNCIL_PARALLELISM=2 or 3 in
+# /opt/ai-trader/secrets.env. Output stays in universe order: each ticker writes
+# its own log, printed in order once all are done.
+COUNCIL_PARALLELISM="${COUNCIL_PARALLELISM:-1}"
 MAX_COUNCIL_PARALLELISM=6
 if ! [[ "$COUNCIL_PARALLELISM" =~ ^[0-9]+$ ]] || [[ "$COUNCIL_PARALLELISM" -lt 1 ]]; then
   echo "WARNING: COUNCIL_PARALLELISM='$COUNCIL_PARALLELISM' is not a positive integer — running one ticker at a time" | tee -a "$RUN_LOG"
@@ -300,6 +302,9 @@ fi
 
 # The breaker state is throwaway and removed at exit. The ticker logs are not:
 # they sit beside the run log, one directory per day, one prefix per run.
+# trade.py prefetches prices for every name in the run before it takes the
+# submit lock: the other tickers' BUYs are what its locked read will find.
+export UNIVERSE
 RUN_STATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tradingagents-run.XXXXXX")"
 export TRADINGAGENTS_RUN_STATE_DIR="$RUN_STATE_DIR"
 TICKER_LOG_DIR="${LOG_DIR}/daily_${DATE}.d"

@@ -26,7 +26,7 @@ import sys
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -40,8 +40,9 @@ if str(_AGENT_ROOT / "vendor" / "tradingagents") not in sys.path:
 
 from tradingagents_us.dataflows.alpaca_broker import AlpacaClient  # noqa: E402
 from tradingagents_us.dataflows.polygon import PolygonClient  # noqa: E402
-from tradingagents_us.dataflows.sector_map import sector_for  # noqa: E402
+from tradingagents_us.dataflows.sector_map import UNKNOWN_SECTOR, sector_for  # noqa: E402
 from tradingagents_us.execution import ExecutionConfig, submit_order  # noqa: E402
+from tradingagents_us.execution.book import read_open_buys  # noqa: E402
 from tradingagents_us.execution.submit_lock import (  # noqa: E402
     SubmitLockUnavailableError,
     submit_section,
@@ -70,7 +71,11 @@ from tradingagents_us.risk.market_inputs import (  # noqa: E402
 )
 from tradingagents_us.risk.portfolio_limits import PortfolioContext, PortfolioLimits  # noqa: E402
 from tradingagents_us.risk.precouncil import should_council  # noqa: E402
-from tradingagents_us.risk.sizer import MarketContext, size_from_decision  # noqa: E402
+from tradingagents_us.risk.sizer import (  # noqa: E402
+    MarketContext,
+    _side_from_rating,
+    size_from_decision,
+)
 from tradingagents_us.schemas import AgentDecision, AgentReasoning  # noqa: E402
 from tradingagents_us.storage import TradeLogRepository  # noqa: E402
 
@@ -256,46 +261,7 @@ def _read_book(
         # before any of the post-close orders fill. Without reserving what earlier
         # tickers already committed, all eleven size against the same cash balance
         # and the sum blows straight through it.
-        #
-        # Pagination: Alpaca list_orders has a 500-order max per call. When the book
-        # has >500 open orders, a single call truncates and under-reserves cash.
-        # Loop until fewer than 500 orders are returned (final page).
-        open_buys: list[PendingBuy] = []
-        page_limit = 500
-        fetched_count = page_limit
-        until_timestamp: str | None = None
-
-        while fetched_count >= page_limit:
-            # AlpacaClient.list_orders does not expose 'until' directly; use httpx
-            query = f"/orders?status=open&limit={page_limit}&direction=desc"
-            if until_timestamp is not None:
-                query += f"&until={until_timestamp}"
-            page = ac._http.get(ac.base_url + query).json()
-            if not isinstance(page, list):
-                break
-            fetched_count = len(page)
-            if fetched_count == 0:
-                break
-
-            for o_dict in page:
-                if o_dict.get("side", "").upper() != "BUY":
-                    continue
-                qty = float(o_dict["qty"])
-                filled = float(o_dict.get("filled_qty", 0))
-                limit_price = (
-                    float(o_dict["limit_price"]) if o_dict.get("limit_price") else None
-                )
-                open_buys.append(
-                    PendingBuy(
-                        symbol=o_dict["symbol"],
-                        unfilled_qty=qty - filled,
-                        limit_price=limit_price,
-                    )
-                )
-
-            # Next page starts BEFORE the oldest (last in desc order) of this page
-            if fetched_count >= page_limit and page:
-                until_timestamp = page[-1]["submitted_at"]
+        open_buys = read_open_buys(ac)
     if verbose:
         print("\n=== ALPACA ACCOUNT ===")
         print(f"  Number:    {acct.account_number} ({acct.status})")
@@ -416,6 +382,9 @@ def main() -> int:
 
     # Market inputs for sizing, fetched OUTSIDE the submit lock: each can be a
     # slow Polygon call, and every other ticker waits while the lock is held.
+    # Prices and sectors cover every symbol the locked read can meet, the
+    # run's whole universe included: the BUYs other tickers placed during this
+    # council are market orders, and reserving their cash needs their price.
     market = _market_inputs(args.ticker, repo, book, price_of, prices)
 
     # 4. Size and submit, one ticker at a time.
@@ -426,18 +395,20 @@ def main() -> int:
     # path takes, and nobody else can submit between that read and this order.
     # An exit spends no cash and must not be lost to a lock problem, so it
     # goes ahead without the lock when it cannot have it (submit_lock.py).
-    exit_only = decision.rating not in _CASH_SPENDING_RATINGS
+    # The sizer's own mapping decides what spends cash, so the two cannot drift.
+    exit_only = _side_from_rating(decision.rating) != "BUY"
     try:
         with submit_section(exit_only=exit_only) as locked:
-            fresh = _fresh_book(args.ticker, limits, price_of)
+            # Under the lock: prices already in hand only, never a fetch.
+            fresh = _fresh_book(args.ticker, limits, lambda s: _known_price(s, market))
             if fresh is None:
                 if not exit_only:
                     log.error("%s: the book could not be re-read; no BUY is sized "
                               "from a stale one", args.ticker)
                     return 1
-                log.warning("%s: the book could not be re-read; sizing the exit "
-                            "from the pre-council read", args.ticker)
-                fresh = book
+                fresh = _exit_book_from_stale(args.ticker, book)
+                if fresh is None:
+                    return 1
             if fresh.spendable != spendable or fresh.held_qty != held_qty:
                 print(f"  Book moved during the council: spendable "
                       f"{_money(spendable)} -> {_money(fresh.spendable)}, "
@@ -450,8 +421,34 @@ def main() -> int:
         return 1
 
 
-#: Ratings whose order spends cash. Everything else sells or does nothing.
-_CASH_SPENDING_RATINGS = ("Buy", "Overweight")
+def _exit_book_from_stale(ticker: str, book: _Book) -> _Book | None:
+    """The pre-council book for an exit, with its share count re-checked.
+
+    The account could not be read twice, but an exit must not be dropped over
+    that. Selling the pre-council share count is unsafe on its own: something
+    may have sold shares during the council (a flatten, an approval), and a
+    sell for more than is held opens a short. So the count is capped by the
+    broker's position, one more narrow read. If even that fails, nothing is
+    sent: the ticker fails, daily_run pages, and a person looks. Skipping is
+    the choice here because a broker that answers neither read would almost
+    certainly refuse the order too.
+    """
+    try:
+        with AlpacaClient() as ac:
+            held_now = next(
+                (int(p.qty) for p in ac.list_positions() if p.symbol == ticker), 0
+            )
+    except Exception as exc:  # noqa: BLE001 — any failure: skip and alert
+        log.error("%s: EXIT NOT SENT: neither the book nor the position could be read "
+                  "(%s); decision recorded, check the position by hand", ticker, exc)
+        print(f"\n=== EXIT NOT SENT ===\n  {ticker}: broker unreadable; decision recorded")
+        return None
+    capped = min(book.held_qty, held_now)
+    log.warning("%s: the book could not be re-read; sizing the exit from the "
+                "pre-council read, capped to %d shares held now", ticker, capped)
+    return replace(book, held_qty=capped)
+
+
 #: Pause before the one retry of a failed account read.
 _BOOK_RETRY_PAUSE_S = 2.0
 
@@ -489,25 +486,48 @@ def _market_inputs(
     price_of: Callable[[str], float | None],
     prices: dict[str, float | None],
 ) -> _Market:
-    symbols = {ticker, *book.existing_by_ticker, *(b.symbol for b in book.open_buys)}
+    symbols = sorted({
+        ticker, *book.existing_by_ticker, *(b.symbol for b in book.open_buys),
+        *_run_universe(),
+    })
+    for sym in symbols:
+        price_of(sym)
     return _Market(
         adv=average_dollar_volume(ticker),
         current_price=price_of(ticker),
         stats=rolling_price_stats(ticker, repo=repo),
-        sectors={sym: sector_for(sym) for sym in sorted(symbols)},
+        sectors={sym: sector_for(sym) for sym in symbols},
         prices=prices,
     )
 
 
+#: The run's tickers, which daily_run.sh exports. The other tickers' BUYs are
+#: what the locked read finds that the pre-council read did not.
+UNIVERSE_ENV = "UNIVERSE"
+
+
+def _run_universe() -> list[str]:
+    return [t.strip().upper() for t in os.environ.get(UNIVERSE_ENV, "").split() if t.strip()]
+
+
 def _sector_of(symbol: str, known: dict[str, str | None]) -> str | None:
-    """Sector from the pre-lock lookups; a symbol new since then is looked up."""
-    if symbol not in known:
-        known[symbol] = sector_for(symbol)
-    return known[symbol]
+    """Sector from the pre-lock lookups, never a fetch: this runs under the lock.
+
+    A symbol nobody looked up (not held, not pending, not in the run's
+    universe) goes in sector_for's own "Unknown" bucket, which the sector cap
+    counts rather than skips.
+    """
+    return known.get(symbol) or UNKNOWN_SECTOR
 
 
 def _known_price(symbol: str, market: _Market) -> float | None:
-    """A price already in hand, never a fetch: this runs under the submit lock."""
+    """A price already in hand, never a fetch: this runs under the submit lock.
+
+    A pending BUY whose price was not prefetched reads as unpriceable, and the
+    cash budget then refuses new exposure rather than guess.
+    """
+    if symbol not in market.prices:
+        log.warning("no prefetched price for %s under the submit lock", symbol)
     return market.prices.get(symbol)
 
 

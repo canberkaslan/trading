@@ -382,3 +382,167 @@ class TestX:
         _run(repo, x=FakeXAPI([post("1001", "2026-09-26T12:00:00Z", "a")]).client())
         row = _items(repo)["x:1001"]
         assert store.aware(row.expires_at_utc) == NOW + timedelta(days=8)
+
+
+class TestNoTransactionAcrossPaidCalls:
+    """The SQLite write lock is never held while the extractor (a paid LLM call) runs."""
+
+    def _file_repo(self, tmp_path) -> tuple[TradeLogRepository, str]:
+        path = tmp_path / "commentator.db"
+        return TradeLogRepository(engine=create_engine(f"sqlite:///{path}", future=True)), str(path)
+
+    def test_another_writer_is_never_locked_out_during_an_extraction(self, tmp_path) -> None:
+        import sqlite3
+
+        repo, path = self._file_repo(tmp_path)
+        locked: list[str] = []
+
+        class LockProbe(Extractor):
+            def __call__(self, text: str) -> Extraction | None:
+                # timeout=0: fail at once if any transaction holds the write lock.
+                con = sqlite3.connect(path, timeout=0)
+                try:
+                    con.execute("BEGIN IMMEDIATE")
+                    con.rollback()
+                except sqlite3.OperationalError as exc:
+                    locked.append(str(exc))
+                finally:
+                    con.close()
+                return super().__call__(text)
+
+        ext = LockProbe()
+        x_api = FakeXAPI([post("1001", "2026-09-26T12:00:00Z", "a"),
+                          post("1002", "2026-09-27T12:00:00Z", "b")])
+        report = _run(repo, yt=FakeYouTubeAPI(_videos()).client(), x=x_api.client(),
+                      extractor=ext)
+        assert len(ext.calls) == 8 and report.extracted == 8
+        assert locked == []
+
+    def test_no_session_is_open_while_the_extractor_or_a_source_runs(self) -> None:
+        from contextlib import contextmanager
+
+        repo = TradeLogRepository(engine=create_engine("sqlite://", future=True))
+        open_sessions = [0]
+
+        @contextmanager
+        def sessions():
+            open_sessions[0] += 1
+            try:
+                with repo.session() as s:
+                    yield s
+            finally:
+                open_sessions[0] -= 1
+
+        seen: list[int] = []
+
+        class Probe(Extractor):
+            def __call__(self, text: str) -> Extraction | None:
+                seen.append(open_sessions[0])
+                return super().__call__(text)
+
+        x_api = FakeXAPI([post("1001", "2026-09-26T12:00:00Z", "zor"),
+                          post("1002", "2026-09-27T12:00:00Z", "b")])
+        with repo.session() as s:
+            store.record_status(s, store.RETENTION_PASS, NOW - timedelta(hours=1))
+        # First run: X post 1001 fails; second run retries it from the deletion check.
+        ingest.run(sessions, youtube=FakeYouTubeAPI(_videos()).client(), x=x_api.client(),
+                   x_user_id=X_USER, extractor=Probe(fail_on=("zor",)), model="m", now=NOW)
+        ingest.run(sessions, youtube=None, x=x_api.client(), x_user_id=X_USER,
+                   extractor=Probe(), model="m", now=NOW + timedelta(hours=1))
+        assert seen and set(seen) == {0}
+
+    def test_the_writes_still_land_together_with_the_read(self, tmp_path) -> None:
+        repo, _ = self._file_repo(tmp_path)
+        _run(repo, yt=FakeYouTubeAPI(_videos()).client())
+        assert len(_items(repo)) == 6
+        with repo.session() as s:
+            assert {r.source for r in store.source_reads(s)} == {"youtube"}
+
+    def test_an_item_extracted_meanwhile_keeps_that_extraction(self) -> None:
+        repo = TradeLogRepository(engine=create_engine("sqlite://", future=True))
+        vids = _videos()[:1]
+
+        class Racing(Extractor):
+            """Another pass stores and extracts the same video while this call runs."""
+
+            def __call__(self, text: str) -> Extraction | None:
+                with repo.session() as s:
+                    store.upsert_item(
+                        s, source="youtube", source_id="v1", channel_id="c", url="u",
+                        published_at=NOW - timedelta(days=1), content_sha256="h", now=NOW,
+                        expires_at=NOW + timedelta(days=29),
+                        extraction=Extraction(("AAPL",), (), {"AAPL": "bullish"}, "Theirs.",
+                                              False, True),
+                        extraction_model="other",
+                    )
+                return super().__call__(text)
+
+        report = _run(repo, yt=FakeYouTubeAPI(vids).client(), extractor=Racing())
+        row = _items(repo)["youtube:v1"]
+        assert row.claim_en == "Theirs." and row.extraction_model == "other"
+        assert report.cached == 1 and report.extracted == 0
+
+    def test_a_retry_never_reinserts_a_post_purged_while_the_model_ran(self) -> None:
+        repo = TradeLogRepository(engine=create_engine("sqlite://", future=True))
+        api = FakeXAPI([post("1001", "2026-09-26T12:00:00Z", "zor metin")])
+        _run(repo, x=api.client(), extractor=Extractor(fail_on=("zor",)))
+        assert "x:1001" in _items(repo)
+
+        class PurgedMeanwhile(Extractor):
+            def __call__(self, text: str) -> Extraction | None:
+                with repo.session() as s:
+                    store.purge(s, ["x:1001"])  # the retention timer, concurrently
+                return super().__call__(text)
+
+        ext = PurgedMeanwhile()
+        report = _run(repo, x=api.client(), x_user=None, extractor=ext,
+                      now=NOW + timedelta(hours=1))
+        assert ext.calls == ["zor metin"]
+        assert "x:1001" not in _items(repo) and report.extracted == 0
+
+
+class TestExtractorFailureHandling:
+    def test_repeated_failures_stop_calling_for_the_rest_of_the_step(
+        self, repo: TradeLogRepository
+    ) -> None:
+        ext = Extractor(fail_on=("",))  # every call fails, as in an outage
+        report = _run(repo, yt=FakeYouTubeAPI(_videos()).client(), extractor=ext)
+        assert len(ext.calls) == ingest.MAX_CONSECUTIVE_EXTRACTION_FAILURES
+        assert report.extraction_failed == 6 and report.new_items == 6
+        assert any("extraction stopped" in n for n in report.notes)
+        assert all(r.extracted_at_utc is None for r in _items(repo).values())
+
+        ok = Extractor()  # the next run retries every one of them
+        retry = _run(repo, yt=FakeYouTubeAPI(_videos()).client(), extractor=ok,
+                     now=NOW + timedelta(hours=1))
+        assert len(ok.calls) == 6 and retry.extracted == 6
+
+    def test_a_success_resets_the_failure_count(self, repo: TradeLogRepository) -> None:
+        # v1, v2 fail, v3 succeeds, v4, v5 fail, v6 succeeds: never three in a row.
+        ext = Extractor(fail_on=("İçerik 1", "İçerik 2", "İçerik 4", "İçerik 5"))
+        report = _run(repo, yt=FakeYouTubeAPI(_videos()).client(), extractor=ext)
+        assert len(ext.calls) == 6
+        assert report.extracted == 2 and report.extraction_failed == 4
+        assert not any("extraction stopped" in n for n in report.notes)
+
+    def test_an_extractor_that_raises_is_a_failed_extraction_not_a_failed_run(
+        self, repo: TradeLogRepository
+    ) -> None:
+        def boom(text: str) -> Extraction | None:
+            raise TimeoutError("hung")
+
+        report = ingest.run(repo.session, youtube=FakeYouTubeAPI(_videos()).client(), x=None,
+                            x_user_id=None, extractor=boom, model="m", now=NOW)
+        assert report.extraction_failed == 6 and report.extracted == 0
+        assert not any(n.startswith("YouTube failed") for n in report.notes)
+        with repo.session() as s:  # the read landed; the unread items keep the window open
+            assert {r.source for r in store.source_reads(s)} == {"youtube"}
+
+
+class TestLongPosts:
+    def test_the_extractor_reads_a_long_posts_full_text(self, repo: TradeLogRepository) -> None:
+        p = post("1001", "2026-09-26T12:00:00Z", "Kesik başlangıç…")
+        p["note_tweet"] = {"text": "Kesik başlangıç ve devamı: NVDA için görüşüm olumlu."}
+        ext = Extractor()
+        _run(repo, x=FakeXAPI([p]).client(), extractor=ext)
+        assert ext.calls == ["Kesik başlangıç ve devamı: NVDA için görüşüm olumlu."]

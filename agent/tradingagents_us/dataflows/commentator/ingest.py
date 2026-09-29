@@ -13,6 +13,12 @@ deletion must be seen within a day, not at the next weekday run.
 Each source is its own step with its own session, so a YouTube quota error
 does not roll back what X stored, and neither failure stops the other. A
 source with no credentials is skipped and says so; it is not an error.
+
+No transaction is open across a network or model call. Each step reads what
+it needs in one short session, fetches and extracts with none open, and
+writes in another short session: on SQLite a write transaction holds the
+database's only write lock, and a paid extraction (seconds each, bounded by
+`extract.timeout_s()`) must not make the decision save or the API wait.
 """
 
 from __future__ import annotations
@@ -70,31 +76,103 @@ class IngestReport:
         return "\n".join([line, *(f"  - {n}" for n in self.notes)])
 
 
-def _store(
-    session: Session,
+#: After this many extraction failures in a row, the rest of the step's items
+#: are stored unextracted (and retried next run) without a call: an outage or
+#: a timeout that hits every call would otherwise cost one timeout per item.
+MAX_CONSECUTIVE_EXTRACTION_FAILURES = 3
+
+
+@dataclass(frozen=True)
+class _Extracted:
+    """One item and what the extractor made of it (None: failed or not attempted)."""
+
+    item: RawItem
+    extraction: Extraction | None
+
+
+def _extract_pending(
+    sessions: SessionFactory,
     items: list[RawItem],
     *,
     extractor: Extractor,
-    model: str,
-    now: datetime,
-    expires_at: datetime,
     report: IngestReport,
-    verified_at: datetime | None = None,
-) -> None:
-    """Extract what is new or still unextracted; leave extracted items alone."""
-    rows = store.get_rows(session, (store.item_key(i.source, i.source_id) for i in items))
+) -> list[_Extracted]:
+    """Extract what is new or still unextracted. No transaction is open during a call.
+
+    One short read to see what is stored, then the paid calls with no session
+    at all: on SQLite an open write transaction would hold the database's
+    write lock for as long as the model takes, and every other writer (the
+    decision save, the API) would wait on it. The writes happen afterwards,
+    in `_write_extracted`'s own short transaction.
+    """
+    keys = [store.item_key(i.source, i.source_id) for i in items]
+    with sessions() as s:
+        rows = store.get_rows(s, keys)
+        # Plain values: the rows do not outlive the session.
+        done = {k: r.content_sha256 for k, r in rows.items() if r.extracted_at_utc is not None}
+    pending: list[_Extracted] = []
     edited = 0
-    for item in items:
-        row = rows.get(store.item_key(item.source, item.source_id))
-        if row is not None and row.extracted_at_utc is not None:
+    failures_in_a_row = 0
+    skipped = 0
+    for item, key in zip(items, keys, strict=True):
+        if key in done:
             report.cached += 1
-            if row.content_sha256 != item.content_sha256:
+            if done[key] != item.content_sha256:
                 # Kept as first read: the stored fields are what was knowable at
                 # first fetch, and re-extracting an edit would date a later view
                 # to the original publish time.
                 edited += 1
             continue
-        extraction = extractor(item.text)
+        extraction: Extraction | None = None
+        if failures_in_a_row >= MAX_CONSECUTIVE_EXTRACTION_FAILURES:
+            skipped += 1
+        else:
+            try:
+                extraction = extractor(item.text)
+            except Exception as exc:  # noqa: BLE001 — stored unextracted, retried next run
+                log.warning("commentator extractor raised (%s)", describe(exc))
+            failures_in_a_row = 0 if extraction is not None else failures_in_a_row + 1
+        pending.append(_Extracted(item, extraction))
+    if skipped:
+        report.notes.append(
+            f"extraction stopped after {MAX_CONSECUTIVE_EXTRACTION_FAILURES} failures in a "
+            f"row; {skipped} item(s) stored unextracted without a call, retried next run"
+        )
+    if edited:
+        # A count, not ids: the log outlives the items (see `failures`).
+        log.info("%d item(s) edited since first fetch; keeping the first extraction", edited)
+    return pending
+
+
+def _write_extracted(
+    session: Session,
+    results: list[_Extracted],
+    *,
+    model: str,
+    now: datetime,
+    expires_at: datetime,
+    report: IngestReport,
+    verified_at: datetime | None = None,
+    insert_new: bool = True,
+) -> None:
+    """Store what `_extract_pending` produced, inside one short transaction.
+
+    Rows are re-read here: another pass may have extracted an item while this
+    one was calling the model, and its extraction is kept, not overwritten.
+    With `insert_new` False (a retry of stored rows) an item whose row is gone
+    — purged meanwhile — is dropped, never re-inserted.
+    """
+    rows = store.get_rows(
+        session, (store.item_key(r.item.source, r.item.source_id) for r in results)
+    )
+    for result in results:
+        item, extraction = result.item, result.extraction
+        row = rows.get(store.item_key(item.source, item.source_id))
+        if row is None and not insert_new:
+            continue
+        if row is not None and row.extracted_at_utc is not None:
+            report.cached += 1
+            continue
         store.upsert_item(
             session,
             source=item.source,
@@ -115,9 +193,6 @@ def _store(
             report.extraction_failed += 1
         else:
             report.extracted += 1
-    if edited:
-        # A count, not ids: the log outlives the items (see `failures`).
-        log.info("%d item(s) edited since first fetch; keeping the first extraction", edited)
 
 
 def _youtube_step(
@@ -135,9 +210,10 @@ def _youtube_step(
         client, config.YOUTUBE_CHANNEL_ID, since=now - lookback, max_pages=max_pages
     )
     report.fetched[YOUTUBE] = len(items)
+    results = _extract_pending(sessions, items, extractor=extractor, report=report)
     with sessions() as s:
-        _store(
-            s, items, extractor=extractor, model=model, now=now,
+        _write_extracted(
+            s, results, model=model, now=now,
             expires_at=now + config.YOUTUBE_RETENTION, report=report,
         )
         # Committed with the items, so a read is recorded only if it landed.
@@ -151,12 +227,17 @@ def _youtube_step(
 def _x_check_deletions(
     sessions: SessionFactory, client: XClient, *, now: datetime, report: IngestReport
 ) -> dict[str, dict[str, Any]]:
-    """Purge stored posts X no longer serves; stamp and return the ones it still does."""
+    """Purge stored posts X no longer serves; stamp and return the ones it still does.
+
+    The lookup runs between two short transactions, not inside one. A post
+    stored in between is not in `stored`, so it is neither purged nor stamped.
+    """
     with sessions() as s:
         stored = store.source_ids(s, X)
-        if not stored:
-            return {}
-        alive = client.lookup_alive(stored)
+    if not stored:
+        return {}
+    alive = client.lookup_alive(stored)
+    with sessions() as s:
         gone = [store.item_key(X, pid) for pid in stored if pid not in alive]
         report.purged_deleted += store.purge(s, gone)
         store.mark_verified(s, [store.item_key(X, pid) for pid in stored if pid in alive], now)
@@ -181,12 +262,16 @@ def _x_retry_extraction(
             if row.extracted_at_utc is None
             and (item := to_raw_item(alive[row.source_id], row.channel_id)) is not None
         ]
-        if retry:
-            # These rows exist, so `upsert_item` keeps their first-fetch expiry.
-            _store(
-                s, retry, extractor=extractor, model=model, now=now,
-                expires_at=now + config.x_retention(), report=report,
-            )
+    if not retry:
+        return
+    results = _extract_pending(sessions, retry, extractor=extractor, report=report)
+    with sessions() as s:
+        # These rows existed, so `upsert_item` keeps their first-fetch expiry.
+        # One purged while the model ran stays purged: a retry never re-inserts.
+        _write_extracted(
+            s, results, model=model, now=now,
+            expires_at=now + config.x_retention(), report=report, insert_new=False,
+        )
 
 
 def _retain(
@@ -256,6 +341,7 @@ def _x_fetch(
         expected_username=config.X_EXPECTED_USERNAME,
     )
     report.fetched[X] = len(items)
+    results = _extract_pending(sessions, items, extractor=extractor, report=report)
     # What this read proves it saw: everything after the since_id post (the
     # earlier reads saw that one), or on a first run the newest posts back to
     # the oldest returned. A since_id is at most a retention window old, so
@@ -265,8 +351,8 @@ def _x_fetch(
     else:
         covered_since = min((i.published_at for i in items), default=now)
     with sessions() as s:
-        _store(
-            s, items, extractor=extractor, model=model, now=now,
+        _write_extracted(
+            s, results, model=model, now=now,
             expires_at=now + config.x_retention(), report=report,
             verified_at=now,  # X served it just now
         )

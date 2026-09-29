@@ -746,3 +746,72 @@ class TestNoSourceIsANoOp:
         assert len(warned) == 1
         assert "YOUTUBE_API_KEY is not set" in warned[0]
         assert "X_BEARER_TOKEN is not set" in warned[0]
+
+
+class TestEveryConfiguredSourceMustHaveBeenRead:
+    """With YouTube and X configured, "no commentary" needs a good read of both."""
+
+    YT = read("youtube", at(28, 22, 35), at(14, 22, 35))
+    XR = read("x", at(28, 22, 36), at(14, 22, 36))
+
+    def _block(self, reads: list[SourceRead], sources=None) -> str:
+        block, used = cs.build_block("NVDA", "2026-09-21", "2026-09-28",
+                                     live_anchor=at(28, 22, 35), now=at(28, 22, 45),
+                                     load=lambda *a: [], load_reads=lambda: reads,
+                                     sources=sources)
+        assert used == []
+        return block
+
+    def test_both_read_is_an_observed_absence_naming_both(self) -> None:
+        block = self._block([self.YT, self.XR], sources=["youtube", "x"])
+        assert "No commentary in window" in block
+        assert "YouTube at 2026-09-28T22:35Z" in block and "X at 2026-09-28T22:36Z" in block
+
+    def test_a_failed_x_read_beside_a_good_youtube_read_is_unavailable(self) -> None:
+        # Today's X read failed; the last good one is two days old.
+        stale_x = read("x", at(26, 22, 36), at(12))
+        block = self._block([self.YT, stale_x], sources=["youtube", "x"])
+        assert "No commentary" not in block
+        assert "Commentator feed unavailable: no successful read of X covers" in block
+        assert "not an absence of commentary" in block
+
+    def test_an_x_read_that_never_happened_is_unavailable(self) -> None:
+        block = self._block([self.YT], sources=["youtube", "x"])
+        assert "No commentary" not in block and "no successful read of X" in block
+
+    def test_a_failed_youtube_read_beside_a_good_x_read_is_unavailable(self) -> None:
+        block = self._block([self.XR], sources=["youtube", "x"])
+        assert "No commentary" not in block and "no successful read of YouTube" in block
+
+    def test_both_failed_names_both(self) -> None:
+        block = self._block([], sources=["youtube", "x"])
+        assert "no successful read of YouTube, X covers" in block
+
+    def test_a_read_of_an_unconfigured_source_is_not_named_as_proof(self) -> None:
+        # X was switched off; its last read is still stored and still fresh.
+        block = self._block([self.YT, self.XR], sources=["youtube"])
+        assert "No commentary in window" in block
+        assert "read from YouTube at 2026-09-28T22:35Z)" in block and "X at" not in block
+
+    def test_the_default_is_the_configured_sources(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("YOUTUBE_API_KEY", "yt-key-not-real-0001")
+        monkeypatch.setenv("COMMENTATOR_YOUTUBE_CLEARED", "1")
+        monkeypatch.setenv("X_BEARER_TOKEN", "x-token-not-real-0001")
+        monkeypatch.setenv("COMMENTATOR_X_USER_ID", "1234567890")
+        block = self._block([self.YT])
+        assert "No commentary" not in block and "no successful read of X" in block
+        assert "No commentary in window" in self._block([self.YT, self.XR])
+
+    def test_the_wrapper_says_unavailable_when_one_configured_source_failed(
+        self, analyst, feed_on, source_on, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("X_BEARER_TOKEN", "x-token-not-real-0001")
+        monkeypatch.setenv("COMMENTATOR_X_USER_ID", "1234567890")
+        monkeypatch.setattr(cs, "_load_items", lambda *a: [])
+        monkeypatch.setattr(cs, "_load_reads", lambda: [read("youtube", TODAY, at(1))])
+        cs.install()
+        out = analyst._build_system_message(**KW)
+        # Wall-clock dependent whether the old YouTube read still covers; X never does.
+        assert "No commentary" not in out and "X covers" in out

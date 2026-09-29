@@ -124,3 +124,77 @@ class TestExtract:
 
     def test_an_unparseable_answer_is_none(self) -> None:
         assert ex.extract("Title: x", invoke=lambda t: "Sorry, I can't.") is None
+
+
+class TestTimeout:
+    """A hung model call must not hold the daily run: bounded, then retried next run."""
+
+    def test_a_hung_call_is_abandoned_at_the_deadline(self) -> None:
+        import threading
+        import time
+
+        release = threading.Event()
+
+        def invoke(text: str) -> str:
+            release.wait(5)  # far past the deadline below
+            return _answer()
+
+        started = time.monotonic()
+        try:
+            assert ex.extract("Title: x", invoke=invoke, timeout=0.2) is None
+        finally:
+            release.set()
+        assert time.monotonic() - started < 2
+
+    def test_a_timeout_is_logged_without_the_item(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import threading
+
+        release = threading.Event()
+        with caplog.at_level("WARNING"):
+            try:
+                ex.extract("Title: gizli içerik", invoke=lambda t: (release.wait(5), "")[1],
+                           timeout=0.1)
+            finally:
+                release.set()
+        assert "timed out" in caplog.text
+        assert "gizli" not in caplog.text
+
+    def test_a_fast_answer_inside_the_deadline_is_used(self) -> None:
+        assert ex.extract("Title: x", invoke=lambda t: _answer(), timeout=5) is not None
+
+    def test_the_default_deadline_is_bounded(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("COMMENTATOR_EXTRACT_TIMEOUT_S", raising=False)
+        assert 0 < ex.timeout_s() <= 120
+
+    @pytest.mark.parametrize("raw", ["0", "-5", "abc", "601", "inf", "nan"])
+    def test_a_bad_override_falls_back_to_the_default(
+        self, monkeypatch: pytest.MonkeyPatch, raw: str
+    ) -> None:
+        monkeypatch.setenv("COMMENTATOR_EXTRACT_TIMEOUT_S", raw)
+        assert ex.timeout_s() == ex._DEFAULT_TIMEOUT_S
+
+    def test_a_valid_override_is_used(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("COMMENTATOR_EXTRACT_TIMEOUT_S", "15")
+        assert ex.timeout_s() == 15.0
+
+    def test_the_sdk_call_carries_a_timeout_and_few_retries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import langchain_anthropic
+
+        seen: dict[str, object] = {}
+
+        class FakeChat:
+            def __init__(self, **kwargs: object) -> None:
+                seen.update(kwargs)
+
+            def invoke(self, messages: object) -> object:
+                return type("R", (), {"content": _answer()})()
+
+        monkeypatch.setattr(langchain_anthropic, "ChatAnthropic", FakeChat)
+        monkeypatch.setenv("COMMENTATOR_EXTRACT_TIMEOUT_S", "20")
+        assert ex.extract("Title: x") is not None
+        assert seen["timeout"] == 20.0
+        assert seen["max_retries"] == 1

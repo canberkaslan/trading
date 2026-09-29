@@ -15,8 +15,16 @@ the source text is untrusted, and anything it tries to say to a model reading
 it has nowhere to go but a validated enum or a sanitised sentence. It also
 means no report can end up quoting the commentator verbatim.
 
-A failed or unparseable extraction returns None. The item is stored without
-fields and retried on the next run; it is never shown to the analyst half-read.
+A failed, unparseable or timed-out extraction returns None. The item is
+stored without fields and retried on the next run; it is never shown to the
+analyst half-read.
+
+Every call is bounded (`timeout_s()`): the SDK gets a per-request timeout and
+one retry, and the whole call runs under a wall-clock deadline on a daemon
+thread, so a hung connection or a stuck retry loop cannot hold the daily run
+for its systemd cap. Past the deadline the call is abandoned (its thread may
+still finish and be billed; its answer is discarded) and the item is retried
+next run.
 """
 
 from __future__ import annotations
@@ -25,6 +33,7 @@ import json
 import logging
 import os
 import re
+import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -37,6 +46,15 @@ _DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 
 # The answer is a few hundred tokens of JSON; this is headroom, not a target.
 _MAX_TOKENS = 1000
+
+#: Wall-clock bound on one extraction, SDK retries included. A few hundred
+#: tokens of JSON from the cheap tier takes seconds; this is headroom.
+_DEFAULT_TIMEOUT_S = 60.0
+_TIMEOUT_ENV = "COMMENTATOR_EXTRACT_TIMEOUT_S"
+
+#: SDK retries inside that bound (the SDK default is 2). The item is retried
+#: on the next run anyway, so one retry covers a transient 529 and no more.
+_MAX_RETRIES = 1
 
 STANCES = ("bullish", "bearish", "neutral", "unstated")
 CLAIM_MAX_CHARS = 200
@@ -83,6 +101,22 @@ def _model() -> str:
 def model_name() -> str:
     """The model an extraction is attributed to in `commentator_items`."""
     return _model()
+
+
+def timeout_s() -> float:
+    """The wall-clock bound on one extraction: COMMENTATOR_EXTRACT_TIMEOUT_S, else 60s."""
+    raw = os.environ.get(_TIMEOUT_ENV)
+    if not raw:
+        return _DEFAULT_TIMEOUT_S
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 0.0
+    if not 0 < value <= 600:  # 600: the daily run's own cap on the whole fetch step
+        log.warning("%s=%r is not a positive number of seconds up to 600; using %.0f",
+                    _TIMEOUT_ENV, raw, _DEFAULT_TIMEOUT_S)
+        return _DEFAULT_TIMEOUT_S
+    return value
 
 
 def _sanitise(text: str, limit: int) -> str:
@@ -160,6 +194,9 @@ def _invoke_anthropic(text: str, callbacks: list[Any] | None) -> str:
         model=_model(),
         temperature=0,  # an extraction should not be creative
         max_tokens=_MAX_TOKENS,
+        # Per request; `extract` bounds the whole call, retries included.
+        timeout=timeout_s(),
+        max_retries=_MAX_RETRIES,
         **({"callbacks": callbacks} if callbacks else {}),
     )
     result = llm.invoke([("system", _SYSTEM), ("human", text)])
@@ -172,21 +209,62 @@ def _invoke_anthropic(text: str, callbacks: list[Any] | None) -> str:
 Invoke = Callable[[str], str]
 
 
+class ExtractionTimeoutError(TimeoutError):
+    """The model did not answer within `timeout_s()`."""
+
+
+def _bounded(call: Callable[[], str], limit_s: float) -> str:
+    """`call()`, or ExtractionTimeoutError after `limit_s`; the call's own exception re-raised.
+
+    A daemon thread, not an executor: an executor's worker is joined at
+    interpreter exit, so a hung call would hold the process open anyway.
+    """
+    box: dict[str, object] = {}
+
+    def target() -> None:
+        try:
+            box["out"] = call()
+        except BaseException as exc:  # noqa: BLE001 — handed to the caller below
+            box["exc"] = exc
+
+    worker = threading.Thread(target=target, name="commentator-extract", daemon=True)
+    worker.start()
+    worker.join(limit_s)
+    if worker.is_alive():
+        raise ExtractionTimeoutError(f"no answer within {limit_s:.0f}s")
+    if "exc" in box:
+        raise box["exc"]  # type: ignore[misc]
+    out = box.get("out")
+    return out if isinstance(out, str) else ""
+
+
 def extract(
     text: str,
     *,
     invoke: Invoke | None = None,
     callbacks: list[Any] | None = None,
+    timeout: float | None = None,
 ) -> Extraction | None:
     """English fields for one item, or None when they could not be produced.
 
     `invoke` replaces the model call (tests, dry runs). `callbacks` carries a
     UsageCollector so the spend lands in a cost record, as translate.py does.
+    `timeout` overrides `timeout_s()`; either way the call, injected or not,
+    runs under that deadline.
     """
     if not text or not text.strip():
         return None
+    limit = timeout if timeout is not None else timeout_s()
     try:
-        raw = invoke(text) if invoke is not None else _invoke_anthropic(text, callbacks)
+        raw = _bounded(
+            (lambda: invoke(text)) if invoke is not None
+            else (lambda: _invoke_anthropic(text, callbacks)),
+            limit,
+        )
+    except ExtractionTimeoutError:
+        log.warning("commentator extraction timed out after %.0fs; the item is retried "
+                    "next run", limit)
+        return None
     except Exception:  # noqa: BLE001 — a failed extraction is retried next run
         log.warning("commentator extraction failed; the item is retried next run", exc_info=True)
         return None

@@ -3,10 +3,13 @@
 The API, the daily run and the timers share one SQLite file on the box. Under
 the rollback journal every one of them opened, an open read stalled a
 writer's commit and pysqlite failed it after 5 s with "database is locked".
-These pin the pragmas the factory sets, and prove with two real connections
-the two things they buy: a writer commits past an open reader, and a second
+These pin the pragmas the factory sets, and prove with real connections the
+two things they buy: a writer commits past an open reader, and a second
 writer waits for the first instead of failing. Each concurrency test also runs
-the old configuration and watches it fail, so a pass means something.
+the old configuration and watches it fail, so a pass means something: the
+rollback journal against a reader that never lets go (any timeout fails, so
+0.2 s stands in for 5 s), and pysqlite's own 5 s against a write lock held
+past it (the one slow test here; `-m "not slow"` skips it).
 """
 
 from __future__ import annotations
@@ -196,51 +199,51 @@ class TestConcurrency:
             c.execute(text("INSERT INTO t VALUES (2)"))
         reader.execute("COMMIT")
 
-    def _hold_the_write_lock(self, db: Path, seconds: float) -> threading.Thread:
-        """Another process's write transaction, committed after `seconds`."""
-        locked = threading.Event()
-
-        def hold() -> None:
-            conn = sqlite3.connect(db, isolation_level=None)
-            conn.execute("BEGIN IMMEDIATE")
-            conn.execute("INSERT INTO t VALUES (10)")
-            locked.set()
-            time.sleep(seconds)
-            conn.execute("COMMIT")
-            conn.close()
-
-        thread = threading.Thread(target=hold)
-        thread.start()
-        assert locked.wait(5)
-        return thread
-
-    def test_a_second_writer_waits_for_the_first_instead_of_failing(self, tmp_path: Path) -> None:
+    @pytest.mark.slow
+    def test_a_second_writer_outlasts_the_old_five_second_limit(self, tmp_path: Path) -> None:
+        # The real old configuration against the factory's, on one lock held
+        # past pysqlite's 5 s: the old writer gives up with "database is
+        # locked", the factory's waits it out and commits. Shorter holds
+        # cannot tell them apart, since both wait 5 s or more. ~5.5 s.
         db = tmp_path / "ww.db"
         url = _file_url(db)
         _seed_in_wal(url)
-        engine = make_engine(url)
+        outcome: dict[str, float | OperationalError] = {}
+        old_done = threading.Event()
 
-        thread = self._hold_the_write_lock(db, seconds=0.5)
-        started = time.monotonic()
-        with engine.begin() as c:
-            c.execute(text("INSERT INTO t VALUES (11)"))
-        waited = time.monotonic() - started
-        thread.join()
-        assert waited >= 0.3  # it really did queue behind the first writer
-        with engine.connect() as c:
-            assert c.execute(text("SELECT count(*) FROM t")).scalar() == 3
+        def write(name: str, engine: Engine, value: int) -> None:
+            started = time.monotonic()
+            try:
+                with engine.begin() as c:
+                    c.execute(text(f"INSERT INTO t VALUES ({value})"))
+                outcome[name] = time.monotonic() - started
+            except OperationalError as exc:
+                outcome[name] = exc
+            finally:
+                if name == "old":
+                    old_done.set()
 
-    def test_without_the_timeout_that_second_writer_fails(self, tmp_path: Path) -> None:
-        db = tmp_path / "ww-short.db"
-        url = _file_url(db)
-        _seed_in_wal(url)
-        thread = self._hold_the_write_lock(db, seconds=0.5)
-        short = create_engine(url, connect_args={"timeout": 0.05})
-        try:
-            with (
-                pytest.raises(OperationalError, match="database is locked"),
-                short.begin() as c,
-            ):
-                c.execute(text("INSERT INTO t VALUES (11)"))
-        finally:
-            thread.join()
+        first = sqlite3.connect(db, isolation_level=None)  # another process's write
+        first.execute("BEGIN IMMEDIATE")
+        first.execute("INSERT INTO t VALUES (10)")
+        writers = [
+            threading.Thread(target=write, args=("old", create_engine(url), 11)),
+            threading.Thread(target=write, args=("new", make_engine(url), 12)),
+        ]
+        for w in writers:
+            w.start()
+        # Released only once the old writer has given up, and a little after,
+        # so the factory's writer has provably waited past the old limit.
+        assert old_done.wait(DRIVER_DEFAULT_BUSY_MS / 1000 + 5)
+        time.sleep(0.5)
+        first.execute("COMMIT")
+        first.close()
+        for w in writers:
+            w.join(BUSY_TIMEOUT_MS / 1000)
+
+        old, new = outcome["old"], outcome["new"]
+        assert isinstance(old, OperationalError) and "database is locked" in str(old)
+        assert not isinstance(new, OperationalError), new  # the factory's writer committed
+        assert new > DRIVER_DEFAULT_BUSY_MS / 1000  # after waiting past the old limit
+        with make_engine(url).connect() as c:
+            assert c.execute(text("SELECT x FROM t ORDER BY x")).scalars().all() == [1, 10, 12]

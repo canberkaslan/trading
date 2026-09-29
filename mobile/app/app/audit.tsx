@@ -5,39 +5,22 @@
  * money or stop it moving: approve, reject, kill switch.
  *
  * ── The honest part ────────────────────────────────────────────────────────
- * The backend keeps an audit trail but does not yet publish it. Concretely,
- * as of this port:
+ * The rows now come from `GET /v1/audit`, which reads back only what a table
+ * recorded: kill-switch flips (actor + source), operator rejects / cancels
+ * (`order_updates`), and risk refusals (`trade_orders.risk_approved = false`).
+ * Approvals, logins and setting changes have no record with an actor yet, so
+ * the server names them in `not_recorded` and this screen says so under the
+ * list instead of inferring them.
  *
- *   • `kill_switch_events` is an append-only table (models.py) written by
- *     `POST /v1/orders/kill-switch` (actor + source + detail) and by the
- *     daily `kill_check.py` backstop. `DELETE /v1/me` deliberately keeps it —
- *     its test asserts "the audit trail itself must survive".
- *   • approvals / rejections / cancellations land in `order_updates` with a
- *     status and a timestamp.
- *   • no route in `agent/api/routes/` reads either of them back. The only
- *     kill-switch GET returns the CURRENT state (`{state}`) and nothing about
- *     how it got there; `GET /v1/orders` carries no actor, no device and no
- *     decided-at.
- *
- * So this screen draws the chrome and says so. It does not reconstruct a log
- * out of order rows: a list assembled from `submitted_at_utc` would show an
- * actor it never received, a device it cannot know, and no record at all of
- * the rejections and kill-switch flips — the three things the screen exists
- * to prove. A convincing but partial audit log is worse than an absent one,
- * because it is the screen an operator would point at to say "I did not do
- * that".
- *
- * Wiring it later is one function: fill {@link AUDIT_ENTRIES} from a hook over
- * the new endpoint. Everything below — filters, actor chips, row shape,
- * counts — already runs off that array, and the filter bar appears with the
- * first row.
+ * It still does not reconstruct approvals out of order rows: an approval and
+ * the daily run's own submission leave the same actor-less `order_updates`
+ * row, so an "approved by the operator" line would be a guess — on the screen
+ * an operator would point at to say "I did not do that".
  *
  * What IS live here is the header block: the current kill-switch state, the
  * trading mode and the signed-in identity, all from existing hooks. That is
  * the "who / where" the app can actually answer today, and it is the context
- * the log would be read against.
- *
- * Nothing in `src/utils/` or `src/api/` was changed for this screen.
+ * the log is read against.
  */
 
 import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
@@ -45,7 +28,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 
-import { useKillSwitch, useReadiness } from '@/api/hooks';
+import { useAudit, useKillSwitch, useReadiness } from '@/api/hooks';
+import type { AuditLogEntry } from '@/api/types';
 import { useMe } from '@/api/useMe';
 import { Card } from '@/components/Card';
 import { ErrorState } from '@/components/ErrorState';
@@ -57,6 +41,8 @@ import { useShape, type Shape } from '@/theme/shape';
 import { font, TYPE, TABULAR } from '@/theme/type';
 import { hitSlopFor, killSwitchLabel, MIN_TOUCH_TARGET } from '@/utils/a11y';
 import { parseUtc, relativeAgeTr } from '@/utils/format';
+import { rejectionReasonTr } from '@/utils/orders';
+import { statusOf } from '@/utils/apiError';
 
 /** Who took the action. The prototype's `actorLabel` map, Turkish column. */
 type AuditActor = 'operator' | 'system' | 'risk';
@@ -137,12 +123,27 @@ function matchesFilter(entry: AuditEntry, filter: AuditFilter): boolean {
   return entry.action === filter;
 }
 
-/**
- * The log rows. Empty, and deliberately so — see the file header. Replace this
- * with the query result when `agent/api/routes/` grows an audit read endpoint;
- * nothing else on this screen needs to change.
- */
-const AUDIT_ENTRIES: AuditEntry[] = [];
+/** A server row as the screen draws it: refusal reasons in TR, in the detail. */
+function toAuditEntry(e: AuditLogEntry): AuditEntry {
+  const reasons = (e.reasons ?? []).map(rejectionReasonTr).filter(Boolean);
+  return {
+    id: e.id,
+    ts: e.ts,
+    actor: e.actor,
+    action: e.action,
+    detail: reasons.length ? `${e.detail} · ${reasons.join(' · ')}` : e.detail,
+    where: e.where,
+  };
+}
+
+/** TR names for the kinds the server says it does not record yet. */
+const NOT_RECORDED_TR: Record<string, string> = {
+  approve: 'onaylar',
+  hold: 'onaya düşen emirler',
+  login: 'girişler',
+  setting: 'ayar değişiklikleri',
+  report: 'raporlar',
+};
 
 /** The prototype's chips are 34pt; `hitSlopFor` carries them to 44. */
 const CHIP_HEIGHT = 34;
@@ -177,10 +178,16 @@ export default function AuditScreen() {
   const readiness = useReadiness();
   const me = useMe();
 
+  const audit = useAudit();
+  const entries = useMemo(() => (audit.data?.entries ?? []).map(toAuditEntry), [audit.data]);
+  const notRecorded = audit.data?.not_recorded ?? [];
+  // A filter for a kind nothing records would always be empty — leave it out.
+  const filters = FILTERS.filter((f) => !notRecorded.includes(f.key));
   const rows = useMemo(
-    () => AUDIT_ENTRIES.filter((entry) => matchesFilter(entry, filter)),
-    [filter],
+    () => entries.filter((entry) => matchesFilter(entry, filter)),
+    [entries, filter],
   );
+  const auditStatus = statusOf(audit.error);
 
   const killState = kill.data?.state;
   // Same three-way tone as the risk screen: RUN is the healthy state, PAUSE is
@@ -221,7 +228,7 @@ export default function AuditScreen() {
         <View style={styles.head}>
           <Text style={styles.title} accessibilityRole="header">
             Denetim kaydı{' '}
-            <Text style={styles.titleCount}>{AUDIT_ENTRIES.length}</Text>
+            <Text style={styles.titleCount}>{audit.data ? entries.length : '—'}</Text>
           </Text>
           <Text style={styles.subtitle}>Kim, ne zaman, hangi cihazdan</Text>
         </View>
@@ -267,20 +274,20 @@ export default function AuditScreen() {
 
         <SectionHeader
           title="Kayıt"
-          count={AUDIT_ENTRIES.length ? rows.length : null}
+          count={entries.length ? rows.length : null}
           style={styles.section}
         />
 
         {/* The filter bar only exists once there is something to filter —
             six chips over an empty list are six controls that do nothing. */}
-        {AUDIT_ENTRIES.length > 0 ? (
+        {entries.length > 0 ? (
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.chips}
             style={styles.chipScroll}
           >
-            {FILTERS.map((f) => {
+            {filters.map((f) => {
               const active = filter === f.key;
               return (
                 <Pressable
@@ -301,13 +308,36 @@ export default function AuditScreen() {
           </ScrollView>
         ) : null}
 
-        {AUDIT_ENTRIES.length === 0 ? (
+        {audit.isError && auditStatus === 403 ? (
           <Card tone="dashed" style={styles.slot}>
-            <Text style={styles.slotTitle}>Kayıt uygulamaya açık değil</Text>
+            <Text style={styles.slotTitle}>Kayıt yalnız yöneticiye açık</Text>
             <Text style={styles.slotText}>
-              Onaylar, redler ve kill switch değişiklikleri sunucuda tutuluyor, ancak sunucu bu kaydı
-              okumak için bir uç nokta sunmuyor. Emir listesinden kim ve hangi cihaz bilgisi
-              çıkarılamadığı için burada uydurma satır gösterilmiyor.
+              Denetim kaydı işlemi yapanların kimliğini içerir; bu oturumun görme yetkisi yok.
+            </Text>
+          </Card>
+        ) : audit.isError && auditStatus === 404 ? (
+          <Card tone="dashed" style={styles.slot}>
+            <Text style={styles.slotTitle}>Kayıt bu sunucuda yok</Text>
+            <Text style={styles.slotText}>
+              Bağlı sunucu denetim kaydı uç noktasını henüz sunmuyor. Güncellendiğinde kayıt burada
+              listelenir; uydurma satır gösterilmez.
+            </Text>
+          </Card>
+        ) : audit.isError ? (
+          <ErrorState
+            title="Denetim kaydı okunamadı"
+            detail={audit.error}
+            onRetry={() => void audit.refetch()}
+          />
+        ) : audit.isLoading ? (
+          <Card tone="dashed" style={styles.slot}>
+            <Text style={styles.slotText}>Yükleniyor…</Text>
+          </Card>
+        ) : entries.length === 0 ? (
+          <Card tone="dashed" style={styles.slot}>
+            <Text style={styles.slotTitle}>Henüz kayıt yok</Text>
+            <Text style={styles.slotText}>
+              Kill switch değişikliği, emir reddi/iptali ya da risk reddi olduğunda burada görünür.
             </Text>
           </Card>
         ) : rows.length === 0 ? (
@@ -351,8 +381,12 @@ export default function AuditScreen() {
         )}
 
         <Text style={styles.note}>
-          Her onay, red ve kill switch değişikliği cihaz + doğrulama yöntemiyle kaydedilir. Kayıt
-          sunucuda tutulur; uygulamadan silinemez.
+          Kayıt sunucuda tutulur; uygulamadan silinemez.
+          {notRecorded.length
+            ? ` Henüz kayda geçmeyenler: ${notRecorded
+                .map((k) => NOT_RECORDED_TR[k] ?? k)
+                .join(', ')} — bu yüzden liste eksiksiz değildir.`
+            : ''}
         </Text>
       </ScrollView>
     </SafeAreaView>

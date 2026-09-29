@@ -34,6 +34,7 @@ from .deps import get_alpaca, get_repo, is_admin, require_token
 from .routes import (
     agents,
     analyze,
+    audit,
     diagnostics,
     learn,
     market,
@@ -88,6 +89,7 @@ app.include_router(diagnostics.router, prefix="/v1/diagnostics", tags=["diagnost
 app.include_router(risk.router, prefix="/v1/risk", tags=["risk"])
 app.include_router(tickers.router, prefix="/v1/tickers", tags=["tickers"])
 app.include_router(market.router, prefix="/v1/market", tags=["market"])
+app.include_router(audit.router, prefix="/v1/audit", tags=["audit"])
 
 
 # Same reason as the scripts: an outbound call that carries its key in the

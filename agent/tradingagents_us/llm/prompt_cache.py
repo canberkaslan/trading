@@ -7,29 +7,73 @@ schemas and the same system prompt at full price.
 Caching is not free and not symmetric: a cache write costs 1.25x input, a read
 costs 0.10x. So it is a large saving when the cached prefix is genuinely stable
 and a straight loss when it is not, and the two are indistinguishable without
-measurement. That is why the accounting landed first — `cache_hit_rate` is now
-the number that says which of the two happened, and a run that shows near zero
-after this is switched on is telling us to switch it back off.
+measurement. That is why the accounting landed first — `cache_hit_rate` is the
+number that says which of the two happened.
 
-**Where the breakpoints go.** Anthropic caches a PREFIX of the request, in the
-order tools -> system -> messages, and allows at most four breakpoints. The
-messages are where the conversation grows, so they are deliberately left alone;
-everything before them is identical on every call an agent makes. One
-breakpoint on the last tool covers the whole tool schema block, and one on the
-system prompt covers tools plus system together.
+**What marking tools + system bought: a 7-9% hit rate.** 200 councils
+(2026-09-28): 40.3M uncached input, 3.35M read, 1.07M written. A SPY council
+captured request by request (2026-09-29) shows why:
+
+- 73% of council input (125k of 171k tokens) is in calls made ONCE with a
+  prompt nobody re-sends. The debaters, research manager, trader and
+  portfolio manager each build one fresh prompt that opens with the agent's
+  own role text and only then embeds the four analyst reports. None of those
+  requests matches any earlier one beyond its first few words, and a cache
+  is a prefix match, so there is nothing to read. The five debaters do carry
+  the same ~13k-token block of reports — at character 1,025 in one, 2,637 in
+  another, never at the start. No breakpoint placement changes that.
+- The analysts' tool loops DO re-send: each call repeats 53-84% of the one
+  before it. But only tools + system (1.7-2.5k tokens) were marked, so the
+  market analyst's third call read 2,494 tokens and paid full price for the
+  other 9,748 — the tool results of its own previous two turns.
+- The sentiment analyst is a single-shot structured call whose 2.4k-token
+  system prompt was marked anyway: written at 1.25x every council, never read.
+  At this size that is ~0.48M of the 200-run sample's 1.07M writes.
+
+**The rule now: mark only a prefix that will be sent again.** That means a
+tool-loop call — tools bound with the model free to use them. It keeps the
+tools and system breakpoints and gains a rolling one on the last block of the
+conversation, so each turn reads everything up to the previous turn's end and
+writes only what that turn added: re-run on this code, the market analyst's
+second and third calls read 2,816 and 6,327 tokens instead of 2,494 each.
+Every other call is left unmarked.
+Three breakpoints at most, under Anthropic's four.
+
+It is a small saving, not a large one, and the reason is structural: the
+loops are 27% of the input and ~3 calls long, so the last and largest turn is
+written at 1.25x and never read. The lever on the other 73% is prompt layout
+— the shared reports first, as one byte-identical block, in the five debater
+prompts: one write and four reads of ~13k tokens, about $0.13 of a $1.09
+council — which changes what each agent reads first and so needs a ratings
+comparison, not a cost PR.
+
+**Minimum cacheable prefix** (Anthropic docs, checked 2026-09-29): Sonnet 4.6
+1,024 tokens, Opus 4.7 2,048, Haiku 4.5 4,096. Shorter prefixes are silently
+not cached — no error, no charge. The analysts' tools + system prefixes
+measure 1.7-2.5k, above Sonnet's floor but under Haiku's: on routed Haiku
+only the rolling breakpoint caches, once the conversation passes 4,096.
+
+**TTL: five minutes, 1h opt-in and not recommended.** Inside a council the
+calls that share a prefix are seconds apart. Across tickers in a daily run the
+only shared prefix is an analyst's tool schema block (~1-1.6k tokens) because
+the system prompt names the ticker before its instructions — about a cent per
+ticker at best, while `ttl: "1h"` bills each write at 2x instead of 1.25x.
+TRADINGAGENTS_CACHE_TTL=1h still opts in (no beta header needed), for the
+tools and system markers only. The rolling marker stays at five minutes: its
+next read is seconds away in the same loop and nothing reads it after that, so
+1h there only doubles the loop's largest writes. Repriced on the market
+analyst's loop above (calls of 2,816 / 6,327 / 12,242 tokens, tools + system
+2,494), in input-token equivalents: 1h on every marker 25,398, 1h on tools +
+system with a 5m rolling marker 18,087, main's tools + system alone at 1h
+19,390. Anthropic requires longer-TTL entries before shorter ones; tools and
+system render before the messages, so a 1h prefix with a 5m tail satisfies it.
+The usage line prices every write at 1.25x whatever its TTL, so under the
+opt-in it under-reports the 1h tools + system writes.
 
 **Why not the vendor's prompt files.** The prompts are built inside thirteen
 upstream agent modules that a subtree pull rewrites. Overriding the one method
-that assembles the API payload puts the change in a single place we own.
-
-**Default TTL is the plain five-minute cache**, which is generally available
-and needs no beta header. The one-hour variant costs 2x to write instead of
-1.25x and has to be requested explicitly — worth it across a full daily run,
-wrong for a single ticker. TRADINGAGENTS_CACHE_TTL=1h opts in.
-
-A prefix under Anthropic's minimum (1024 tokens, 2048 for Haiku) is silently
-not cached — no error, no charge. So a short system prompt costs nothing here;
-it simply does not participate.
+that assembles the API payload puts the change in a single place we own, and
+a breakpoint is metadata: the characters the model reads are unchanged.
 """
 
 from __future__ import annotations
@@ -42,13 +86,22 @@ log = logging.getLogger(__name__)
 
 _VALID_TTLS = ("5m", "1h")
 
+# Anthropic rejects a request carrying more than four breakpoints with a 400.
+# Counted over the whole payload, so a marker upstream placed itself is never
+# the one that tips a call over.
+_MAX_BREAKPOINTS = 4
+
+# Content blocks the API accepts a breakpoint on. Thinking blocks are cached
+# with their turn but cannot carry the marker, and an empty text block is
+# rejected outright — so the marker walks back to the nearest block that can.
+_MARKABLE_BLOCKS = frozenset({"text", "image", "document", "tool_use", "tool_result"})
+
 
 def _ttl() -> str | None:
     """Configured TTL, or None for Anthropic's default five minutes.
 
-    Returning None rather than "5m" matters: omitting the key uses the GA
-    behaviour, while sending an explicit ttl requires a beta header that this
-    client may not be sending.
+    Returning None rather than "5m" keeps the payload identical to the
+    default request; omitting the key IS the five-minute cache.
     """
     raw = (os.environ.get("TRADINGAGENTS_CACHE_TTL") or "").strip().lower()
     if raw in ("", "5m"):
@@ -65,6 +118,43 @@ def _ttl() -> str | None:
 def _marker() -> dict[str, Any]:
     ttl = _ttl()
     return {"type": "ephemeral", "ttl": ttl} if ttl else {"type": "ephemeral"}
+
+
+def _rolling_marker() -> dict[str, Any]:
+    """Five minutes always, whatever TRADINGAGENTS_CACHE_TTL says.
+
+    The rolling entry is read by the next turn of the same loop, seconds
+    later, and never by anything after it: its prefix ends in this council's
+    own tool results. A 1h TTL there buys nothing and bills the write at 2x.
+    Placed last, after the tools and system markers, a 5m entry here keeps
+    Anthropic's longer-before-shorter ordering satisfied when those are 1h.
+    """
+    return {"type": "ephemeral"}
+
+
+def _has_marker(block: Any) -> bool:
+    return isinstance(block, dict) and block.get("cache_control") is not None
+
+
+def count_breakpoints(payload: dict[str, Any]) -> int:
+    """Every cache_control marker in the request, wherever it sits.
+
+    Top-level `cache_control` (automatic caching) takes a slot too.
+    """
+    n = 1 if payload.get("cache_control") is not None else 0
+    tools = payload.get("tools")
+    if isinstance(tools, list):
+        n += sum(_has_marker(t) for t in tools)
+    system = payload.get("system")
+    if isinstance(system, list):
+        n += sum(_has_marker(b) for b in system)
+    messages = payload.get("messages")
+    if isinstance(messages, list):
+        for m in messages:
+            content = m.get("content") if isinstance(m, dict) else None
+            if isinstance(content, list):
+                n += sum(_has_marker(b) for b in content)
+    return n
 
 
 def _cache_system(system: Any) -> Any:
@@ -97,12 +187,87 @@ def _cache_tools(tools: Any) -> Any:
     return out
 
 
+def _is_tool_loop(payload: dict[str, Any]) -> bool:
+    """Whether this call's conversation will be re-sent, one turn longer.
+
+    That is the only case in which a breakpoint on the messages is ever read
+    back. An analyst binds its tools with the model free to call them (no
+    tool_choice, or "auto"), and every tool call it makes comes straight back
+    as the next request. A structured-output call forces its single schema
+    tool and is answered in one shot; a debater has no tools at all. Marking
+    either would write their whole prompt at 1.25x and read none of it.
+    """
+    tools = payload.get("tools")
+    if not isinstance(tools, list) or not tools:
+        return False
+    choice = payload.get("tool_choice")
+    if choice is None:
+        return True
+    if isinstance(choice, dict):
+        return choice.get("type") == "auto"
+    return choice == "auto"
+
+
+def _markable(block: Any) -> bool:
+    if not isinstance(block, dict) or block.get("type") not in _MARKABLE_BLOCKS:
+        return False
+    if block.get("type") == "text":
+        text = block.get("text")
+        return isinstance(text, str) and bool(text.strip())
+    return True
+
+
+def _cache_last_message(messages: Any) -> Any:
+    """Breakpoint on the last markable block of the last message.
+
+    Copies what it touches: the list, the one message, its content list and
+    the one block — the caller's conversation is never mutated.
+    """
+    if not isinstance(messages, list) or not messages:
+        return messages
+    last = messages[-1]
+    if not isinstance(last, dict):
+        return messages
+    content = last.get("content")
+    if isinstance(content, str):
+        if not content.strip():
+            return messages
+        new_content: list[Any] = [
+            {"type": "text", "text": content, "cache_control": _rolling_marker()}
+        ]
+    elif isinstance(content, list):
+        new_content = list(content)
+        for i in range(len(new_content) - 1, -1, -1):
+            if _markable(new_content[i]):
+                new_content[i] = {**new_content[i], "cache_control": _rolling_marker()}
+                break
+        else:
+            return messages
+    else:
+        return messages
+    return [*messages[:-1], {**last, "content": new_content}]
+
+
 def apply_cache_control(payload: dict[str, Any]) -> dict[str, Any]:
-    """Add cache breakpoints to a request payload. Pure; safe on any shape."""
-    if "tools" in payload:
-        payload["tools"] = _cache_tools(payload["tools"])
-    if payload.get("system") is not None:
-        payload["system"] = _cache_system(payload["system"])
+    """Add cache breakpoints to a request payload. Pure; safe on any shape.
+
+    Only a tool-loop call is marked, because only its prefix is ever sent
+    again: tools, then system, then the end of the conversation, each while
+    the four-breakpoint budget allows. A single-shot call is returned as it
+    came. Re-applying to an already-marked payload changes nothing.
+    """
+    if not _is_tool_loop(payload):
+        return payload
+    tools = payload["tools"]
+    if _has_marker(tools[-1]) or count_breakpoints(payload) < _MAX_BREAKPOINTS:
+        payload["tools"] = _cache_tools(tools)
+    system = payload.get("system")
+    if system is not None:
+        already = isinstance(system, list) and bool(system) and _has_marker(system[-1])
+        if already or count_breakpoints(payload) < _MAX_BREAKPOINTS:
+            payload["system"] = _cache_system(system)
+    if "messages" in payload and count_breakpoints(payload) < _MAX_BREAKPOINTS:
+        payload["messages"] = _cache_last_message(payload["messages"])
     return payload
 
 

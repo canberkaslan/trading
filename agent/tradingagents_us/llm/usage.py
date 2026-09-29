@@ -56,6 +56,12 @@ log = logging.getLogger(__name__)
 _DEFAULT_PRICES: dict[str, tuple[float, float]] = {
     "claude-opus-5": (15.0, 75.0),
     "claude-sonnet-5": (3.0, 15.0),
+    # The council's actual models (.env deep/quick think). Without these every
+    # "council usage" line read cost=$0.0000 with an "unpriced" warning, and the
+    # per-decision cost stored with each decision was zero. Opus 4.5 and later
+    # are listed at $5/$25, Sonnet 4.x at $3/$15; assumptions like the rest.
+    "claude-opus-4-7": (5.0, 25.0),
+    "claude-sonnet-4-6": (3.0, 15.0),
     "claude-haiku-4-5": (1.0, 5.0),
 }
 

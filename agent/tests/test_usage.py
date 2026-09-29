@@ -30,6 +30,12 @@ class TestPricing:
         # "claude-sonnet-5" must not be matched by a shorter, cheaper entry.
         assert _price_for("claude-sonnet-5") == (3.0, 15.0)
 
+    def test_the_councils_models_are_priced(self) -> None:
+        # The deep- and quick-think models the council runs on; unpriced, every
+        # run logged cost=$0 and stored a zero cost per decision.
+        assert _price_for("claude-opus-4-7") == (5.0, 25.0)
+        assert _price_for("claude-sonnet-4-6") == (3.0, 15.0)
+
     def test_an_unknown_model_has_no_price(self) -> None:
         assert _price_for("some-other-model") is None
 

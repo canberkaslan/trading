@@ -101,6 +101,26 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       },
     ],
     'expo-font',
+    [
+      // Android 3-button navigation drew a LIGHT contrast scrim over this
+      // always-dark app. Cause: with SDK 57's mandatory edge-to-edge, React
+      // Native's `enableEdgeToEdge()` sets `isAppearanceLightNavigationBars =
+      // !isDarkMode` from the SYSTEM ui mode whenever `enforceNavigationBarContrast`
+      // is on (the platform default) — so a phone in light mode got dark buttons
+      // and the platform's white scrim. `Appearance.setColorScheme('dark')` did
+      // not help: that runs in JS after the window was already configured.
+      //
+      // `enforceContrast: false` takes the scrim off (and stops RN from touching
+      // the button style); `style: 'light'` writes windowLightNavigationBar=false
+      // into the theme, so light buttons are right from the first frame, before
+      // JS. At runtime the root layout's <NavigationBar> follows the in-app
+      // palette (dark buttons on the light Modernist theme).
+      //
+      // This is a native theme change: it alters the fingerprint runtimeVersion,
+      // so it ships in a new binary, never as an OTA update.
+      'expo-navigation-bar',
+      { style: 'light', enforceContrast: false },
+    ],
     'expo-secure-store',
     'expo-local-authentication',
     'expo-notifications',

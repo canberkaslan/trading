@@ -40,6 +40,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
+import { NavigationBar } from 'expo-navigation-bar';
 import { useMemo, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
@@ -293,6 +294,7 @@ export default function LoginScreen() {
           sit on the slab rather than on the page ground. Aurora is dark
           throughout, so light content is right either way. */}
       <StatusBar style="light" />
+      <NavigationBar style="light" />
       <KeyboardAvoidingView
         style={styles.flex}
         behavior="padding"

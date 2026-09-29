@@ -1,5 +1,6 @@
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { NavigationBar } from 'expo-navigation-bar';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { I18nextProvider } from 'react-i18next';
@@ -71,6 +72,9 @@ export default function RootLayout() {
     <QueryClientProvider client={queryClient}>
       <I18nextProvider i18n={i18n}>
         <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
+        {/* Same rule for the Android navigation-bar buttons (no-op elsewhere):
+            they follow the palette, not the phone's light/dark setting. */}
+        <NavigationBar style={scheme === 'dark' ? 'light' : 'dark'} />
         <Stack screenOptions={{ headerShown: false }}>
           {/* `(auth)` has no _layout, so its only route is `(auth)/login`;
               naming the group logged "No route named (auth)" on every launch. */}

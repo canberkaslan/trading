@@ -36,7 +36,10 @@ no item it fetched in the window is still waiting for extraction. Otherwise —
 a source with no key, a failed or timed-out fetch, a window older than the
 reads or than retention, an item the extractor could not read — the block
 says the feed is unavailable. An empty table is not an observed absence, and
-neither is an empty selection over an item nobody read. With no source
+neither is an empty selection over an item nobody read. With more than one
+source configured (YouTube and X), every one of them needs such a read: a
+failed X read beside a good YouTube read is "unavailable", not silence, since
+X may hold the post YouTube does not. With no source
 configured at all the pipeline installs nothing (`graph/pipeline.py`).
 
 The seam is the same one `sentiment_supplement` uses: the analyst node resolves
@@ -392,6 +395,7 @@ def render(
     observed: Sequence[SourceRead] = (),
     unread: int = 0,
     live: bool = False,
+    missing: Sequence[str] = (),
 ) -> str:
     """The section. With no items, absence is claimed only on `observed` reads.
 
@@ -406,6 +410,9 @@ def render(
     read happened after its trade date, and the same prompt tells the analyst
     the trade date is "now": the read's time would hand it the real present.
     So by default a read is named by its source alone.
+
+    `missing` names configured sources with no covering read: with nothing
+    to show, absence is then not claimed, whatever the other sources saw.
     """
     sym = ticker.upper()
     lines = [_line(i, sym, label=n, market_wide=wide)
@@ -421,6 +428,11 @@ def render(
         return unavailable(
             f"{unread} item(s) published between {start_date} and {end_date} "
             "could not be read yet"
+        )
+    if missing:
+        names = ", ".join(_SOURCE_LABEL.get(m, m) for m in missing)
+        return unavailable(
+            f"no successful read of {names} covers {start_date} to {end_date}"
         )
     if not observed:
         return unavailable(
@@ -496,11 +508,12 @@ def build_block(
     live_anchor: datetime | None = None,
     load: Callable[[datetime, datetime], list[StoredItem]] | None = None,
     load_reads: Callable[[], list[SourceRead]] | None = None,
+    sources: Sequence[str] | None = None,
 ) -> tuple[str, list[StoredItem]]:
     """The rendered section and the items in it, in label order."""
     block, lines = build_block_lines(
         ticker, start_date, end_date, run_start=run_start, now=now,
-        live_anchor=live_anchor, load=load, load_reads=load_reads,
+        live_anchor=live_anchor, load=load, load_reads=load_reads, sources=sources,
     )
     return block, [i for i, _ in lines]
 
@@ -515,8 +528,15 @@ def build_block_lines(
     live_anchor: datetime | None = None,
     load: Callable[[datetime, datetime], list[StoredItem]] | None = None,
     load_reads: Callable[[], list[SourceRead]] | None = None,
+    sources: Sequence[str] | None = None,
 ) -> tuple[str, list[tuple[StoredItem, bool]]]:
-    """`build_block`, with each item's `market_wide` flag as `shown_lines` gives it."""
+    """`build_block`, with each item's `market_wide` flag as `shown_lines` gives it.
+
+    `sources` are the sources whose reads an absence needs (default:
+    `config.configured_sources()`). Every one must have a covering read. With
+    none configured, any covering read will do: the pipeline installs no
+    block then, and this keeps a replay over stored reads working.
+    """
     now = now or datetime.now(UTC)
     loader = load or _load_items
     items = loader(_day(start_date), _day(end_date) + timedelta(days=1))
@@ -525,6 +545,7 @@ def build_block_lines(
     pending = unread(items, start_date, end_date, run_start=run_start, now=now,
                      live_anchor=live_anchor)
     observed: list[SourceRead] = []
+    missing: list[str] = []
     live = False
     if not own and not macro and not pending:  # only this makes a claim that needs proof
         limit, live = cutoff(end_date, run_start=run_start, now=now, live_anchor=live_anchor)
@@ -532,8 +553,13 @@ def build_block_lines(
             (load_reads or _load_reads)(), start=_day(start_date), limit=limit, live=live,
             now=now,
         )
+        required = list(sources) if sources is not None else config.configured_sources()
+        if required:
+            observed = [r for r in observed if r.source in required]
+            seen = {r.source for r in observed}
+            missing = [src for src in required if src not in seen]
     block = render(ticker, own, macro, start_date=start_date, end_date=end_date,
-                   observed=observed, unread=len(pending), live=live)
+                   observed=observed, unread=len(pending), live=live, missing=missing)
     return block, shown_lines(ticker, own, macro)
 
 

@@ -68,6 +68,17 @@ What WAL changes around the file:
   For an ad hoc copy use ``sqlite3 local.db ".backup copy.db"``. The -wal and
   -shm files are never backed up separately: the copy does not need them.
 
+- A purge of commentator items (ADR-009, "A purge removes bytes") no longer
+  removes the bytes at commit. `secure_delete`'s zeroed pages are appended
+  to local.db-wal; the old pages, purged text and ids included, stay in
+  local.db until a checkpoint and in earlier -wal frames until overwritten,
+  and the API's pooled connection keeps the close-time checkpoint from ever
+  coming. So the retention pass that purged anything ends with
+  ``wal_checkpoint(TRUNCATE)`` (`commentator.release_purged_bytes`), and
+  fails its unit when another connection keeps that from finishing
+  (tests/test_commentator_store.py, TestPurgedBytesInWAL, with an API
+  connection held open).
+
 - ``local.db-wal`` and ``local.db-shm`` sit next to local.db while any
   connection is open, i.e. all the time the API runs. Every unit runs as
   ``deploy`` and install.sh leaves /opt/ai-trader owned by deploy, so every

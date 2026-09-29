@@ -277,10 +277,25 @@ def _x_retry_extraction(
 def _retain(
     sessions: SessionFactory, x: XClient | None, *, now: datetime, report: IngestReport
 ) -> dict[str, dict[str, Any]] | None:
-    """The retention half of a pass: expiry, then X deletions.
+    """The retention half of a pass: expiry, then X deletions, then the bytes.
 
     Returns the stored posts X still serves, or None when X was not read.
+    Raises `store.PurgedBytesRemainError` when rows were purged but their bytes
+    could not be moved out of local.db-wal.
     """
+    alive = _purge(sessions, x, now=now, report=report)
+    if report.purged_expired or report.purged_deleted:
+        # Each purge above committed in its own session; only now can a
+        # checkpoint copy their zeroed pages over the old ones in local.db.
+        with sessions() as s:
+            store.release_purged_bytes(s)
+    return alive
+
+
+def _purge(
+    sessions: SessionFactory, x: XClient | None, *, now: datetime, report: IngestReport
+) -> dict[str, dict[str, Any]] | None:
+    """Delete expired items, then X posts that are gone or can no longer be checked."""
     with sessions() as s:
         report.purged_expired += store.purge_expired(s, now)
     # Without a deletion check there is no way to see a deletion, so nothing
@@ -308,8 +323,9 @@ def enforce_retention(
 
     Deletes expired items and checks X deletions (with a token; without one,
     every stored X post goes). Then records that it ran, which is what lets
-    the X fetch store new posts. Raises only when the store itself fails, so
-    the timer that runs it pages.
+    the X fetch store new posts. Raises only when the store itself fails or a
+    purge's bytes could not be cleared off the disk, so the timer that runs
+    it pages; the pass is then not recorded.
     """
     now = now or datetime.now(UTC)
     report = IngestReport()

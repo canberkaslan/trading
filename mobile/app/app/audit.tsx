@@ -40,6 +40,7 @@ import { Tag, type TagVariant } from '@/components/Tag';
 import { useTheme } from '@/theme/useTheme';
 import { useShape, type Shape } from '@/theme/shape';
 import { font, TYPE, TABULAR } from '@/theme/type';
+import { useNow } from '@/utils/useNow';
 import { hitSlopFor, killSwitchLabel, MIN_TOUCH_TARGET } from '@/utils/a11y';
 import { parseUtc, relativeAgeTr } from '@/utils/format';
 import { rejectionReasonTr } from '@/utils/orders';
@@ -161,14 +162,16 @@ function stampTr(iso: string): string {
   });
 }
 
-function ageTr(iso: string): string {
+/** `now` comes from `useNow`, so the label is a pure function of its inputs. */
+function ageTr(iso: string, now: number): string {
   const d = parseUtc(iso);
   if (!d) return '—';
-  return relativeAgeTr(Date.now() - d.getTime());
+  return relativeAgeTr(now - d.getTime());
 }
 
 export default function AuditScreen() {
   const { t: tr } = useTranslation();
+  const now = useNow();
   const router = useRouter();
   const t = useTheme();
   const sh = useShape();
@@ -359,7 +362,7 @@ export default function AuditScreen() {
                   ACTION_LABEL_TR[entry.action],
                   entry.detail,
                   `nerede: ${entry.where}`,
-                  ageTr(entry.ts),
+                  ageTr(entry.ts, now),
                 ].join(', ')}
               >
                 <View style={styles.rowHead}>
@@ -375,7 +378,7 @@ export default function AuditScreen() {
                 </View>
                 <Text style={styles.rowDetail}>{entry.detail}</Text>
                 <Text style={styles.rowWhere}>
-                  Nerede: {entry.where} · {ageTr(entry.ts)}
+                  Nerede: {entry.where} · {ageTr(entry.ts, now)}
                 </Text>
               </View>
             ))}

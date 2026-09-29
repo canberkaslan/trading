@@ -33,6 +33,7 @@ import { HTTPError } from 'ky';
 
 import { useStartAnalysis, useAnalysisJob } from '@/api/hooks';
 import { useIsAdmin } from '@/api/useMe';
+import { useNow } from '@/utils/useNow';
 import {
   useMarketMovers,
   useTickerSearch,
@@ -177,13 +178,7 @@ export default function AskScreen() {
   // A clock, ticking only while something is running. Without it the elapsed
   // count would freeze between polls and the screen would look stuck again —
   // the exact thing this is here to disprove.
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!busy) return;
-    setNow(Date.now());
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [busy]);
+  const now = useNow(busy ? 1000 : null);
 
   // Mirror the poller into the handoff's chat shape.
   useEffect(() => {

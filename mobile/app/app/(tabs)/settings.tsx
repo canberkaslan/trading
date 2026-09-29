@@ -58,7 +58,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import Constants from 'expo-constants';
 
@@ -97,6 +97,7 @@ import { Tag } from '@/components/Tag';
 import { Seg } from '@/components/Seg';
 import { Sheet } from '@/components/Sheet';
 import { font, TABULAR, TYPE } from '@/theme/type';
+import { useNow } from '@/utils/useNow';
 
 type Palette = ReturnType<typeof useTheme>;
 
@@ -205,7 +206,8 @@ function Toggle({
   const t = useTheme();
   const sh = useShape();
   const styles = useMemo(() => makeStyles(t, sh), [t, sh]);
-  const x = useRef(new Animated.Value(on ? KNOB_ON_X : KNOB_OFF_X)).current;
+  // Created once, like the ref it replaces, but as state so render never reads a ref.
+  const [x] = useState(() => new Animated.Value(on ? KNOB_ON_X : KNOB_OFF_X));
 
   useEffect(() => {
     Animated.timing(x, {
@@ -417,15 +419,16 @@ export default function SettingsScreen() {
     'TOO EARLY': theme.warning,
   };
 
+  const now = useNow();
   const lastDecisionAt = parseUtc(decisions?.[0]?.timestamp_utc);
-  const lastRun = lastDecisionAt ? relativeAgeTr(Date.now() - lastDecisionAt.getTime()) : '—';
+  const lastRun = lastDecisionAt ? relativeAgeTr(now - lastDecisionAt.getTime()) : '—';
 
   const refreshPermission = useCallback(async () => {
     setPermission(await getPermissionStatus());
   }, []);
 
   useEffect(() => {
-    void refreshPermission();
+    void getPermissionStatus().then(setPermission);
     // The grant is changed in the OS Settings app, so the only moment we can
     // learn about it is when this app comes back to the foreground. Without
     // this the row keeps claiming "kapalı" after the user just enabled it.

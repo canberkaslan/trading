@@ -31,6 +31,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNow } from '@/utils/useNow';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { HTTPError } from 'ky';
@@ -190,9 +191,10 @@ export default function QueueScreen() {
   // An approved or rejected order leaves the list under the cursor. Clamping
   // keeps the selection on a real row instead of pointing past the end, which
   // is what made the keyboard path go dead after the last order.
-  useEffect(() => {
-    setIndex((i) => (rows.length === 0 ? 0 : Math.min(i, rows.length - 1)));
-  }, [rows.length]);
+  // Adjusted during render rather than in an effect, so no frame ever renders
+  // with the cursor past the end.
+  const clampedIndex = rows.length === 0 ? 0 : Math.min(index, rows.length - 1);
+  if (clampedIndex !== index) setIndex(clampedIndex);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -335,7 +337,7 @@ export default function QueueScreen() {
   }, [flow.step, rows, index, isAdmin, router, openOrder, askApprove, askReject]);
 
   const busy = flow.step === 'verifying' || flow.step === 'rejecting';
-  const now = Date.now();
+  const now = useNow();
 
   if (pending.isLoading && rows.length === 0) {
     return (

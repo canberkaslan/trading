@@ -49,6 +49,7 @@ import {
 } from '@/utils/orders';
 import { MIN_TOUCH_TARGET, orderActionLabel } from '@/utils/a11y';
 import { font, TABULAR, TYPE } from '@/theme/type';
+import { useNow } from '@/utils/useNow';
 
 type Tab = 'pending' | 'history';
 
@@ -309,8 +310,9 @@ function PendingRow({
   const buy = o.side === 'BUY';
 
   const notional = decision?.entry_price != null ? decision.entry_price * o.quantity : null;
+  const now = useNow();
   const submitted = parseUtc(o.submitted_at_utc);
-  const age = submitted ? relativeAgeTr(Date.now() - submitted.getTime()) : null;
+  const age = submitted ? relativeAgeTr(now - submitted.getTime()) : null;
 
   // "BUY 18 · MARKET · stop $312.40" — the side and size lead, because the
   // right column already carries the money. Parts with no data drop out rather

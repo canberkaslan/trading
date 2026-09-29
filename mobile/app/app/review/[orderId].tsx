@@ -4,7 +4,7 @@ import { useIsAdmin } from '@/api/useMe';
 import { ErrorState } from '@/components/ErrorState';
 import { useTranslation } from 'react-i18next';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useState, useMemo, useRef } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import Svg, { Path } from 'react-native-svg';
 import { HTTPError } from 'ky';
 
@@ -32,6 +32,7 @@ import { MIN_TOUCH_TARGET, hitSlopFor, orderActionLabel } from '@/utils/a11y';
 import type { AgentDecision, OrderListItem } from '@/api/types';
 import { font, TYPE } from '@/theme/type';
 import { decisionRoute } from '@/utils/decision';
+import { useNow } from '@/utils/useNow';
 
 /**
  * The approval flow, as one state machine.
@@ -166,6 +167,7 @@ export default function ApproveOrderScreen() {
   const [decision, setDecision] = useState<AgentDecision | null>(null);
   const [decisionError, setDecisionError] = useState<string | null>(null);
   const [flow, setFlow] = useState<Flow>({ step: 'idle' });
+  const now = useNow();
 
   const listed: OrderListItem | undefined = orders?.find((o) => o.order_id === orderId);
 
@@ -179,10 +181,11 @@ export default function ApproveOrderScreen() {
    * authoritative again, and an order approved from another device correctly
    * reads as gone.
    */
-  const lastSeen = useRef<OrderListItem | null>(null);
-  if (listed) lastSeen.current = listed;
+  // Kept as state, updated during render, so render never reads a ref.
+  const [lastSeen, setLastSeen] = useState<OrderListItem | null>(null);
+  if (listed && listed !== lastSeen) setLastSeen(listed);
   const order: OrderListItem | undefined =
-    listed ?? (flow.step === 'idle' ? undefined : lastSeen.current ?? undefined);
+    listed ?? (flow.step === 'idle' ? undefined : lastSeen ?? undefined);
 
   // Fetch the underlying decision for full PM reasoning. Keyed on the decision
   // id rather than the order object: the pending list is re-fetched every ten
@@ -276,7 +279,7 @@ export default function ApproveOrderScreen() {
   const equity = portfolio?.total_equity_usd ?? null;
   const weight = notional != null && equity != null && equity > 0 ? notional / equity : null;
   const submitted = parseUtc(target.submitted_at_utc);
-  const age = submitted ? relativeAgeTr(Date.now() - submitted.getTime()) : '—';
+  const age = submitted ? relativeAgeTr(now - submitted.getTime()) : '—';
 
   /*
    * The single-name cap is not this screen's rule to invent: `topWeightTone`

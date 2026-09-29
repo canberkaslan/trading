@@ -57,10 +57,18 @@ only the rolling breakpoint caches, once the conversation passes 4,096.
 calls that share a prefix are seconds apart. Across tickers in a daily run the
 only shared prefix is an analyst's tool schema block (~1-1.6k tokens) because
 the system prompt names the ticker before its instructions — about a cent per
-ticker at best, while `ttl: "1h"` bills every write, the rolling ones
-included, at 2x instead of 1.25x. TRADINGAGENTS_CACHE_TTL=1h still opts in (no
-beta header needed); one TTL for every marker keeps Anthropic's
-longer-before-shorter ordering rule satisfied.
+ticker at best, while `ttl: "1h"` bills each write at 2x instead of 1.25x.
+TRADINGAGENTS_CACHE_TTL=1h still opts in (no beta header needed), for the
+tools and system markers only. The rolling marker stays at five minutes: its
+next read is seconds away in the same loop and nothing reads it after that, so
+1h there only doubles the loop's largest writes. Repriced on the market
+analyst's loop above (calls of 2,816 / 6,327 / 12,242 tokens, tools + system
+2,494), in input-token equivalents: 1h on every marker 25,398, 1h on tools +
+system with a 5m rolling marker 18,087, main's tools + system alone at 1h
+19,390. Anthropic requires longer-TTL entries before shorter ones; tools and
+system render before the messages, so a 1h prefix with a 5m tail satisfies it.
+The usage line prices every write at 1.25x whatever its TTL, so under the
+opt-in it under-reports the 1h tools + system writes.
 
 **Why not the vendor's prompt files.** The prompts are built inside thirteen
 upstream agent modules that a subtree pull rewrites. Overriding the one method
@@ -110,6 +118,18 @@ def _ttl() -> str | None:
 def _marker() -> dict[str, Any]:
     ttl = _ttl()
     return {"type": "ephemeral", "ttl": ttl} if ttl else {"type": "ephemeral"}
+
+
+def _rolling_marker() -> dict[str, Any]:
+    """Five minutes always, whatever TRADINGAGENTS_CACHE_TTL says.
+
+    The rolling entry is read by the next turn of the same loop, seconds
+    later, and never by anything after it: its prefix ends in this council's
+    own tool results. A 1h TTL there buys nothing and bills the write at 2x.
+    Placed last, after the tools and system markers, a 5m entry here keeps
+    Anthropic's longer-before-shorter ordering satisfied when those are 1h.
+    """
+    return {"type": "ephemeral"}
 
 
 def _has_marker(block: Any) -> bool:
@@ -213,13 +233,13 @@ def _cache_last_message(messages: Any) -> Any:
         if not content.strip():
             return messages
         new_content: list[Any] = [
-            {"type": "text", "text": content, "cache_control": _marker()}
+            {"type": "text", "text": content, "cache_control": _rolling_marker()}
         ]
     elif isinstance(content, list):
         new_content = list(content)
         for i in range(len(new_content) - 1, -1, -1):
             if _markable(new_content[i]):
-                new_content[i] = {**new_content[i], "cache_control": _marker()}
+                new_content[i] = {**new_content[i], "cache_control": _rolling_marker()}
                 break
         else:
             return messages

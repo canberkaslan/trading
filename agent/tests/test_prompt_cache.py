@@ -293,19 +293,44 @@ class TestTtl:
             "ttl": "1h",
         }
 
-    def test_one_hour_applies_to_every_marker_alike(
-        self, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize(
+        "messages",
+        [
+            _tool_loop_payload()["messages"],
+            [{"role": "user", "content": "SPY"}],
+        ],
+        ids=["mid-loop", "opening-call"],
+    )
+    def test_one_hour_stops_short_of_the_rolling_marker(
+        self, monkeypatch: pytest.MonkeyPatch, messages: list
     ) -> None:
-        # Anthropic requires longer-TTL entries to precede shorter ones. One
-        # TTL for all three markers can never violate that ordering.
+        # The rolling entry is read seconds later in the same loop and never
+        # again, so 1h there would only bill the loop's largest writes at 2x
+        # instead of 1.25x. The opt-in is for tools + system.
         monkeypatch.setenv("TRADINGAGENTS_CACHE_TTL", "1h")
+        out = apply_cache_control(_tool_loop_payload(messages=messages))
+        assert _cc(out["tools"][-1]) == {"type": "ephemeral", "ttl": "1h"}
+        assert _cc(out["system"][-1]) == {"type": "ephemeral", "ttl": "1h"}
+        assert _cc(out["messages"][-1]["content"][-1]) == {"type": "ephemeral"}
+
+    @pytest.mark.parametrize("ttl", ["", "5m", "1h"])
+    def test_a_longer_ttl_never_follows_a_shorter_one(
+        self, monkeypatch: pytest.MonkeyPatch, ttl: str
+    ) -> None:
+        # Anthropic rejects a 1h entry placed after a 5m one. Walk the markers
+        # in render order — tools, system, messages — and require the TTL
+        # never to grow along the way.
+        monkeypatch.setenv("TRADINGAGENTS_CACHE_TTL", ttl)
         out = apply_cache_control(_tool_loop_payload())
-        ttls = {
-            _cc(out["tools"][-1])["ttl"],
-            _cc(out["system"][-1])["ttl"],
-            _cc(out["messages"][-1]["content"][-1])["ttl"],
-        }
-        assert ttls == {"1h"}
+        blocks = [*out["tools"], *out["system"]]
+        blocks += [
+            b for m in out["messages"] if isinstance(m["content"], list) for b in m["content"]
+        ]
+        # An absent ttl is the five-minute default.
+        length = {"1h": 2, "5m": 1}
+        ttls = [length[cc.get("ttl", "5m")] for b in blocks if (cc := _cc(b)) is not None]
+        assert len(ttls) == 3
+        assert ttls == sorted(ttls, reverse=True)
 
     def test_an_unknown_ttl_falls_back_rather_than_sending_garbage(
         self, monkeypatch: pytest.MonkeyPatch

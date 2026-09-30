@@ -350,6 +350,20 @@ export interface TradesResponse {
   strategy?: ExitBucket | null;
   /** Rows with no stored class. Non-zero means `by_exit` does not add up. */
   unattributed?: number;
+  /** Same rows split by symbol, worst net P&L first. Sums to `stats`. */
+  by_ticker?: TickerStats[];
+}
+
+/** One symbol's realized record; `trades` is its sample size. */
+export interface TickerStats {
+  ticker: string;
+  trades: number;
+  wins: number;
+  losses: number;
+  win_rate: number;
+  net_pnl: number;
+  expectancy: number;
+  worst_trade: number;
 }
 
 /**

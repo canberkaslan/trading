@@ -84,7 +84,7 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 ### Round 4 later (post-go-live)
 - [x] **Fill reconciliation + realized P&L ledger** ✅ 2026-08-09 — see the daily-loop entry below.
       Reflection memory on realized fills is now UNBLOCKED (closed_trades is the input).
-- [ ] **Sizer has no cash / buying-power cap** (found 2026-08-09). `size_from_decision` sizes off
+- [x] **Sizer has no cash / buying-power cap** (found 2026-08-09). ✅ DONE in 6ebafe5 (`apply_cash_cap`, BUY-only, step 3b in sizer.py) — item was left open by mistake; closed 2026-10-01. `size_from_decision` sizes off
       `account_equity` only (sizer.py:98), so a fully-invested long book drifts into margin as it
       appreciates — the paper account sits at cash **-$510.54** on $109,574 equity (0.47% levered).
       Harmless on paper; on a funded live account that is real leverage plus margin interest, and
@@ -107,6 +107,19 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - 7a eval scorecard, 7b /analyze, 7c Ask tab + OTA
 - 7e Charts, 7f Analiz-Et deep-link, 7g Settings kill-switch+health, snapshot logger
 - cost-opt routing on branch (opt-in, not deployed)
+
+## Daily loop 2026-10-01 (🔴 BROKER 401 18. gün; box 77 commit geride ve pull'u tek blok)
+- **Canlı durum alınamadı.** trader-stg: `/readyz` degraded `alpaca:false`, `/v1/eval` 500, snapshot 502
+  (box 4ec0472). `trader.fusapp.com` başka origin (`alpaca:true`, dev token 401).
+- [x] **`docs/box-catchup-2026-10-01.md`**: 77 commit blast-radius'a göre 4 kovaya ayrıldı
+  (A execution/risk 16, B decision-quality 12, C read-only API/monitoring 14, D UI/CI/docs).
+  Key rotate = yeni kodu açan şalter → sıra: #52 kapat/revert → key hâlâ 401'ken pull → install.sh +
+  `User=ubuntu` sed + eval-report.timer → key rotate → ilk koşuyu canlı izle. Doğrulananlar:
+  15bf661 revert'i main'de temiz uygulanıyor; 4ec0472'ye e364701+94e71f8 temiz, f007e0b
+  `risk.py`'de çakışıyor (stop-coverage route box'ta yok). Box'ta `eval-report.timer` aktif değil.
+- [x] Backlog'daki "Sizer cash cap" maddesi 6ebafe5'te zaten yapılmıştı → kapatıldı.
+- **Sıradaki:** (a) Alpaca paper key rotate = Canberk, (b) #52 ambiguous-state tasarımı (branch) veya
+  revert kararı, (c) pull'dan önce bucket-C deploy branch'i seçeneği.
 
 ## Daily loop 2026-09-28 (🔴 BROKER 401 15. gün; backtest motoru çok-isimli portföyü ticker ortalamasıyla skorluyormuş)
 - **Canlı durum alınamadı (broker 401, gün 15).** trader-stg: `/readyz` degraded `alpaca:false`,

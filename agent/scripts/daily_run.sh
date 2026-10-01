@@ -129,6 +129,9 @@ ping_healthcheck() {
 # than leave the check to notice only when its grace period runs out.
 on_exit() {
   local rc=$?
+  if [[ -n "${RUN_STATE_DIR:-}" && -d "$RUN_STATE_DIR" ]]; then
+    rm -rf "$RUN_STATE_DIR"
+  fi
   if [[ "$rc" -ne 0 && "$HC_PINGED" -eq 0 ]]; then
     ping_healthcheck fail "daily_run.sh exited rc=$rc before reporting an outcome @ ${DATE}"
   fi
@@ -262,18 +265,127 @@ if [[ "${COMMENTATOR_FEED:-0}" == "1" ]]; then
   fi
 fi
 
+# Councils run side by side, COUNCIL_PARALLELISM at a time.
+#
+# Run one after another, eleven councils at ~14.5 min each are most of three
+# hours, and nearly all of it is waiting on model and data APIs rather than
+# computing. Each ticker is still its own process with its own timeout, so one
+# ticker failing or hanging costs that ticker only. What the processes share
+# is coordinated elsewhere: a BUY is sized and submitted under the submit lock
+# (tradingagents_us/execution/submit_lock.py), so each sizes against the cash
+# the others left, while an exit never waits on it for long; the vendor memory
+# log takes a lock around its file operations; and the fail-fast source
+# breakers count per run in TRADINGAGENTS_RUN_STATE_DIR.
+#
+# The default is 1, the old sequential run, so a box that pulls this without
+# touching its config trades exactly as before. Every council in flight is a
+# stream of model calls against one API key's rate limit, and a 429 storm there
+# costs more than the parallelism saves. To raise it, watch one run's
+# rate-limit headroom, then set COUNCIL_PARALLELISM=2 or 3 in
+# /opt/ai-trader/secrets.env. Output stays in universe order: each ticker writes
+# its own log, printed in order once all are done.
+COUNCIL_PARALLELISM="${COUNCIL_PARALLELISM:-1}"
+MAX_COUNCIL_PARALLELISM=6
+if ! [[ "$COUNCIL_PARALLELISM" =~ ^[0-9]+$ ]] || [[ "$COUNCIL_PARALLELISM" -lt 1 ]]; then
+  echo "WARNING: COUNCIL_PARALLELISM='$COUNCIL_PARALLELISM' is not a positive integer — running one ticker at a time" | tee -a "$RUN_LOG"
+  COUNCIL_PARALLELISM=1
+elif [[ "$COUNCIL_PARALLELISM" -gt "$MAX_COUNCIL_PARALLELISM" ]]; then
+  echo "WARNING: COUNCIL_PARALLELISM=$COUNCIL_PARALLELISM above $MAX_COUNCIL_PARALLELISM — capped" | tee -a "$RUN_LOG"
+  COUNCIL_PARALLELISM=$MAX_COUNCIL_PARALLELISM
+fi
+# Seconds between the first wave's launches, so the councils do not hit the
+# same data sources and the model API in the same second.
+COUNCIL_STAGGER_S="${COUNCIL_STAGGER_S:-5}"
+if ! [[ "$COUNCIL_STAGGER_S" =~ ^[0-9]+$ ]]; then
+  COUNCIL_STAGGER_S=5
+fi
+
+# The breaker state is throwaway and removed at exit. The ticker logs are not:
+# they sit beside the run log, one directory per day, one prefix per run.
+# trade.py prefetches prices for every name in the run before it takes the
+# submit lock: the other tickers' BUYs are what its locked read will find.
+export UNIVERSE
+RUN_STATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tradingagents-run.XXXXXX")"
+export TRADINGAGENTS_RUN_STATE_DIR="$RUN_STATE_DIR"
+TICKER_LOG_DIR="${LOG_DIR}/daily_${DATE}.d"
+RUN_TAG="$(date -u +%H%M%S)-$$"
+mkdir -p "$TICKER_LOG_DIR"
+slot_for() {
+  printf '%s/%s-%03d-%s' "$TICKER_LOG_DIR" "$RUN_TAG" "$1" "$2"
+}
+
+progress() {
+  echo "  [council] $*" | tee -a "$RUN_LOG" >&2
+}
+
+run_ticker() {
+  local ticker="$1" slot="$2" rc=0
+  timeout -k 30 "$TICKER_TIMEOUT_S" env PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.trade \
+      --ticker "$ticker" --date "$DATE" $SUBMIT_FLAG >"${slot}.log" 2>&1 || rc=$?
+  echo "$rc" >"${slot}.rc"
+  progress "$ticker finished rc=$rc"
+}
+
+# A stop (systemctl stop, a unit timeout, Ctrl-C) must stop the councils too.
+# Left alone, the background tickers outlive this script and keep trading with
+# nobody collecting their results. Each job's children (timeout, and through
+# it the python) get the signal, the partial logs go into the run log, and the
+# run exits 143 so the dead-man's switch hears a failure, not a clean run.
+on_signal() {
+  trap - TERM INT
+  echo "" | tee -a "$RUN_LOG"
+  echo "SIGNAL received — stopping councils in flight" | tee -a "$RUN_LOG"
+  local pid
+  for pid in $(jobs -p); do
+    pkill -TERM -P "$pid" 2>/dev/null || true
+    kill -TERM "$pid" 2>/dev/null || true
+  done
+  wait 2>/dev/null || true
+  local log
+  for log in "$TICKER_LOG_DIR/$RUN_TAG"-*.log; do
+    [[ -f "$log" ]] || continue
+    echo "--- partial: $(basename "$log") ---" | tee -a "$RUN_LOG"
+    tee -a "$RUN_LOG" <"$log"
+  done
+  exit 143
+}
+trap on_signal TERM INT
+
+echo "" | tee -a "$RUN_LOG"
+echo "--- councils: parallelism=$COUNCIL_PARALLELISM ---" | tee -a "$RUN_LOG"
+_idx=0
+for TICKER in $UNIVERSE; do
+  _idx=$((_idx + 1))
+  while [[ "$(jobs -rp | wc -l | tr -d ' ')" -ge "$COUNCIL_PARALLELISM" ]]; do
+    sleep 0.2
+  done
+  if [[ "$_idx" -gt 1 && "$_idx" -le "$COUNCIL_PARALLELISM" && "$COUNCIL_STAGGER_S" -gt 0 ]]; then
+    sleep "$COUNCIL_STAGGER_S"
+  fi
+  progress "$TICKER started"
+  # Fresh decision (no --use-cached). Guards + bracket are on by default.
+  run_ticker "$TICKER" "$(slot_for "$_idx" "$TICKER")" &
+done
+wait
+trap - TERM INT
+
 rc_total=0
 failed_tickers=""
+_idx=0
 for TICKER in $UNIVERSE; do
+  _idx=$((_idx + 1))
+  _slot="$(slot_for "$_idx" "$TICKER")"
   echo "" | tee -a "$RUN_LOG"
   echo "--- $TICKER @ $DATE ---" | tee -a "$RUN_LOG"
-  # Fresh decision (no --use-cached). Guards + bracket are on by default.
-  if timeout -k 30 "$TICKER_TIMEOUT_S" env PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.trade \
-        --ticker "$TICKER" --date "$DATE" $SUBMIT_FLAG 2>&1 | tee -a "$RUN_LOG"; then
+  if [[ -f "${_slot}.log" ]]; then
+    tee -a "$RUN_LOG" <"${_slot}.log"
+  fi
+  # No rc file means the ticker's job died before it could write one.
+  rc="$(cat "${_slot}.rc" 2>/dev/null || echo 1)"
+  if [[ "$rc" == "0" ]]; then
     echo "  -> $TICKER done" | tee -a "$RUN_LOG"
   else
-    rc=$?
-    if [[ "$rc" -eq 124 ]]; then
+    if [[ "$rc" == "124" ]]; then
       echo "  -> $TICKER TIMED OUT after ${TICKER_TIMEOUT_S}s — continuing" | tee -a "$RUN_LOG"
     else
       echo "  -> $TICKER FAILED (rc=$rc) — continuing" | tee -a "$RUN_LOG"

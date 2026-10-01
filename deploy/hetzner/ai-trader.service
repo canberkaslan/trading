@@ -12,6 +12,14 @@ User=deploy
 WorkingDirectory=/opt/ai-trader/agent
 # Secrets live OUTSIDE the git tree so a repo pull never clobbers them.
 EnvironmentFile=/opt/ai-trader/secrets.env
+# Councils in flight at once (scripts/daily_run.sh). The script's own default
+# is 1, the sequential run, so a git pull alone changes nothing; this line only
+# makes the value visible in the unit. To raise it: watch one run's Anthropic
+# rate-limit headroom (429s and retry lines in logs/daily_<date>.log), then set
+# COUNCIL_PARALLELISM=2 or 3 in /opt/ai-trader/secrets.env, which wins over
+# Environment= here. A value in agent/.env wins over both (daily_run.sh
+# sources it).
+Environment=COUNCIL_PARALLELISM=1
 ExecStart=/usr/bin/env bash /opt/ai-trader/agent/scripts/daily_run.sh
 # Absolute backstop above the per-ticker cap: 11 tickers × 1800s
 # (daily_run.sh TICKER_TIMEOUT_S) ≈ 19800s theoretical worst + overhead.

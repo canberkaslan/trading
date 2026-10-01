@@ -101,10 +101,11 @@ class TestRedditCircuitBreaker:
     """
 
     @pytest.fixture(autouse=True)
-    def _reset(self):
-        ss._consecutive_failures["n"] = 0
+    def _reset(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delenv("TRADINGAGENTS_RUN_STATE_DIR", raising=False)
+        ss._BREAKER.reset()
         yield
-        ss._consecutive_failures["n"] = 0
+        ss._BREAKER.reset()
 
     def _wrap(self, monkeypatch: pytest.MonkeyPatch, impl):
         from tradingagents.agents.analysts import sentiment_analyst as mod

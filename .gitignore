@@ -69,6 +69,8 @@ data/
 agent/.tradingagents/
 .checkpoints/
 *.db
+# Runtime locks (agent/tradingagents_us/execution/submit_lock.py)
+agent/run/
 *.sqlite
 agent/inert_alert.state.json
 agent/preflight.state.json

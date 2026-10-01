@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import os
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -12,7 +13,12 @@ from sqlalchemy import select
 
 from tradingagents_us.dataflows.alpaca_broker import AlpacaClient
 from tradingagents_us.execution import ExecutionConfig, submit_order
+from tradingagents_us.execution.book import read_open_buys, spendable_now
 from tradingagents_us.execution.flatten import flatten_all
+from tradingagents_us.execution.submit_lock import (
+    SubmitLockUnavailableError,
+    submit_section,
+)
 from tradingagents_us.risk.kill_switch import FileKillSwitchReader, default_kill_switch_path
 from tradingagents_us.schemas import KillSwitchState, OrderUpdate, TradeOrder
 from tradingagents_us.storage import TradeLogRepository
@@ -134,17 +140,23 @@ async def list_pending_orders(
     return out
 
 
-@router.post("/{order_id}/approve")
-async def approve_order(
-    order_id: str,
-    user: str = Depends(require_admin),
-    repo: TradeLogRepository = Depends(get_repo),
-) -> dict:
-    """Mobile-approved submission. Re-runs the executor with dry_run=False so
-    the stale + entry sanity guards re-evaluate against the *current* market
-    state — not the one captured when the order was held."""
-    # Kill switch gates THIS path too — an armed PAUSE_NEW/FLATTEN_ALL must
-    # block a stale Approve tap the same way it blocks the daily run.
+#: A tap waits this long for a daily-run ticker to finish sizing, then 503s.
+APPROVE_LOCK_TIMEOUT_S = 15.0
+
+
+def _previous_close(ticker: str) -> float | None:
+    try:
+        from tradingagents_us.dataflows.polygon import PolygonClient
+        with PolygonClient() as p:
+            results = p.previous_close(ticker).get("results") or []
+            if results:
+                return float(results[0].get("c") or 0) or None
+    except Exception:  # noqa: BLE001 — a missing price is handled by the caller
+        return None
+    return None
+
+
+def _refuse_if_killed(repo: TradeLogRepository, user: str, order_id: str) -> None:
     ks_state = FileKillSwitchReader().read()
     if ks_state != "RUN":
         # Audit is best-effort: the block below happens either way.
@@ -154,6 +166,52 @@ async def approve_order(
                 detail=f"blocked approve of order {order_id}",
             )
         raise HTTPException(409, f"kill switch is {ks_state} — approvals disabled")
+
+
+def _refuse_if_unaffordable(
+    alpaca: AlpacaClient, order: TradeOrder, price: float | None,
+    prices: dict[str, float | None],
+) -> None:
+    """A held BUY is re-costed against the cash the account has NOW.
+
+    It was sized when it was held, possibly days ago; tonight's daily run may
+    have committed that cash since. Priced from prices fetched before the lock
+    (no market-data call is made while it is held); an unpriceable pending BUY
+    or a missing reference price refuses rather than guesses.
+    """
+    try:
+        spendable, _ = spendable_now(alpaca, prices.get)
+    except Exception as exc:  # noqa: BLE001 — no cash figure, no BUY
+        raise HTTPException(503, f"could not read the account to re-check cash: {exc}") from exc
+    if price is None or spendable is None:
+        raise HTTPException(
+            409, "cannot re-check this BUY against current cash (no price for it or for a "
+                 "pending BUY); it stays PENDING"
+        )
+    notional = order.quantity * price
+    if notional > spendable:
+        raise HTTPException(
+            409, f"BUY needs ${notional:,.2f} but only ${spendable:,.2f} is spendable now; "
+                 f"it stays PENDING"
+        )
+
+
+# A plain `def`, not `async def`: FastAPI runs it in its threadpool. The lock
+# wait below sleeps, and in an async handler that sleep would stall the event
+# loop, and with it every other request, the kill switch included.
+@router.post("/{order_id}/approve")
+def approve_order(
+    order_id: str,
+    user: str = Depends(require_admin),
+    repo: TradeLogRepository = Depends(get_repo),
+) -> dict:
+    """Mobile-approved submission. Re-runs the executor with dry_run=False so
+    the stale + entry sanity guards re-evaluate against the *current* market
+    state — not the one captured when the order was held."""
+
+    # Kill switch gates THIS path too — an armed PAUSE_NEW/FLATTEN_ALL must
+    # block a stale Approve tap the same way it blocks the daily run.
+    _refuse_if_killed(repo, user, order_id)
 
     # Load order + decision rows
     with repo.session() as s:
@@ -179,22 +237,60 @@ async def approve_order(
         rejection_reasons=order_row.rejection_reasons_json or [],
         submitted_at_utc=order_row.submitted_at_utc,
     )
+    is_buy = order.side == "BUY"
 
-    # Fetch current price for re-validation
-    current_price: float | None = None
+    # Market data BEFORE the lock: the order's own price for re-validation and,
+    # for a BUY, the prices of the pending BUYs whose cash it must not take.
+    current_price = _previous_close(order.ticker)
+    prices: dict[str, float | None] = {order.ticker: current_price}
+    # Only a BUY reads the account (to re-check its cash); a SELL needs no
+    # broker client here at all.
+    alpaca = _account_client() if is_buy else None
     try:
-        from tradingagents_us.dataflows.polygon import PolygonClient
-        with PolygonClient() as p:
-            results = p.previous_close(order.ticker).get("results") or []
-            if results:
-                current_price = float(results[0].get("c") or 0) or None
-    except Exception:
-        pass
+        if alpaca is not None:
+            with contextlib.suppress(Exception):
+                for pending in read_open_buys(alpaca):
+                    if pending.symbol not in prices:
+                        prices[pending.symbol] = _previous_close(pending.symbol)
+        return _submit_locked(repo, user, order_id, order, decision, current_price,
+                              prices, alpaca)
+    finally:
+        if alpaca is not None:
+            with contextlib.suppress(Exception):
+                alpaca.close()
 
-    result = submit_order(
-        order, config=ExecutionConfig(dry_run=False),
-        decision=decision, current_price=current_price,
-    )
+
+def _account_client() -> AlpacaClient:
+    return get_alpaca()
+
+
+def _submit_locked(
+    repo: TradeLogRepository, user: str, order_id: str, order: TradeOrder,
+    decision: Any, current_price: float | None, prices: dict[str, float | None],
+    alpaca: AlpacaClient | None,
+) -> dict:
+    is_buy = alpaca is not None
+
+    # The daily run may be sizing BUYs right now against the same cash; take
+    # the lock every order path takes (execution/submit_lock.py). A SELL goes
+    # ahead without it rather than wait on a run; a BUY is refused, and the
+    # held order stays PENDING for another tap.
+    try:
+        with submit_section(exit_only=not is_buy, timeout_s=APPROVE_LOCK_TIMEOUT_S):
+            # Re-checked under the lock: the switch may have been flipped, or
+            # the cash spent, while this request waited for it.
+            _refuse_if_killed(repo, user, order_id)
+            if alpaca is not None:
+                ref = current_price or order.limit_price or decision.entry_price
+                _refuse_if_unaffordable(alpaca, order, ref, prices)
+            result = submit_order(
+                order, config=ExecutionConfig(dry_run=False),
+                decision=decision, current_price=current_price,
+            )
+    except SubmitLockUnavailableError as exc:
+        raise HTTPException(
+            503, f"another order path is sizing against this account; retry shortly ({exc})"
+        ) from exc
     repo.save_order(order, broker_order_id=result.broker_order_id)
     repo.append_update(result.update)
 

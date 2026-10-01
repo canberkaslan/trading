@@ -38,9 +38,11 @@ from tradingagents_us.dataflows import (  # noqa: E402
     alpaca_news_vendor,
     alpha_vantage_limited,
     commentator_supplement,
+    polymarket_guard,
     sentiment_supplement,
 )
 from tradingagents_us.dataflows.commentator import config as commentator_config  # noqa: E402
+from tradingagents_us.graph import memory_lock  # noqa: E402
 from tradingagents_us.llm import translate as _translate  # noqa: E402
 from tradingagents_us.llm.agent_routing import install as install_agent_routing  # noqa: E402
 from tradingagents_us.llm.prompt_cache import install as install_prompt_cache  # noqa: E402
@@ -68,6 +70,19 @@ def _load_env() -> None:
         v = v.strip().strip('"')
         if v:
             os.environ.setdefault(k, v)
+
+
+def _install_concurrency_seams() -> None:
+    """Seams the daily run's concurrent, fail-fast councils rely on. Idempotent."""
+    # Fail fast on the optional sources: 5 s timeouts, one bounded retry, and a
+    # breaker the whole daily run shares (see dataflows/fail_fast.py). A slow
+    # Gamma API used to cost up to 30 s per call, several calls per ticker.
+    if not polymarket_guard.install():
+        log.warning("polymarket fail-fast not installed — vendor client moved; 30 s timeouts")
+    # The daily run councils tickers concurrently, and they share one memory
+    # log whose rewrite-by-rename drops a concurrent append.
+    if not memory_lock.install():
+        log.warning("memory log lock not installed — concurrent councils may lose entries")
 
 
 def propagate(
@@ -111,6 +126,7 @@ def propagate(
     # still decides — but they cannot be chosen if nothing registered them.
     alpaca_news_vendor.register()
     alpha_vantage_limited.register()
+    _install_concurrency_seams()
 
     # Measured: the sentiment analyst received 394 input tokens and produced
     # 2,616 — every source had failed and it formed an opinion out of nothing.

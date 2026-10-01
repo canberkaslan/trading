@@ -216,6 +216,51 @@ class TestDryRunVersusSubmit:
         assert rc == 0
         assert fake.writes == EXPECTED_PLAN
 
+    def test_the_pass_submits_under_the_submit_lock(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Its orders are all exits, but taking the lock keeps a BUY from being
+        # sized while this pass is moving the book.
+        from tradingagents_us.execution import submit_lock
+        from tradingagents_us.file_lock import acquire, release
+
+        fake = _book()
+        held: list[bool] = []
+        real_submit = fake.submit_order
+
+        def watching(*a, **kw):
+            try:
+                release(acquire(submit_lock.lock_path(), 0.0))
+                held.append(False)
+            except Exception:  # noqa: BLE001 — refused by flock: someone holds it
+                held.append(True)
+            return real_submit(*a, **kw)
+
+        monkeypatch.setattr(fake, "submit_order", watching)
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+        assert rc == 0
+        assert held and all(held)
+
+    def test_a_held_lock_never_stops_the_pass(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from tradingagents_us.execution import submit_lock
+        from tradingagents_us.file_lock import exclusive
+
+        monkeypatch.setattr(submit_lock, "EXIT_TIMEOUT_S", 0.1)
+        fake = _book()
+        import threading
+
+        rcs: list[int] = []
+        with exclusive(submit_lock.lock_path()):
+            t = threading.Thread(target=lambda: rcs.append(
+                _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+            ))
+            t.start()
+            t.join(20)
+        assert rcs == [0]
+        assert fake.writes == EXPECTED_PLAN
+
     def test_without_backfill_a_naked_name_is_reported_not_protected(
         self, db_url: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:

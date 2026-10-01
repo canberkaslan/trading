@@ -7,6 +7,7 @@ The single source of truth is `models.py` — Alembic migrations are
 generated from these declarative tables.
 """
 
+from .engine import make_engine
 from .models import (
     AgentDecisionRow,
     Base,
@@ -23,4 +24,5 @@ __all__ = [
     "OrderUpdateRow",
     "TradeLogRepository",
     "TradeOrderRow",
+    "make_engine",
 ]

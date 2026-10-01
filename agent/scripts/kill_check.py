@@ -37,12 +37,10 @@ EXIT_FLATTENED = 76
 
 
 def _repo():
-    from sqlalchemy import create_engine
-
-    from tradingagents_us.storage import TradeLogRepository
+    from tradingagents_us.storage import TradeLogRepository, make_engine
 
     url = os.environ.get("TRADE_LOG_DB_URL", "sqlite:///./local.db")
-    return TradeLogRepository(engine=create_engine(url, future=True))
+    return TradeLogRepository(engine=make_engine(url))
 
 
 def _audit(state: str, detail: str) -> None:

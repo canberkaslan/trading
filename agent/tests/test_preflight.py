@@ -247,3 +247,49 @@ def test_a_record_that_cannot_be_written_never_fails_preflight(
 
     assert preflight.main() == 0
     assert "could not record the result" in capsys.readouterr().err
+
+
+class TestDbWritable:
+    """A SELECT passes on a WAL database whose sidecars cannot be written; a write does not."""
+
+    def _db(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        from sqlalchemy import text
+
+        from tradingagents_us.storage import make_engine
+
+        db = tmp_path / "local.db"
+        url = f"sqlite:///{db}"
+        engine = make_engine(url)
+        conn = engine.connect()  # held open, as the API does: keeps -wal/-shm on disk
+        conn.execute(text("CREATE TABLE t (x INTEGER)"))
+        conn.execute(text("INSERT INTO t VALUES (1)"))
+        conn.commit()
+        monkeypatch.setenv("TRADE_LOG_DB_URL", url)
+        return db, conn
+
+    def test_a_writable_db_passes(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        _db, conn = self._db(tmp_path, monkeypatch)
+        failures: list = []
+        try:
+            preflight._check_db(failures)
+        finally:
+            conn.close()
+        assert failures == []
+
+    def test_unwritable_sidecars_fail_the_check(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db, conn = self._db(tmp_path, monkeypatch)
+        sidecars = [Path(f"{db}-wal"), Path(f"{db}-shm")]
+        assert all(p.exists() for p in sidecars)  # the premise: WAL is on
+        for p in sidecars:
+            p.chmod(0o444)
+        failures: list = []
+        try:
+            preflight._check_db(failures)
+        finally:
+            for p in sidecars:
+                p.chmod(0o644)
+            conn.close()
+        assert failures, "a DB that cannot take the write lock must fail preflight"
+        assert failures[0][0] == "db"

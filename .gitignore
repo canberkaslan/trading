@@ -69,6 +69,9 @@ data/
 agent/.tradingagents/
 .checkpoints/
 *.db
+# WAL sidecars of local.db (agent/tradingagents_us/storage/engine.py)
+*.db-wal
+*.db-shm
 *.sqlite
 agent/inert_alert.state.json
 agent/preflight.state.json

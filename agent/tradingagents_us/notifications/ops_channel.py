@@ -135,14 +135,12 @@ def scrub(text: str) -> str:
 
 def _send_push(title: str, body: str, kind: str) -> ChannelResult:
     try:
-        from sqlalchemy import create_engine
-
         from tradingagents_us.notifications.sender import PushMessage, send_expo_push
-        from tradingagents_us.storage import TradeLogRepository
+        from tradingagents_us.storage import TradeLogRepository, make_engine
         from tradingagents_us.storage.device_tokens import list_all_tokens
 
         url = os.environ.get("TRADE_LOG_DB_URL", "sqlite:///./local.db")
-        repo = TradeLogRepository(engine=create_engine(url, future=True))
+        repo = TradeLogRepository(engine=make_engine(url))
         with repo.session() as s:
             tokens = list_all_tokens(s)
         if not tokens:

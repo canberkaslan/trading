@@ -864,6 +864,67 @@ class TestAnUncoveredOutcomeHasItsOwnExitCode:
         assert rc == 1
 
 
+class TestAnExitTheOpenRefusedIsNamed:
+    """Yesterday's exit, queued for the open, was cancelled there: the lot sat naked.
+
+    The next run finds it naked and sells it again, which closes the gap, but
+    only this line says the gap was there, so the pass fails and pages.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _no_waiting(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("tradingagents_us.execution.protected_close.time.sleep", lambda _: None)
+
+    def _yesterdays_exit(self, status: str) -> Order:
+        stamp = derive_exit_client_order_id("XOM", TODAY - timedelta(days=1), "time")
+        return dataclasses.replace(
+            _stop("exit-y", "XOM", 0.0), client_order_id=stamp, order_type="market",
+            stop_price=None, status=status, submitted_at=datetime.now(UTC) - timedelta(days=1),
+        )
+
+    def test_the_lot_is_sold_again_and_the_run_pages(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO, logger="manage_positions")
+        fake = FakeBroker(
+            positions=[_position("XOM", 100.5)], orders=[self._yesterdays_exit("canceled")],
+            fills=[_buy("XOM")], exit_status="accepted",
+        )
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        assert rc == 1
+        assert [w for w in fake.writes if w[0] == "submit_order"] == [XOM_EXIT]
+        assert "MISSED EXIT" in caplog.text and "canceled, 0 of 10 sold" in caplog.text
+
+    def test_an_exit_that_sold_the_lot_is_no_miss(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO, logger="manage_positions")
+        filled = dataclasses.replace(self._yesterdays_exit("filled"), filled_qty=10.0)
+        fake = FakeBroker(
+            positions=[_position("XOM", 100.5)], orders=[filled, _stop("stop-xom", "XOM", 90.0)],
+            fills=[_buy("XOM")], exit_status="accepted",
+        )
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        assert rc == 0
+        assert "MISSED EXIT" not in caplog.text
+
+
+class TestTodaysExitsAreCountedByTheirStamp:
+    def test_a_stop_re_armed_under_a_retried_stamp_spends_no_exit_budget(self) -> None:
+        retried = f"{XOM_EXIT_ID}-r2"
+        sells = frozenset({
+            ("XOM", _rearm_id(retried, "stop-xom")),
+            ("AAPL", derive_exit_client_order_id("AAPL", TODAY, "time") + "-r3"),
+            ("MSFT", derive_exit_client_order_id("MSFT", TODAY, "time")),
+        })
+
+        assert mp._exited_on(sells, TODAY) == {"AAPL", "MSFT"}
+
+
 class TestTimeExitAttributionThroughTheLedger:
     """What the ledger books a production time exit as, from the pass to reconcile.
 

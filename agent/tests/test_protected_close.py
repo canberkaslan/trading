@@ -932,6 +932,16 @@ class TestAnExitThatDidNotSellAtTheOpen:
 
         assert outcome.missed_exits == ()
 
+    def test_an_exit_its_own_close_re_armed_beside_is_not_a_miss(self) -> None:
+        # Rejected the night it was sent, and that close put the stop back:
+        # the lot was never without one, and that night's run already paged.
+        rearm = _stop("rearm-y", coid=_rearm_id(YESTERDAY_STAMP, "old-stop"))
+        fake = _shut([self._yesterday("rejected"), rearm])
+
+        outcome = _close(fake)
+
+        assert outcome.missed_exits == ()
+
     def test_a_re_armed_stop_of_an_earlier_close_is_not_an_exit(self) -> None:
         rearm = _stop(coid=_rearm_id(YESTERDAY_STAMP, "old-stop"), status="canceled")
         fake = _shut([rearm, _stop("stop-2")])

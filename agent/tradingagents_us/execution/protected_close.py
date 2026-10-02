@@ -486,6 +486,8 @@ def _missed_exits(
     released. If the broker rejects, cancels or expires it there, the lot
     spends the session with neither, and the next run only finds it naked:
     sold again or covered by then, but the gap happened, and only this says so.
+    One whose own close re-armed a stop under its stamp died that night, and
+    the lot kept its stop: that close already said so.
     """
     today = derive_exit_client_order_id(ticker, trade_date, reason)
     prefix = today[: today.rindex("-") + 1]
@@ -497,7 +499,13 @@ def _missed_exits(
     if not earlier:
         return ()
     last = max(earlier, key=lambda o: o.submitted_at)
-    if last.status.lower() in FAILED_EXIT_STATUSES and _remaining(last) > QTY_EPSILON:
+    rearmed = any(o.client_order_id.startswith(f"{last.client_order_id}-arm-")
+                  for o in book.records.values())
+    if (
+        last.status.lower() in FAILED_EXIT_STATUSES
+        and _remaining(last) > QTY_EPSILON
+        and not rearmed
+    ):
         return (f"{last.client_order_id} {last.status}, {last.filled_qty:g} of {last.qty:g} sold",)
     return ()
 

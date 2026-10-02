@@ -29,7 +29,9 @@ Exit codes, which daily_run.sh turns into pages:
        every night. Also with --submit, a due time exit the exit budget
        held back: a bad input that reads the book as due is held to three
        names only until a person looks. Also a time exit deferred because the
-       market was open (a pass run by hand in the session).
+       market was open (a pass run by hand in the session), and a time exit
+       queued by an earlier run that the broker rejected, cancelled or expired
+       at the open: the lot had neither stop nor exit from then until now.
     3  a time exit may have left shares with no stop: a close ended `unknown`
        or `naked`, or the re-cover after it could not place what it had to.
        A cancel still on its way strips its stop after this run, while the
@@ -79,6 +81,7 @@ import argparse
 import dataclasses
 import logging
 import os
+import re
 import sys
 import time
 from datetime import UTC, date, datetime, timedelta
@@ -237,7 +240,9 @@ def _exited_on(sells: frozenset[tuple[str, str]], day: date) -> frozenset[str]:
     out = set()
     for symbol, coid in sells:
         stamp = derive_exit_client_order_id(symbol, day, "time")
-        if coid == stamp or coid.startswith(f"{stamp}-r"):
+        # Exactly the stamp or `-rN`: a stop re-armed under a retried stamp
+        # (`<stamp>-r2-arm-...`) is a stop, not an exit, and spends nothing.
+        if re.fullmatch(rf"{re.escape(stamp)}(-r\d+)?", coid):
             out.add(symbol)
     return frozenset(out)
 
@@ -531,25 +536,10 @@ def _execute(
             elif isinstance(act, PlaceStop):
                 _place_backfill(client, act)
             else:
-                # Not DELETE /positions/{symbol}: the GTC stop reserves every
-                # share of a protected position, so the broker refused that
-                # close on exactly the positions that have one, and what it did
-                # close carried a broker id and booked as a flatten.
-                # close_with_protection releases the stop, sells the holding
-                # read after the release under the time-exit stamp, re-arms the
-                # stop if the sell is not working, and reads the verdict back.
-                outcome = close_with_protection(
-                    client, act.ticker, trade_date=trade_date or datetime.now(UTC).date()
-                )
+                outcome = _close_on_age(client, act, trade_date)
+                failures += int(not outcome.ok or bool(outcome.missed_exits))
                 if not outcome.ok:
-                    failures += 1
-                    if unclosed is not None:
-                        unclosed.append(act.ticker)
-                    if uncovered is not None and outcome.status in UNCOVERED_STATUSES:
-                        uncovered.append(f"{act.ticker} {outcome.status}")
-                    if unsettled is not None and outcome.client_order_id:
-                        unsettled[act.ticker] = outcome.client_order_id
-                _log_close(outcome)
+                    _hand_on(outcome, unclosed, uncovered, unsettled)
         except Exception as exc:  # noqa: BLE001 — one bad symbol must not stop the pass
             failures += 1
             log.error("%-6s FAILED: %s", act.ticker, exc)
@@ -560,6 +550,47 @@ def _execute(
                 if uncovered is not None:
                     uncovered.append(f"{act.ticker} close died: {exc}")
     return failures
+
+
+def _close_on_age(client: AlpacaClient, act: TimeExit, trade_date: date | None) -> CloseOutcome:
+    """One time exit through `protected_close`, logged.
+
+    Not DELETE /positions/{symbol}: the GTC stop reserves every share of a
+    protected position, so the broker refused that close on exactly the
+    positions that have one, and what it did close carried a broker id and
+    booked as a flatten. close_with_protection releases the stop, sells the
+    holding read after the release under the time-exit stamp, re-arms the stop
+    if the sell is not working, and reads the verdict off the broker.
+
+    An earlier exit that the open refused is named here once, as a failure:
+    the gap it left is closed by this run, but someone should know why.
+    """
+    outcome = close_with_protection(
+        client, act.ticker, trade_date=trade_date or datetime.now(UTC).date()
+    )
+    if outcome.missed_exits:
+        log.error(
+            "%-6s MISSED EXIT: an earlier time exit did not sell the lot at the open, "
+            "which then had no stop until this run: %s",
+            act.ticker, "; ".join(outcome.missed_exits),
+        )
+    _log_close(outcome)
+    return outcome
+
+
+def _hand_on(
+    outcome: CloseOutcome,
+    unclosed: list[str] | None,
+    uncovered: list[str] | None,
+    unsettled: dict[str, str] | None,
+) -> None:
+    """Record what a close that did not close left for the rest of the pass."""
+    if unclosed is not None:
+        unclosed.append(outcome.ticker)
+    if uncovered is not None and outcome.status in UNCOVERED_STATUSES:
+        uncovered.append(f"{outcome.ticker} {outcome.status}")
+    if unsettled is not None and outcome.client_order_id:
+        unsettled[outcome.ticker] = outcome.client_order_id
 
 
 def _report_exit_budget(

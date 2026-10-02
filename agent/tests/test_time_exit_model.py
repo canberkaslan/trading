@@ -200,8 +200,10 @@ def test_exhaustive_exploration(harness: Harness, market_open: bool) -> None:
         for book in BOOKS:
             stats.merge(explore_bounded(harness, book, max_faults, window))
     # In the session the close defers at its first read, so there is little
-    # left to explore: the fills it meets, the re-cover, and run 2.
-    assert stats.scenarios >= (2_000 if market_open else 50_000), "the exploration shrank"
+    # left to explore: the fills it meets, the re-cover, and run 2. Each floor
+    # is about three quarters of what the run explores (96k after the close,
+    # 3k in the session), the margin the original 200k-of-266k floor kept.
+    assert stats.scenarios >= (2_250 if market_open else 72_000), "the exploration shrank"
     _judge(harness, stats, "exhaustive")
 
 

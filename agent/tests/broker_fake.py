@@ -25,6 +25,11 @@ the first DELETE of each stop it placed with a 429 that changes nothing.
 `stop_in_flight` is `sell_in_flight` for a stop: its POST times out and it lands
 a set number of broker calls later, checked against the book as it is then.
 
+`market_open` is the clock's answer, closed by default: the daily run is after
+the close, and protected_close acts only then. `minutes_to_open` is how far off
+the next open is. `throttle_cancels` answers the first DELETEs of an order with
+429s that change nothing, as many as it says.
+
 An `oco` pair is one reservation, as Alpaca's held_for_orders has it: both legs
 can sell the same shares, and only one of them ever will. The nested listing
 returns the pair as the take-profit with the stop as its leg, the shape of an
@@ -37,12 +42,13 @@ from __future__ import annotations
 import dataclasses
 import itertools
 from collections.abc import Iterable, Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
 from tradingagents_us.dataflows.alpaca_broker import (
     AlpacaRequestError,
+    Clock,
     FillActivity,
     Order,
     Position,
@@ -95,6 +101,9 @@ class FakeBroker:
         stop_reply_error: Exception | None = None,
         throttle_own_cancels: bool = False,
         stop_in_flight: Mapping[str, int] | None = None,
+        market_open: bool = False,
+        minutes_to_open: float = 15 * 60,
+        throttle_cancels: Mapping[str, int] | None = None,
     ) -> None:
         self.positions: dict[str, Position] = {p.symbol: p for p in positions}
         self.orders: dict[str, Order] = {o.id: o for o in orders}
@@ -123,6 +132,10 @@ class FakeBroker:
         self.throttle_own_cancels = throttle_own_cancels
         #: symbol -> broker calls after a timed-out stop POST before it lands.
         self.stop_in_flight = dict(stop_in_flight or {})
+        self.market_open = market_open
+        self.minutes_to_open = minutes_to_open
+        #: order id -> 429s still to answer its DELETEs with.
+        self.throttle_cancels = dict(throttle_cancels or {})
         self._throttled: set[str] = set()
         self._in_flight: list[list] = []
         self._settling: dict[str, int] = {}
@@ -229,6 +242,9 @@ class FakeBroker:
 
     def _start_cancel(self, order_id: str) -> None:
         order = self.orders[order_id]
+        if order_id in self._settling:
+            # Already on its way: a second DELETE does not start the clock again.
+            return
         if order_id in self.slow_cancel:
             interim, reads = self.slow_cancel[order_id]
             self.orders[order_id] = dataclasses.replace(order, status=interim)
@@ -240,6 +256,16 @@ class FakeBroker:
             self._start_cancel(sibling)
 
     # ---- reads --------------------------------------------------------------
+
+    def clock(self) -> Clock:
+        self._record("clock")
+        now = datetime(2026, 9, 28, 22, 30, tzinfo=UTC)
+        return Clock(
+            is_open=self.market_open,
+            timestamp=now.isoformat(),
+            next_open=(now + timedelta(minutes=self.minutes_to_open)).isoformat(),
+            next_close=(now + timedelta(hours=21, minutes=30)).isoformat(),
+        )
 
     def list_positions(self) -> list[Position]:
         self._record("list_positions")
@@ -294,6 +320,9 @@ class FakeBroker:
         own = any(o.id == order_id for o in self.created)
         if self.throttle_own_cancels and own and order_id not in self._throttled:
             self._throttled.add(order_id)
+            raise _broker_error(f"DELETE /orders/{order_id}", 429, "rate limit exceeded")
+        if self.throttle_cancels.get(order_id, 0) > 0:
+            self.throttle_cancels[order_id] -= 1
             raise _broker_error(f"DELETE /orders/{order_id}", 429, "rate limit exceeded")
         if order_id in self.cancel_refused or order.status == "pending_cancel":
             raise _broker_error(f"DELETE /orders/{order_id}", 422, "order is not cancelable")

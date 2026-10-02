@@ -28,15 +28,16 @@ Exit codes, which daily_run.sh turns into pages:
        stop stands where it was, and without a page it would stand there
        every night. Also with --submit, a due time exit the exit budget
        held back: a bad input that reads the book as due is held to three
-       names only until a person looks.
+       names only until a person looks. Also a time exit deferred because the
+       market was open (a pass run by hand in the session).
     3  a time exit may have left shares with no stop: a close ended `unknown`
        or `naked`, or the re-cover after it could not place what it had to.
        A cancel still on its way strips its stop after this run, while the
        coverage check at the end of the run still sees the stop standing, so
        this code is the only thing that can say so while the run is on. An
-       `unknown` close can also mean the opposite: a stop that could not be
-       confirmed off a book the exit already sold, which the coverage check
-       never pages on either.
+       `unknown` close can also mean an exit that may still land on shares no
+       stop reserves, a sell standing on a book already flat, or an end state
+       the broker would not show; the coverage check pages on none of them.
 
 Safety, in the order it matters:
 
@@ -54,10 +55,12 @@ Safety, in the order it matters:
     guess there is how you end up with two stops on one lot — a short position
     waiting for a gap down.
   * A time exit releases the stop before it sells, because the stop reserves the
-    shares, and it releases it in the one order that cannot double-sell:
-    cancel, confirm the cancel, sell the holding read after that, verify, and
-    re-arm the stop in the same pass if the sell did not go through
-    (`execution.protected_close`).
+    shares, and only while the market is shut, when nothing but its own
+    requests can move the lot: cancel, confirm the cancel, sell the holding
+    read after that, verify, re-arm the stop if the sell is not working, and
+    read the book once more for the verdict (`execution.protected_close`).
+    Between the exit and a re-armed stop the broker's share reservation lets
+    only one stand, whatever order lost replies come back in.
   * One pass time-exits at most 3 positions, or 25% of those examined if fewer
     (`position_manager.exit_budget`), so one bad input cannot liquidate the book
     through time exits in a single run. The budget is the trade date's: a pass
@@ -532,9 +535,9 @@ def _execute(
                 # share of a protected position, so the broker refused that
                 # close on exactly the positions that have one, and what it did
                 # close carried a broker id and booked as a flatten.
-                # close_with_protection releases the stop, confirms it, sells
-                # the holding read after the release under the time-exit stamp,
-                # and re-arms the stop in the same pass if the sell fails.
+                # close_with_protection releases the stop, sells the holding
+                # read after the release under the time-exit stamp, re-arms the
+                # stop if the sell is not working, and reads the verdict back.
                 outcome = close_with_protection(
                     client, act.ticker, trade_date=trade_date or datetime.now(UTC).date()
                 )
@@ -678,12 +681,12 @@ def _recover_unclosed(
     sell them, and a stop placed beside it is refused while the lot is held and
     becomes a short once that sell fills.
 
-    A name whose exit was sent and never ruled out (`unsettled`) is back-filled
-    all the same, since it may never land, but through
-    `protected_close.cover_beside_exit`: that exit can land between this read
-    and the stop's POST, fill, and leave the stop on a flat book, so the stamp
-    and the book are read again once the stop stands, and it is taken back if
-    the exit got there first. A name it settles either way is off `uncovered`.
+    A name whose exit was sent and never found (`unsettled`) is back-filled all
+    the same, since it may never land, but through
+    `protected_close.cover_beside_exit`: the exit can land beside the stop's
+    POST, and the broker then lets only the first of the two stand, so the
+    book is read again to say which. A name it settles either way is off
+    `uncovered`.
 
     Returns how many placements failed. A book it could not read, or a
     placement that failed, is also appended to `uncovered`: the names it was

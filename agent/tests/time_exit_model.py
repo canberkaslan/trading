@@ -55,6 +55,7 @@ from scripts import manage_positions as mp
 from tradingagents_us import storage
 from tradingagents_us.dataflows.alpaca_broker import (
     AlpacaRequestError,
+    Clock,
     FillActivity,
     Order,
     Position,
@@ -182,7 +183,7 @@ class ModelBroker:
         ]
         self.latent: list[Latent] = []
         self.base_time = RUN1_AT
-        self.clock = 0.0
+        self.elapsed = 0.0
         self.armed = False
         self.n = 0
         self.next_id = 1
@@ -198,6 +199,8 @@ class ModelBroker:
         #: Shares sold by anything but our exit: cover a stop gave up by selling.
         self.sold_by_protection = 0.0
         self.in_run_fill = False
+        #: What the clock says during run 1. The daily run is after the close.
+        self.market_open = False
         self.tracing = False
         self.events: list[str] = []
         self.stage = "run 1"
@@ -226,10 +229,10 @@ class ModelBroker:
         return other
 
     def now(self) -> datetime:
-        return self.base_time + timedelta(seconds=self.clock)
+        return self.base_time + timedelta(seconds=self.elapsed)
 
     def sleep(self, seconds: float) -> None:
-        self.clock += seconds
+        self.elapsed += seconds
 
     def _new_id(self, role: str) -> str:
         oid = f"{role}-{self.next_id:02d}"
@@ -251,7 +254,7 @@ class ModelBroker:
 
     def _step(self, kind: str, what: str, target: Rec | None = None) -> str:
         """One broker call: time passes, then maybe an event, then the call's outcome."""
-        self.clock += CALL_S
+        self.elapsed += CALL_S
         self._tick()
         if not self.armed:
             if self.tracing and kind not in ("read",):
@@ -268,9 +271,9 @@ class ModelBroker:
             out = "ok"
         self.points.append((idx, kind, env_opts, outs))
         if env is not None:
-            self.trace(f"#{idx:<3} t={self.clock:6.2f}  [event] {self._describe_env(env)}")
+            self.trace(f"#{idx:<3} t={self.elapsed:6.2f}  [event] {self._describe_env(env)}")
             self._env(env)
-        self.trace(f"#{idx:<3} t={self.clock:6.2f}  {what} -> {out}")
+        self.trace(f"#{idx:<3} t={self.elapsed:6.2f}  {what} -> {out}")
         return out
 
     def _tick(self) -> None:
@@ -413,7 +416,7 @@ class ModelBroker:
                 )
         if "-arm-" in coid:
             role = "rearm"
-        elif "-cover-" in coid:
+        elif "-cover" in coid:
             role = "cover"
         elif coid.startswith("tr-exit-"):
             role = "exit"
@@ -440,12 +443,20 @@ class ModelBroker:
         }
 
     def _env_options(self) -> tuple[str, ...]:
+        """What may happen before a call: a fill only while the clock says open.
+
+        Alpaca triggers stops and fills GTC take-profits in regular hours
+        only, and queues a market order sent outside them for the open. A
+        model that fills them while its own clock says shut is not one Alpaca
+        can be, so fills follow `market_open`, and the explorers run both.
+        """
         opts: list[str] = []
-        for kind, recs in self._candidates().items():
-            for i, r in enumerate(recs):
-                opts.append(f"fill:{kind}#{i}")
-                if kind != "tp" and r.remaining >= 2:
-                    opts.append(f"half:{kind}#{i}")
+        if self.market_open:
+            for kind, recs in self._candidates().items():
+                for i, r in enumerate(recs):
+                    opts.append(f"fill:{kind}#{i}")
+                    if kind != "tp" and r.remaining >= 2:
+                        opts.append(f"half:{kind}#{i}")
         opts += [f"land:{i}" for i in range(len(self.latent))]
         return tuple(opts)
 
@@ -490,6 +501,18 @@ class ModelBroker:
     def _read(self, what: str) -> None:
         if self._step("read", what) == "timeout":
             raise _timeout()
+
+    def clock(self) -> Clock:
+        """Alpaca's market clock: open or not, and the next open (13:30 UTC, a weekday)."""
+        self._read("clock()")
+        now = self.now()
+        nxt = now.replace(hour=13, minute=30, second=0, microsecond=0)
+        while nxt <= now or nxt.weekday() >= 5:
+            nxt += timedelta(days=1)
+        return Clock(
+            is_open=self.market_open, timestamp=now.isoformat(),
+            next_open=nxt.isoformat(), next_close=nxt.replace(hour=20, minute=0).isoformat(),
+        )
 
     def list_positions(self) -> list[Position]:
         self._read("list_positions()")
@@ -641,7 +664,7 @@ class ModelBroker:
         """The next session: queued exits execute or die, a gap fills the stops, day orders end."""
         how, gap = choice
         self.stage = "open"
-        self.base_time, self.clock = OPEN_AT, 0.0
+        self.base_time, self.elapsed = OPEN_AT, 0.0
         for rec in self._candidates()["exit"]:
             if how == "fill":
                 self._fill(rec, rec.remaining, "at the open")
@@ -825,6 +848,9 @@ class Harness:
         self.broker: ModelBroker = build_book("stop")
         self.variant = "due"
         self.arming = False
+        #: Run 1 in the session instead of after the close: the clock says
+        #: open, and the model may fill a stop, a take-profit or an exit.
+        self.market_open = False
         self._run2_memo: dict[tuple, tuple[int, str, str]] = {}
         real_close = mp.close_with_protection
         real_cover = getattr(mp, "cover_beside_exit", None)
@@ -864,7 +890,7 @@ class Harness:
         # Every wait the close makes passes on the model's clock, not the wall's.
         # A lambda, not `self.broker.sleep`: the broker changes with every run.
         monkeypatch.setattr(time, "sleep", lambda s: self.broker.sleep(s))  # noqa: PLW0108
-        monkeypatch.setattr(time, "monotonic", lambda: 1_000.0 + self.broker.clock)
+        monkeypatch.setattr(time, "monotonic", lambda: 1_000.0 + self.broker.elapsed)
         # A fixed suffix for ids minted with uuid4, so traces replay identically.
         monkeypatch.setattr(
             pc, "uuid", SimpleNamespace(uuid4=lambda: SimpleNamespace(hex="c0ffee" * 6)),
@@ -876,7 +902,7 @@ class Harness:
     def _main(self, broker: ModelBroker, at: datetime, variant: str, arm: bool) -> int:
         self.broker, self.variant, self.arming = broker, variant, arm
         _ClockDT.current = at
-        broker.base_time, broker.clock, broker.mark = at, 0.0, MARK[variant]
+        broker.base_time, broker.elapsed, broker.mark = at, 0.0, MARK[variant]
         previous = logging.root.manager.disable
         if not broker.tracing:
             logging.disable(logging.CRITICAL)
@@ -919,7 +945,9 @@ class Harness:
         b = build_book(scenario.book)
         b.tracing = trace
         b.chooser = chooser or _replay(dict(scenario.faults))
+        b.market_open = self.market_open
         rc1 = self._main(b, RUN1_AT, "due", arm=True)
+        b.market_open = False
         b.trace(f"     == run 1 rc={rc1}; {b.describe()}; in flight: "
                 f"{[lat.label(b.name) for lat in b.latent] or 'nothing'}")
         stats.schedules += 1

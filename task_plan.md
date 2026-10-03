@@ -1306,3 +1306,19 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
   Realized ledger: 30 işlem, −$531.93 net, %26.7 win rate — yani app artık iki rakamı da gösteriyor.
 - Sıradaki: sizer cash cap (decision-path → test + supervised run; negatif cash 2. gün) ya da
   reflection memory on realized fills (branch) ya da per-ticker realized alt kırılımı (trade detay).
+
+## Daily loop 2026-10-03 (canlı trader okunabildi: prod-fusapp01, eval gün 21 NO-GO)
+- **Canlı durum** (box localhost üzerinden, prod-fusapp01 @46bca18, `/readyz` alpaca:true): eval 1M
+  **NO-GO** — Sharpe 0.96 (gate >1.0), MaxDD −1.62%, +1.22% vs SPY −0.21%, 21/10 gün. Equity
+  $111,514.70, cash $24,238, 8 pozisyon, günlük +$865 (+0.78%). Laptop dev token trader.fusapp.com'da
+  "invalid token" — box'ın token'ı farklı; okuma ssh + localhost ile yapıldı.
+- [x] **Watchdog iki farklı makineyi izliyordu**: `watchdog.yml` → trader-stg (yetim WAW kopya),
+  `watchdog-relay.yml` → trader.fusapp.com. Her ikisi artık `liveness.DEFAULT_HEALTH_URL`
+  (trader.fusapp.com); remedy metinleri `ssh agentmesh` / "Hetzner console" / trader-stg yerine
+  `BOX_SSH` / `HOST_CONSOLE` sabitlerini kullanıyor (public issue'ya origin IP sızmıyor).
+  3 regression test (eski kodda kırmızı, yenide yeşil) — biri iki workflow'un aynı URL'i probe
+  ettiğini dosyadan okuyarak sabitliyor. Suite 1827 pass / 2 fail = laptop'taki ölü Alpaca key (401).
+- [x] `docs/box-catchup-2026-10-01.md` başına düzeltme: gerçek hedef prod-fusapp01, 28 commit geride,
+  **key rotate = canlı trader'ı kırar**, #52 hâlâ blocker.
+- **Canberk'e kalan:** (a) `WATCHDOG_HOST` secret'ını prod-fusapp01 origin'ine çevir, (b) WAW
+  `ai-trader*.timer`'ları disable (her gece boşa ~$5–16 council), (c) #52 kararı → sonra prod pull.

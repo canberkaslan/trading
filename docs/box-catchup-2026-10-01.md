@@ -1,5 +1,29 @@
 # Box catch-up: what `git pull` would ship (2026-10-01)
 
+> **Correction, 2026-10-03 — this note targets the wrong box.** The live paper
+> trader is **prod-fusapp01** (behind `trader.fusapp.com`), on **46bca18**
+> (2026-09-23), with a **working** broker key: `/readyz` `alpaca:true`, eval
+> day 21 on 10-03. `151.115.89.202` (`trader-stg`) is an orphaned copy whose key
+> died when the prod deploy regenerated it; it still runs the full council every
+> night and then fails at submit.
+>
+> What changes as a result:
+>
+> - **Do not rotate the Alpaca key** (step 4 below). It is the live trader's key;
+>   rotating it takes the real runner down. Putting the working key on the WAW
+>   copy instead would put two runners on one account. The WAW copy's timers
+>   should be disabled, not repaired.
+> - **There is no "key refusing" safety window on the live box.** A `git pull`
+>   there trades the new code at the next 22:30 UTC run.
+> - The live box is **28** commits behind, not 77. In the buckets below:
+>   A = 3b502d1 (#49), **15bf661 (#52)**, a716efa (#45), 4bf5f32 (#72, DB engine/WAL);
+>   B = 3ef1e1c (#56, flag off), 7835bf8 (#58), 68e709a, bf39d11 (#71);
+>   C = 94e71f8, e364701, f007e0b, e276d0c, 14d7722; the rest are D.
+>   The September stop work is already on it. #52 is still the blocker.
+> - Units there run as `User=deploy`: use `sudo -u deploy git ...`.
+> - The watchdog now probes `trader.fusapp.com` from both workflows. The
+>   `WATCHDOG_HOST` secret still has to be pointed at the live origin by hand.
+
 The trader box (`ubuntu@151.115.89.202`, `/opt/ai-trader`) is on **4ec0472**
 (2026-09-09). `main` is **77 commits** ahead. The deploy path is
 `git pull --ff-only origin main`, so it is all of them or none of them. This

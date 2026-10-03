@@ -1,6 +1,6 @@
 """Is the box still there — decided from outside the box.
 
-Every alerting path this agent has runs *on* the Hetzner host: the daily run's
+Every alerting path this agent has runs *on* the trader host: the daily run's
 non-zero exit, `OnFailure=` on the systemd units, `scripts/inert_alert`, the
 healthchecks.io dead-man ping. All of them share one failure mode, and on
 2026-08-24 that failure mode happened: the host stopped answering SSH, ICMP and
@@ -61,6 +61,15 @@ from dataclasses import dataclass
 BACKUP_INTERVAL_HOURS = 24.0
 BACKUP_GRACE_HOURS = 2.0
 BACKUP_STALE_AFTER_HOURS = BACKUP_INTERVAL_HOURS + BACKUP_GRACE_HOURS
+
+# Where the live trader is and how to reach it, named once. Remedies are read by
+# somebody acting on them at 3am, and until 2026-10-03 they still said
+# `ssh agentmesh`, "the Hetzner console" and the trader-stg URL — a host
+# decommissioned on 2026-09-08 and an orphaned copy. The origin address stays
+# out on purpose: these strings land in public issues.
+DEFAULT_HEALTH_URL = "https://trader.fusapp.com/healthz"
+BOX_SSH = "ssh to the trader box (Scaleway, `/opt/ai-trader`)"
+HOST_CONSOLE = "the Scaleway console"
 
 # States, worst-first. Ordering matters: the runner uses it to decide whether a
 # new observation is an escalation of an open incident or just more of the same.
@@ -326,7 +335,7 @@ def _unreadable_backup(
                 "is in cloudflared or the API process.",
             ),
             remedy=(
-                "ssh agentmesh, then `systemctl status cloudflared ai-trader-api.service` "
+                f"{BOX_SSH}, then `systemctl status cloudflared ai-trader-api.service` "
                 "and restart whichever is down."
             ),
         )
@@ -341,8 +350,8 @@ def _unreadable_backup(
             "identical from here, so it is not called."
         )
         remedy = (
-            "Treat as probably dark: check the Hetzner console first, and keep "
-            "`curl -sS https://trader-stg.fusapp.tech/healthz` as the recovery check."
+            f"Treat as probably dark: check {HOST_CONSOLE} first, and keep "
+            f"`curl -sS {DEFAULT_HEALTH_URL}` as the recovery check."
         )
     else:
         leaning = (
@@ -351,8 +360,8 @@ def _unreadable_backup(
             "this case instead of leaving it open every 30 minutes."
         )
         remedy = (
-            "Retry `curl -sS https://trader-stg.fusapp.tech/healthz`; if it stays down, "
-            "`ssh agentmesh` and check `cloudflared` before assuming the host is gone."
+            f"Retry `curl -sS {DEFAULT_HEALTH_URL}`; if it stays down, "
+            f"{BOX_SSH} and check `cloudflared` before assuming the host is gone."
         )
 
     return Verdict(
@@ -428,7 +437,7 @@ def _origin_answered(
             ),
             reasons=(health_line, backup_line, *box_lines, stale),
             remedy=(
-                "ssh agentmesh, then `journalctl -u ai-trader-preflight -n 50` names each "
+                f"{BOX_SSH}, then `journalctl -u ai-trader-preflight -n 50` names each "
                 "failure. Fix the key or dependency in `/opt/ai-trader/secrets.env`, then "
                 "`sudo systemctl start ai-trader-preflight` to re-check; this closes once "
                 "a run records no failure. If nothing is recorded, check "
@@ -472,7 +481,7 @@ def _origin_answered(
                 "check `ai-trader-backup.timer`, disk space, and the deploy key.",
             ),
             remedy=(
-                "ssh agentmesh, then "
+                f"{BOX_SSH}, then "
                 "`systemctl status ai-trader-backup.timer ai-trader-backup.service` "
                 "and `journalctl -u ai-trader-backup -n 50`."
             ),
@@ -535,7 +544,7 @@ def classify(
                     "book is unattended, exactly as if the box were gone.",
                 ),
                 remedy=(
-                    "ssh agentmesh (it may still work — the host is up). Check `df -h` and "
+                    f"{BOX_SSH} (it may still work — the host is up). Check `df -h` and "
                     "`journalctl -b -e` first: a full disk or an OOM kill takes the timer, the "
                     "API and cloudflared down together. Console only if ssh also refuses."
                 ),
@@ -564,7 +573,7 @@ def classify(
             headline="Box is dark — the trader is not running",
             reasons=tuple(reasons),
             remedy=(
-                "Check the Hetzner console for the host; if it is up, `ssh agentmesh` and "
+                f"Check {HOST_CONSOLE} for the host; if it is up, {BOX_SSH} and "
                 "read `journalctl -b -1 -e`. If it is not, reboot from the console and "
                 "verify `ai-trader.timer`, `ai-trader-api.service` and `cloudflared` come back."
             ),
@@ -583,7 +592,7 @@ def classify(
             "and a working timer — the break is in cloudflared or the API process.",
         ),
         remedy=(
-            "ssh agentmesh, then `systemctl status cloudflared ai-trader-api.service` and "
+            f"{BOX_SSH}, then `systemctl status cloudflared ai-trader-api.service` and "
             "restart whichever is down."
         ),
     )

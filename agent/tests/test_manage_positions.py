@@ -912,6 +912,78 @@ class TestAnExitTheOpenRefusedIsNamed:
         assert rc == 0
         assert "MISSED EXIT" not in caplog.text
 
+    @pytest.mark.parametrize(("status", "filled"), [("rejected", 0.0), ("expired", 4.0),
+                                                     ("canceled", 0.0)])
+    def test_a_lot_no_longer_due_is_named_too(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+        status: str, filled: float,
+    ) -> None:
+        # The session that refused the exit moved the lot out of the flat band,
+        # here by an age window it no longer passes: no close is planned, so
+        # only the back-fill runs, and the close never got to see the miss.
+        caplog.set_level(logging.INFO, logger="manage_positions")
+        held = 10.0 - filled
+        yesterdays = dataclasses.replace(self._yesterdays_exit(status), filled_qty=filled)
+        fake = FakeBroker(
+            positions=[_position("XOM", 100.5, qty=held)], orders=[yesterdays],
+            fills=[_buy("XOM")],
+        )
+
+        rc = _run(
+            monkeypatch, fake, "--submit", "--backfill-stops", "--max-bars", "1000",
+            "--db-url", db_url,
+        )
+
+        assert rc == 1
+        (backfill,) = [w for w in fake.writes if w[0] == "submit_order"]
+        assert backfill[1]["order_type"] == "stop" and backfill[1]["qty"] == held
+        assert "MISSED EXIT" in caplog.text
+        assert f"{status}, {filled:g} of 10 sold" in caplog.text
+
+    def test_a_miss_is_named_once(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The run after the miss back-filled the lot. The run after that finds
+        # the dead exit still in the listing, with a stop placed since: old news.
+        caplog.set_level(logging.INFO, logger="manage_positions")
+        fake = FakeBroker(
+            positions=[_position("XOM", 100.5)],
+            orders=[self._yesterdays_exit("rejected"), _stop("backfill-xom", "XOM", 96.0)],
+            fills=[_buy("XOM")],
+        )
+
+        rc = _run(
+            monkeypatch, fake, "--submit", "--backfill-stops", "--max-bars", "1000",
+            "--db-url", db_url,
+        )
+
+        assert rc == 0
+        assert "MISSED EXIT" not in caplog.text
+
+    def test_a_lot_the_exit_budget_defers_is_named_too(
+        self, aged_book_db: str, monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # T7's exit died at the open, and today T0 and T1 spend the budget.
+        caplog.set_level(logging.INFO, logger="manage_positions")
+        stamp = derive_exit_client_order_id("T7", TODAY - timedelta(days=1), "time")
+        dead = dataclasses.replace(
+            _stop("exit-T7", "T7", 0.0), client_order_id=stamp, order_type="market",
+            stop_price=None, status="rejected", submitted_at=datetime.now(UTC) - timedelta(days=1),
+        )
+        fake = FakeBroker(
+            positions=[_position(s, 100.5) for s in AGED],
+            orders=[dead, *(_stop(f"stop-{s}", s, 90.0) for s in AGED[:-1])],
+            fills=[_buy(s) for s in AGED],
+        )
+
+        rc = _run(monkeypatch, fake, "--submit", "--db-url", aged_book_db)
+
+        assert rc == 1
+        assert "T7" not in {w[1]["symbol"] for w in fake.writes if w[0] == "submit_order"}
+        (missed,) = [r.getMessage() for r in caplog.records if "MISSED EXIT" in r.getMessage()]
+        assert missed.startswith("T7") and f"{stamp} rejected" in missed
+
 
 class TestTodaysExitsAreCountedByTheirStamp:
     def test_a_stop_re_armed_under_a_retried_stamp_spends_no_exit_budget(self) -> None:

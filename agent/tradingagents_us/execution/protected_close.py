@@ -72,7 +72,7 @@ import hashlib
 import logging
 import re
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from typing import Literal
@@ -550,31 +550,46 @@ def _prior_exit(ticker: str, prior: Order) -> CloseOutcome:
 def _missed_exits(
     book: _Book, ticker: str, trade_date: date, reason: str
 ) -> tuple[str, ...]:
-    """This lot's last earlier exit, when it ended without selling the lot.
+    return missed_exits(book.records.values(), ticker, trade_date, reason)
+
+
+def missed_exits(
+    orders: Iterable[Order], ticker: str, trade_date: date, reason: str = "time"
+) -> tuple[str, ...]:
+    """This lot's last earlier exit, when it ended without selling the lot and nothing followed.
 
     An exit sent after the close queues for the open, in place of the stop it
     released. If the broker rejects, cancels or expires it there, the lot
     spends the session with neither, and the next run only finds it naked:
     sold again or covered by then, but the gap happened, and only this says so.
-    One whose own close re-armed a stop under its stamp died that night, and
-    the lot kept its stop: that close already said so.
+
+    Named once: by the first run that reads the book after it. That run puts
+    something in its place, a stop or a new exit of this lot, and once one
+    was placed after it the exit is old news. So is one whose own close
+    re-armed a stop under its stamp: it died that night, the lot kept its
+    stop, and that close already said so.
+
+    `orders` is any listing of the account's orders, in any status; only
+    `ticker`'s sells count.
     """
-    today = derive_exit_client_order_id(ticker, trade_date, reason)
-    prefix = today[: today.rindex("-") + 1]
+    sells = [o for o in orders if o.symbol == ticker and o.side.lower() == "sell"]
     earlier = [
-        o for o in book.records.values()
-        if o.client_order_id.startswith(prefix) and not o.client_order_id.startswith(today)
-        and not _is_protective(o)
+        o for o in sells
+        if not _is_protective(o)
+        and exit_stamp_date(o.client_order_id, ticker, reason) not in (None, trade_date)
     ]
     if not earlier:
         return ()
     last = max(earlier, key=lambda o: o.submitted_at)
-    rearmed = any(o.client_order_id.startswith(f"{last.client_order_id}-arm-")
-                  for o in book.records.values())
+    replaced_since = any(
+        o.submitted_at > last.submitted_at
+        and (_is_protective(o) or exit_stamp_date(o.client_order_id, ticker, reason))
+        for o in sells
+    )
     if (
         last.status.lower() in FAILED_EXIT_STATUSES
         and _remaining(last) > QTY_EPSILON
-        and not rearmed
+        and not replaced_since
     ):
         return (f"{last.client_order_id} {last.status}, {last.filled_qty:g} of {last.qty:g} sold",)
     return ()

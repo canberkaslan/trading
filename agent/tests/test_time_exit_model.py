@@ -74,6 +74,10 @@ cancelled and never replaced has lost its way out as surely as a stop.
       queued on an earlier trade date and still waiting for an open) is never
       cancelled, in run 1 or in run 2. Cancelling it puts the lot's way out
       behind a cancel that may stick, and its resend spends exit budget again.
+  I7  An exit of ours that the open rejected, expired, cancelled or only half
+      filled, on a lot still held, fails run 2 (rc != 0), in both variants:
+      the lot spent that session with neither stop nor exit, and by the end
+      of run 2 it is covered again, so nothing else would ever say so.
 
 Exploration, all of it deterministic:
 

@@ -147,6 +147,8 @@ class Rec:
     role: str = ""
     #: Status before a cancel left it pending, for a cancel that never lands.
     prior: str | None = None
+    #: When the broker took it, as Alpaca's `submitted_at` reports it.
+    submitted: datetime = ENTRY_AT
 
     @property
     def remaining(self) -> float:
@@ -213,6 +215,9 @@ class ModelBroker:
         self.tracing = False
         self.events: list[str] = []
         self.stage = "run 1"
+        #: Our exits the open refused, expired, cancelled or only half filled:
+        #: the lot had neither stop nor exit for that session.
+        self.missed_at_open: list[str] = []
 
     # ---- plumbing ----------------------------------------------------------
 
@@ -233,6 +238,7 @@ class ModelBroker:
         other.violations = list(self.violations)
         other.outcomes = list(self.outcomes)
         other.events = list(self.events)
+        other.missed_at_open = list(self.missed_at_open)
         other.chooser = lambda *_: CLEAN
         other.armed = False
         return other
@@ -436,7 +442,7 @@ class ModelBroker:
             # After the close a market order queues for the open; a GTC stop rests.
             status="accepted" if order_type == "market" else "new",
             tif=kw.get("time_in_force", "day"), stop_price=kw.get("stop_price"),
-            limit_price=kw.get("limit_price"), role=role,
+            limit_price=kw.get("limit_price"), role=role, submitted=self.now(),
         )
         self.recs[rec.id] = rec
         return rec
@@ -493,7 +499,7 @@ class ModelBroker:
         return Order(
             id=rec.id, client_order_id=rec.coid, symbol=SYMBOL, side=rec.side,  # type: ignore[arg-type]
             qty=rec.qty, filled_qty=rec.filled, order_type=rec.type,  # type: ignore[arg-type]
-            status=rec.status, submitted_at=ENTRY_AT,
+            status=rec.status, submitted_at=rec.submitted,
             filled_avg_price=self.mark if rec.filled else None,
             limit_price=rec.limit_price, stop_price=rec.stop_price, legs=legs,
         )
@@ -645,7 +651,7 @@ class ModelBroker:
         new = dataclasses.replace(
             old, id=self._new_id(old.role), qty=old.remaining, filled=0.0,
             stop_price=kw.get("stop_price", old.stop_price),
-            status=old.status if old.status == "held" else "new",
+            status=old.status if old.status == "held" else "new", submitted=self.now(),
         )
         old.status = "replaced"
         self.recs[new.id] = new
@@ -703,6 +709,8 @@ class ModelBroker:
             else:
                 rec.status = how
                 self.trace(f"     {rec.role} {rec.id} {how} at the open")
+            if rec.remaining > EPS and rec.status != "filled":
+                self.missed_at_open.append(f"{rec.id} {rec.status}")
         if gap == "gap":
             for rec in self._candidates()["stop"]:
                 self._fill(rec, rec.remaining, "gap down at the open")
@@ -745,14 +753,21 @@ class ModelBroker:
         return f"held {self.held:g}, live sells: {live}"
 
     def key(self) -> tuple:
-        """The state run 2 depends on: the holding and every sell still standing."""
+        """The state run 2 depends on: the holding and every sell, in the order sent.
+
+        Dead sells too, not only those standing: run 2 reads them (an exit the
+        open refused is reported, a bracket leg whose pair ended is in doubt),
+        and which came after which.
+        """
         group_names: dict[str, int] = {}
-        live = []
-        for r in sorted(self.sells(), key=lambda r: (r.type, r.role, r.status, r.stop_price or 0)):
+        sells = []
+        for r in sorted(
+            (r for r in self.recs.values() if r.side == "sell"), key=lambda r: (r.submitted, r.id)
+        ):
             g = group_names.setdefault(r.group, len(group_names)) if r.group else None
-            live.append((r.type, r.role, r.status, round(r.remaining, 6), r.stop_price,
-                         r.limit_price, r.tif, g, r.parent is not None))
-        return (round(self.held, 6), tuple(live))
+            sells.append((r.type, r.role, r.status, round(r.remaining, 6), round(r.filled, 6),
+                          r.stop_price, r.limit_price, r.tif, g, r.parent is not None))
+        return (round(self.held, 6), tuple(sells))
 
 
 def build_book(name: str) -> ModelBroker:
@@ -1042,10 +1057,17 @@ class Harness:
         return out
 
     @staticmethod
-    def _check_run2(rc2: int, e2: str, state: str, variant: str) -> list[tuple[str, str]]:
-        """I1, I2, I3 after the next daily run."""
+    def _check_run2(
+        rc2: int, e2: str, state: str, variant: str, o: ModelBroker
+    ) -> list[tuple[str, str]]:
+        """I1, I2, I3 and I7 after the next daily run, which met the book `o` left."""
         out: list[tuple[str, str]] = []
         tail = f"{state} (run 2 {variant}, rc={rc2})"
+        if o.missed_at_open and o.held > EPS and rc2 == 0:
+            out.append((
+                f"I7 an exit the open did not fill went unreported by run 2 ({variant})",
+                f"{', '.join(o.missed_at_open)}; {tail}",
+            ))
         if e2 == "short":
             pass  # flagged as I1 at the fill that made it
         elif e2 == "flat+sell":
@@ -1100,7 +1122,7 @@ class _After:
         for variant in [sc.variant] if sc.variant else RUN2_VARIANTS:
             self.stats.scenarios += 1
             rc2, e2, state, flagged = self.harness.run2(o, variant, trace=o.tracing)
-            for cls, msg in (*flagged, *Harness._check_run2(rc2, e2, state, variant)):
+            for cls, msg in (*flagged, *Harness._check_run2(rc2, e2, state, variant, o)):
                 self.add(cls, msg, dataclasses.replace(sc, variant=variant))
             o.trace(f"     == run 2 ({variant}) rc={rc2}: {e2}; {state}")
         return o

@@ -991,6 +991,15 @@ class TestAnExitThatDidNotSellAtTheOpen:
 
         assert outcome.missed_exits == ()
 
+    def test_a_miss_a_later_stop_followed_was_named_by_the_run_that_placed_it(self) -> None:
+        # The run after the miss back-filled the lot (no stamp on that stop),
+        # and paged: the dead exit is still listed, and is old news now.
+        fake = _shut([self._yesterday("rejected"), _stop("backfill-y", coid="broker-1")])
+
+        outcome = _close(fake)
+
+        assert outcome.missed_exits == ()
+
     def test_a_re_armed_stop_of_an_earlier_close_is_not_an_exit(self) -> None:
         rearm = _stop(coid=_rearm_id(YESTERDAY_STAMP, "old-stop"), status="canceled")
         fake = _shut([rearm, _stop("stop-2")])

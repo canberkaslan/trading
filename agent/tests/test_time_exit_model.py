@@ -78,6 +78,16 @@ cancelled and never replaced has lost its way out as surely as a stop.
       filled, on a lot still held, fails run 2 (rc != 0), in both variants:
       the lot spent that session with neither stop nor exit, and by the end
       of run 2 it is covered again, so nothing else would ever say so.
+  I8  Precision. I4 and I5 accept `naked` with rc 3 in any scenario, so on
+      their own they pass a close that never puts a stop back. Where every
+      read was answered, nothing filled or landed by choice, and at most two
+      writes went wrong in a way the broker settles by itself (refused, or a
+      reply lost whether or not the request was carried out), the lot ends
+      the night flat, exiting or protected; with one such write, run 1 also
+      exits 0 or 1, not 3 (on a book fully covered at the start: a failed
+      back-fill of shares that were naked before is not the time exit's).
+      Not a cancel left pending or a bracket sibling left behind: those
+      leave the broker itself in doubt.
 
 Exploration, all of it deterministic:
 
@@ -90,7 +100,13 @@ Exploration, all of it deterministic:
   * random: four fixed seeds, 6000 schedules each, with per-call event and
     fault rates from 3-10% and 12-30% (one seed draws no events at all: the
     after-hours run as it is scheduled); one night, open and variant drawn per
-    schedule.
+    schedule;
+  * pinned: schedules deeper than the explorers reach, each found by a review
+    and written down as the story it tells (`Scripted`, `TestDeepSchedules`).
+
+TestTheHarnessHasTeeth breaks the code on purpose (a close that lies about
+its outcome or never re-arms, a pass with no re-cover or no back-fill) and
+requires the invariants to notice.
 
 Any violation prints a minimal trace: faults are dropped one at a time while
 the same class still shows, then the scenario is replayed call by call.
@@ -127,6 +143,7 @@ from tests.time_exit_model import (
     report,
 )
 from tradingagents_us.dataflows.alpaca_broker import AlpacaRequestError
+from tradingagents_us.execution import protected_close as pc
 
 #: Flip to True once the time exit resolves the ambiguous states: the
 #: exploration must then find no violation at all. Flipped by the redesign
@@ -344,3 +361,28 @@ class TestTheHarnessHasTeeth:
         monkeypatch.setattr(tem, "ARGV", ["--submit", "--refresh-bars"])
         stats = explore_bounded(Harness(monkeypatch), "stop", 1)
         assert "I2 naked after run 2 (moved)" in stats.findings
+
+    @pytest.mark.parametrize("book", ["stop", "bracket", "two_stops"])
+    def test_a_close_that_does_not_re_arm(
+        self, monkeypatch: pytest.MonkeyPatch, book: str
+    ) -> None:
+        # The same-run re-cover still back-fills what the close left naked,
+        # and run 2 would too: only the close's own report can tell.
+        monkeypatch.setattr(pc, "_rearm", lambda ctx, truth: pc._Placed())
+        stats = explore_bounded(Harness(monkeypatch), book, 1)
+        assert any(c.startswith("I8 rc=3") for c in stats.findings), sorted(stats.findings)
+
+    def test_a_pass_that_does_not_re_cover(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Exit and re-arm both refused: the close says naked (rc 3), and
+        # without the re-cover the lot spends the night with no stop.
+        monkeypatch.setattr(mp, "_recover_unclosed", lambda *a, **kw: 0)
+        stats = explore_bounded(Harness(monkeypatch), "stop", 2)
+        assert any(c.startswith("I8 naked") for c in stats.findings), sorted(stats.findings)
+
+    def test_a_close_and_a_pass_that_put_nothing_back(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(pc, "_rearm", lambda ctx, truth: pc._Placed())
+        monkeypatch.setattr(mp, "_recover_unclosed", lambda *a, **kw: 0)
+        stats = explore_bounded(Harness(monkeypatch), "stop", 1)
+        assert any(c.startswith("I8 naked") for c in stats.findings), sorted(stats.findings)

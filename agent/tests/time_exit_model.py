@@ -106,6 +106,14 @@ SIBLING_OUTCOMES = ("ok+sib_kept", "ok+sib_pending")
 DEAD_CANCEL_OUTCOMES = ("ok", "timeout_lost")
 SUBMIT_OUTCOMES = ("ok", "timeout_applied", "timeout_lost", "timeout_soon", "timeout_late", "422")
 
+#: Write outcomes the broker settles by itself: a refusal, or a reply lost
+#: whether the request was carried out, is still on its way, or never arrived.
+#: Not a cancel left pending, nor a bracket sibling left behind: those leave
+#: the broker itself in doubt, and the close is right to say it cannot tell.
+SETTLED_WRITE_FAULTS = frozenset(
+    {"422", "429", "timeout_lost", "timeout_applied", "timeout_soon", "timeout_late"}
+)
+
 #: How a queued market exit ends at the open, and whether a gap fills the stops.
 OPEN_EXIT_OUTCOMES = ("fill", "half", "rejected", "expired", "canceled")
 OPEN_GAP = ("hold", "gap")
@@ -204,6 +212,8 @@ class ModelBroker:
         )
         #: Choice points seen while armed: (index, kind, env options, outcomes).
         self.points: list[tuple[int, str, tuple[str, ...], tuple[str, ...]]] = []
+        #: (kind, event, outcome) of every choice that was not clean, as made.
+        self.applied: list[tuple[str, str | None, str]] = []
         #: (class, message) for every violation seen, in order.
         self.violations: list[tuple[str, str]] = []
         self.outcomes: list[tuple[str, pc.CloseOutcome]] = []
@@ -236,6 +246,7 @@ class ModelBroker:
         other.latent = [dataclasses.replace(lat, kw=dict(lat.kw) if lat.kw else None)
                         for lat in self.latent]
         other.points = []
+        other.applied = list(self.applied)
         other.violations = list(self.violations)
         other.outcomes = list(self.outcomes)
         other.events = list(self.events)
@@ -286,6 +297,8 @@ class ModelBroker:
         if out not in outs:
             out = "ok"
         self.points.append((idx, kind, env_opts, outs))
+        if (env, out) != CLEAN:
+            self.applied.append((kind, env, out))
         if env is not None:
             self.trace(f"#{idx:<3} t={self.elapsed:6.2f}  [event] {self._describe_env(env)}")
             self._env(env)
@@ -745,6 +758,21 @@ class ModelBroker:
             return "protected"
         return "naked"
 
+    def settled_writes(self) -> int | None:
+        """How many writes went wrong in run 1, when nothing else did; None otherwise.
+
+        Nothing else: every read answered, no fill or late landing chosen, and
+        each write that went wrong did so in a way the broker settles by itself
+        (`SETTLED_WRITE_FAULTS`). Such a schedule hides nothing a careful
+        close cannot read back, which is what I8 holds it to.
+        """
+        for kind, env, out in self.applied:
+            if env is not None or kind not in ("submit", "cancel"):
+                return None
+            if out not in SETTLED_WRITE_FAULTS:
+                return None
+        return len(self.applied)
+
     def describe(self) -> str:
         live = ", ".join(
             f"{r.role}:{r.id}[{r.status}] {r.remaining:g}"
@@ -1027,7 +1055,10 @@ class Harness:
         if close is None:
             stats.add(Finding("harness: no time exit in run 1", f"rc={rc1}", scenario))
             return b
-        after = _After(self, scenario, close, rc1, cover_wanted(scenario.book), add, stats, pick)
+        after = _After(
+            self, scenario, close, rc1, cover_wanted(scenario.book), add, stats, pick,
+            b.settled_writes(),
+        )
         nights = [scenario.night] if scenario.night is not None else b.night_choices()
         if pick is not None and scenario.night is None:
             nights = [pick.choice(nights)]
@@ -1056,6 +1087,32 @@ class Harness:
             out.append((f"I4 close says unchanged but the lot is {e1}", state))
         if e1 not in ("flat", "exiting", "protected") and rc1 != mp.EXIT_UNCOVERED:
             out.append((f"I5 {e1} after run 1, reported as rc={rc1}", state))
+        return out
+
+    @staticmethod
+    def _check_precision(
+        close: pc.CloseOutcome, rc1: int, e1: str, n: ModelBroker, writes: int | None,
+        full: bool,
+    ) -> list[tuple[str, str]]:
+        """I8: what a schedule of refused or lost writes, every read answered, must end in.
+
+        I4 and I5 accept `naked` with rc 3 anywhere, so on their own they
+        cannot tell a close that puts the stop back from one that does not.
+        With at most two such writes, every one of them read back, the lot
+        ends the night flat, exiting or protected: the re-arm and the same-run
+        re-cover between them put back what went. With one, the pass also
+        knows it did, and exits 0 or 1, not 3: on a book that was fully
+        covered at the start (`full`), since a back-fill of shares that were
+        already naked is not the time exit's to vouch for.
+        """
+        if writes is None or writes > 2 or e1 == "short":
+            return []
+        state = f"{n.describe()} (close: {close.status}; rc={rc1})"
+        out: list[tuple[str, str]] = []
+        if e1 not in ("flat", "exiting", "protected"):
+            out.append((f"I8 {e1} after run 1 with {writes} refused or lost write(s)", state))
+        if writes <= 1 and full and rc1 == mp.EXIT_UNCOVERED:
+            out.append((f"I8 rc=3 after run 1 with {writes} refused or lost write(s)", state))
         return out
 
     @staticmethod
@@ -1093,6 +1150,8 @@ class _After:
     add: Callable[[str, str, Scenario], None]
     stats: Stats
     pick: random.Random | None
+    #: `ModelBroker.settled_writes` of run 1.
+    writes: int | None = None
 
     def night(self, b: ModelBroker, choice: tuple[str, ...]) -> ModelBroker:
         """Settle what run 1 left in flight one way, check, then every open after it."""
@@ -1102,7 +1161,10 @@ class _After:
         sc = dataclasses.replace(self.scenario, night=settled)
         e1 = n.kind(self.wanted)
         n.trace(f"     == after the night: {e1}; {n.describe()}")
-        for cls, msg in Harness._check_run1(self.close, self.rc1, e1, n):
+        precision = Harness._check_precision(
+            self.close, self.rc1, e1, n, self.writes, self.wanted >= QTY - EPS
+        )
+        for cls, msg in (*Harness._check_run1(self.close, self.rc1, e1, n), *precision):
             self.add(cls, msg, sc)
         openings = [sc.opening] if sc.opening is not None else n.open_choices()
         if self.pick is not None and sc.opening is None:

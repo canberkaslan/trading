@@ -1339,6 +1339,55 @@ class Scripted:
         return None, rule[1]
 
 
+class Streak:
+    """One outcome on consecutive calls of one kind: a broker that keeps failing one way.
+
+    From call `start` on, each call of `kind` whose outcomes include `outcome`
+    gets it, `length` times; every other call is answered cleanly. The
+    explorers above bound the faults per schedule (two anywhere, three within
+    ten calls, a fault rate per call), and the release retries a DELETE at
+    every read until the broker answers: the end of its confirm window, and
+    what it decides there off the DELETEs it noted as possibly landed, takes
+    ten failures in a row to reach.
+    """
+
+    def __init__(self, start: int, kind: str, outcome: str, length: int) -> None:
+        self.start, self.kind, self.outcome, self.left = start, kind, outcome, length
+        self.made: dict[int, Choice] = {}
+
+    def __call__(self, idx: int, kind: str, env_opts, outs, what: str = "") -> Choice:  # noqa: ANN001
+        if idx < self.start or kind != self.kind or self.left <= 0 or self.outcome not in outs:
+            return CLEAN
+        self.left -= 1
+        self.made[idx] = (None, self.outcome)
+        return None, self.outcome
+
+
+#: How many calls in a row a streak runs: past the confirm window's ten reads,
+#: and past the settle window's seven more.
+STREAK_LENGTHS = (3, 10, 20)
+
+
+def explore_streaks(
+    harness: Harness, book: str, lengths: Sequence[int] = STREAK_LENGTHS
+) -> Stats:
+    """Every streak: from each call of the clean run, each fault its kind allows, each length.
+
+    Each schedule is checked under every night, open and run-2 variant.
+    """
+    stats = Stats()
+    start = time.perf_counter()
+    base = harness.evaluate(Scenario(book, ()), stats)
+    for idx, kind, _env_opts, outs in base.points:
+        for outcome in outs[1:]:
+            for length in lengths:
+                harness.evaluate(
+                    Scenario(book, ()), stats, chooser=Streak(idx, kind, outcome, length)
+                )
+    stats.seconds = time.perf_counter() - start
+    return stats
+
+
 def explore_random(
     harness: Harness, books: Sequence[str], seed: int, n: int,
     p_env: float = 0.06, p_fault: float = 0.12,

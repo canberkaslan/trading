@@ -113,6 +113,13 @@ Exploration, all of it deterministic, for each of run 1's three times:
     fault rates from 3-10% and 12-30% (one seed draws no events at all: the
     after-hours run as it is scheduled); one night, open and variant drawn per
     schedule;
+  * streaks: from each call of the clean run, each fault its kind allows, on
+    3, 10 or 20 consecutive calls of that kind (every DELETE throttled, every
+    one lost in flight, every read timed out), with every night, open and
+    variant. The release sends a DELETE at each read until the order goes,
+    and what it decides at the end of its confirm window takes ten failures
+    in a row to reach: deeper than the bounded explorers go, and rarer than
+    the random sweep draws;
   * pinned: schedules deeper than the explorers reach, each found by a review
     and written down as the story it tells (`Scripted`, `TestDeepSchedules`).
 
@@ -218,6 +225,10 @@ RUN1 = {
 #: meets, the re-cover, and run 2.
 EXHAUSTIVE_FLOOR = {"after-close": 113_000, "past-midnight": 113_000, "in-session": 4_000}
 
+#: Each streak exploration's floor, about three quarters of what it covers
+#: (3.1k scenarios after the close, either time, and 0.5k in the session).
+STREAK_FLOOR = {"after-close": 2_300, "past-midnight": 2_300, "in-session": 390}
+
 #: (seed, schedules, per-call event rate, per-call fault rate).
 RANDOM = (
     (101, 6000, 0.06, 0.12),
@@ -274,6 +285,16 @@ def test_random_sweep(harness: Harness, run1: str) -> None:
     _judge(harness, stats, "random")
 
 
+@pytest.mark.parametrize("run1", list(RUN1))
+def test_streak_exploration(harness: Harness, run1: str) -> None:
+    harness.run1_at, harness.market_open = RUN1[run1]
+    stats = Stats()
+    for book in BOOKS:
+        stats.merge(tem.explore_streaks(harness, book))
+    assert stats.scenarios >= STREAK_FLOOR[run1], "the exploration shrank"
+    _judge(harness, stats, "streak")
+
+
 class TestDeepSchedules:
     """Counterexamples deeper than the explorers reach, pinned as the story they tell.
 
@@ -303,6 +324,22 @@ class TestDeepSchedules:
             ("submit_order(stop sell 4 @88", "422"),
             ("list_orders", "timeout", 3),
             ("-cover", "timeout_lost"),
+        ))
+
+    @pytest.mark.parametrize("book", ["stop", "bracket", "two_stops"])
+    def test_a_delete_lost_in_flight_then_throttled_through_the_confirm_window(
+        self, harness: Harness, book: str
+    ) -> None:
+        # Eleven faults. The first DELETE times out with the cancel still on
+        # its way, and the next ten, one per read of the confirm window, are
+        # throttled. The order reads working all the while. Only the note
+        # that the first DELETE may yet land keeps the release waiting it out
+        # past the window; without it the stop is taken at its word, the
+        # close says `unchanged` (rc 1), and the cancel lands in the night on
+        # a lot nothing else covers.
+        self._judge(harness, book, tem.Scripted(
+            ("cancel_order", "timeout_late"),
+            ("cancel_order", "429", 10),
         ))
 
 
@@ -454,6 +491,26 @@ class TestTheHarnessHasTeeth:
         monkeypatch.setattr(mp, "_recover_unclosed", lambda *a, **kw: 0)
         stats = explore_bounded(Harness(monkeypatch), "stop", 2)
         assert any(c.startswith("I8 naked") for c in stats.findings), sorted(stats.findings)
+
+    def test_a_release_that_forgets_a_delete_it_got_no_answer_to(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A DELETE that timed out is noted as possibly landed only when the
+        # broker refused it: a timed-out cancel still on its way is then
+        # forgotten, and the stop it strips counted as cover.
+        def forgetful(client, order, release) -> None:  # noqa: ANN001
+            try:
+                client.cancel_order(order.id)
+            except Exception:  # noqa: BLE001
+                return
+            release.sent[order.id] = order
+
+        monkeypatch.setattr(pc, "_send_cancel", forgetful)
+        stats = tem.explore_streaks(Harness(monkeypatch), "stop")
+        assert "I4 close says unchanged but the lot is naked" in stats.findings, sorted(
+            stats.findings
+        )
+        assert "I5 naked after run 1, reported as rc=1" in stats.findings
 
     def test_a_close_and_a_pass_that_put_nothing_back(
         self, monkeypatch: pytest.MonkeyPatch

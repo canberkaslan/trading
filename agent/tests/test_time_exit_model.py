@@ -85,7 +85,10 @@ cancelled and never replaced has lost its way out as surely as a stop.
       the lot spent that session with neither stop nor exit, and by the end
       of run 2 it is covered again, so nothing else would ever say so. Also
       when run 1 was past 00:00 UTC, and the exit's stamp carries run 2's
-      own trade date.
+      own trade date. And where run 2 closes the lot again, that close names
+      the exit in its outcome (`missed_exits`), which is what its log line
+      says: it sends the next stamp (`-r2`) past the dead one, and a close
+      that reads that dead stamp as today's own says nothing of the session.
   I8  Precision. I4 and I5 accept `naked` with rc 3 in any scenario, so on
       their own they pass a close that never puts a stop back. Where every
       read was answered, nothing filled or landed by choice, and at most two
@@ -416,6 +419,18 @@ class TestTheHarnessHasTeeth:
         stats = explore_bounded(Harness(monkeypatch), "stop", 1)
         assert any(c.startswith("I4 close says exit_submitted") for c in stats.findings)
         assert any(c.startswith("I5 ") for c in stats.findings)
+
+    def test_a_close_that_does_not_name_the_exit_the_open_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The pass still names it and fails (rc 1), so only the close's own
+        # report can tell.
+        monkeypatch.setattr(pc, "missed_exits", lambda *a, **kw: ())
+        stats = explore_bounded(Harness(monkeypatch), "stop", 1)
+        assert "I7 run 2's close did not name the exit the open did not fill (due)" in (
+            stats.findings
+        ), sorted(stats.findings)
+        assert not any("unreported" in c for c in stats.findings)
 
     def test_a_next_run_that_does_not_back_fill(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(tem, "ARGV", ["--submit", "--refresh-bars"])

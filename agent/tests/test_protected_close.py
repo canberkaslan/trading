@@ -1037,6 +1037,20 @@ class TestTheCalendarSaysWhetherAnExitMetAnOpen:
         assert outcome.missed_exits == ()
         _assert_exiting_once(fake)
 
+    def test_a_dead_exit_under_this_closes_own_stamp_that_met_an_open_is_named(self) -> None:
+        # Sent at 01:00 UTC by a run past midnight, under the date this 22:30
+        # close has too, and refused at the 13:30 open. The close moves on to
+        # the next stamp, and says why.
+        fake = _shut(now=datetime.combine(DAY, datetime.min.time(), UTC) + timedelta(hours=22.5))
+        self._dead(fake, fake.now - timedelta(hours=21.5), coid=STAMP)
+
+        outcome = _close(fake)
+
+        assert outcome.status == "exit_submitted"
+        assert outcome.client_order_id == f"{STAMP}-r2"
+        assert outcome.missed_exits == (f"{STAMP} rejected, 0 of 10 sold",)
+        assert f"an earlier exit did not sell the lot: {STAMP} rejected" in outcome.detail
+
     def test_a_calendar_it_cannot_read_names_the_exit_rather_than_miss_it(self) -> None:
         class _NoCalendar(FakeBroker):
             def calendar(self, start: date, end: date) -> list:

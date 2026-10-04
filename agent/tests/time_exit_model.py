@@ -914,6 +914,18 @@ def fresh_bars(at: datetime, variant: str) -> dict[str, tuple[list[Bar], list[da
 
 
 @dataclass(frozen=True)
+class Run2:
+    """What run 2 did: its exit code, the lot's kind after it, the book, what it flagged."""
+
+    rc: int
+    kind: str
+    state: str
+    flagged: tuple[tuple[str, str], ...]
+    #: The outcome of each time exit run 2 closed: what it said to the log.
+    closes: tuple[pc.CloseOutcome, ...] = ()
+
+
+@dataclass(frozen=True)
 class Scenario:
     """Everything that decides one end-to-end run: replayable."""
 
@@ -978,7 +990,7 @@ class Harness:
         #: Run 1 in the session instead of after the close: the clock says
         #: open, and the model may fill a stop, a take-profit or an exit.
         self.market_open = False
-        self._run2_memo: dict[tuple, tuple[int, str, str, tuple[tuple[str, str], ...]]] = {}
+        self._run2_memo: dict[tuple, Run2] = {}
         real_close = mp.close_with_protection
         real_cover = getattr(mp, "cover_beside_exit", None)
 
@@ -1041,10 +1053,8 @@ class Harness:
             broker.armed = False
             self.arming = False
 
-    def run2(
-        self, b: ModelBroker, variant: str, trace: bool = False
-    ) -> tuple[int, str, str, tuple[tuple[str, str], ...]]:
-        """Run 2 on `b`: its exit code, the lot's kind, the book, and what it flagged."""
+    def run2(self, b: ModelBroker, variant: str, trace: bool = False) -> Run2:
+        """Run 2 on `b`: its exit code, the lot's kind, the book, what it flagged, its closes."""
         # The calendar too: whether an exit met an open is read off it.
         key = (variant, b.key(), self.run1_at, frozenset(b.holidays))
         if not trace and key in self._run2_memo:
@@ -1053,7 +1063,10 @@ class Harness:
         r.tracing, r.stage = trace, f"run 2 ({variant})"
         r.events = []
         rc = self._main(r, RUN2_AT, variant, arm=False)
-        result = (rc, r.kind(QTY), r.describe(), tuple(r.violations[len(b.violations):]))
+        closes = tuple(o for kind, o in r.outcomes[len(b.outcomes):] if kind == "close")
+        result = Run2(
+            rc, r.kind(QTY), r.describe(), tuple(r.violations[len(b.violations):]), closes
+        )
         if trace:
             b.events.extend(r.events)
         else:
@@ -1161,16 +1174,22 @@ class Harness:
         return out
 
     @staticmethod
-    def _check_run2(
-        rc2: int, e2: str, state: str, variant: str, o: ModelBroker
-    ) -> list[tuple[str, str]]:
+    def _check_run2(r2: Run2, variant: str, o: ModelBroker) -> list[tuple[str, str]]:
         """I1, I2, I3 and I7 after the next daily run, which met the book `o` left."""
         out: list[tuple[str, str]] = []
+        rc2, e2, state = r2.rc, r2.kind, r2.state
         tail = f"{state} (run 2 {variant}, rc={rc2})"
-        if o.missed_at_open and o.held > EPS and rc2 == 0:
+        missed = o.missed_at_open and o.held > EPS
+        if missed and rc2 == 0:
             out.append((
                 f"I7 an exit the open did not fill went unreported by run 2 ({variant})",
                 f"{', '.join(o.missed_at_open)}; {tail}",
+            ))
+        if missed and r2.closes and not any(c.missed_exits for c in r2.closes):
+            out.append((
+                f"I7 run 2's close did not name the exit the open did not fill ({variant})",
+                f"{', '.join(o.missed_at_open)}; close: "
+                f"{'; '.join(f'{c.status}: {c.detail}' for c in r2.closes)}; {tail}",
             ))
         if e2 == "short":
             pass  # flagged as I1 at the fill that made it
@@ -1230,10 +1249,10 @@ class _After:
         o.trace(f"     == after the open ({opening[0]}, {opening[1]}): {o.describe()}")
         for variant in [sc.variant] if sc.variant else RUN2_VARIANTS:
             self.stats.scenarios += 1
-            rc2, e2, state, flagged = self.harness.run2(o, variant, trace=o.tracing)
-            for cls, msg in (*flagged, *Harness._check_run2(rc2, e2, state, variant, o)):
+            r2 = self.harness.run2(o, variant, trace=o.tracing)
+            for cls, msg in (*r2.flagged, *Harness._check_run2(r2, variant, o)):
                 self.add(cls, msg, dataclasses.replace(sc, variant=variant))
-            o.trace(f"     == run 2 ({variant}) rc={rc2}: {e2}; {state}")
+            o.trace(f"     == run 2 ({variant}) rc={r2.rc}: {r2.kind}; {r2.state}")
         return o
 
 

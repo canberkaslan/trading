@@ -75,7 +75,7 @@ import hashlib
 import logging
 import re
 import time
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from typing import Literal
@@ -296,6 +296,8 @@ class _Release:
     """What the cancel step did: each released order before and after."""
 
     group: Mapping[str, str] = field(default_factory=dict)
+    #: Ids of the sells standing in the listing the release works from.
+    listed: frozenset[str] = frozenset()
     pairs: list[tuple[Order, Order]] = field(default_factory=list)
     #: Orders sent a DELETE that was not refused outright: each may be
     #: cancelled, now or later, whatever its status read last.
@@ -318,6 +320,11 @@ class _Release:
     def touched(self) -> dict[str, Order]:
         """Every order this pass released or may yet cancel."""
         return {**self.sent, **{after.id: after for _, after in self.pairs}}
+
+    @property
+    def sellers(self) -> frozenset[str]:
+        """The sells a pair can be made of, as `_at_risk` takes them."""
+        return self.listed | self.touched.keys()
 
 
 @dataclass(frozen=True)
@@ -761,7 +768,12 @@ def _release_order(live: list[Order], group: Mapping[str, str]) -> list[Order]:
 
 
 def _at_risk(
-    order: Order, group: Mapping[str, str], doubtful: Mapping[str, Order], *, known: bool
+    order: Order,
+    group: Mapping[str, str],
+    doubtful: Mapping[str, Order],
+    sellers: Collection[str],
+    *,
+    known: bool,
 ) -> bool:
     """Whether a cancel may be on its way to `order`: its own, or its pair's.
 
@@ -772,6 +784,14 @@ def _at_risk(
     with no partner, an order of the other kind that it shows with none either
     may be the partner it does not show. That last only for an order the close
     found standing (`known`): one placed since was paired with nothing.
+
+    A partner is one of `sellers`: a sell that stood in either listing, or a
+    doubtful one. Not the filled entry a bracket's legs are listed under, nor
+    a leg that is gone. A stop the position pass ratcheted (`replace_order`)
+    keeps its take-profit's OCO link at the broker, while the listing may show
+    it at the top level, and its take-profit under the entry beside the leg it
+    replaced: counted by what is listed there, that take-profit has a partner
+    and the stop has none, and the stop it takes along reads as cover.
     """
     key = group.get(order.id, order.id)
     if any(group.get(d, d) == key for d in doubtful):
@@ -779,7 +799,7 @@ def _at_risk(
 
     def alone(order_id: str) -> bool:
         root = group.get(order_id, order_id)
-        return not any(r == root for oid, r in group.items() if oid != order_id)
+        return not any(group.get(s, s) == root for s in sellers if s != order_id)
 
     return known and alone(order.id) and any(
         alone(d) and _is_protective(o) != _is_protective(order) for d, o in doubtful.items()
@@ -790,16 +810,17 @@ def _in_flight(ctx: _Ctx, book: _Book) -> frozenset[str]:
     """Standing orders a cancel is, or may be, on its way to: none of them is cover."""
     doubtful = {**ctx.release.touched, **{o.id: o for o in book.unclear}}
     group = {**ctx.book.group, **book.group}
+    sellers = {o.id for o in (*ctx.book.standing, *book.standing)} | doubtful.keys()
     return frozenset(
         o.id for o in book.standing
         if o.id in doubtful
-        or _at_risk(o, group, doubtful, known=o.id in ctx.book.records)
+        or _at_risk(o, group, doubtful, sellers, known=o.id in ctx.book.records)
     )
 
 
 def _release(client: AlpacaClient, book: _Book, sleep: Sleep) -> _Release:
     """Cancel each working sell in turn, and stop at the first that will not go."""
-    release = _Release(group=book.group)
+    release = _Release(group=book.group, listed=frozenset(o.id for o in book.standing))
     for order in book.live:
         final, error = _cancel_until_released(client, order, release, sleep)
         if not _released(final):
@@ -829,7 +850,7 @@ def _cancel_until_released(
     error = ""
     for n, delay in enumerate((*_CONFIRM_DELAYS_S, *CANCEL_SETTLE_DELAYS_S)):
         if n == len(_CONFIRM_DELAYS_S) and _working(last) and not _at_risk(
-            order, release.group, release.touched, known=True
+            order, release.group, release.touched, release.sellers, known=True
         ):
             break
         if delay:

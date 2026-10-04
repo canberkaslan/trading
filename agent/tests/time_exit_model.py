@@ -148,7 +148,7 @@ Choice = tuple[str | None, str]
 CLEAN: Choice = (None, "ok")
 
 #: The start books. Each is one 10-share long lot of XOM bought at 100.
-BOOKS = ("stop", "bracket", "two_stops", "partial", "queued")
+BOOKS = ("stop", "bracket", "two_stops", "partial", "queued", "ratcheted")
 
 #: The `queued` book's exit: stamped the trade date before run 1's.
 PREV_STAMP = derive_exit_client_order_id(SYMBOL, (RUN1_AT - timedelta(days=1)).date(), "time")
@@ -868,6 +868,22 @@ def build_book(name: str) -> ModelBroker:
         # released the stop, and its exit still waits for an open.
         b.add(Rec("exit-prev", PREV_STAMP, "sell", "market", 10.0, "accepted", tif="day",
                   role="exit"))
+    elif name == "ratcheted":
+        # A bracket whose stop the position pass ratcheted (RatchetStop, through
+        # replace_order). The old leg reads `replaced` under the filled entry;
+        # its replacement keeps the take-profit's OCO link at the broker, but
+        # the listing shows it at the top level, paired with nothing, as
+        # tests/broker_fake.py lists a replacement. Which shape Alpaca's nested
+        # listing has is not known here, and `replace_order` below keeps the
+        # other one, so the start book carries this one.
+        b.add(Rec("entry-A", "tr-buy-XOM-20260812", "buy", "market", 10.0, "filled",
+                  filled=10.0, tif="gtc", role="entry"))
+        b.add(Rec("tp-A", "coid-tp-A", "sell", "limit", 10.0, "new", limit_price=120.0,
+                  parent="entry-A", group="entry-A", role="tp"))
+        b.add(Rec("sl-A", "coid-sl-A", "sell", "stop", 10.0, "replaced", stop_price=90.0,
+                  parent="entry-A", group="entry-A", role="sl"))
+        b.add(Rec("sl-A2", "coid-sl-A2", "sell", "stop", 10.0, "held", stop_price=92.0,
+                  group="entry-A", role="sl"))
     else:
         raise ValueError(name)
     return b

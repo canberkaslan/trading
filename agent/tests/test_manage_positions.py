@@ -506,6 +506,49 @@ class TestAFailedTimeExitIsCoveredInTheSamePass:
         stops = [o for o in fake.live_sells("XOM") if o.order_type == "stop"]
         assert sorted((o.qty, o.stop_price) for o in stops) == [(10.0, 88.0), (10.0, 90.0)]
 
+    def test_a_take_profit_beside_its_own_stop_does_not_hold_off_the_re_cover(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # GOOGL's shape: a stop over 7 of 10 shares and three one-share
+        # brackets, after a bad night. The first bracket went (take-profit and
+        # stop cancelled) and its stop was never put back; the second's stop
+        # stands `held` with its take-profit gone, so the close sends nothing
+        # beside it and pages. The third's take-profit works beside its own
+        # stop. Counted as a sell still standing, it held the re-cover off,
+        # and the first bracket's share had no stop on any run after.
+        caplog.set_level(logging.INFO, logger="manage_positions")
+
+        def leg(oid: str, kind: str, status: str) -> Order:
+            if kind == "stop":
+                return dataclasses.replace(_stop(oid, "XOM", 90.0, qty=1.0), status=status)
+            return Order(
+                id=oid, client_order_id=f"coid-{oid}", symbol="XOM", side="sell", qty=1.0,
+                filled_qty=0.0, order_type="limit", status=status,
+                submitted_at=datetime.now(UTC), filled_avg_price=None, limit_price=120.0,
+            )
+
+        fake = FakeBroker(
+            positions=[_position("XOM", 100.5)],
+            orders=[
+                _stop("stop-s", "XOM", 90.0, qty=7.0),
+                leg("tp-1", "limit", "canceled"), leg("sl-1", "stop", "canceled"),
+                leg("tp-2", "limit", "canceled"), leg("sl-2", "stop", "held"),
+                leg("tp-3", "limit", "new"), leg("sl-3", "stop", "held"),
+            ],
+            fills=[_buy("XOM")],
+            oco={"tp-1": "sl-1", "tp-2": "sl-2", "tp-3": "sl-3"},
+        )
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        assert rc == 3, "the second bracket's stop is still in doubt, and pages"
+        assert "SKIP  re-cover" not in caplog.text
+        stops = [(w[1]["qty"], w[1]["stop_price"]) for w in fake.writes
+                 if w[0] == "submit_order" and w[1]["order_type"] == "stop"]
+        assert stops == [(1.0, 94.0)]
+        assert sum(o.qty for o in fake.live_sells("XOM") if o.order_type == "stop") == 10.0
+        assert fake._reserved("XOM") == 10.0
+
     def test_an_exit_that_fills_between_two_reads_gets_no_stop_beside_it(
         self, db_url: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:

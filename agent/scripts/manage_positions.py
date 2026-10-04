@@ -770,13 +770,23 @@ def _recover_unclosed(
 
     Stricter than the main pass, because a failed close is where the book is
     least settled: a name is left alone while any sell other than a working
-    stop still stands on it. That covers a stop still in `pending_cancel`, which
-    may yet fill; one in `stopped`, whose fill is on its way; an exit that
-    landed after all; a take-profit. Each reserves the shares or is about to
-    sell them, and a stop placed beside it is refused while the lot is held and
-    becomes a short once that sell fills. Not an exit of the lot whose day is
-    over (`protected_close.day_ended_exit`): a day order, it sells nothing
-    more, and left standing in the count it kept the lot naked for good.
+    stop or a working take-profit still stands on it. That covers a stop still
+    in `pending_cancel`, which may yet fill; one in `stopped`, whose fill is on
+    its way; an exit that landed after all; a take-profit whose cancel is on
+    its way. Each reserves the shares or is about to sell them, and a stop
+    placed beside it is refused while the lot is held and becomes a short once
+    that sell fills. Not an exit of the lot whose day is over
+    (`protected_close.day_ended_exit`): a day order, it sells nothing more, and
+    left standing in the count it kept the lot naked for good.
+
+    Nor a take-profit that works: it sells only the shares it holds back, the
+    broker refuses a stop on those, and the back-fill is sized off the shares
+    no stop covers (`_naked_now`), so it never stands beside the take-profit on
+    the same shares, as the main pass's back-fill does not. Counted as standing,
+    a bracket's take-profit kept a lot added to by brackets (GOOGL: a stop on
+    most of it, three one-share brackets) from its back-fill on every run: a
+    share whose stop a failed close could not put back stayed without one for
+    as long as the lot stayed due.
 
     A name whose exit was sent and never found (`unsettled`) is back-filled all
     the same, since it may never land, but through
@@ -805,7 +815,8 @@ def _recover_unclosed(
         kind, status = o.order_type.lower(), o.status.lower()
         gone = status in RELEASED_STATUSES or status == "replaced" or day_ended_exit(o, o.symbol)
         a_working_stop = kind in PROTECTIVE_TYPES and status in LIVE_STATUSES
-        if o.qty - o.filled_qty > QTY_EPSILON and not gone and not a_working_stop:
+        a_take_profit = kind == "limit" and status in LIVE_ORDER_STATUSES
+        if o.qty - o.filled_qty > QTY_EPSILON and not (gone or a_working_stop or a_take_profit):
             standing.setdefault(o.symbol, f"{kind} sell in {status}")
     for p in held:
         if p.symbol in standing:

@@ -105,11 +105,12 @@ cancelled and never replaced has lost its way out as surely as a stop.
 
 Exploration, all of it deterministic, for each of run 1's three times:
 
-  * exhaustive: on six books (one stop; a bracket's take-profit + held stop;
+  * exhaustive: on seven books (one stop; a bracket's take-profit + held stop;
     two stops; a stop over 6 of 10 shares; yesterday's exit still queued, the
     stop it replaced released, as the run after a holiday finds it; a bracket
     whose stop was ratcheted, its replacement listed apart from the take-
-    profit it is still OCO-linked to), every
+    profit it is still OCO-linked to; three one-share brackets beside a
+    seven-share stop, GOOGL's shape), every
     schedule with at most two non-clean choices anywhere in run 1, and every
     schedule of three within ten calls of each other; for each, every night,
     every open (the holiday among them) and both run-2 variants;
@@ -222,16 +223,16 @@ RUN1 = {
     "in-session": (tem.RUN1_AT, True),
 }
 
-#: Each exploration's floor, about three quarters of what it covers (190k
-#: scenarios after the close, either time, and 5.8k in the session): the
+#: Each exploration's floor, about three quarters of what it covers (505k
+#: scenarios after the close, either time, and 10.5k in the session): the
 #: margin the original 200k-of-266k floor kept. In the session the close
 #: defers at its first read, so there is little left to explore: the fills it
 #: meets, the re-cover, and run 2.
-EXHAUSTIVE_FLOOR = {"after-close": 142_000, "past-midnight": 142_000, "in-session": 4_300}
+EXHAUSTIVE_FLOOR = {"after-close": 378_000, "past-midnight": 378_000, "in-session": 7_800}
 
 #: Each streak exploration's floor, about three quarters of what it covers
-#: (3.9k scenarios after the close, either time, and 0.6k in the session).
-STREAK_FLOOR = {"after-close": 2_900, "past-midnight": 2_900, "in-session": 440}
+#: (5.9k scenarios after the close, either time, and 0.6k in the session).
+STREAK_FLOOR = {"after-close": 4_400, "past-midnight": 4_400, "in-session": 480}
 
 #: (seed, schedules, per-call event rate, per-call fault rate).
 RANDOM = (
@@ -360,6 +361,21 @@ class TestDeepSchedules:
         # said `unchanged` (rc 1), and the cancel landing in the night took
         # the stop along at the broker, OCO-linked as it still is.
         self._judge(harness, "ratcheted", tem.Scripted(("cancel_order(tp-A", "pending_stuck")))
+
+    def test_a_share_a_failed_re_arm_left_bare_beside_a_bracket_is_back_filled(
+        self, harness: Harness
+    ) -> None:
+        # Two faults, on the `three_brackets` book (GOOGL's shape). The second
+        # take-profit's cancel leaves its stop pending, and the re-arm of the
+        # first bracket's one-share stop is refused: run 1 pages (rc 3). In
+        # the night the pending cancel never lands, so that stop stands `held`
+        # with its pair ended, and every close after sends nothing beside it.
+        # The third take-profit, working beside its own stop, held the
+        # re-cover off: the first bracket's share had no stop after run 2.
+        self._judge(harness, "three_brackets", tem.Scripted(
+            ("cancel_order(tp-2", "ok+sib_pending"),
+            ("-arm-", "422"),
+        ))
 
 
 class TestARunPastMidnight:

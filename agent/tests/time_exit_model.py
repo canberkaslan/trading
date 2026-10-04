@@ -148,7 +148,7 @@ Choice = tuple[str | None, str]
 CLEAN: Choice = (None, "ok")
 
 #: The start books. Each is one 10-share long lot of XOM bought at 100.
-BOOKS = ("stop", "bracket", "two_stops", "partial", "queued", "ratcheted")
+BOOKS = ("stop", "bracket", "two_stops", "partial", "queued", "ratcheted", "three_brackets")
 
 #: The `queued` book's exit: stamped the trade date before run 1's.
 PREV_STAMP = derive_exit_client_order_id(SYMBOL, (RUN1_AT - timedelta(days=1)).date(), "time")
@@ -886,6 +886,20 @@ def build_book(name: str) -> ModelBroker:
                   parent="entry-A", group="entry-A", role="sl"))
         b.add(Rec("sl-A2", "coid-sl-A2", "sell", "stop", 10.0, "held", stop_price=92.0,
                   group="entry-A", role="sl"))
+    elif name == "three_brackets":
+        # GOOGL's shape, scaled to ten shares: a lot added to three times by
+        # one-share brackets (take-profit new, stop held), the rest under a
+        # standalone stop the position pass back-filled.
+        b.add(Rec("stop-S", "coid-stop-S", "sell", "stop", 7.0, "new", stop_price=90.0,
+                  role="stop"))
+        for i in (1, 2, 3):
+            entry = f"entry-{i}"
+            b.add(Rec(entry, f"tr-buy-XOM-2026081{i}", "buy", "market", 1.0, "filled",
+                      filled=1.0, tif="gtc", role="entry"))
+            b.add(Rec(f"tp-{i}", f"coid-tp-{i}", "sell", "limit", 1.0, "new",
+                      limit_price=120.0, parent=entry, group=entry, role="tp"))
+            b.add(Rec(f"sl-{i}", f"coid-sl-{i}", "sell", "stop", 1.0, "held",
+                      stop_price=90.0, parent=entry, group=entry, role="sl"))
     else:
         raise ValueError(name)
     return b

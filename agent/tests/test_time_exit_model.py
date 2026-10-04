@@ -45,6 +45,12 @@ flight land), the open (g), then run 2 on D+1 against a clean broker, in two
 variants: the lot is still due (another time exit), or it has moved and only
 its stops are maintained (`--backfill-stops`, the back-fill pass).
 
+Run 1 starts at one of three times. At 22:30 UTC, after the close, as
+scheduled. Past 00:00 UTC and before D+1's open: the same run fired late
+(ai-trader.timer is Persistent=true, so a box that was down at 22:30 runs it
+at boot) or rerun by hand. Its trade date is then D+1's, the same as run 2's,
+and its exit still queues for D+1's open. Or in the session, by hand.
+
 INVARIANTS, asserted in every scenario. "Covered" means a live stop (new,
 accepted, held, partially_filled) holds the share back, each bracket pair once;
 a share a working exit of ours holds back is on its way out at the open, and
@@ -77,7 +83,9 @@ cancelled and never replaced has lost its way out as surely as a stop.
   I7  An exit of ours that the open rejected, expired, cancelled or only half
       filled, on a lot still held, fails run 2 (rc != 0), in both variants:
       the lot spent that session with neither stop nor exit, and by the end
-      of run 2 it is covered again, so nothing else would ever say so.
+      of run 2 it is covered again, so nothing else would ever say so. Also
+      when run 1 was past 00:00 UTC, and the exit's stamp carries run 2's
+      own trade date.
   I8  Precision. I4 and I5 accept `naked` with rc 3 in any scenario, so on
       their own they pass a close that never puts a stop back. Where every
       read was answered, nothing filled or landed by choice, and at most two
@@ -89,7 +97,7 @@ cancelled and never replaced has lost its way out as surely as a stop.
       Not a cancel left pending or a bracket sibling left behind: those
       leave the broker itself in doubt.
 
-Exploration, all of it deterministic:
+Exploration, all of it deterministic, for each of run 1's three times:
 
   * exhaustive: on five books (one stop; a bracket's take-profit + held stop;
     two stops; a stop over 6 of 10 shares; yesterday's exit still queued, the
@@ -127,6 +135,7 @@ prints what it found.
 from __future__ import annotations
 
 import dataclasses
+from datetime import date, timedelta
 
 import pytest
 
@@ -189,6 +198,22 @@ KNOWN_ON_MAIN: dict[str, frozenset[str]] = {
 #: (max non-clean choices, window between consecutive ones or None).
 EXHAUSTIVE = ((2, None), (3, 10))
 
+#: When run 1 starts, and whether the clock then says open: after the close as
+#: scheduled, past 00:00 UTC (a late or repeated run, see the module doc), or
+#: in the session, by hand.
+RUN1 = {
+    "after-close": (tem.RUN1_AT, False),
+    "past-midnight": (tem.CATCH_UP_AT, False),
+    "in-session": (tem.RUN1_AT, True),
+}
+
+#: Each exploration's floor, about three quarters of what it covers (127k
+#: scenarios after the close, either time, and 5.2k in the session): the
+#: margin the original 200k-of-266k floor kept. In the session the close
+#: defers at its first read, so there is little left to explore: the fills it
+#: meets, the re-cover, and run 2.
+EXHAUSTIVE_FLOOR = {"after-close": 95_000, "past-midnight": 95_000, "in-session": 3_900}
+
 #: (seed, schedules, per-call event rate, per-call fault rate).
 RANDOM = (
     (101, 6000, 0.06, 0.12),
@@ -223,25 +248,21 @@ def _judge(harness: Harness, stats: Stats, part: str) -> None:
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("market_open", [False, True], ids=["after-close", "in-session"])
-def test_exhaustive_exploration(harness: Harness, market_open: bool) -> None:
-    harness.market_open = market_open
+@pytest.mark.parametrize("run1", list(RUN1))
+def test_exhaustive_exploration(harness: Harness, run1: str) -> None:
+    harness.run1_at, harness.market_open = RUN1[run1]
     stats = Stats()
     for max_faults, window in EXHAUSTIVE:
         for book in BOOKS:
             stats.merge(explore_bounded(harness, book, max_faults, window))
-    # In the session the close defers at its first read, so there is little
-    # left to explore: the fills it meets, the re-cover, and run 2. Each floor
-    # is about three quarters of what the run explores (127k after the close,
-    # 5.2k in the session), the margin the original 200k-of-266k floor kept.
-    assert stats.scenarios >= (3_900 if market_open else 95_000), "the exploration shrank"
+    assert stats.scenarios >= EXHAUSTIVE_FLOOR[run1], "the exploration shrank"
     _judge(harness, stats, "exhaustive")
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("market_open", [False, True], ids=["after-close", "in-session"])
-def test_random_sweep(harness: Harness, market_open: bool) -> None:
-    harness.market_open = market_open
+@pytest.mark.parametrize("run1", list(RUN1))
+def test_random_sweep(harness: Harness, run1: str) -> None:
+    harness.run1_at, harness.market_open = RUN1[run1]
     stats = Stats()
     for seed, n, p_env, p_fault in RANDOM:
         stats.merge(explore_random(harness, BOOKS, seed, n, p_env=p_env, p_fault=p_fault))
@@ -281,6 +302,37 @@ class TestDeepSchedules:
         ))
 
 
+class TestARunPastMidnight:
+    """Run 1 past 00:00 UTC stamps its exit with the trade date run 2 has too.
+
+    That exit still queues for the open between them, and if the open does not
+    fill it the lot spends the session with neither stop nor exit: run 2 must
+    say so (I7) whether the stamp's date is its own or not.
+    """
+
+    @pytest.mark.parametrize("book", BOOKS)
+    @pytest.mark.parametrize(
+        "opening", [(how, "hold") for how in tem.OPEN_EXIT_OUTCOMES[1:]], ids=lambda o: o[0]
+    )
+    @pytest.mark.parametrize("variant", tem.RUN2_VARIANTS)
+    def test_an_exit_the_open_did_not_fill_fails_run_2(
+        self, harness: Harness, book: str, opening: tuple[str, str], variant: str
+    ) -> None:
+        harness.run1_at = tem.CATCH_UP_AT
+        stats = Stats()
+        b = harness.evaluate(Scenario(book, (), night=(), opening=opening, variant=variant), stats)
+        close = next(o for kind, o in b.outcomes if kind == "close")
+        assert close.ok, close
+        if stats.findings:
+            pytest.fail(report(harness, stats, f"{book}: "), pytrace=False)
+
+    def test_a_holiday_leaves_the_exit_queued_and_nothing_missed(self, harness: Harness) -> None:
+        harness.run1_at = tem.CATCH_UP_AT
+        stats = Stats()
+        harness.evaluate(Scenario("stop", (), night=(), opening=tem.OPEN_HOLIDAY), stats)
+        assert not stats.findings
+
+
 class TestTheModel:
     """The broker model keeps the rules the close relies on, and a clean run closes."""
 
@@ -295,6 +347,14 @@ class TestTheModel:
         assert not stats.findings
         openings = len(tem.OPEN_EXIT_OUTCOMES) + 1  # the holiday
         assert stats.scenarios == openings * len(tem.RUN2_VARIANTS)
+
+    def test_the_calendar_skips_weekends_and_holidays_and_agrees_with_the_clock(self) -> None:
+        b = build_book("stop")
+        b.open_market(tem.OPEN_HOLIDAY)
+        b.base_time, b.elapsed = tem.RUN2_AT, 0.0
+        days = [s.date for s in b.calendar(tem.RUN1_AT.date(), tem.RUN2_AT.date() + timedelta(4))]
+        assert days == [date(2026, 10, 1), date(2026, 10, 5), date(2026, 10, 6)]
+        assert b.clock().next_open == "2026-10-05T13:30:00+00:00"
 
     def test_a_holiday_leaves_the_queued_exit_for_run_2(self) -> None:
         b = build_book("stop")

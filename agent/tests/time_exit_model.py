@@ -24,13 +24,15 @@ everywhere is a clean, prompt broker.
 `Harness` runs `scripts.manage_positions.main()` itself, with the flags the
 daily run passes, against that broker: run 1 on day D at 22:30 UTC plans a
 time exit, and the broker is armed from the moment `close_with_protection`
-starts until the run ends (the same-run re-cover is under fire too). Then the
-night (whatever is still in flight lands, a stuck cancel lands or never does),
-the open (our queued market exit fills, half-fills, or is rejected, expired or
-cancelled; a gap down fills every standing stop or none; or no session at all,
-an exchange holiday on a weekday, and a queued exit still waits), and run 2 on
-D+1 with a clean broker, in two variants: the lot is still due for its time
-exit, or it has moved and only its stops are maintained (the back-fill pass).
+starts until the run ends (the same-run re-cover is under fire too). Or run 1
+is that run replayed past 00:00 UTC (`CATCH_UP_AT`), before D+1's open: its
+trade date is then D+1's, the same as run 2's. Then the night (whatever is
+still in flight lands, a stuck cancel lands or never does), the open (our
+queued market exit fills, half-fills, or is rejected, expired or cancelled; a
+gap down fills every standing stop or none; or no session at all, an exchange
+holiday on a weekday, and a queued exit still waits), and run 2 on D+1 with a
+clean broker, in two variants: the lot is still due for its time exit, or it
+has moved and only its stops are maintained (the back-fill pass).
 
 The explorers enumerate fault schedules (`explore_bounded`: every schedule with
 at most K non-clean choices, the night and the open enumerated in full) or draw
@@ -48,6 +50,7 @@ import time
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from datetime import time as daytime
 from types import SimpleNamespace
 
 import httpx
@@ -60,6 +63,7 @@ from tradingagents_us.dataflows.alpaca_broker import (
     FillActivity,
     Order,
     Position,
+    Session,
 )
 from tradingagents_us.execution import protected_close as pc
 from tradingagents_us.execution.executor import derive_exit_client_order_id
@@ -76,6 +80,17 @@ RUN1_AT = datetime(2026, 10, 1, 22, 30, tzinfo=UTC)
 OPEN_AT = datetime(2026, 10, 2, 13, 30, tzinfo=UTC)
 RUN2_AT = datetime(2026, 10, 2, 22, 30, tzinfo=UTC)
 ENTRY_AT = RUN1_AT - timedelta(days=50)
+
+#: Run 1 replayed past 00:00 UTC, before Friday's open: Thursday's 22:30 run
+#: fired late (ai-trader.timer is Persistent=true, so a box that was down at
+#: 22:30 runs it at boot), or was rerun by hand. Its trade date is Friday's,
+#: which is run 2's too, and its exit still queues for Friday's open.
+CATCH_UP_AT = datetime(2026, 10, 2, 0, 30, tzinfo=UTC)
+
+#: A session's regular hours in UTC, as the model's clock and calendar keep
+#: them (October: New York is on daylight time).
+SESSION_OPEN = daytime(13, 30)
+SESSION_CLOSE = daytime(20, 0)
 
 #: The daily run's flags (scripts/daily_run.sh), with --submit.
 ARGV = ["--submit", "--backfill-stops", "--refresh-bars"]
@@ -229,6 +244,9 @@ class ModelBroker:
         #: Our exits the open refused, expired, cancelled or only half filled:
         #: the lot had neither stop nor exit for that session.
         self.missed_at_open: list[str] = []
+        #: Weekdays with no session (`OPEN_HOLIDAY`): the clock and the
+        #: calendar skip them.
+        self.holidays: set[date] = set()
 
     # ---- plumbing ----------------------------------------------------------
 
@@ -251,6 +269,7 @@ class ModelBroker:
         other.outcomes = list(self.outcomes)
         other.events = list(self.events)
         other.missed_at_open = list(self.missed_at_open)
+        other.holidays = set(self.holidays)
         other.chooser = lambda *_: CLEAN
         other.armed = False
         return other
@@ -531,17 +550,32 @@ class ModelBroker:
         if self._step("read", what) == "timeout":
             raise _timeout()
 
+    def _session(self, day: date) -> bool:
+        return day.weekday() < 5 and day not in self.holidays
+
     def clock(self) -> Clock:
-        """Alpaca's market clock: open or not, and the next open (13:30 UTC, a weekday)."""
+        """Alpaca's market clock: open or not, and the next open (13:30 UTC, a session day)."""
         self._read("clock()")
         now = self.now()
-        nxt = now.replace(hour=13, minute=30, second=0, microsecond=0)
-        while nxt <= now or nxt.weekday() >= 5:
+        nxt = datetime.combine(now.date(), SESSION_OPEN, UTC)
+        while nxt <= now or not self._session(nxt.date()):
             nxt += timedelta(days=1)
         return Clock(
             is_open=self.market_open, timestamp=now.isoformat(),
-            next_open=nxt.isoformat(), next_close=nxt.replace(hour=20, minute=0).isoformat(),
+            next_open=nxt.isoformat(),
+            next_close=datetime.combine(nxt.date(), SESSION_CLOSE, UTC).isoformat(),
         )
+
+    def calendar(self, start: date, end: date) -> list[Session]:
+        """Alpaca's trading calendar: every session day from `start` to `end`, holidays skipped."""
+        self._read(f"calendar({start}, {end})")
+        days = (start + timedelta(days=k) for k in range((end - start).days + 1))
+        return [
+            Session(
+                d, datetime.combine(d, SESSION_OPEN, UTC), datetime.combine(d, SESSION_CLOSE, UTC)
+            )
+            for d in days if self._session(d)
+        ]
 
     def list_positions(self) -> list[Position]:
         self._read("list_positions()")
@@ -712,6 +746,7 @@ class ModelBroker:
         self.base_time, self.elapsed = OPEN_AT, 0.0
         if choice == OPEN_HOLIDAY:
             self.stage = "holiday"
+            self.holidays.add(OPEN_AT.date())
             self.trace("     no session: an exchange holiday, every order still as it was")
             return
         for rec in self._candidates()["exit"]:
@@ -866,9 +901,15 @@ def _weekdays_until(day: date, n: int) -> list[date]:
     return out[::-1]
 
 
-def fresh_bars(today: date, variant: str) -> dict[str, tuple[list[Bar], list[date]]]:
+def fresh_bars(at: datetime, variant: str) -> dict[str, tuple[list[Bar], list[date]]]:
+    """45 daily bars up to the last session closed by `at`.
+
+    A run past 00:00 UTC has no bar for its own UTC date: that session is
+    still to come.
+    """
     close = TAPE[variant]
-    days = _weekdays_until(today, 45)
+    last = at.date() if at.time() >= SESSION_CLOSE else at.date() - timedelta(days=1)
+    days = _weekdays_until(last, 45)
     return {SYMBOL: ([Bar(high=close + 1, low=close - 1, close=close) for _ in days], days)}
 
 
@@ -932,6 +973,8 @@ class Harness:
         self.broker: ModelBroker = build_book("stop")
         self.variant = "due"
         self.arming = False
+        #: When run 1 starts: the scheduled 22:30 UTC, or `CATCH_UP_AT`.
+        self.run1_at = RUN1_AT
         #: Run 1 in the session instead of after the close: the clock says
         #: open, and the model may fill a stop, a take-profit or an exit.
         self.market_open = False
@@ -965,7 +1008,8 @@ class Harness:
         monkeypatch.setattr(mp, "AlpacaClient", lambda: self.broker)
         monkeypatch.setattr(mp, "datetime", _ClockDT)
         monkeypatch.setattr(
-            mp, "_refresh_held", lambda client, today: (fresh_bars(today, self.variant), [])
+            mp, "_refresh_held",
+            lambda client, today: (fresh_bars(_ClockDT.current, self.variant), []),
         )
         monkeypatch.setattr(mp, "_kill_switch", lambda: "RUN")
         monkeypatch.setattr(mp, "close_with_protection", close)
@@ -1001,7 +1045,8 @@ class Harness:
         self, b: ModelBroker, variant: str, trace: bool = False
     ) -> tuple[int, str, str, tuple[tuple[str, str], ...]]:
         """Run 2 on `b`: its exit code, the lot's kind, the book, and what it flagged."""
-        key = (variant, b.key())
+        # The calendar too: whether an exit met an open is read off it.
+        key = (variant, b.key(), self.run1_at, frozenset(b.holidays))
         if not trace and key in self._run2_memo:
             return self._run2_memo[key]
         r = b.clone()
@@ -1033,7 +1078,7 @@ class Harness:
         b.tracing = trace
         b.chooser = chooser or _replay(dict(scenario.faults))
         b.market_open = self.market_open
-        rc1 = self._main(b, RUN1_AT, "due", arm=True)
+        rc1 = self._main(b, self.run1_at, "due", arm=True)
         b.market_open = False
         b.trace(f"     == run 1 rc={rc1}; {b.describe()}; in flight: "
                 f"{[lat.label(b.name) for lat in b.latent] or 'nothing'}")

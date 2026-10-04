@@ -13,12 +13,16 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 import httpx
 
 DEFAULT_BASE = "https://paper-api.alpaca.markets/v2"
+
+#: The calendar's times are the exchange's wall clock.
+_EXCHANGE_TZ = ZoneInfo("America/New_York")
 
 Side = Literal["buy", "sell"]
 OrderType = Literal["market", "limit", "stop", "stop_limit", "trailing_stop"]
@@ -119,6 +123,15 @@ class Clock:
     next_close: str
 
 
+@dataclass(frozen=True)
+class Session:
+    """One trading day of `/v2/calendar`: its regular hours, as instants in UTC."""
+
+    date: date
+    open: datetime
+    close: datetime
+
+
 class AlpacaClient:
     """REST client for Alpaca brokerage (paper or live)."""
 
@@ -182,6 +195,12 @@ class AlpacaClient:
             next_open=d["next_open"],
             next_close=d["next_close"],
         )
+
+    def calendar(self, start: date, end: date) -> list[Session]:
+        """The exchange's sessions from `start` to `end`, both included: holidays are absent."""
+        d = self._get(f"/calendar?start={start.isoformat()}&end={end.isoformat()}")
+        assert isinstance(d, list)
+        return [_session_from_dict(s) for s in d]
 
     def portfolio_history(
         self, period: str = "3M", timeframe: str = "1D"
@@ -431,6 +450,17 @@ class AlpacaClient:
             return r.json()
         except Exception:
             return {}
+
+
+def _session_from_dict(d: dict[str, str]) -> Session:
+    """`{"date": "2026-10-02", "open": "09:30", "close": "16:00", ...}`, New York time."""
+    day = date.fromisoformat(d["date"])
+
+    def at(hhmm: str) -> datetime:
+        local = datetime.combine(day, time.fromisoformat(hhmm), _EXCHANGE_TZ)
+        return local.astimezone(UTC)
+
+    return Session(date=day, open=at(d["open"]), close=at(d["close"]))
 
 
 def _position_from_dict(p: dict) -> Position:

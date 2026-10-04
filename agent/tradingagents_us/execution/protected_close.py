@@ -35,7 +35,9 @@ One call is one step, each state decided off the broker as it is then:
   STAMP    an exit under today's stamp works or filled, or one of this lot's
            exits from an earlier trade date still works (queued for an open
            that has not come: an exchange holiday, a rerun past 00:00 UTC):
-           nothing sent.
+           nothing sent. Otherwise the lot's last exit, if an open came since
+           it was sent and it did not sell the lot, is named in the outcome
+           (`missed_exits`), whatever date its stamp carries.
   BLOCKED  a sell on the symbol is neither working nor gone (pending_cancel,
            stopped, a leg whose pair ended), or works and is not one the
            release may cancel (a market sell: no bracket has one as a leg):
@@ -77,7 +79,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from typing import Literal
 
-from ..dataflows.alpaca_broker import AlpacaClient, AlpacaRequestError, Order
+from ..dataflows.alpaca_broker import AlpacaClient, AlpacaRequestError, Clock, Order
 from ..risk.stop_coverage import PROTECTIVE_TYPES, QTY_EPSILON, flatten_orders
 from .executor import derive_exit_client_order_id
 
@@ -141,6 +143,11 @@ EXIT_LOOKUP_DELAYS_S = (1.0, 2.0, 4.0, 8.0, 8.0)
 #: the pauses between them.
 TRUTH_READ_DELAYS_S = (0.0, 1.0, 2.0)
 
+#: How far back the calendar is read for the latest session's open: past the
+#: longest the exchange has stayed shut (four weekdays in September 2001, six
+#: days with the weekend), with room to spare.
+CALENDAR_LOOKBACK = timedelta(days=14)
+
 #: Alpaca caps a client_order_id's length (48, as executor.derive_client_order_id
 #: notes). A re-arm id carries the stop it replaces as a short digest: the
 #: stop's 36-character order id beside the stamp came to 71 characters.
@@ -175,9 +182,9 @@ class CloseOutcome:
     client_order_id: str | None = None
     released: tuple[str, ...] = ()
     rearmed: tuple[str, ...] = ()
-    #: Earlier time exits of this lot that ended without selling it (refused,
-    #: cancelled or expired at the open): the lot had neither stop nor exit
-    #: from then until this run.
+    #: This lot's last time exit, when a session opened after it was sent and
+    #: it ended without selling the lot (refused, cancelled or expired there):
+    #: the lot had neither stop nor exit from then until this run.
     missed_exits: tuple[str, ...] = ()
 
     @property
@@ -394,7 +401,7 @@ def _refused(exc: Exception) -> bool:
     )
 
 
-def _market_shut(client: AlpacaClient) -> str:
+def _market_shut(clock: Clock) -> str:
     """'' when the market is shut and stays shut long enough; why not, otherwise.
 
     This is the precondition every step below rests on. Alpaca triggers stops
@@ -405,7 +412,6 @@ def _market_shut(client: AlpacaClient) -> str:
     close of the year, so this costs it nothing; a pass run by hand during the
     session defers its time exits to the next run instead of racing the tape.
     """
-    clock = client.clock()
     if clock.is_open:
         return f"the market is open (closes {clock.next_close})"
     left = _instant(clock.next_open) - _instant(clock.timestamp)
@@ -434,12 +440,10 @@ def close_with_protection(
         return CloseOutcome(ticker, "unchanged", f"could not read the book: {exc}")
     if isinstance(start, CloseOutcome):
         return start
-    stamp, book = start
+    stamp, book, missed = start
     ctx = _Ctx(
         client, ticker, stamp, book, _Release(group=book.group), sleep,
-        wanted=book.cover_standing,
-        missed=_missed_exits(book, ticker, trade_date, reason),
-        reason=reason,
+        wanted=book.cover_standing, missed=missed, reason=reason,
     )
     if book.unclear or book.kept:
         return _settle(ctx, _blocked(book))
@@ -481,7 +485,7 @@ def cover_beside_exit(
     sleep = sleep or time.sleep
     ctx = _Ctx(client, ticker, stamp, _NO_BOOK, _Release(), sleep, wanted=covered + qty)
     try:
-        shut = _market_shut(client)
+        shut = _market_shut(client.clock())
     except Exception as exc:  # noqa: BLE001 — no clock, no write
         shut = f"the clock could not be read: {exc}"
     if shut:
@@ -501,15 +505,16 @@ def cover_beside_exit(
 
 def _start(
     client: AlpacaClient, ticker: str, trade_date: date, reason: str
-) -> tuple[str, _Book] | CloseOutcome:
-    """GUARD and STAMP: the exit id and the book to work from, or why not to start.
+) -> tuple[str, _Book, tuple[str, ...]] | CloseOutcome:
+    """GUARD and STAMP: the exit id, the book, the exit the lot missed; or why not to start.
 
     An exit an earlier run queued that still works is this lot's exit as much
     as today's would be: no session has come to execute it (a weekday
     exchange holiday, or a rerun past 00:00 UTC), and the lot is on its way
     out at the next one.
     """
-    shut = _market_shut(client)
+    clock = client.clock()
+    shut = _market_shut(clock)
     if shut:
         return CloseOutcome(ticker, "deferred", f"nothing sent: {shut}")
     stamp, prior = _exit_stamp(client, ticker, trade_date, reason)
@@ -521,7 +526,8 @@ def _start(
     queued = book.queued_exit()
     if queued is not None:
         return _prior_exit(ticker, queued)
-    return stamp, book
+    missed = missed_exits(book.records.values(), ticker, opened_after(client, clock), reason)
+    return stamp, book, missed
 
 
 def _exit_stamp(
@@ -553,21 +559,27 @@ def _prior_exit(ticker: str, prior: Order) -> CloseOutcome:
     )
 
 
-def _missed_exits(
-    book: _Book, ticker: str, trade_date: date, reason: str
-) -> tuple[str, ...]:
-    return missed_exits(book.records.values(), ticker, trade_date, reason)
-
-
 def missed_exits(
-    orders: Iterable[Order], ticker: str, trade_date: date, reason: str = "time"
+    orders: Iterable[Order],
+    ticker: str,
+    opened: Callable[[datetime], bool],
+    reason: str = "time",
 ) -> tuple[str, ...]:
-    """This lot's last earlier exit, when it ended without selling the lot and nothing followed.
+    """This lot's last exit, when a session opened after it was sent and it did not sell the lot.
 
     An exit sent after the close queues for the open, in place of the stop it
     released. If the broker rejects, cancels or expires it there, the lot
     spends the session with neither, and the next run only finds it naked:
     sold again or covered by then, but the gap happened, and only this says so.
+
+    Whether the exit met an open is the calendar's to say (`opened`, asked
+    of its `submitted_at`; see `opened_after`), never its stamp's date. The stamp carries
+    the UTC date of the run that sent it, and a run past 00:00 UTC (a late
+    catch-up, a rerun by hand) shares that date with the run after the
+    session it queued for: read by its date, the dead exit was the later
+    run's own, and the session it left naked went unnamed. An exit that died
+    before any open (refused the night it was sent) is no miss: no session
+    passed, and the run reading it covers the lot.
 
     Named once: by the first run that reads the book after it. That run puts
     something in its place, a stop or a new exit of this lot, and once one
@@ -576,29 +588,70 @@ def missed_exits(
     stop, and that close already said so.
 
     `orders` is any listing of the account's orders, in any status; only
-    `ticker`'s sells count.
+    `ticker`'s sells count. `opened` is asked only about an exit that is a
+    miss on every other count, so a book with none reads no calendar.
     """
     sells = [o for o in orders if o.symbol == ticker and o.side.lower() == "sell"]
-    earlier = [
+    exits = [
         o for o in sells
-        if not _is_protective(o)
-        and exit_stamp_date(o.client_order_id, ticker, reason) not in (None, trade_date)
+        if not _is_protective(o) and exit_stamp_date(o.client_order_id, ticker, reason)
     ]
-    if not earlier:
+    if not exits:
         return ()
-    last = max(earlier, key=lambda o: o.submitted_at)
+    last = max(exits, key=lambda o: o.submitted_at)
     replaced_since = any(
         o.submitted_at > last.submitted_at
         and (_is_protective(o) or exit_stamp_date(o.client_order_id, ticker, reason))
         for o in sells
     )
     if (
-        last.status.lower() in FAILED_EXIT_STATUSES
-        and _remaining(last) > QTY_EPSILON
-        and not replaced_since
+        last.status.lower() not in FAILED_EXIT_STATUSES
+        or _remaining(last) <= QTY_EPSILON
+        or replaced_since
+        or not opened(last.submitted_at)
     ):
-        return (f"{last.client_order_id} {last.status}, {last.filled_qty:g} of {last.qty:g} sold",)
-    return ()
+        return ()
+    return (f"{last.client_order_id} {last.status}, {last.filled_qty:g} of {last.qty:g} sold",)
+
+
+def last_session_open(client: AlpacaClient, clock: Clock | None = None) -> datetime | None:
+    """When the latest regular session opened, at or before now, off the broker's calendar.
+
+    The clock names the next open and nothing of the last, so the calendar is
+    read up to that next open and the latest session opening before it taken:
+    open now or not, that one has begun. None when no session shows in
+    CALENDAR_LOOKBACK. Raises when the clock or the calendar cannot be read.
+    """
+    clock = clock or client.clock()
+    nxt = _instant(clock.next_open)
+    sessions = client.calendar((nxt - CALENDAR_LOOKBACK).date(), nxt.date())
+    return max((s.open for s in sessions if s.open < nxt), default=None)
+
+
+def opened_after(client: AlpacaClient, clock: Clock | None = None) -> Callable[[datetime], bool]:
+    """Whether a regular session has opened after a given instant: `missed_exits`' calendar.
+
+    Read on first use and kept, so a pass asks the broker once however many
+    lots it judges, and not at all when none has an exit to judge. Where the
+    clock or the calendar cannot be read, every instant counts as one an open
+    followed: the caller names an exit it could not place, and pages, where
+    the other way a miss would pass in silence.
+    """
+    memo: list[datetime | None] = []
+
+    def after(when: datetime) -> bool:
+        if not memo:
+            try:
+                memo.append(last_session_open(client, clock))
+            except Exception as exc:  # noqa: BLE001 — erring toward a page, and saying so
+                log.warning(
+                    "calendar unreadable: a dead exit counts as one an open met: %s", exc
+                )
+                memo.append(None)
+        last = memo[0]
+        return last is None or when < last
+
+    return after
 
 
 def _read_book(client: AlpacaClient, ticker: str, reason: str = "time") -> _Book:

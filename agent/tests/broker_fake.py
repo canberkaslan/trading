@@ -27,8 +27,12 @@ a set number of broker calls later, checked against the book as it is then.
 
 `market_open` is the clock's answer, closed by default: the daily run is after
 the close, and protected_close acts only then. `minutes_to_open` is how far off
-the next open is. `throttle_cancels` answers the first DELETEs of an order with
-429s that change nothing, as many as it says.
+the next open is, from `now` (the clock's time; the wall clock's by default,
+which is what the orders a test builds carry). The calendar has a session every
+day, each opening a whole number of days before that next open: by default the
+last one opened nine hours before `now`, as the 22:30 UTC run finds 13:30.
+`throttle_cancels` answers the first DELETEs of an order with 429s that change
+nothing, as many as it says.
 
 An `oco` pair is one reservation, as Alpaca's held_for_orders has it: both legs
 can sell the same shares, and only one of them ever will. The nested listing
@@ -42,7 +46,7 @@ from __future__ import annotations
 import dataclasses
 import itertools
 from collections.abc import Iterable, Mapping
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import httpx
 
@@ -52,6 +56,7 @@ from tradingagents_us.dataflows.alpaca_broker import (
     FillActivity,
     Order,
     Position,
+    Session,
 )
 
 #: Calls that change something at the broker. Everything else is a read.
@@ -104,6 +109,7 @@ class FakeBroker:
         market_open: bool = False,
         minutes_to_open: float = 15 * 60,
         throttle_cancels: Mapping[str, int] | None = None,
+        now: datetime | None = None,
     ) -> None:
         self.positions: dict[str, Position] = {p.symbol: p for p in positions}
         self.orders: dict[str, Order] = {o.id: o for o in orders}
@@ -134,6 +140,7 @@ class FakeBroker:
         self.stop_in_flight = dict(stop_in_flight or {})
         self.market_open = market_open
         self.minutes_to_open = minutes_to_open
+        self.now = now or datetime.now(UTC)
         #: order id -> 429s still to answer its DELETEs with.
         self.throttle_cancels = dict(throttle_cancels or {})
         self._throttled: set[str] = set()
@@ -198,7 +205,8 @@ class FakeBroker:
             filled_qty=filled,
             order_type=order_type,  # type: ignore[arg-type]
             status=status,
-            submitted_at=datetime.now(UTC),
+            # Each later than the last, and on the fake's clock.
+            submitted_at=self.now + timedelta(milliseconds=len(self.created) + 1),
             filled_avg_price=100.5 if filled else None,
             stop_price=stop_price,
         )
@@ -257,15 +265,28 @@ class FakeBroker:
 
     # ---- reads --------------------------------------------------------------
 
+    @property
+    def next_open(self) -> datetime:
+        return self.now + timedelta(minutes=self.minutes_to_open)
+
     def clock(self) -> Clock:
         self._record("clock")
-        now = datetime(2026, 9, 28, 22, 30, tzinfo=UTC)
         return Clock(
             is_open=self.market_open,
-            timestamp=now.isoformat(),
-            next_open=(now + timedelta(minutes=self.minutes_to_open)).isoformat(),
-            next_close=(now + timedelta(hours=21, minutes=30)).isoformat(),
+            timestamp=self.now.isoformat(),
+            next_open=self.next_open.isoformat(),
+            next_close=(self.now + timedelta(hours=21, minutes=30)).isoformat(),
         )
+
+    def calendar(self, start: date, end: date) -> list[Session]:
+        """A session every day, opening at the next open's time of day, 6.5 hours long."""
+        self._record("calendar", start, end)
+        sessions = []
+        for k in range(-1, (self.next_open.date() - start).days + 2):
+            opens = self.next_open - timedelta(days=k)
+            if start <= opens.date() <= end:
+                sessions.append(Session(opens.date(), opens, opens + timedelta(hours=6.5)))
+        return sorted(sessions, key=lambda s: s.open)
 
     def list_positions(self) -> list[Position]:
         self._record("list_positions")

@@ -34,7 +34,9 @@ Exit codes, which daily_run.sh turns into pages:
        at the open: the lot had neither stop nor exit from then until now.
        That last is read off the book for every held name, whatever this
        pass then does with it (closes it again, back-fills it, or leaves it
-       to the exit budget), and named by the first run after it.
+       to the exit budget), and named by the first run after it. Which open
+       it met is the broker's calendar's to say, not its stamp's date: a run
+       past 00:00 UTC stamps the date the next 22:30 run has too.
     3  a time exit may have left shares with no stop: a close ended `unknown`
        or `naked`, or the re-cover after it could not place what it had to.
        A cancel still on its way strips its stop after this run, while the
@@ -88,6 +90,7 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -102,6 +105,7 @@ from tradingagents_us.execution.protected_close import (
     cover_beside_exit,
     exit_stamp_date,
     missed_exits,
+    opened_after,
 )
 from tradingagents_us.log_redaction import install as install_log_redaction
 from tradingagents_us.risk.kill_switch import FileKillSwitchReader, default_kill_switch_path
@@ -647,7 +651,10 @@ def _report_exit_budget(
 
 
 def _report_missed_exits(
-    sell_orders: list[Order], positions: list, today: date, submitting: bool
+    sell_orders: list[Order],
+    positions: list,
+    opened: Callable[[datetime], bool],
+    submitting: bool,
 ) -> bool:
     """Name each held lot whose time exit, queued by an earlier run, the open did not fill.
 
@@ -659,11 +666,15 @@ def _report_missed_exits(
     would never see the miss, and the back-fill that covers the lot tonight
     would make the next coverage check read it as recovered.
 
+    `opened` says whether a session opened after an exit was sent
+    (`protected_close.opened_after`): an exit that met none has missed
+    nothing yet, whatever date its stamp carries.
+
     True when the pass must fail for it: with --submit. A dry run only reports.
     """
     missed = {
         p.symbol: found for p in positions
-        if (found := missed_exits(sell_orders, p.symbol, today))
+        if (found := missed_exits(sell_orders, p.symbol, opened))
     }
     for symbol, found in sorted(missed.items()):
         log.error(
@@ -954,7 +965,7 @@ def main(argv: list[str] | None = None) -> int:
         # Each names what it found in a line of its own; with --submit, any
         # of them fails the pass, and daily_run pages on that.
         failing = [
-            _report_missed_exits(sell_orders, positions_raw, today, args.submit),
+            _report_missed_exits(sell_orders, positions_raw, opened_after(client), args.submit),
             _report_exit_budget(actions, skips, managed, config, exited_today, args.submit),
             _report_refusals(skips, args.submit),
             _report_unrefreshed(skips, unrefreshed, args.submit),

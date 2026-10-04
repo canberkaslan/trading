@@ -49,6 +49,8 @@ from tradingagents_us.execution.protected_close import (
     close_with_protection,
     cover_beside_exit,
     exit_stamp_date,
+    last_session_open,
+    opened_after,
 )
 
 DAY = date(2026, 9, 28)
@@ -1007,6 +1009,77 @@ class TestAnExitThatDidNotSellAtTheOpen:
         outcome = _close(fake)
 
         assert outcome.missed_exits == ()
+
+
+class TestTheCalendarSaysWhetherAnExitMetAnOpen:
+    """`missed_exits` asks the broker's calendar whether an open came, not the stamp's date.
+
+    The fake's last session opened nine hours before its clock (13:30 for the
+    22:30 UTC run), each one a day apart.
+    """
+
+    @staticmethod
+    def _dead(fake: FakeBroker, submitted_at: datetime, coid: str = YESTERDAY_STAMP) -> None:
+        dead = _order("exit-d", "market", status="rejected", coid=coid,
+                      submitted_at=submitted_at)
+        fake.orders[dead.id] = dead
+
+    def test_an_exit_that_died_before_any_open_is_no_miss(self) -> None:
+        # Sent at 23:50 UTC and refused at once, the close rerun at 00:10:
+        # the stamp's date is yesterday's, yet no session came between, and
+        # the lot was never left to one with neither stop nor exit.
+        fake = _shut()
+        self._dead(fake, fake.now - timedelta(minutes=20))
+
+        outcome = _close(fake)
+
+        assert outcome.status == "exit_submitted"
+        assert outcome.missed_exits == ()
+        _assert_exiting_once(fake)
+
+    def test_a_calendar_it_cannot_read_names_the_exit_rather_than_miss_it(self) -> None:
+        class _NoCalendar(FakeBroker):
+            def calendar(self, start: date, end: date) -> list:
+                self._record("calendar", start, end)
+                raise httpx.ConnectError("calendar unreachable")
+
+        fake = _NoCalendar([_position()], exit_status="accepted")
+        self._dead(fake, fake.now - timedelta(minutes=20))
+
+        outcome = _close(fake)
+
+        assert outcome.status == "exit_submitted"
+        assert outcome.missed_exits == (f"{YESTERDAY_STAMP} rejected, 0 of 10 sold",)
+
+    def test_no_exit_to_judge_reads_no_calendar(self) -> None:
+        sold = _order("exit-s", "market", status="filled", coid=YESTERDAY_STAMP,
+                      filled_qty=10.0, submitted_at=datetime.now(UTC) - timedelta(days=1))
+        fake = _shut([sold, _stop()])
+
+        outcome = _close(fake)
+
+        assert outcome.status == "exit_submitted" and outcome.missed_exits == ()
+        assert not [c for c in fake.calls if c[0] == "calendar"]
+
+    def test_the_last_open_is_the_latest_before_the_next_one_open_now_or_not(self) -> None:
+        in_session = FakeBroker(
+            [], market_open=True, now=datetime(2026, 10, 2, 15, 0, tzinfo=UTC),
+            minutes_to_open=22.5 * 60,
+        )
+        before_the_open = FakeBroker(
+            [], now=datetime(2026, 10, 2, 10, 0, tzinfo=UTC), minutes_to_open=3.5 * 60
+        )
+
+        assert last_session_open(in_session) == datetime(2026, 10, 2, 13, 30, tzinfo=UTC)
+        assert last_session_open(before_the_open) == datetime(2026, 10, 1, 13, 30, tzinfo=UTC)
+
+    def test_the_calendar_is_read_once_per_pass(self) -> None:
+        fake = FakeBroker([])
+        after = opened_after(fake)
+
+        assert after(fake.now - timedelta(hours=10))
+        assert not after(fake.now - timedelta(hours=8))
+        assert [c[0] for c in fake.calls] == ["clock", "calendar"]
 
 
 class TestABackFillBesideAnExitNeverFound:

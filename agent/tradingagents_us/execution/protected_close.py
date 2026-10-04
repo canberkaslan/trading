@@ -32,13 +32,21 @@ the open, so the lot is sold once and never short.
 One call is one step, each state decided off the broker as it is then:
 
   GUARD    the market is open, or opens within MIN_TIME_TO_OPEN: nothing sent.
-  STAMP    an exit under today's stamp works or filled: nothing sent.
+  STAMP    an exit under today's stamp works or filled, or one of this lot's
+           exits from an earlier trade date still works (queued for an open
+           that has not come: an exchange holiday, a rerun past 00:00 UTC):
+           nothing sent.
   BLOCKED  a sell on the symbol is neither working nor gone (pending_cancel,
-           stopped, a leg whose pair ended): nothing sent. It may still sell,
-           or be about to stop protecting, and acting beside it is a guess.
-  RELEASE  each working sell is cancelled, a take-profit before its own stop,
-           and confirmed by its status, with the DELETE sent again while it
-           still works. One that will not go ends the release there (ABORT).
+           stopped, a leg whose pair ended), or works and is not one the
+           release may cancel (a market sell: no bracket has one as a leg):
+           nothing sent. It may still sell, or be about to stop protecting,
+           and acting beside it is a guess.
+  RELEASE  each working stop and take-profit is cancelled, a take-profit
+           before its own stop, and confirmed by its status, with the DELETE
+           sent again while it still works. One that will not go ends the
+           release there (ABORT). Nothing else is ever released: an exit
+           already queued is the lot's way out, and cancelling it trades that
+           for a cancel that may stick and a resend.
   SELL     the holding read after the release, sold at market under the stamp.
   VERIFY   a sell the broker did not refuse is settled by its reply, or by
            looking its stamp up.
@@ -51,7 +59,8 @@ One call is one step, each state decided off the broker as it is then:
   VERDICT  the book read again: the exit working or filled with nothing beside
            it; or still held, with every share a stop covered before covered
            again by a stop no cancel is on its way to; or how many are not, and
-           what is in flight.
+           what is in flight. An exit of this lot standing at the start
+           counts as cover the verdict holds the end state to, as a stop does.
 
 Every path past STAMP ends in the verdict, so an outcome is what the broker
 shows afterwards, never what this module meant to do.
@@ -61,6 +70,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -139,10 +149,10 @@ MAX_CLIENT_ID_LEN = 48
 CloseStatus = Literal[
     "exit_submitted",   # the stamped exit works or filled, and nothing stands beside it
     "already_closed",   # nothing held, and nothing standing on the flat book
-    "already_exiting",  # an exit under today's stamp works or filled before anything was sent
+    "already_exiting",  # this lot's exit (today's, or an earlier day's still queued) works
     "unchanged",        # still held, and every share a stop covered is covered again
     "deferred",         # the market is open or about to open: nothing sent
-    "naked",            # shares a stop covered have none, now or once a cancel in flight lands
+    "naked",            # shares a stop (or exit) covered have none, now or once a cancel lands
     "unknown",          # the end state could not be read, or is one that must not exist
 ]
 
@@ -196,9 +206,16 @@ class _Book:
     #: Every sell on the symbol the listing returned, whatever its status.
     records: Mapping[str, Order]
 
+    #: Working sells the release never cancels: this lot's time exits, from
+    #: any trade date, and any other sell no bracket or OCO pair can have as a
+    #: leg (`_releasable`).
+    kept: tuple[Order, ...] = ()
+    #: Ids of this lot's time exits in the listing, whatever their status.
+    exits: frozenset[str] = frozenset()
+
     @property
     def standing(self) -> tuple[Order, ...]:
-        return (*self.live, *self.unclear)
+        return (*self.live, *self.unclear, *self.kept)
 
     def _per_group(self, orders: Sequence[Order]) -> float:
         by_group: dict[str, float] = {}
@@ -213,9 +230,20 @@ class _Book:
         return self._per_group(self.standing)
 
     @property
-    def stop_cover_standing(self) -> float:
-        """Shares a standing stop covers, in doubt or not, each pair counted once."""
-        return self._per_group([o for o in self.standing if _is_protective(o)])
+    def cover_standing(self) -> float:
+        """Shares a standing stop or exit of this lot holds back, in doubt or not, each pair once.
+
+        An exit counts with the stops: a lot whose queued exit goes, with no
+        stop to take its place, has lost its way out as surely as its stop.
+        """
+        return self._per_group(
+            [o for o in self.standing if _is_protective(o) or o.id in self.exits]
+        )
+
+    def queued_exit(self) -> Order | None:
+        """This lot's exit from an earlier trade date, still working, if there is one."""
+        queued = [o for o in self.kept if o.id in self.exits]
+        return max(queued, key=lambda o: o.submitted_at) if queued else None
 
     def cover(self, in_flight: frozenset[str]) -> float:
         """Shares a working stop covers that no cancel is on its way to."""
@@ -293,14 +321,49 @@ class _Ctx:
     book: _Book
     release: _Release
     sleep: Sleep
-    #: Shares a stop covered when the close began, in doubt or not: what the
-    #: verdict holds the end state to, capped by what is still held.
+    #: Shares a stop (or an exit of this lot) covered when the close began,
+    #: in doubt or not: what the verdict holds the end state to, capped by
+    #: what is still held.
     wanted: float
     missed: tuple[str, ...] = ()
+    reason: str = "time"
 
 
 def _is_protective(order: Order) -> bool:
     return order.order_type.lower() in PROTECTIVE_TYPES
+
+
+def exit_stamp_date(client_order_id: str, ticker: str, reason: str = "time") -> date | None:
+    """The trade date of `ticker`'s exit under `client_order_id`, or None if it is no exit.
+
+    The stamp `derive_exit_client_order_id` makes, or a retry of it (`-rN`),
+    for any date. A stop re-armed or back-filled under a stamp (`-arm-...`,
+    `-cover`) is a stop, not an exit, and is None here.
+    """
+    stem = derive_exit_client_order_id(ticker, date(2000, 1, 1), reason)[: -len("20000101")]
+    match = re.fullmatch(rf"{re.escape(stem)}(\d{{8}})(?:-r\d+)?", client_order_id)
+    if match is None:
+        return None
+    try:
+        return datetime.strptime(match.group(1), "%Y%m%d").date()
+    except ValueError:
+        return None
+
+
+def _releasable(order: Order, exits: frozenset[str]) -> bool:
+    """Whether the release may cancel this working sell: protection, or a take-profit.
+
+    A stop, or a limit sell: a bracket's or an OCO's take-profit holds the
+    shares back with its stop, and goes first so the stop can. The listing
+    may not show which stop it pairs with (`_at_risk`), so a limit sell is
+    released whether the listing shows its pair or not. Never this lot's time
+    exit, from whatever trade date, nor a market sell, which no bracket has
+    as a leg: either is the lot's way out at the next open, and cancelling it
+    swaps that for a cancel that may stick and a resend.
+    """
+    if order.id in exits:
+        return False
+    return _is_protective(order) or order.order_type.lower() == "limit"
 
 
 def _remaining(order: Order) -> float:
@@ -374,15 +437,12 @@ def close_with_protection(
     stamp, book = start
     ctx = _Ctx(
         client, ticker, stamp, book, _Release(group=book.group), sleep,
-        wanted=book.stop_cover_standing,
+        wanted=book.cover_standing,
         missed=_missed_exits(book, ticker, trade_date, reason),
+        reason=reason,
     )
-    if book.unclear:
-        described = ", ".join(
-            f"{o.id}={o.status}" + (", its pair ended" if _working(o) else "")
-            for o in book.unclear
-        )
-        return _settle(ctx, f"nothing sent, sell order(s) in doubt: {described}")
+    if book.unclear or book.kept:
+        return _settle(ctx, _blocked(book))
 
     ctx = replace(ctx, release=_release(client, book, sleep))
     if ctx.release.blocker_id is not None:
@@ -436,7 +496,13 @@ def cover_beside_exit(
 def _start(
     client: AlpacaClient, ticker: str, trade_date: date, reason: str
 ) -> tuple[str, _Book] | CloseOutcome:
-    """GUARD and STAMP: the exit id and the book to work from, or why not to start."""
+    """GUARD and STAMP: the exit id and the book to work from, or why not to start.
+
+    An exit an earlier run queued that still works is this lot's exit as much
+    as today's would be: no session has come to execute it (a weekday
+    exchange holiday, or a rerun past 00:00 UTC), and the lot is on its way
+    out at the next one.
+    """
     shut = _market_shut(client)
     if shut:
         return CloseOutcome(ticker, "deferred", f"nothing sent: {shut}")
@@ -445,7 +511,11 @@ def _start(
         return _prior_exit(ticker, prior)
     if stamp is None:
         return CloseOutcome(ticker, "unchanged", "no unused exit id for today")
-    return stamp, _read_book(client, ticker)
+    book = _read_book(client, ticker, reason)
+    queued = book.queued_exit()
+    if queued is not None:
+        return _prior_exit(ticker, queued)
+    return stamp, book
 
 
 def _exit_stamp(
@@ -464,7 +534,7 @@ def _exit_stamp(
 
 
 def _prior_exit(ticker: str, prior: Order) -> CloseOutcome:
-    """Today's exit is already there: on its way out, or in a status that is neither."""
+    """This lot's exit is already there: on its way out, or in a status that is neither."""
     kw = {"exit_order_id": prior.id, "client_order_id": prior.client_order_id}
     if _working(prior) or prior.status.lower() == "filled":
         return CloseOutcome(
@@ -510,7 +580,7 @@ def _missed_exits(
     return ()
 
 
-def _read_book(client: AlpacaClient, ticker: str) -> _Book:
+def _read_book(client: AlpacaClient, ticker: str, reason: str = "time") -> _Book:
     """Every sell on the symbol that still reserves shares, any in doubt, and pairs.
 
     `status="all"` and nested, for the reason `stop_coverage` gives: a
@@ -521,26 +591,49 @@ def _read_book(client: AlpacaClient, ticker: str) -> _Book:
     Nor is a working order whose pair has already ended: a take-profit that
     filled, or a leg the broker cancelled, takes the other leg with it, and
     for a while that leg still reads `held` with its cancel on the way.
+
+    A working sell the release may not cancel (`_releasable`) is `kept`.
     """
     top = client.list_orders(status="all", limit=500, nested=True)
     group = {o.id: root.id for root in top for o in flatten_orders([root])}
     mine = [
         o for o in flatten_orders(top) if o.symbol == ticker and o.side.lower() == "sell"
     ]
+    exits = frozenset(
+        o.id for o in mine
+        if not _is_protective(o) and exit_stamp_date(o.client_order_id, ticker, reason)
+    )
     ended = {group.get(o.id, o.id) for o in mine if o.status.lower() in PAIR_ENDING_STATUSES}
     working = [o for o in mine if _remaining(o) > QTY_EPSILON]
-    live = [o for o in working if _working(o) and group.get(o.id, o.id) not in ended]
-    live_ids = {o.id for o in live}
+    active = [o for o in working if _working(o) and group.get(o.id, o.id) not in ended]
+    active_ids = {o.id for o in active}
     unclear = [
         o for o in working
-        if o.status.lower() not in _GONE_STATUSES and o.id not in live_ids
+        if o.status.lower() not in _GONE_STATUSES and o.id not in active_ids
     ]
     return _Book(
-        live=tuple(_release_order(live, group)),
+        live=tuple(_release_order([o for o in active if _releasable(o, exits)], group)),
         unclear=tuple(unclear),
         group=group,
         records={o.id: o for o in mine},
+        kept=tuple(o for o in active if not _releasable(o, exits)),
+        exits=exits,
     )
+
+
+def _blocked(book: _Book) -> str:
+    """Why nothing is sent: the sells in doubt, and those the release may not cancel."""
+    parts = []
+    if book.unclear:
+        parts.append("sell order(s) in doubt: " + ", ".join(
+            f"{o.id}={o.status}" + (", its pair ended" if _working(o) else "")
+            for o in book.unclear
+        ))
+    if book.kept:
+        parts.append("a sell the release may not cancel stands: " + ", ".join(
+            f"{o.id}={o.order_type} {o.status} ({o.client_order_id})" for o in book.kept
+        ))
+    return "nothing sent, " + "; ".join(parts)
 
 
 def _release_order(live: list[Order], group: Mapping[str, str]) -> list[Order]:
@@ -674,7 +767,7 @@ def _read_truth(ctx: _Ctx) -> _Truth | str:
         if delay:
             ctx.sleep(delay)
         try:
-            book = _read_book(ctx.client, ctx.ticker)
+            book = _read_book(ctx.client, ctx.ticker, ctx.reason)
             position = ctx.client.get_position(ctx.ticker)
         except Exception as exc:  # noqa: BLE001 — retried, then reported
             error = str(exc)
@@ -1008,8 +1101,8 @@ def _held_verdict(
     """Still held and no exit works: every share a stop covered must be covered again.
 
     Counted, not assumed: working stops no cancel is on its way to, each pair
-    once, against what the first listing's stops covered or what is still
-    held, whichever is less. And an exit that may still land is ruled out only
+    once, against what the first listing's stops and this lot's exits covered
+    or what is still held, whichever is less. And an exit that may still land is ruled out only
     by a sell that reserves the shares: the broker refuses it beside one.
     """
     book, held = truth.book, truth.held

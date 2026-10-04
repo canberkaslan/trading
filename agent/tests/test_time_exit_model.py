@@ -30,7 +30,9 @@ starts until run 1 ends, every answer it gives is a choice:
       leaves it pending; a filled leg cancels its sibling;
   (g) at the open, a separate step, our queued market exit fills, half-fills,
       or is rejected, expired or cancelled; a gap fills every standing stop or
-      none;
+      none; or there is no session at all (a weekday exchange holiday: the
+      timer runs Mon-Fri and daily_run.sh skips weekends only), and run 2
+      meets yesterday's exit still queued;
   (h) partial fills: of a stop or our exit, in the run or at the open.
 
 The model keeps the Alpaca rules the close relies on: an open sell reserves its
@@ -45,7 +47,9 @@ its stops are maintained (`--backfill-stops`, the back-fill pass).
 
 INVARIANTS, asserted in every scenario. "Covered" means a live stop (new,
 accepted, held, partially_filled) holds the share back, each bracket pair once;
-a share a working exit of ours holds back is on its way out at the open.
+a share a working exit of ours holds back is on its way out at the open, and
+what the lot had at the start counts both: a lot whose queued exit is
+cancelled and never replaced has lost its way out as surely as a stop.
 
   I1  Never short, and never more sold than held: the holding never goes below
       zero, and no sell stands on a flat book after run 1 or after run 2 (a
@@ -65,14 +69,20 @@ a share a working exit of ours holds back is on its way out at the open.
       (manage_positions' "a time exit may have left shares with no stop",
       which daily_run.sh pages on). Exit 0 or 1 claims the lot is closed or as
       protected as before.
+  I6  The time exit releases protection only: a stop, or a leg of a bracket or
+      OCO pair. A working sell that is neither (above all an exit of ours
+      queued on an earlier trade date and still waiting for an open) is never
+      cancelled, in run 1 or in run 2. Cancelling it puts the lot's way out
+      behind a cancel that may stick, and its resend spends exit budget again.
 
 Exploration, all of it deterministic:
 
-  * exhaustive: on four books (one stop; a bracket's take-profit + held stop;
-    two stops; a stop over 6 of 10 shares), every schedule with at most two
-    non-clean choices anywhere in run 1, and every schedule of three within
-    ten calls of each other; for each, every night, every open and both run-2
-    variants;
+  * exhaustive: on five books (one stop; a bracket's take-profit + held stop;
+    two stops; a stop over 6 of 10 shares; yesterday's exit still queued, the
+    stop it replaced released, as the run after a holiday finds it), every
+    schedule with at most two non-clean choices anywhere in run 1, and every
+    schedule of three within ten calls of each other; for each, every night,
+    every open (the holiday among them) and both run-2 variants;
   * random: four fixed seeds, 6000 schedules each, with per-call event and
     fault rates from 3-10% and 12-30% (one seed draws no events at all: the
     after-hours run as it is scheduled); one night, open and variant drawn per
@@ -201,9 +211,9 @@ def test_exhaustive_exploration(harness: Harness, market_open: bool) -> None:
             stats.merge(explore_bounded(harness, book, max_faults, window))
     # In the session the close defers at its first read, so there is little
     # left to explore: the fills it meets, the re-cover, and run 2. Each floor
-    # is about three quarters of what the run explores (96k after the close,
-    # 3k in the session), the margin the original 200k-of-266k floor kept.
-    assert stats.scenarios >= (2_250 if market_open else 72_000), "the exploration shrank"
+    # is about three quarters of what the run explores (127k after the close,
+    # 5.2k in the session), the margin the original 200k-of-266k floor kept.
+    assert stats.scenarios >= (3_900 if market_open else 95_000), "the exploration shrank"
     _judge(harness, stats, "exhaustive")
 
 
@@ -226,10 +236,27 @@ class TestTheModel:
         stats = Stats()
         b = harness.evaluate(Scenario(book, ()), stats)
         (close,) = [o for kind, o in b.outcomes if kind == "close"]
-        assert close.status == "exit_submitted"
+        # A lot whose exit is already queued is on its way out: nothing is sent.
+        assert close.status == ("already_exiting" if book == "queued" else "exit_submitted")
         assert b.kind(tem.cover_wanted(book)) == "exiting"
         assert not stats.findings
-        assert stats.scenarios == len(tem.OPEN_EXIT_OUTCOMES) * len(tem.RUN2_VARIANTS)
+        openings = len(tem.OPEN_EXIT_OUTCOMES) + 1  # the holiday
+        assert stats.scenarios == openings * len(tem.RUN2_VARIANTS)
+
+    def test_a_holiday_leaves_the_queued_exit_for_run_2(self) -> None:
+        b = build_book("stop")
+        b.cancel_order("stop-A")
+        b.submit_order(symbol="XOM", qty=10, side="sell", order_type="market",
+                       time_in_force="day", client_order_id="tr-exit-time-XOM-20261001")
+        b.open_market(tem.OPEN_HOLIDAY)
+        assert b.held == 10.0
+        assert [(r.role, r.status) for r in b.sells()] == [("exit", "accepted")]
+
+    def test_a_cancelled_queued_exit_is_not_protected(self) -> None:
+        b = build_book("queued")
+        b.cancel_order("exit-prev")
+        assert b.kind(tem.cover_wanted("queued")) == "naked"
+        assert b.violations and b.violations[0][0].startswith("I6 ")
 
     def test_a_sell_beyond_the_unreserved_shares_is_refused(self) -> None:
         b = build_book("stop")

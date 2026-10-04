@@ -27,9 +27,10 @@ time exit, and the broker is armed from the moment `close_with_protection`
 starts until the run ends (the same-run re-cover is under fire too). Then the
 night (whatever is still in flight lands, a stuck cancel lands or never does),
 the open (our queued market exit fills, half-fills, or is rejected, expired or
-cancelled; a gap down fills every standing stop or none), and run 2 on D+1 with
-a clean broker, in two variants: the lot is still due for its time exit, or it
-has moved and only its stops are maintained (the back-fill pass).
+cancelled; a gap down fills every standing stop or none; or no session at all,
+an exchange holiday on a weekday, and a queued exit still waits), and run 2 on
+D+1 with a clean broker, in two variants: the lot is still due for its time
+exit, or it has moved and only its stops are maintained (the back-fill pass).
 
 The explorers enumerate fault schedules (`explore_bounded`: every schedule with
 at most K non-clean choices, the night and the open enumerated in full) or draw
@@ -61,6 +62,7 @@ from tradingagents_us.dataflows.alpaca_broker import (
     Position,
 )
 from tradingagents_us.execution import protected_close as pc
+from tradingagents_us.execution.executor import derive_exit_client_order_id
 from tradingagents_us.risk.position_manager import Bar
 
 SYMBOL = "XOM"
@@ -107,13 +109,20 @@ SUBMIT_OUTCOMES = ("ok", "timeout_applied", "timeout_lost", "timeout_soon", "tim
 #: How a queued market exit ends at the open, and whether a gap fills the stops.
 OPEN_EXIT_OUTCOMES = ("fill", "half", "rejected", "expired", "canceled")
 OPEN_GAP = ("hold", "gap")
+#: No session before run 2: the daily timer runs Mon-Fri and daily_run.sh skips
+#: weekends only, so on a weekday exchange holiday nothing fills, nothing
+#: expires, and an exit queued the night before still waits for an open.
+OPEN_HOLIDAY = ("holiday", "hold")
 
 #: (environment event or None, outcome of the call).
 Choice = tuple[str | None, str]
 CLEAN: Choice = (None, "ok")
 
 #: The start books. Each is one 10-share long lot of XOM bought at 100.
-BOOKS = ("stop", "bracket", "two_stops", "partial")
+BOOKS = ("stop", "bracket", "two_stops", "partial", "queued")
+
+#: The `queued` book's exit: stamped the trade date before run 1's.
+PREV_STAMP = derive_exit_client_order_id(SYMBOL, (RUN1_AT - timedelta(days=1)).date(), "time")
 
 
 # --------------------------------------------------------------------------- broker
@@ -554,8 +563,21 @@ class ModelBroker:
 
     # ---- writes --------------------------------------------------------------
 
+    def _check_release(self, rec: Rec | None) -> None:
+        """I6: a cancel goes to protection only, a stop or a bracket leg."""
+        if (
+            rec is not None and rec.side == "sell" and rec.type != "stop"
+            and rec.group is None and rec.status in CANCELABLE
+        ):
+            self.flag(
+                "I6 a working sell that is neither a stop nor a bracket leg cancelled",
+                f"{self.stage}: cancel_order({rec.role} {rec.id}[{rec.status}] "
+                f"{rec.type} {rec.remaining:g})",
+            )
+
     def cancel_order(self, order_id: str) -> dict:
         rec = self.recs.get(order_id)
+        self._check_release(rec)
         out = self._step("cancel", f"cancel_order({self.name(order_id)})", rec)
         path = f"/orders/{order_id}"
         if rec is None:
@@ -658,13 +680,20 @@ class ModelBroker:
     def open_choices(self) -> list[tuple[str, str]]:
         exits = OPEN_EXIT_OUTCOMES if self._candidates()["exit"] else ("fill",)
         gaps = OPEN_GAP if self._candidates()["stop"] else ("hold",)
-        return list(itertools.product(exits, gaps))
+        return [*itertools.product(exits, gaps), OPEN_HOLIDAY]
 
     def open_market(self, choice: tuple[str, str]) -> None:
-        """The next session: queued exits execute or die, a gap fills the stops, day orders end."""
+        """The next session: queued exits execute or die, a gap fills the stops, day orders end.
+
+        Or none (`OPEN_HOLIDAY`): the book run 2 meets is the one the night left.
+        """
         how, gap = choice
         self.stage = "open"
         self.base_time, self.elapsed = OPEN_AT, 0.0
+        if choice == OPEN_HOLIDAY:
+            self.stage = "holiday"
+            self.trace("     no session: an exchange holiday, every order still as it was")
+            return
         for rec in self._candidates()["exit"]:
             if how == "fill":
                 self._fill(rec, rec.remaining, "at the open")
@@ -686,8 +715,11 @@ class ModelBroker:
     def kind(self, cover_before: float) -> str:
         """flat | exiting | protected | naked | flat+sell | short | over-reserved.
 
-        `protected`: every share a stop covered before (`cover_before`) that is
-        still held, and that no stop or take-profit has sold since, has a live stop.
+        `protected`: every share a stop or a working exit of ours covered before
+        (`cover_before`) that is still held, and that no stop or take-profit has
+        sold since, has a live stop. An exit counts: a lot whose queued exit is
+        cancelled and not replaced has lost its way out as surely as one whose
+        stop went.
         """
         live = self.sells()
         if self.held < -EPS:
@@ -744,6 +776,12 @@ def build_book(name: str) -> ModelBroker:
     elif name == "partial":
         b.add(Rec("stop-A", "coid-stop-A", "sell", "stop", 6.0, "new", stop_price=90.0,
                   role="stop"))
+    elif name == "queued":
+        # What the run after a time exit finds when no session came between (a
+        # weekday exchange holiday, or a rerun past 00:00 UTC): that close
+        # released the stop, and its exit still waits for an open.
+        b.add(Rec("exit-prev", PREV_STAMP, "sell", "market", 10.0, "accepted", tif="day",
+                  role="exit"))
     else:
         raise ValueError(name)
     return b
@@ -838,7 +876,9 @@ def _replay(faults: dict[int, Choice]):
 
 
 def cover_wanted(book: str) -> float:
-    return build_book(book).stop_cover()
+    """What the start book covers: shares a live stop, or a working exit of ours, holds back."""
+    b = build_book(book)
+    return b.stop_cover() + b.exit_cover()
 
 
 class Harness:
@@ -851,7 +891,7 @@ class Harness:
         #: Run 1 in the session instead of after the close: the clock says
         #: open, and the model may fill a stop, a take-profit or an exit.
         self.market_open = False
-        self._run2_memo: dict[tuple, tuple[int, str, str]] = {}
+        self._run2_memo: dict[tuple, tuple[int, str, str, tuple[tuple[str, str], ...]]] = {}
         real_close = mp.close_with_protection
         real_cover = getattr(mp, "cover_beside_exit", None)
 
@@ -913,7 +953,10 @@ class Harness:
             broker.armed = False
             self.arming = False
 
-    def run2(self, b: ModelBroker, variant: str, trace: bool = False) -> tuple[int, str, str]:
+    def run2(
+        self, b: ModelBroker, variant: str, trace: bool = False
+    ) -> tuple[int, str, str, tuple[tuple[str, str], ...]]:
+        """Run 2 on `b`: its exit code, the lot's kind, the book, and what it flagged."""
         key = (variant, b.key())
         if not trace and key in self._run2_memo:
             return self._run2_memo[key]
@@ -921,7 +964,7 @@ class Harness:
         r.tracing, r.stage = trace, f"run 2 ({variant})"
         r.events = []
         rc = self._main(r, RUN2_AT, variant, arm=False)
-        result = (rc, r.kind(QTY), r.describe())
+        result = (rc, r.kind(QTY), r.describe(), tuple(r.violations[len(b.violations):]))
         if trace:
             b.events.extend(r.events)
         else:
@@ -1056,8 +1099,8 @@ class _After:
         o.trace(f"     == after the open ({opening[0]}, {opening[1]}): {o.describe()}")
         for variant in [sc.variant] if sc.variant else RUN2_VARIANTS:
             self.stats.scenarios += 1
-            rc2, e2, state = self.harness.run2(o, variant, trace=o.tracing)
-            for cls, msg in Harness._check_run2(rc2, e2, state, variant):
+            rc2, e2, state, flagged = self.harness.run2(o, variant, trace=o.tracing)
+            for cls, msg in (*flagged, *Harness._check_run2(rc2, e2, state, variant)):
                 self.add(cls, msg, dataclasses.replace(sc, variant=variant))
             o.trace(f"     == run 2 ({variant}) rc={rc2}: {e2}; {state}")
         return o

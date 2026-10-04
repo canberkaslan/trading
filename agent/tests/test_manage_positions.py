@@ -917,12 +917,26 @@ class TestTodaysExitsAreCountedByTheirStamp:
     def test_a_stop_re_armed_under_a_retried_stamp_spends_no_exit_budget(self) -> None:
         retried = f"{XOM_EXIT_ID}-r2"
         sells = frozenset({
-            ("XOM", _rearm_id(retried, "stop-xom")),
-            ("AAPL", derive_exit_client_order_id("AAPL", TODAY, "time") + "-r3"),
-            ("MSFT", derive_exit_client_order_id("MSFT", TODAY, "time")),
+            ("XOM", _rearm_id(retried, "stop-xom"), "new"),
+            ("AAPL", derive_exit_client_order_id("AAPL", TODAY, "time") + "-r3", "accepted"),
+            ("MSFT", derive_exit_client_order_id("MSFT", TODAY, "time"), "filled"),
+            ("NVDA", derive_exit_client_order_id("NVDA", TODAY, "time"), "rejected"),
         })
 
         assert mp._exited_on(sells, TODAY) == {"AAPL", "MSFT"}
+
+    def test_an_exit_queued_on_an_earlier_day_is_told_apart_from_todays(self) -> None:
+        yesterday = TODAY - timedelta(days=1)
+        sells = frozenset({
+            ("XOM", derive_exit_client_order_id("XOM", yesterday, "time"), "accepted"),
+            ("AAPL", derive_exit_client_order_id("AAPL", yesterday, "time") + "-r2", "new"),
+            ("MSFT", derive_exit_client_order_id("MSFT", yesterday, "time"), "expired"),
+            ("NVDA", derive_exit_client_order_id("NVDA", TODAY, "time"), "accepted"),
+            ("AMD", _rearm_id(derive_exit_client_order_id("AMD", yesterday, "time"), "s"), "new"),
+        })
+
+        assert mp._exiting_before(sells, TODAY) == {"XOM", "AAPL"}
+        assert mp._exited_on(sells, TODAY) == {"NVDA"}
 
 
 class TestTimeExitAttributionThroughTheLedger:
@@ -1034,6 +1048,36 @@ class TestExitBudgetThroughThePass:
         assert "closing 0 of 6 due (budget 2 of 8 positions today, 2 closed earlier today)" in (
             last[-1]
         )
+
+    def test_an_exit_queued_on_an_earlier_day_is_left_and_spends_no_budget(
+        self, aged_book_db: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The run after a weekday exchange holiday (the timer runs Mon-Fri):
+        # T0's exit, queued the trade date before, still waits for an open,
+        # and the close that queued it released T0's stop. The lot is on its
+        # way out. Cancelling and resending its exit spent a share of today's
+        # budget on it, deferred a name that was due, and left T0 with neither
+        # exit nor stop whenever that cancel stuck.
+        stamp = derive_exit_client_order_id("T0", TODAY - timedelta(days=1), "time")
+        queued = dataclasses.replace(
+            _stop("exit-T0", "T0", 0.0), client_order_id=stamp, order_type="market",
+            stop_price=None, status="accepted", submitted_at=datetime.now(UTC) - timedelta(days=1),
+        )
+        fake = FakeBroker(
+            positions=[_position(s, 100.5) for s in AGED],
+            orders=[queued, *(_stop(f"stop-{s}", s, 90.0) for s in AGED[1:])],
+            fills=[_buy(s) for s in AGED],
+            exit_status="accepted",
+        )
+
+        rc = _run(monkeypatch, fake, "--submit", "--db-url", aged_book_db)
+
+        assert rc == 1, "the five names still deferred page"
+        sold = [w[1]["symbol"] for w in fake.writes
+                if w[0] == "submit_order" and w[1]["order_type"] == "market"]
+        assert sold == ["T1", "T2"]
+        assert [w[1] for w in fake.writes if w[0] == "cancel_order"] == ["stop-T1", "stop-T2"]
+        assert fake.orders["exit-T0"].status == "accepted"
 
     def test_the_deferred_names_are_reported(
         self, aged_book_db: str, monkeypatch: pytest.MonkeyPatch,

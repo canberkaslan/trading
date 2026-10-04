@@ -66,7 +66,9 @@ Safety, in the order it matters:
   * One pass time-exits at most 3 positions, or 25% of those examined if fewer
     (`position_manager.exit_budget`), so one bad input cannot liquidate the book
     through time exits in a single run. The budget is the trade date's: a pass
-    run again the same day counts the exits already stamped today against it.
+    run again the same day counts the exits already stamped today against it,
+    and a name whose exit an earlier date queued still waits for an open (a
+    weekday exchange holiday) is left to that exit and spends none of it.
     The rest are reported as deferred, keep their stops, and with --submit
     fail the pass so it pages. Stop maintenance does not count against the
     budget. A stop moved to the last price is a close all the same, so the
@@ -81,7 +83,6 @@ import argparse
 import dataclasses
 import logging
 import os
-import re
 import sys
 import time
 from datetime import UTC, date, datetime, timedelta
@@ -96,6 +97,7 @@ from tradingagents_us.execution.protected_close import (
     CloseOutcome,
     close_with_protection,
     cover_beside_exit,
+    exit_stamp_date,
 )
 from tradingagents_us.log_redaction import install as install_log_redaction
 from tradingagents_us.risk.kill_switch import FileKillSwitchReader, default_kill_switch_path
@@ -131,6 +133,9 @@ LIVE_ORDER_STATUSES = frozenset({"held", "new", "accepted", "pending_new", "part
 #: Statuses in which a sell never sold a share and never will.
 _NEVER_SOLD = FAILED_EXIT_STATUSES | {"replaced"}
 
+#: (symbol, client id, status) of each sell on the book.
+Sells = frozenset[tuple[str, str, str]]
+
 #: Enough history for a 14-period ATR with room for holidays. Calendar days.
 BAR_LOOKBACK_DAYS = 60
 
@@ -163,7 +168,7 @@ UNCOVERED_STATUSES = frozenset({"unknown", "naked"})
 
 def _order_views(
     client: AlpacaClient,
-) -> tuple[list[OrderView], dict[tuple[str, float], str], frozenset[tuple[str, str]]]:
+) -> tuple[list[OrderView], dict[tuple[str, float], str], Sells]:
     """Every live order as a pure view, plus a map back to the broker order id.
 
     Two things this gets right that the obvious version does not:
@@ -181,9 +186,10 @@ def _order_views(
     pure view the coverage rules are written against) while amending a stop needs
     one. Keyed on symbol + stop price, which is unique for a live protective leg.
 
-    Last, (symbol, client id) for every sell that sold or may still sell, read
-    off the same listing: what today's time exits have spent of the exit
-    budget is counted from their stamps there (`_exited_on`).
+    Last, (symbol, client id, status) for every sell, read off the same
+    listing: what today's time exits have spent of the exit budget is counted
+    from their stamps there (`_exited_on`), and which names an earlier date's
+    exit is still selling (`_exiting_before`).
     """
     raw = client.list_orders(status="all", limit=500, nested=True)
     flat = flatten_orders(raw)
@@ -205,16 +211,16 @@ def _order_views(
         if o.stop_price is not None and o.status.lower() in LIVE_ORDER_STATUSES
     }
     sells = frozenset(
-        (o.symbol, o.client_order_id)
+        (o.symbol, o.client_order_id, o.status.lower())
         for o in flat
-        if o.side.lower() == "sell" and o.status.lower() not in _NEVER_SOLD
+        if o.side.lower() == "sell"
     )
     return views, ids, sells
 
 
 def _read_book(
     client: AlpacaClient,
-) -> tuple[list[OrderView], dict[tuple[str, float], str], list, frozenset[tuple[str, str]]]:
+) -> tuple[list[OrderView], dict[tuple[str, float], str], list, Sells]:
     """The orders, then the holding, in that order and never the other.
 
     A sell that fills between two reads must show up as fewer shares held,
@@ -229,22 +235,32 @@ def _read_book(
     return orders, stop_ids, client.list_positions(), sells
 
 
-def _exited_on(sells: frozenset[tuple[str, str]], day: date) -> frozenset[str]:
+def _exited_on(sells: Sells, day: date) -> frozenset[str]:
     """The names a time exit sold, or is selling, under `day`'s stamp.
 
     The stamp or a retry of it (`-rN`), in a status that sold or still can:
-    what earlier passes on the same trade date spent of the exit budget.
+    what earlier passes on the same trade date spent of the exit budget. A
+    stop re-armed under a stamp (`<stamp>-r2-arm-...`) is a stop, not an
+    exit, and spends nothing.
     """
-    from tradingagents_us.execution.executor import derive_exit_client_order_id
+    return frozenset(
+        symbol for symbol, coid, status in sells
+        if status not in _NEVER_SOLD and exit_stamp_date(coid, symbol) == day
+    )
 
-    out = set()
-    for symbol, coid in sells:
-        stamp = derive_exit_client_order_id(symbol, day, "time")
-        # Exactly the stamp or `-rN`: a stop re-armed under a retried stamp
-        # (`<stamp>-r2-arm-...`) is a stop, not an exit, and spends nothing.
-        if re.fullmatch(rf"{re.escape(stamp)}(-r\d+)?", coid):
-            out.add(symbol)
-    return frozenset(out)
+
+def _exiting_before(sells: Sells, day: date) -> frozenset[str]:
+    """The names whose time exit, stamped on a trade date other than `day`, still works.
+
+    Queued for an open that has not come since (a weekday exchange holiday,
+    or a rerun past 00:00 UTC). The lot is on its way out: its close sends
+    nothing, and it takes no share of `day`'s exit budget.
+    """
+    return frozenset(
+        symbol for symbol, coid, status in sells
+        if status in LIVE_ORDER_STATUSES
+        and exit_stamp_date(coid, symbol) not in (None, day)
+    )
 
 
 #: Daily bars and their dates, oldest first, as `_bars_for` returns them.
@@ -890,7 +906,10 @@ def main(argv: list[str] | None = None) -> int:
         )
 
         exited_today = _exited_on(sells, today)
-        actions, skips = plan_actions(managed, bars_by_ticker, config, exited_today=exited_today)
+        actions, skips = plan_actions(
+            managed, bars_by_ticker, config,
+            exited_today=exited_today, exiting=_exiting_before(sells, today),
+        )
 
         for skip in skips:
             log.info("%-6s SKIP  %-20s %s", skip.ticker, skip.reason, skip.detail)

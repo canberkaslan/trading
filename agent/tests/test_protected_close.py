@@ -48,6 +48,7 @@ from tradingagents_us.execution.protected_close import (
     _rearm_id,
     close_with_protection,
     cover_beside_exit,
+    exit_stamp_date,
 )
 
 DAY = date(2026, 9, 28)
@@ -302,6 +303,54 @@ class TestBeforeAnythingIsReleased:
         outcome = _close(fake)
 
         assert outcome.status == "unknown" and "pending_cancel" in outcome.detail
+        assert fake.writes == []
+
+    @pytest.mark.parametrize("coid", [YESTERDAY_STAMP, f"{YESTERDAY_STAMP}-r2"])
+    @pytest.mark.parametrize("status", ["accepted", "new", "pending_new"])
+    def test_an_exit_an_earlier_day_queued_and_still_working_sends_nothing(
+        self, coid: str, status: str
+    ) -> None:
+        # A weekday exchange holiday (or a rerun past 00:00 UTC): no session
+        # has come since yesterday's close queued it, and that close released
+        # the stop. The lot is on its way out at the next open. It used to be
+        # cancelled as a take-profit and sent again, and a cancel that stuck
+        # left the lot with neither exit nor stop, reported as `unchanged`.
+        prior = _order("exit-y", "market", status=status, coid=coid,
+                       submitted_at=datetime.now(UTC) - timedelta(days=1))
+        fake = _shut([prior])
+
+        outcome = _close(fake)
+
+        assert outcome.status == "already_exiting" and outcome.ok
+        assert outcome.exit_order_id == "exit-y" and outcome.client_order_id == coid
+        assert fake.writes == []
+
+    def test_an_earlier_exit_whose_cancel_is_on_its_way_pages(self) -> None:
+        # Not cancelled by any close (none releases an exit), yet in
+        # pending_cancel: once it lands the lot has neither exit nor stop.
+        prior = _order("exit-y", "market", status="pending_cancel", coid=YESTERDAY_STAMP,
+                       submitted_at=datetime.now(UTC) - timedelta(days=1))
+        fake = _shut([prior])
+
+        outcome = _close(fake)
+
+        assert outcome.status == "naked", outcome.detail
+        assert "exit-y=pending_cancel" in outcome.detail
+        assert fake.writes == []
+
+    def test_a_market_sell_no_bracket_can_have_is_left_standing(self) -> None:
+        # Another writer's sell, queued for the open beside a stop on the rest
+        # of the lot. No bracket has a market leg: it is not a take-profit, and
+        # cancelling it is not the release's to do. Nothing is sent, and the
+        # stop still covers what it covered.
+        council = _order("sell-1", "market", qty=4.0, status="accepted",
+                         coid="tr-XOM-20260928-SELL")
+        fake = _shut([_stop(qty=6.0), council])
+
+        outcome = _close(fake)
+
+        assert outcome.status == "unchanged", outcome.detail
+        assert "sell-1=market accepted" in outcome.detail
         assert fake.writes == []
 
     @pytest.mark.parametrize("status", ["stopped", "pending_cancel", "pending_replace"])
@@ -1015,6 +1064,14 @@ class TestABackFillBesideAnExitNeverFound:
 
 class TestClientIds:
     """Every order the close places has an id it can be found by, within Alpaca's cap."""
+
+    def test_an_exit_stamp_of_any_day_is_read_back_and_nothing_else(self) -> None:
+        assert exit_stamp_date(STAMP, "XOM") == DAY
+        assert exit_stamp_date(f"{YESTERDAY_STAMP}-r3", "XOM") == DAY - timedelta(days=1)
+        assert exit_stamp_date(_rearm_id(STAMP, "stop-xom"), "XOM") is None
+        assert exit_stamp_date(_fit(f"{STAMP}-cover"), "XOM") is None
+        assert exit_stamp_date(STAMP, "XO") is None
+        assert exit_stamp_date("tr-XOM-20260928-SELL", "XOM") is None
 
     def test_a_re_arm_id_is_the_same_for_the_same_stamp_and_stop(self) -> None:
         uuid = "b0b6dd9d-8b9b-48a9-ba46-b9d54906e415"

@@ -530,6 +530,7 @@ def _ration_exits(
     positions: Sequence[ManagedPosition],
     config: ManagementConfig,
     exited_today: frozenset[str] = frozenset(),
+    exiting: frozenset[str] = frozenset(),
 ) -> tuple[set[str], dict[str, Skip]]:
     """Which due time exits this pass takes, and a Skip for each one it defers.
 
@@ -542,6 +543,8 @@ def _ration_exits(
     before today's exits, and each name `exited_today` has spent its share. A
     name among them that is still held and due (an exit queued for the open)
     is let through again without a second share: its close sends nothing new.
+    So is a name in `exiting`, whose exit an earlier trade date queued still
+    waits for an open: it spent that date's budget, not today's.
     """
     due = sorted(
         (p for p in positions if _time_exit_due(p, config)),
@@ -549,13 +552,14 @@ def _ration_exits(
     )
     book = len({p.ticker for p in positions} | exited_today)
     left = max(0, exit_budget(book, config) - len(exited_today))
-    fresh = [p for p in due if p.ticker not in exited_today]
+    spent = exited_today | exiting
+    fresh = [p for p in due if p.ticker not in spent]
     detail = (
         f"close deferred: {left} of {len(fresh)} due this pass "
         f"(cap {config.max_closes_per_run}, {config.max_close_fraction:.0%} "
         f"of {book} positions, {len(exited_today)} closed today)"
     )
-    allowed = {p.ticker for p in due if p.ticker in exited_today}
+    allowed = {p.ticker for p in due if p.ticker in spent}
     allowed |= {p.ticker for p in fresh[:left]}
     deferred = {p.ticker: Skip(p.ticker, "exit_budget", detail) for p in fresh[left:]}
     return allowed, deferred
@@ -572,6 +576,7 @@ def plan_actions(
     config: ManagementConfig = DEFAULT_CONFIG,
     *,
     exited_today: frozenset[str] = frozenset(),
+    exiting: frozenset[str] = frozenset(),
 ) -> tuple[list[Action], list[Skip]]:
     """Decide what to do with every open position.
 
@@ -580,11 +585,12 @@ def plan_actions(
     stop maintenance is not, so it must never set a stop at the market (see
     DEFAULT_MAX_CLOSES_PER_RUN). `exited_today` names the positions a time exit
     already sold, or is selling, under today's stamp: the budget is the trade
-    date's, and they have spent part of it.
+    date's, and they have spent part of it. `exiting` names those whose exit
+    an earlier trade date queued still works: they take no share of today's.
     """
     actions: list[Action] = []
     skips: list[Skip] = []
-    exits, deferred = _ration_exits(positions, config, exited_today)
+    exits, deferred = _ration_exits(positions, config, exited_today, exiting)
 
     for pos in positions:
         unusable = _unusable(pos)

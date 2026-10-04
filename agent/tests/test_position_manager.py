@@ -326,6 +326,21 @@ class TestExitBudget:
         assert sorted(a.ticker for a in actions if isinstance(a, TimeExit)) == ["T6", "T7"]
         assert len([s for s in skips if s.reason == "exit_budget"]) == 6
 
+    def test_a_name_whose_earlier_exit_still_works_spends_no_share(self) -> None:
+        # The run after a weekday holiday: the exits an earlier trade date
+        # queued for T6 and T7 still wait for an open, and their close sends
+        # nothing new. They spent that day's budget, not today's.
+        positions = _aged(8)
+        bars = {p.ticker: flat_bars(30) for p in positions}
+
+        actions, skips = plan_actions(positions, bars, exiting=frozenset({"T6", "T7"}))
+
+        exits = sorted(a.ticker for a in actions if isinstance(a, TimeExit))
+        assert exits == ["T0", "T1", "T6", "T7"]
+        assert sorted(s.ticker for s in skips if s.reason == "exit_budget") == [
+            "T2", "T3", "T4", "T5"
+        ]
+
     def test_stop_maintenance_does_not_count_against_the_budget(self) -> None:
         # Four ratchets and one due close on a five-name book (budget 1): the
         # close still goes, and so do all four ratchets.

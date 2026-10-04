@@ -7,7 +7,8 @@ backstop: daily_run.sh calls it BEFORE burning any LLM tokens, so an armed
 switch is always enforced even if the API-side attempt failed. Exit codes:
 
     0   RUN          — proceed with the daily run
-    75  PAUSE_NEW    — skip the run (no new entries)
+    75  PAUSE_NEW    — no new entries: the decisions are skipped, the position
+                       pass and the stop-coverage check still run
     76  FLATTEN_ALL  — close orders submitted (or book already flat); skip
     1   flatten failed / partial — caller fail-safes (skip run + alert)
 
@@ -69,7 +70,7 @@ def main() -> int:
         return EXIT_RUN
 
     if state == "PAUSE_NEW":
-        _audit("PAUSE_NEW", "daily run skipped (no new entries)")
+        _audit("PAUSE_NEW", "decisions skipped (no new entries); positions still managed")
         return EXIT_PAUSE
 
     # FLATTEN_ALL — backstop execution (API already tried at flip time)

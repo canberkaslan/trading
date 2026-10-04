@@ -414,6 +414,33 @@ class TestAFailedTimeExitIsCoveredInTheSamePass:
         assert rc == 1
         self._covered_once(fake)
 
+    @pytest.mark.parametrize("status", ["done_for_day", "calculated"])
+    def test_an_exit_whose_day_is_over_does_not_hold_off_the_re_cover(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch, status: str
+    ) -> None:
+        # Yesterday's exit sold 4 of 10 at the open, and the session left the
+        # rest of that day order in an end-of-day state; tonight's exit for
+        # the 6 left is refused. The dead exit sells nothing more, so it is no
+        # seller to stand aside for: the 6 shares get their stop tonight.
+        stamp = derive_exit_client_order_id("XOM", TODAY - timedelta(days=1), "time")
+        dead = dataclasses.replace(
+            _stop("exit-y", "XOM", 0.0), client_order_id=stamp, order_type="market",
+            stop_price=None, status=status, filled_qty=4.0,
+            submitted_at=datetime.now(UTC) - timedelta(days=1),
+        )
+        fake = FakeBroker(
+            positions=[_position("XOM", 100.5, qty=6.0)], orders=[dead], fills=[_buy("XOM")],
+            refuse_sell={"XOM"},
+        )
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        assert rc == 1, "the miss and the refused exit page; nothing is left naked"
+        stops = [(w[1]["qty"], w[1]["stop_price"]) for w in fake.writes
+                 if w[0] == "submit_order" and w[1]["order_type"] == "stop"]
+        assert stops == [(6.0, 94.0)]
+        self._covered_once(fake, 6.0)
+
     def test_a_stop_still_cancelling_is_re_read_and_left_alone(
         self, db_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -928,7 +955,8 @@ class TestAnExitTheOpenRefusedIsNamed:
         assert "MISSED EXIT" not in caplog.text
 
     @pytest.mark.parametrize(("status", "filled"), [("rejected", 0.0), ("expired", 4.0),
-                                                     ("canceled", 0.0)])
+                                                     ("canceled", 0.0), ("done_for_day", 4.0),
+                                                     ("calculated", 4.0)])
     def test_a_lot_no_longer_due_is_named_too(
         self, db_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
         status: str, filled: float,
@@ -954,6 +982,29 @@ class TestAnExitTheOpenRefusedIsNamed:
         assert backfill[1]["order_type"] == "stop" and backfill[1]["qty"] == held
         assert "MISSED EXIT" in caplog.text
         assert f"{status}, {filled:g} of 10 sold" in caplog.text
+
+    @pytest.mark.parametrize("status", ["done_for_day", "calculated"])
+    def test_a_lot_whose_exit_the_day_ended_half_sold_is_sold_again(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+        status: str,
+    ) -> None:
+        # The open sold 4 of 10 and the session left the rest of the day
+        # order in an end-of-day state. It sells nothing more, yet read as
+        # "neither working nor gone" it blocked the close and the re-cover:
+        # the 6 shares left had neither exit nor stop, every night.
+        caplog.set_level(logging.INFO, logger="manage_positions")
+        dead = dataclasses.replace(self._yesterdays_exit(status), filled_qty=4.0)
+        fake = FakeBroker(
+            positions=[_position("XOM", 100.5, qty=6.0)], orders=[dead], fills=[_buy("XOM")],
+            exit_status="accepted",
+        )
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        assert rc == 1
+        assert [(w[1]["order_type"], w[1]["qty"]) for w in fake.writes
+                if w[0] == "submit_order"] == [("market", 6.0)]
+        assert "MISSED EXIT" in caplog.text and f"{status}, 4 of 10 sold" in caplog.text
 
     def test_a_miss_is_named_once(
         self, db_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
@@ -1026,7 +1077,8 @@ class TestAnExitStampedWithTodaysDateTheOpenRefusedIsNamed:
         )
 
     @pytest.mark.parametrize(("status", "filled"), [("rejected", 0.0), ("canceled", 0.0),
-                                                     ("expired", 4.0)])
+                                                     ("expired", 4.0), ("done_for_day", 4.0),
+                                                     ("calculated", 4.0)])
     def test_a_lot_still_due_is_sold_again_and_the_run_pages(
         self, db_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
         status: str, filled: float,

@@ -355,12 +355,16 @@ class TestBeforeAnythingIsReleased:
         assert "sell-1=market accepted" in outcome.detail
         assert fake.writes == []
 
-    @pytest.mark.parametrize("status", ["stopped", "pending_cancel", "pending_replace"])
+    @pytest.mark.parametrize(
+        "status", ["stopped", "pending_cancel", "pending_replace", "done_for_day", "calculated"]
+    )
     def test_a_stop_in_doubt_blocks_the_close_and_pages(self, status: str) -> None:
         # `stopped`: its fill is on its way; `pending_cancel`: a cancel from an
-        # earlier pass is on its way; `pending_replace`: a ratchet is. Acting
-        # beside any of them is a guess. Nothing is sent, and since the stop
-        # may stop covering the lot any moment, the outcome pages.
+        # earlier pass is on its way; `pending_replace`: a ratchet is. A GTC
+        # stop done for the day may resume the next session, unlike an exit
+        # of this lot, which is a day order. Acting beside any of them is a
+        # guess. Nothing is sent, and since the stop may stop covering the
+        # lot any moment, the outcome pages.
         fake = _shut([_stop(status=status)])
 
         outcome = _close(fake)
@@ -962,7 +966,8 @@ class TestAnExitThatDidNotSellAtTheOpen:
         )
 
     @pytest.mark.parametrize(("status", "filled"), [("canceled", 0.0), ("expired", 4.0),
-                                                     ("rejected", 0.0)])
+                                                     ("rejected", 0.0), ("done_for_day", 4.0),
+                                                     ("calculated", 4.0)])
     def test_it_is_sold_again_and_the_miss_is_named(self, status: str, filled: float) -> None:
         held = 10.0 - filled
         fake = _shut([self._yesterday(status, filled)], qty=held)

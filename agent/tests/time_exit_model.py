@@ -130,7 +130,13 @@ SETTLED_WRITE_FAULTS = frozenset(
 )
 
 #: How a queued market exit ends at the open, and whether a gap fills the stops.
-OPEN_EXIT_OUTCOMES = ("fill", "half", "rejected", "expired", "canceled")
+#: `half` sells half and expires the rest; `half_done_for_day` and
+#: `half_calculated` sell half and leave the rest in an end-of-day state,
+#: which Alpaca can report for a day order the session is done with: neither
+#: working nor, by its name, gone, and as unable to sell again as `expired`.
+OPEN_EXIT_OUTCOMES = (
+    "fill", "half", "rejected", "expired", "canceled", "half_done_for_day", "half_calculated",
+)
 OPEN_GAP = ("hold", "gap")
 #: No session before run 2: the daily timer runs Mon-Fri and daily_run.sh skips
 #: weekends only, so on a weekday exchange holiday nothing fills, nothing
@@ -752,9 +758,10 @@ class ModelBroker:
         for rec in self._candidates()["exit"]:
             if how == "fill":
                 self._fill(rec, rec.remaining, "at the open")
-            elif how == "half":
+            elif how.startswith("half"):
                 self._fill(rec, float(int(rec.remaining // 2)), "at the open")
-                rec.status = "expired"
+                rec.status = how.removeprefix("half_") if how != "half" else "expired"
+                self.trace(f"     {rec.role} {rec.id} ends the session {rec.status}")
             else:
                 rec.status = how
                 self.trace(f"     {rec.role} {rec.id} {how} at the open")

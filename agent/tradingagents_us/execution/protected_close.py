@@ -42,7 +42,8 @@ One call is one step, each state decided off the broker as it is then:
            stopped, a leg whose pair ended), or works and is not one the
            release may cancel (a market sell: no bracket has one as a leg):
            nothing sent. It may still sell, or be about to stop protecting,
-           and acting beside it is a guess.
+           and acting beside it is a guess. Not an exit of this lot whose day
+           is over (`DAY_ENDED_STATUSES`): a day order, it sells nothing more.
   RELEASE  each working stop and take-profit is cancelled, a take-profit
            before its own stop, and confirmed by its status, with the DELETE
            sent again while it still works. One that will not go ends the
@@ -101,6 +102,16 @@ _GONE_STATUSES = RELEASED_STATUSES | {"replaced"}
 
 #: An exit in one of these never became a working sell.
 FAILED_EXIT_STATUSES = frozenset({"canceled", "expired", "rejected"})
+
+#: Alpaca's end-of-day states, for an order its session is done with. Every
+#: exit of this module is a day order, so one in either never sells again,
+#: whatever it left unsold: as dead as `expired`, though neither is working or
+#: gone by name. Not so a GTC stop, which `done_for_day` leaves to resume the
+#: next session, nor any order but this lot's exits (`day_ended_exit`).
+DAY_ENDED_STATUSES = frozenset({"done_for_day", "calculated"})
+
+#: An exit in one of these sells no more shares: it never worked, or its day is over.
+DEAD_EXIT_STATUSES = FAILED_EXIT_STATUSES | DAY_ENDED_STATUSES
 
 #: A leg in one of these ends its bracket or OCO pair, and the broker cancels
 #: the other leg. Not `rejected` (it never stood) nor `replaced` (its successor
@@ -183,8 +194,9 @@ class CloseOutcome:
     released: tuple[str, ...] = ()
     rearmed: tuple[str, ...] = ()
     #: This lot's last time exit, when a session opened after it was sent and
-    #: it ended without selling the lot (refused, cancelled or expired there):
-    #: the lot had neither stop nor exit from then until this run.
+    #: it ended without selling the lot (refused, cancelled or expired there,
+    #: or done for the day with shares unsold): the lot had neither stop nor
+    #: exit from then until this run.
     missed_exits: tuple[str, ...] = ()
 
     @property
@@ -355,6 +367,20 @@ def exit_stamp_date(client_order_id: str, ticker: str, reason: str = "time") -> 
         return datetime.strptime(match.group(1), "%Y%m%d").date()
     except ValueError:
         return None
+
+
+def day_ended_exit(order: Order, ticker: str, reason: str = "time") -> bool:
+    """Whether `order` is one of `ticker`'s time exits, in a state that ends its day.
+
+    Such an exit sells nothing more (`DAY_ENDED_STATUSES`), so it is as gone
+    as an expired one: whatever it did not sell has neither exit nor stop,
+    and a listing that kept it in doubt left the lot that way for good.
+    """
+    return (
+        order.status.lower() in DAY_ENDED_STATUSES
+        and not _is_protective(order)
+        and exit_stamp_date(order.client_order_id, ticker, reason) is not None
+    )
 
 
 def _releasable(order: Order, exits: frozenset[str]) -> bool:
@@ -540,7 +566,7 @@ def _exit_stamp(
         found = client.get_order_by_client_order_id(key)
         if found is None:
             return key, None
-        if found.status.lower() not in FAILED_EXIT_STATUSES | {"replaced"}:
+        if found.status.lower() not in DEAD_EXIT_STATUSES | {"replaced"}:
             return None, found
     return None, None
 
@@ -568,9 +594,10 @@ def missed_exits(
     """This lot's last exit, when a session opened after it was sent and it did not sell the lot.
 
     An exit sent after the close queues for the open, in place of the stop it
-    released. If the broker rejects, cancels or expires it there, the lot
-    spends the session with neither, and the next run only finds it naked:
-    sold again or covered by then, but the gap happened, and only this says so.
+    released. If the broker rejects, cancels or expires it there, or leaves it
+    done for the day with shares unsold (`DAY_ENDED_STATUSES`), the lot spends
+    the session with neither, and the next run only finds it naked: sold
+    again or covered by then, but the gap happened, and only this says so.
 
     Whether the exit met an open is the calendar's to say (`opened`, asked
     of its `submitted_at`; see `opened_after`), never its stamp's date. The stamp carries
@@ -605,7 +632,7 @@ def missed_exits(
         for o in sells
     )
     if (
-        last.status.lower() not in FAILED_EXIT_STATUSES
+        last.status.lower() not in DEAD_EXIT_STATUSES
         or _remaining(last) <= QTY_EPSILON
         or replaced_since
         or not opened(last.submitted_at)
@@ -666,7 +693,8 @@ def _read_book(client: AlpacaClient, ticker: str, reason: str = "time") -> _Book
     filled, or a leg the broker cancelled, takes the other leg with it, and
     for a while that leg still reads `held` with its cancel on the way.
 
-    A working sell the release may not cancel (`_releasable`) is `kept`.
+    A working sell the release may not cancel (`_releasable`) is `kept`. An
+    exit of this lot whose day is over (`day_ended_exit`) is gone.
     """
     top = client.list_orders(status="all", limit=500, nested=True)
     group = {o.id: root.id for root in top for o in flatten_orders([root])}
@@ -684,6 +712,7 @@ def _read_book(client: AlpacaClient, ticker: str, reason: str = "time") -> _Book
     unclear = [
         o for o in working
         if o.status.lower() not in _GONE_STATUSES and o.id not in active_ids
+        and not (o.id in exits and o.status.lower() in DAY_ENDED_STATUSES)
     ]
     return _Book(
         live=tuple(_release_order([o for o in active if _releasable(o, exits)], group)),

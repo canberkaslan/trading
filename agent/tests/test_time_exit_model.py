@@ -28,11 +28,12 @@ starts until run 1 ends, every answer it gives is a choice:
       as Alpaca's does, and after the close it fills nothing, as Alpaca does;
   (f) a bracket's take-profit cancel takes its stop along, leaves it live, or
       leaves it pending; a filled leg cancels its sibling;
-  (g) at the open, a separate step, our queued market exit fills, half-fills,
-      or is rejected, expired or cancelled; a gap fills every standing stop or
-      none; or there is no session at all (a weekday exchange holiday: the
-      timer runs Mon-Fri and daily_run.sh skips weekends only), and run 2
-      meets yesterday's exit still queued;
+  (g) at the open, a separate step, our queued market exit fills, half-fills
+      (the rest expired, or left `done_for_day` or `calculated`, the end-of-day
+      states a day order can sit in), or is rejected, expired or cancelled; a
+      gap fills every standing stop or none; or there is no session at all (a
+      weekday exchange holiday: the timer runs Mon-Fri and daily_run.sh skips
+      weekends only), and run 2 meets yesterday's exit still queued;
   (h) partial fills: of a stop or our exit, in the run or at the open.
 
 The model keeps the Alpaca rules the close relies on: an open sell reserves its
@@ -210,12 +211,12 @@ RUN1 = {
     "in-session": (tem.RUN1_AT, True),
 }
 
-#: Each exploration's floor, about three quarters of what it covers (127k
-#: scenarios after the close, either time, and 5.2k in the session): the
+#: Each exploration's floor, about three quarters of what it covers (151k
+#: scenarios after the close, either time, and 5.4k in the session): the
 #: margin the original 200k-of-266k floor kept. In the session the close
 #: defers at its first read, so there is little left to explore: the fills it
 #: meets, the re-cover, and run 2.
-EXHAUSTIVE_FLOOR = {"after-close": 95_000, "past-midnight": 95_000, "in-session": 3_900}
+EXHAUSTIVE_FLOOR = {"after-close": 113_000, "past-midnight": 113_000, "in-session": 4_000}
 
 #: (seed, schedules, per-call event rate, per-call fault rate).
 RANDOM = (

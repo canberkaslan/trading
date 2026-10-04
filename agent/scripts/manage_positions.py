@@ -31,7 +31,8 @@ Exit codes, which daily_run.sh turns into pages:
        names only until a person looks. Also a time exit deferred because the
        market was open (a pass run by hand in the session), and a time exit
        queued by an earlier run that the broker rejected, cancelled or expired
-       at the open: the lot had neither stop nor exit from then until now.
+       at the open, or left done for the day with shares unsold: the lot had
+       neither stop nor exit from then until now.
        That last is read off the book for every held name, whatever this
        pass then does with it (closes it again, back-fills it, or leaves it
        to the exit budget), and named by the first run after it. Which open
@@ -106,6 +107,7 @@ from tradingagents_us.execution.protected_close import (
     CloseOutcome,
     close_with_protection,
     cover_beside_exit,
+    day_ended_exit,
     exit_stamp_date,
     missed_exits,
     opened_after,
@@ -772,7 +774,9 @@ def _recover_unclosed(
     may yet fill; one in `stopped`, whose fill is on its way; an exit that
     landed after all; a take-profit. Each reserves the shares or is about to
     sell them, and a stop placed beside it is refused while the lot is held and
-    becomes a short once that sell fills.
+    becomes a short once that sell fills. Not an exit of the lot whose day is
+    over (`protected_close.day_ended_exit`): a day order, it sells nothing
+    more, and left standing in the count it kept the lot naked for good.
 
     A name whose exit was sent and never found (`unsettled`) is back-filled all
     the same, since it may never land, but through
@@ -787,7 +791,7 @@ def _recover_unclosed(
     """
     try:
         # Orders first, holding last (see `_read_book`).
-        orders, stop_ids, positions, _ = _read_book(client)
+        orders, stop_ids, positions, sell_orders = _read_book(client)
     except Exception as exc:  # noqa: BLE001 — reported and counted, never guessed past
         log.error("re-cover after failed exits: book unreadable, nothing placed: %s", exc)
         uncovered.append(f"re-cover could not read the book: {exc}")
@@ -797,11 +801,12 @@ def _recover_unclosed(
         return 0
 
     standing: dict[str, str] = {}
-    for o in orders:
-        gone = o.status in RELEASED_STATUSES or o.status == "replaced"
-        a_working_stop = o.order_type in PROTECTIVE_TYPES and o.status in LIVE_STATUSES
-        if o.side == "sell" and o.remaining_qty > QTY_EPSILON and not gone and not a_working_stop:
-            standing.setdefault(o.symbol, f"{o.order_type} sell in {o.status}")
+    for o in sell_orders:
+        kind, status = o.order_type.lower(), o.status.lower()
+        gone = status in RELEASED_STATUSES or status == "replaced" or day_ended_exit(o, o.symbol)
+        a_working_stop = kind in PROTECTIVE_TYPES and status in LIVE_STATUSES
+        if o.qty - o.filled_qty > QTY_EPSILON and not gone and not a_working_stop:
+            standing.setdefault(o.symbol, f"{kind} sell in {status}")
     for p in held:
         if p.symbol in standing:
             log.info("%-6s SKIP  re-cover: a %s still stands on it", p.symbol, standing[p.symbol])

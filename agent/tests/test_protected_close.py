@@ -1178,6 +1178,31 @@ class TestABackFillBesideAnExitNeverFound:
         assert outcome.status == "unchanged", outcome.detail
         assert sorted(o.qty for o in fake.live_sells("XOM")) == [4.0, 6.0]
 
+    def test_an_id_an_earlier_close_spent_on_a_back_fill_now_gone_is_passed_over(
+        self,
+    ) -> None:
+        # A close earlier on the same trade date back-filled under this stamp,
+        # and this close released that stop. The broker refuses its id as a
+        # duplicate all the same, so the stop goes under a fresh suffix.
+        fake = self._in_flight(10**6)
+        fake.orders["cover-old"] = _stop("cover-old", coid=f"{STAMP}-cover", status="canceled")
+
+        outcome = self._cover(fake)
+
+        assert outcome.status == "unchanged", outcome.detail
+        (stop,) = fake.live_sells("XOM")
+        assert stop.client_order_id == f"{STAMP}-cover-2"
+        _assert_protected_once(fake)
+
+    def test_an_id_whose_back_fill_still_stands_is_that_back_fill(self) -> None:
+        fake = self._in_flight(10**6)
+        fake.orders["cover-old"] = _stop("cover-old", coid=f"{STAMP}-cover")
+
+        outcome = self._cover(fake)
+
+        assert outcome.status == "unchanged", outcome.detail
+        assert [o.id for o in fake.live_sells("XOM")] == ["cover-old"]
+
     def test_with_the_market_open_nothing_is_placed(self) -> None:
         fake = self._in_flight(10**6, market_open=True)
 

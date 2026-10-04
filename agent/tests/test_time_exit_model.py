@@ -99,7 +99,9 @@ cancelled and never replaced has lost its way out as surely as a stop.
       exits 0 or 1, not 3 (on a book fully covered at the start: a failed
       back-fill of shares that were naked before is not the time exit's).
       Not a cancel left pending or a bracket sibling left behind: those
-      leave the broker itself in doubt.
+      leave the broker itself in doubt. A run 2 armed the same way
+      (`Harness.run2_chooser`, pinned schedules only) is held to the same
+      end state on a lot it found protected, in place of I2.
 
 Exploration, all of it deterministic, for each of run 1's three times:
 
@@ -390,6 +392,39 @@ class TestARunPastMidnight:
         harness.evaluate(Scenario("stop", (), night=(), opening=tem.OPEN_HOLIDAY), stats)
         assert not stats.findings
 
+    @pytest.mark.parametrize("book", ["stop", "bracket"])
+    @pytest.mark.parametrize("rearm", ["timeout_lost", "422"])
+    def test_two_closes_under_one_stamp_each_place_their_own_back_fill(
+        self, harness: Harness, book: str, rearm: str
+    ) -> None:
+        # Both runs armed, each with the same two settled write faults: the
+        # exit's POST is lost and never arrives, and the re-arm is lost or
+        # refused. Run 1 back-fills beside the exit it never found, under
+        # `<stamp>-cover`, and ends protected (rc 1). Run 2 shares its trade
+        # date, and with no order under the stamp it sends that stamp again,
+        # releases the back-fill, and meets the same two faults. Its own
+        # back-fill went under the same id: refused as a duplicate, resolved
+        # to the back-fill it had just cancelled, and the lot entered the
+        # next session with neither stop nor exit (rc 3).
+        harness.run1_at = tem.CATCH_UP_AT
+
+        def script() -> tem.Scripted:
+            return tem.Scripted(("submit_order(market", "timeout_lost"), ("-arm-", rearm))
+
+        harness.run2_chooser = script
+        run1 = script()
+        stats = Stats()
+        b = harness.evaluate(
+            Scenario(book, (), night=(), opening=("fill", "hold"), variant="due"), stats,
+            chooser=run1,
+        )
+        assert not run1.rules, f"run 1's schedule did not play out: {run1.rules} left"
+        (run2,) = harness.run2_choosers
+        assert not run2.rules, f"run 2's schedule did not play out: {run2.rules} left"
+        assert [kind for kind, _ in b.outcomes] == ["close", "cover"]
+        if stats.findings:
+            pytest.fail(report(harness, stats, f"{book}: "), pytrace=False)
+
 
 class TestTheModel:
     """The broker model keeps the rules the close relies on, and a clean run closes."""
@@ -528,6 +563,28 @@ class TestTheHarnessHasTeeth:
             stats.findings
         )
         assert "I5 naked after run 1, reported as rc=1" in stats.findings
+
+    def test_a_second_close_that_reuses_a_spent_back_fill_id(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Run 2 armed with the faults run 1 met: only its own end state can
+        # tell, since it reports rc 3 and the run after it back-fills.
+        monkeypatch.setattr(pc, "MAX_STOP_ID_ATTEMPTS", 1)
+        harness = Harness(monkeypatch)
+        harness.run1_at = tem.CATCH_UP_AT
+
+        def script() -> tem.Scripted:
+            return tem.Scripted(("submit_order(market", "timeout_lost"), ("-arm-", "422"))
+
+        harness.run2_chooser = script
+        stats = Stats()
+        harness.evaluate(
+            Scenario("stop", (), night=(), opening=("fill", "hold"), variant="due"), stats,
+            chooser=script(),
+        )
+        assert "I8 run 2 ends naked with 2 settled write fault(s) (due)" in stats.findings, (
+            sorted(stats.findings)
+        )
 
     def test_a_close_and_a_pass_that_put_nothing_back(
         self, monkeypatch: pytest.MonkeyPatch

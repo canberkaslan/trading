@@ -800,20 +800,22 @@ class ModelBroker:
             return "protected"
         return "naked"
 
-    def settled_writes(self) -> int | None:
-        """How many writes went wrong in run 1, when nothing else did; None otherwise.
+    def settled_writes(self, since: int = 0) -> int | None:
+        """How many writes went wrong in a run, when nothing else did; None otherwise.
 
         Nothing else: every read answered, no fill or late landing chosen, and
         each write that went wrong did so in a way the broker settles by itself
         (`SETTLED_WRITE_FAULTS`). Such a schedule hides nothing a careful
-        close cannot read back, which is what I8 holds it to.
+        close cannot read back, which is what I8 holds it to. Run 1's choices
+        are `applied` from the start; a later run's from `since` on.
         """
-        for kind, env, out in self.applied:
+        applied = self.applied[since:]
+        for kind, env, out in applied:
             if env is not None or kind not in ("submit", "cancel"):
                 return None
             if out not in SETTLED_WRITE_FAULTS:
                 return None
-        return len(self.applied)
+        return len(applied)
 
     def describe(self) -> str:
         live = ", ".join(
@@ -946,6 +948,9 @@ class Run2:
     flagged: tuple[tuple[str, str], ...]
     #: The outcome of each time exit run 2 closed: what it said to the log.
     closes: tuple[pc.CloseOutcome, ...] = ()
+    #: `ModelBroker.settled_writes` of run 2: 0 for the clean broker run 2
+    #: meets unless `Harness.run2_chooser` arms it.
+    writes: int | None = 0
 
 
 @dataclass(frozen=True)
@@ -1013,6 +1018,11 @@ class Harness:
         #: Run 1 in the session instead of after the close: the clock says
         #: open, and the model may fill a stop, a take-profit or an exit.
         self.market_open = False
+        #: Arms run 2 too, from its first close on: called once per run 2 for
+        #: the chooser that run meets. None: run 2 meets a clean broker.
+        self.run2_chooser: Callable[[], Callable[..., Choice]] | None = None
+        #: Each chooser `run2_chooser` made, in the order the runs met them.
+        self.run2_choosers: list[Callable[..., Choice]] = []
         self._run2_memo: dict[tuple, Run2] = {}
         real_close = mp.close_with_protection
         real_cover = getattr(mp, "cover_beside_exit", None)
@@ -1080,19 +1090,24 @@ class Harness:
         """Run 2 on `b`: its exit code, the lot's kind, the book, what it flagged, its closes."""
         # The calendar too: whether an exit met an open is read off it.
         key = (variant, b.key(), self.run1_at, frozenset(b.holidays))
-        if not trace and key in self._run2_memo:
+        armed = self.run2_chooser is not None
+        if not trace and not armed and key in self._run2_memo:
             return self._run2_memo[key]
         r = b.clone()
         r.tracing, r.stage = trace, f"run 2 ({variant})"
         r.events = []
-        rc = self._main(r, RUN2_AT, variant, arm=False)
+        if self.run2_chooser is not None:
+            r.chooser = self.run2_chooser()
+            self.run2_choosers.append(r.chooser)
+        rc = self._main(r, RUN2_AT, variant, arm=armed)
         closes = tuple(o for kind, o in r.outcomes[len(b.outcomes):] if kind == "close")
         result = Run2(
-            rc, r.kind(QTY), r.describe(), tuple(r.violations[len(b.violations):]), closes
+            rc, r.kind(QTY), r.describe(), tuple(r.violations[len(b.violations):]), closes,
+            r.settled_writes(since=len(b.applied)),
         )
         if trace:
             b.events.extend(r.events)
-        else:
+        elif not armed:
             self._run2_memo[key] = result
         return result
 
@@ -1198,7 +1213,13 @@ class Harness:
 
     @staticmethod
     def _check_run2(r2: Run2, variant: str, o: ModelBroker) -> list[tuple[str, str]]:
-        """I1, I2, I3 and I7 after the next daily run, which met the book `o` left."""
+        """I1, I2, I3 and I7 after the next daily run, which met the book `o` left.
+
+        I2 holds a run 2 that met a clean broker. One armed with faults
+        (`Harness.run2_chooser`) is held to I8 instead: with at most two
+        settled write faults, a lot run 2 found protected it leaves flat,
+        exiting or protected.
+        """
         out: list[tuple[str, str]] = []
         rc2, e2, state = r2.rc, r2.kind, r2.state
         tail = f"{state} (run 2 {variant}, rc={rc2})"
@@ -1221,7 +1242,13 @@ class Harness:
         elif e2 == "over-reserved":
             out.append(("I3 two live sells for the same shares after run 2", tail))
         elif e2 not in ("flat", "exiting", "protected"):
-            out.append((f"I2 {e2} after run 2 ({variant})", tail))
+            if r2.writes == 0:
+                out.append((f"I2 {e2} after run 2 ({variant})", tail))
+            elif r2.writes is not None and r2.writes <= 2 and o.kind(QTY) == "protected":
+                out.append((
+                    f"I8 run 2 ends {e2} with {r2.writes} settled write fault(s) ({variant})",
+                    tail,
+                ))
         return out
 
 

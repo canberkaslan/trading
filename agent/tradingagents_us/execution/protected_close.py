@@ -159,6 +159,12 @@ TRUTH_READ_DELAYS_S = (0.0, 1.0, 2.0)
 #: days with the weekend), with room to spare.
 CALENDAR_LOOKBACK = timedelta(days=14)
 
+#: Client ids tried per stop the close places: its own, then `-2` .. `-N`,
+#: past ids an earlier close on the same trade date left on orders now gone
+#: (`_place_stop`). Alpaca refuses a reused client_order_id whatever the
+#: status of the order that has it.
+MAX_STOP_ID_ATTEMPTS = 5
+
 #: Alpaca caps a client_order_id's length (48, as executor.derive_client_order_id
 #: notes). A re-arm id carries the stop it replaces as a short digest: the
 #: stop's 36-character order id beside the stamp came to 71 characters.
@@ -430,7 +436,16 @@ def _refused(exc: Exception) -> bool:
     return (
         isinstance(exc, AlpacaRequestError)
         and 400 <= exc.status_code < 500
-        and "client_order_id" not in exc.body
+        and not _duplicate(exc)
+    )
+
+
+def _duplicate(exc: Exception) -> bool:
+    """Whether a failed POST is Alpaca's refusal of a client_order_id already taken."""
+    return (
+        isinstance(exc, AlpacaRequestError)
+        and 400 <= exc.status_code < 500
+        and "client_order_id" in exc.body
     )
 
 
@@ -1100,12 +1115,36 @@ def _fit(client_id: str) -> str:
 def _place_stop(
     ctx: _Ctx, qty: float, stop_price: float, coid: str
 ) -> tuple[Order | None, str]:
-    """Send one stop under `coid`: (order, error).
+    """Send one stop under `coid`, or under a fresh suffix of it: (order, error).
+
+    `coid` is made from the stamp, and two closes on one trade date share a
+    stamp: a run past 00:00 UTC and the 22:30 run after it, or a rerun by
+    hand. Where the first one's stop under `coid` is gone (the second close
+    released it), the broker still refuses the id as a duplicate, and the
+    stop goes under `<coid>-2` .. `-N` (`MAX_STOP_ID_ATTEMPTS`) instead.
+    """
+    error = ""
+    for attempt in range(1, MAX_STOP_ID_ATTEMPTS + 1):
+        key = coid if attempt == 1 else _fit(f"{coid}-{attempt}")
+        new, error, dead_duplicate = _post_stop(ctx, qty, stop_price, key)
+        if not dead_duplicate:
+            return new, error
+    return None, error
+
+
+def _post_stop(
+    ctx: _Ctx, qty: float, stop_price: float, coid: str
+) -> tuple[Order | None, str, bool]:
+    """Send one stop under `coid`: (order, error, whether a dead order already has `coid`).
 
     Only a refusal proves the stop absent. Anything else is settled by looking
     the client id up, and a stop found working counts as placed. One not found
     is reported as not placed, which errs toward a page: should it land later,
     it is a stop on shares nothing else reserves, or the broker refuses it.
+
+    A duplicate id is the one 4xx that is no refusal (`_refused`): an order
+    stood under `coid` before this POST, so this POST placed nothing. Found
+    working, it is a stop all the same; found gone, the id is spent.
     """
     try:
         return ctx.client.submit_order(
@@ -1116,17 +1155,18 @@ def _place_stop(
             time_in_force="gtc",
             stop_price=stop_price,
             client_order_id=coid,
-        ), ""
+        ), "", False
     except Exception as exc:  # noqa: BLE001 — refused, or looked up below
         if _refused(exc):
-            return None, str(exc)
+            return None, str(exc), False
         sent = exc
     found, lookup_error = _find_order(ctx.client, coid, ctx.sleep)
     if _working(found):
-        return found, ""
+        return found, "", False
     if found is not None:
-        return None, f"{sent} (then {found.status})"
-    return None, f"{sent} (not found{f': {lookup_error}' if lookup_error else ''})"
+        spent = _duplicate(sent) and found.status.lower() in _GONE_STATUSES
+        return None, f"{sent} (then {found.status})", spent
+    return None, f"{sent} (not found{f': {lookup_error}' if lookup_error else ''})", False
 
 
 def _settle(

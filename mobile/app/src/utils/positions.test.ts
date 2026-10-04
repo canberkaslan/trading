@@ -5,7 +5,7 @@ import { formatUsd } from './format';
 
 describe('positionStop', () => {
   it('is null for the backend placeholder', () => {
-    // agent/api/routes/portfolio.py sends stop_loss=0.0 for every position:
+    // agent/api/routes/portfolio.py sends stop_loss=0.0 when it cannot vouch for a stop:
     // "broker-side leg lives on order, not position".
     expect(positionStop({ stop_loss: 0 })).toBeNull();
   });

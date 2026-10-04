@@ -19,10 +19,12 @@ from tradingagents_us.risk.concentration import (
     compute_concentration,
     parse_trend,
 )
+from tradingagents_us.risk.stop_coverage import PositionView, coverage, flatten_orders
 from tradingagents_us.schemas import PortfolioSnapshot, Position
 
 from ..broker_errors import broker_http_exception
 from ..deps import get_alpaca, require_token
+from .risk import order_views
 
 router = APIRouter()
 
@@ -99,6 +101,38 @@ def _intraday_max_dd(history: dict) -> float:
     return round(max_dd, 6)
 
 
+def _position_stops(alpaca: AlpacaClient, positions_raw: list) -> dict[str, float]:
+    """The stop price standing behind each FULLY protected position.
+
+    The protective leg lives on an order, not on the position, so it is read
+    from the order book with the same accounting `/v1/risk/stop-coverage` uses
+    (`status="all"` + `nested=True`, or bracket legs in `held` are missed and a
+    protected book reads as naked).
+
+    A symbol is left out — and its `stop_loss` stays 0.0, which the app draws
+    as "—" — unless every held share is behind a live stop. A price next to a
+    partly covered or indeterminate position would read as "protected" when
+    some of it is not. With several stops the highest is reported: it is where
+    selling starts on a long. Best-effort: an order-book failure must not take
+    the snapshot down, so it degrades to "unknown", never to a made-up stop.
+    """
+    if not positions_raw:
+        return {}
+    try:
+        orders = flatten_orders(alpaca.list_orders(status="all", limit=500, nested=True))
+        report = coverage(
+            [PositionView(p.symbol, p.qty, "long") for p in positions_raw],
+            order_views(orders),
+        )
+    except Exception:
+        return {}
+    return {
+        s.symbol: max(s.stop_prices)
+        for s in report.symbols
+        if s.is_fully_protected and s.stop_prices
+    }
+
+
 @router.get("/snapshot", response_model=PortfolioSnapshot)
 async def get_snapshot(
     user: str = Depends(require_token),
@@ -114,6 +148,7 @@ async def get_snapshot(
             intraday = alpaca.portfolio_history(period="1D", timeframe="5Min")
         except Exception:
             intraday = {}
+        stops = _position_stops(alpaca, positions_raw)
     except Exception as e:
         raise broker_http_exception(e) from e
     finally:
@@ -128,7 +163,7 @@ async def get_snapshot(
             current_price=p.market_value / p.qty if p.qty else 0.0,
             unrealized_pnl=p.unrealized_pl,
             unrealized_pnl_pct=p.unrealized_plpc,
-            stop_loss=0.0,                # broker-side leg lives on order, not position
+            stop_loss=stops.get(p.symbol, 0.0),
             # GICS sector: static map + Polygon fallback (display-only)
             sector=sector_for(p.symbol),
             opened_at_utc=datetime.now(UTC),  # Alpaca doesn't expose open ts on position

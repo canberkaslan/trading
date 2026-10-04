@@ -1322,3 +1322,15 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
   **key rotate = canlı trader'ı kırar**, #52 hâlâ blocker.
 - **Canberk'e kalan:** (a) `WATCHDOG_HOST` secret'ını prod-fusapp01 origin'ine çevir, (b) WAW
   `ai-trader*.timer`'ları disable (her gece boşa ~$5–16 council), (c) #52 kararı → sonra prod pull.
+
+## Daily loop 2026-10-04 (eval gün 22 — GO; ama agent 21 run-day inert)
+- **Canlı durum** (prod-fusapp01 localhost, @46bca18, alpaca:true): eval 1M **GO** — Sharpe 1.66,
+  Sortino 3.01, MaxDD −1.62%, +2.01% vs SPY −0.21%, 22/10 gün. Equity $111,514.70, cash $24,238,
+  8 pozisyon. Stop coverage 0/278 naked. **Ama** inert_alert: 21 run-day, 4/192 emir broker'a
+  ulaştı (top blocker `rating=Hold` ×125, son broker ack 09-10) → GO tamamen tutulan pozisyonların
+  mark-to-market'i, agent'ın kendi kararı değil.
+- [x] **Snapshot `stop_loss` artık gerçek stop**: hardcoded 0.0 yerine order book'tan
+  (`status=all`+`nested`, stop-coverage ile aynı accounting, `risk.order_views` paylaşıldı).
+  Sadece TAM korunan pozisyonda fiyat dolar (kısmi/indeterminate → 0.0 = app'te "—"),
+  çoklu stop'ta en yüksek; order book hatası snapshot'ı düşürmez. 6 yeni test, suite 1833 pass /
+  2 fail = laptop ölü Alpaca key (401). Box'a DEPLOY EDİLMEDİ (prod pull #52 kararına bağlı).

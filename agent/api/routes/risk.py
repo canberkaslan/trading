@@ -2,9 +2,9 @@
 
 Separate from /v1/portfolio on purpose. The snapshot answers "what do I hold";
 this answers "what happens if it gaps down tonight", and the two were being
-conflated: `Position.stop_loss` in the snapshot is hardcoded to 0.0 because the
-protective leg lives on an ORDER, not on the position, so the only honest place
-to answer the question is here, from the order book.
+conflated: the protective leg lives on an ORDER, not on the position, so the
+full answer (partial cover, indeterminate orders, excess) lives here, from the
+order book. The snapshot only borrows a stop price for fully covered names.
 
 This exists because the answer turned out to be bad. `risk.stop_coverage` could
 compute it from the day it was written, nothing ever called it, and the first
@@ -66,6 +66,24 @@ class StopCoverageOut(BaseModel):
     orphan_stop_symbols: list[str]
 
 
+def order_views(orders: list) -> list[OrderView]:
+    """Broker orders (already flattened) as the accounting's `OrderView`s.
+
+    Shared with the snapshot route so "what counts as a stop" is stated once.
+    """
+    return [
+        OrderView(
+            symbol=o.symbol,
+            side=o.side.lower(),
+            order_type=o.order_type.lower(),
+            status=o.status.lower(),
+            remaining_qty=max(0.0, o.qty - o.filled_qty),
+            stop_price=o.stop_price,
+        )
+        for o in orders
+    ]
+
+
 @router.get("/stop-coverage", response_model=StopCoverageOut)
 def stop_coverage(_: None = Depends(require_token), alpaca: AlpacaClient = Depends(get_alpaca)):
     """How much of the book has a protective stop behind it.
@@ -85,18 +103,9 @@ def stop_coverage(_: None = Depends(require_token), alpaca: AlpacaClient = Depen
     finally:
         alpaca.close()
 
-    views = [
-        OrderView(
-            symbol=o.symbol,
-            side=o.side.lower(),
-            order_type=o.order_type.lower(),
-            status=o.status.lower(),
-            remaining_qty=max(0.0, o.qty - o.filled_qty),
-            stop_price=o.stop_price,
-        )
-        for o in orders
-    ]
-    report = coverage([PositionView(p.symbol, p.qty, "long") for p in positions], views)
+    report = coverage(
+        [PositionView(p.symbol, p.qty, "long") for p in positions], order_views(orders)
+    )
 
     return StopCoverageOut(
         total_qty=report.total_qty,

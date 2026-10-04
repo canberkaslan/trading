@@ -139,6 +139,21 @@ def _run(monkeypatch: pytest.MonkeyPatch, fake: FakeBroker, *argv: str) -> int:
     return mp.main(list(argv))
 
 
+def _clock_at(monkeypatch: pytest.MonkeyPatch, fake: FakeBroker, when: datetime) -> None:
+    """The pass and the fake's clock at `when`, the next open at the 13:30 UTC after it."""
+
+    class _Now(datetime):
+        @classmethod
+        def now(cls, tz=None):  # noqa: ANN001, ANN206 — datetime's own signature
+            return when
+
+    nxt = datetime.combine(when.date(), time(13, 30), UTC)
+    if nxt <= when:
+        nxt += timedelta(days=1)
+    monkeypatch.setattr(mp, "datetime", _Now)
+    fake.now, fake.minutes_to_open = when, (nxt - when).total_seconds() / 60
+
+
 XOM_EXIT = (
     "submit_order",
     {
@@ -1214,15 +1229,15 @@ class TestExitBudgetThroughThePass:
             last[-1]
         )
 
-    def test_an_exit_queued_on_an_earlier_day_is_left_and_spends_no_budget(
+    def test_an_exit_queued_on_an_earlier_day_is_left_and_spends_its_share(
         self, aged_book_db: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # The run after a weekday exchange holiday (the timer runs Mon-Fri):
         # T0's exit, queued the trade date before, still waits for an open,
         # and the close that queued it released T0's stop. The lot is on its
-        # way out. Cancelling and resending its exit spent a share of today's
-        # budget on it, deferred a name that was due, and left T0 with neither
-        # exit nor stop whenever that cancel stuck.
+        # way out. Cancelling and resending its exit left T0 with neither
+        # exit nor stop whenever that cancel stuck. Left alone, it still sells
+        # at the open tonight's exits queue for: one of that open's two.
         stamp = derive_exit_client_order_id("T0", TODAY - timedelta(days=1), "time")
         queued = dataclasses.replace(
             _stop("exit-T0", "T0", 0.0), client_order_id=stamp, order_type="market",
@@ -1237,12 +1252,39 @@ class TestExitBudgetThroughThePass:
 
         rc = _run(monkeypatch, fake, "--submit", "--db-url", aged_book_db)
 
-        assert rc == 1, "the five names still deferred page"
+        assert rc == 1, "the six names still deferred page"
         sold = [w[1]["symbol"] for w in fake.writes
                 if w[0] == "submit_order" and w[1]["order_type"] == "market"]
-        assert sold == ["T1", "T2"]
-        assert [w[1] for w in fake.writes if w[0] == "cancel_order"] == ["stop-T1", "stop-T2"]
+        assert sold == ["T1"]
+        assert [w[1] for w in fake.writes if w[0] == "cancel_order"] == ["stop-T1"]
         assert fake.orders["exit-T0"].status == "accepted"
+
+    def test_a_rerun_past_midnight_sells_no_more_than_the_budget_at_one_open(
+        self, aged_book_db: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The 22:30 UTC run queues T0 and T1 for the next open. A rerun past
+        # 00:00 UTC (after the overnight page, before 13:30) carries the next
+        # UTC date, so none of those stamps is its own, yet its exits queue
+        # for the same open. Charged nothing for T0 and T1, it queued T2 and
+        # T3 as well: four market sells at one open, twice the budget.
+        monkeypatch.setattr(
+            "tradingagents_us.execution.protected_close.time.sleep", lambda _: None
+        )
+        fake = self._book()
+        fake.exit_status = "accepted"
+        evening = datetime.combine(TODAY - timedelta(days=1), time(22, 30), UTC)
+        rerun = datetime.combine(TODAY, time(0, 40), UTC)
+
+        rcs = []
+        for when in (evening, rerun):
+            _clock_at(monkeypatch, fake, when)
+            rcs.append(_run(monkeypatch, fake, "--submit", "--db-url", aged_book_db))
+
+        sold = [w[1]["symbol"] for w in fake.writes
+                if w[0] == "submit_order" and w[1]["order_type"] == "market"]
+        assert sold == ["T0", "T1"]
+        assert [w[1] for w in fake.writes if w[0] == "cancel_order"] == ["stop-T0", "stop-T1"]
+        assert rcs == [1, 1], "every pass that holds a due exit back pages"
 
     def test_the_deferred_names_are_reported(
         self, aged_book_db: str, monkeypatch: pytest.MonkeyPatch,

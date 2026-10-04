@@ -543,21 +543,31 @@ def _ration_exits(
     before today's exits, and each name `exited_today` has spent its share. A
     name among them that is still held and due (an exit queued for the open)
     is let through again without a second share: its close sends nothing new.
+
     So is a name in `exiting`, whose exit an earlier trade date queued still
-    waits for an open: it spent that date's budget, not today's.
+    waits for an open, and it spends a share all the same: that exit sells at
+    the same open as any this pass queues. The stamp carries the UTC date of
+    the run that sent it, so the 22:30 run and a rerun past 00:00 UTC (after
+    the overnight page, before the open) stamp different dates for one open,
+    and a weekday exchange holiday puts two runs' exits on the next open too.
+    Charged to neither, each run took a full budget and one open sold twice
+    as many names as the budget allows.
     """
     due = sorted(
         (p for p in positions if _time_exit_due(p, config)),
         key=lambda p: (-(p.bars_held or 0), p.ticker),
     )
     book = len({p.ticker for p in positions} | exited_today)
-    left = max(0, exit_budget(book, config) - len(exited_today))
     spent = exited_today | exiting
+    left = max(0, exit_budget(book, config) - len(spent))
     fresh = [p for p in due if p.ticker not in spent]
+    queued = len(exiting - exited_today)
     detail = (
         f"close deferred: {left} of {len(fresh)} due this pass "
         f"(cap {config.max_closes_per_run}, {config.max_close_fraction:.0%} "
-        f"of {book} positions, {len(exited_today)} closed today)"
+        f"of {book} positions, {len(exited_today)} closed today"
+        + (f", {queued} queued earlier for the same open" if queued else "")
+        + ")"
     )
     allowed = {p.ticker for p in due if p.ticker in spent}
     allowed |= {p.ticker for p in fresh[:left]}
@@ -586,7 +596,8 @@ def plan_actions(
     DEFAULT_MAX_CLOSES_PER_RUN). `exited_today` names the positions a time exit
     already sold, or is selling, under today's stamp: the budget is the trade
     date's, and they have spent part of it. `exiting` names those whose exit
-    an earlier trade date queued still works: they take no share of today's.
+    an earlier trade date queued still works: it sells at the open today's
+    exits queue for, so they have spent part of it too.
     """
     actions: list[Action] = []
     skips: list[Skip] = []

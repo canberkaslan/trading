@@ -326,20 +326,31 @@ class TestExitBudget:
         assert sorted(a.ticker for a in actions if isinstance(a, TimeExit)) == ["T6", "T7"]
         assert len([s for s in skips if s.reason == "exit_budget"]) == 6
 
-    def test_a_name_whose_earlier_exit_still_works_spends_no_share(self) -> None:
-        # The run after a weekday holiday: the exits an earlier trade date
-        # queued for T6 and T7 still wait for an open, and their close sends
-        # nothing new. They spent that day's budget, not today's.
+    def test_a_name_whose_earlier_exit_still_works_spends_its_share(self) -> None:
+        # A rerun past 00:00 UTC, or the run on a weekday holiday: the exits
+        # an earlier trade date queued for T6 and T7 still wait for an open,
+        # the one today's exits would queue for too. Their close sends nothing
+        # new, and they have spent that open's budget of two: nothing more goes.
         positions = _aged(8)
         bars = {p.ticker: flat_bars(30) for p in positions}
 
         actions, skips = plan_actions(positions, bars, exiting=frozenset({"T6", "T7"}))
 
         exits = sorted(a.ticker for a in actions if isinstance(a, TimeExit))
-        assert exits == ["T0", "T1", "T6", "T7"]
-        assert sorted(s.ticker for s in skips if s.reason == "exit_budget") == [
-            "T2", "T3", "T4", "T5"
-        ]
+        assert exits == ["T6", "T7"]
+        deferred = [s for s in skips if s.reason == "exit_budget"]
+        assert sorted(s.ticker for s in deferred) == ["T0", "T1", "T2", "T3", "T4", "T5"]
+        assert "2 queued earlier for the same open" in deferred[0].detail
+
+    def test_an_earlier_exit_on_a_name_no_longer_due_spends_its_share(self) -> None:
+        # T7 moved out of the flat band, but its queued exit still sells at
+        # the open: one of the two names that open may take.
+        positions = [*_aged(7), position(ticker="T7", bars_held=25, current_price=110.0)]
+        bars = {p.ticker: flat_bars(30) for p in positions}
+
+        actions, _ = plan_actions(positions, bars, exiting=frozenset({"T7"}))
+
+        assert [a.ticker for a in actions if isinstance(a, TimeExit)] == ["T0"]
 
     def test_stop_maintenance_does_not_count_against_the_budget(self) -> None:
         # Four ratchets and one due close on a five-name book (budget 1): the

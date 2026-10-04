@@ -72,8 +72,11 @@ Safety, in the order it matters:
     (`position_manager.exit_budget`), so one bad input cannot liquidate the book
     through time exits in a single run. The budget is the trade date's: a pass
     run again the same day counts the exits already stamped today against it,
-    and a name whose exit an earlier date queued still waits for an open (a
-    weekday exchange holiday) is left to that exit and spends none of it.
+    and a name whose exit an earlier date queued still waits for an open is
+    left to that exit, which counts against it too. That exit sells at the
+    open this pass's exits queue for: a rerun past 00:00 UTC stamps the next
+    date for the same open as the 22:30 run before it, and so does the run on
+    a weekday exchange holiday.
     The rest are reported as deferred, keep their stops, and with --submit
     fail the pass so it pages. Stop maintenance does not count against the
     budget. A stop moved to the last price is a close all the same, so the
@@ -263,7 +266,8 @@ def _exiting_before(sells: Sells, day: date) -> frozenset[str]:
 
     Queued for an open that has not come since (a weekday exchange holiday,
     or a rerun past 00:00 UTC). The lot is on its way out: its close sends
-    nothing, and it takes no share of `day`'s exit budget.
+    nothing, and its exit spends a share of `day`'s exit budget, since it
+    sells at the open `day`'s exits queue for.
     """
     return frozenset(
         symbol for symbol, coid, status in sells
@@ -620,6 +624,7 @@ def _report_exit_budget(
     config: ManagementConfig,
     exited_today: frozenset[str],
     submitting: bool,
+    exiting: frozenset[str] = frozenset(),
 ) -> bool:
     """Say what the exit budget held back, in one line a person will read.
 
@@ -637,14 +642,16 @@ def _report_exit_budget(
         return False
     closing = sum(1 for a in actions if isinstance(a, TimeExit))
     book = len({m.ticker for m in examined} | exited_today)
+    queued = len(exiting - exited_today)
     log.warning(
         "exit budget: closing %d of %d due (budget %d of %d positions today, "
-        "%d closed earlier today); deferred: %s",
+        "%d closed earlier today%s); deferred: %s",
         closing,
         closing + len(deferred),
         exit_budget(book, config),
         book,
         len(exited_today),
+        f", {queued} queued earlier for the same open" if queued else "",
         ", ".join(deferred),
     )
     return submitting
@@ -954,10 +961,9 @@ def main(argv: list[str] | None = None) -> int:
             client, repo, positions_raw, by_symbol, orders, stop_ids, entries, today, fresh
         )
 
-        exited_today = _exited_on(sells, today)
+        exited_today, exiting = _exited_on(sells, today), _exiting_before(sells, today)
         actions, skips = plan_actions(
-            managed, bars_by_ticker, config,
-            exited_today=exited_today, exiting=_exiting_before(sells, today),
+            managed, bars_by_ticker, config, exited_today=exited_today, exiting=exiting
         )
 
         for skip in skips:
@@ -966,7 +972,9 @@ def main(argv: list[str] | None = None) -> int:
         # of them fails the pass, and daily_run pages on that.
         failing = [
             _report_missed_exits(sell_orders, positions_raw, opened_after(client), args.submit),
-            _report_exit_budget(actions, skips, managed, config, exited_today, args.submit),
+            _report_exit_budget(
+                actions, skips, managed, config, exited_today, args.submit, exiting
+            ),
             _report_refusals(skips, args.submit),
             _report_unrefreshed(skips, unrefreshed, args.submit),
         ]

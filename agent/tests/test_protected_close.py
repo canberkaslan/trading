@@ -1062,6 +1062,30 @@ class TestABackFillBesideAnExitNeverFound:
 
         _assert_one_seller(fake)
 
+    def _beside_a_re_arm(self, **kw) -> tuple[FakeBroker, object]:
+        """6 of 10 shares under a stop the close re-armed; the other 4 to back-fill."""
+        fake = self._in_flight(10**6, **kw)
+        fake.orders["rearm-6"] = _stop("rearm-6", qty=6.0, coid=_rearm_id(STAMP, "stop-a"))
+        outcome = cover_beside_exit(
+            fake, "XOM", stamp=STAMP, qty=4.0, stop_price=88.0, covered=6.0,
+            sleep=lambda _: None,
+        )
+        return fake, outcome
+
+    def test_a_back_fill_that_never_stood_beside_a_re_arm_is_naked(self) -> None:
+        # Held to the 4 shares it was for, the 6 the re-arm covered read as
+        # enough, and the pass took the lot off its uncovered list.
+        _, outcome = self._beside_a_re_arm(refuse_stop={"XOM"})
+
+        assert outcome.status == "naked", outcome.detail
+        assert "4 shares that had a stop have no working one" in outcome.detail
+
+    def test_a_back_fill_standing_beside_a_re_arm_is_unchanged(self) -> None:
+        fake, outcome = self._beside_a_re_arm()
+
+        assert outcome.status == "unchanged", outcome.detail
+        assert sorted(o.qty for o in fake.live_sells("XOM")) == [4.0, 6.0]
+
     def test_with_the_market_open_nothing_is_placed(self) -> None:
         fake = self._in_flight(10**6, market_open=True)
 

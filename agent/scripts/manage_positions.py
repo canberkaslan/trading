@@ -806,17 +806,24 @@ def _recover_unclosed(
     if failed:
         uncovered.append(f"re-cover could not place {failed} back-fill stop(s)")
     for act in (a for a in backfills if a.ticker in unsettled):
-        failed += _cover_beside_exit(client, act, unsettled[act.ticker], uncovered)
+        row = by_symbol[act.ticker]
+        covered = min(row.protected_qty, row.position_qty)
+        failed += _cover_beside_exit(client, act, unsettled[act.ticker], uncovered, covered)
     return failed
 
 
 def _cover_beside_exit(
-    client: AlpacaClient, act: PlaceStop, stamp: str, uncovered: list[str]
+    client: AlpacaClient, act: PlaceStop, stamp: str, uncovered: list[str], covered: float
 ) -> int:
-    """One back-fill beside an exit that may still land; 1 if it is not settled."""
+    """One back-fill beside an exit that may still land; 1 if it is not settled.
+
+    `covered` is what the stops standing beside it covered when the back-fill
+    was sized: the verdict holds the lot to that and the back-fill both.
+    """
     try:
         outcome = cover_beside_exit(
-            client, act.ticker, stamp=stamp, qty=act.quantity, stop_price=act.stop_price
+            client, act.ticker, stamp=stamp, qty=act.quantity, stop_price=act.stop_price,
+            covered=covered,
         )
     except Exception as exc:  # noqa: BLE001 — one bad symbol must not stop the pass
         log.error("%-6s FAILED back-fill beside exit %s: %s", act.ticker, stamp, exc)
@@ -824,7 +831,9 @@ def _cover_beside_exit(
         return 1
     _log_close(outcome)
     if outcome.status in CLOSED_STATUSES or outcome.status == "unchanged":
-        # Protected, or gone with nothing standing: the close's doubt is settled.
+        # The back-fill stands beside what stood before it (`unchanged` holds
+        # the lot to both), or the lot is gone with nothing standing: the
+        # close's doubt is settled.
         uncovered[:] = [u for u in uncovered if not u.startswith(f"{act.ticker} ")]
         return 0
     uncovered.append(f"{act.ticker} {outcome.status} beside exit {stamp}")

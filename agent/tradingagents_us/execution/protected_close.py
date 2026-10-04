@@ -457,6 +457,7 @@ def cover_beside_exit(
     stamp: str,
     qty: float,
     stop_price: float,
+    covered: float = 0.0,
     sleep: Sleep | None = None,
 ) -> CloseOutcome:
     """Back-fill a lot whose exit under `stamp` was sent and never found.
@@ -468,12 +469,17 @@ def cover_beside_exit(
     first stands, and the other was refused. While the market is shut that is
     all there is to it. With it open, nothing is placed.
 
+    `covered` is what other stops covered when `qty` was sized, a stop the
+    close re-armed above all, and the verdict holds the lot to that plus
+    `qty`: held to `qty` alone, a back-fill that never stood read as done
+    beside a stop that was there before it.
+
     `unchanged` when the stop stands (the exit can no longer land),
     `exit_submitted` when the exit got there first, and `naked` or `unknown`
     otherwise.
     """
     sleep = sleep or time.sleep
-    ctx = _Ctx(client, ticker, stamp, _NO_BOOK, _Release(), sleep, wanted=qty)
+    ctx = _Ctx(client, ticker, stamp, _NO_BOOK, _Release(), sleep, wanted=covered + qty)
     try:
         shut = _market_shut(client)
     except Exception as exc:  # noqa: BLE001 — no clock, no write

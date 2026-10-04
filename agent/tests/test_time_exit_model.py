@@ -232,6 +232,38 @@ def test_random_sweep(harness: Harness, market_open: bool) -> None:
     _judge(harness, stats, "random")
 
 
+class TestDeepSchedules:
+    """Counterexamples deeper than the explorers reach, pinned as the story they tell.
+
+    Each replays one scripted schedule through run 1, then every night, open
+    and run-2 variant after it, and must find nothing.
+    """
+
+    def _judge(self, harness: Harness, book: str, chooser: tem.Scripted) -> None:
+        stats = Stats()
+        harness.evaluate(Scenario(book, ()), stats, chooser=chooser)
+        assert not chooser.rules, f"the schedule did not play out: {chooser.rules} left"
+        if stats.findings:
+            pytest.fail(report(harness, stats, f"{book}: "), pytrace=False)
+
+    def test_a_lost_back_fill_beside_a_half_re_armed_lot_is_not_called_covered(
+        self, harness: Harness
+    ) -> None:
+        # Six faults. The exit POST is lost and never lands; of the two stops
+        # it released, the 6-share re-arm stands and the 4-share one is
+        # refused; the verdict cannot read the book, so the close hands the
+        # stamp on as unsettled; and the re-cover's 4-share back-fill beside
+        # it is lost too. Still 6 of 10 covered: four shares that had a stop
+        # have none, and the pass must say so (rc 3), not "as protected as
+        # before" (rc 1).
+        self._judge(harness, "two_stops", tem.Scripted(
+            ("submit_order(market", "timeout_lost"),
+            ("submit_order(stop sell 4 @88", "422"),
+            ("list_orders", "timeout", 3),
+            ("-cover", "timeout_lost"),
+        ))
+
+
 class TestTheModel:
     """The broker model keeps the rules the close relies on, and a clean run closes."""
 

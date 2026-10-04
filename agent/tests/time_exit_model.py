@@ -198,7 +198,8 @@ class ModelBroker:
         self.armed = False
         self.n = 0
         self.next_id = 1
-        self.chooser: Callable[[int, str, tuple[str, ...], tuple[str, ...]], Choice] = (
+        #: (index, kind, env options, outcomes, the call as the trace names it).
+        self.chooser: Callable[[int, str, tuple[str, ...], tuple[str, ...], str], Choice] = (
             lambda *_: CLEAN
         )
         #: Choice points seen while armed: (index, kind, env options, outcomes).
@@ -279,7 +280,7 @@ class ModelBroker:
         self.n += 1
         env_opts = self._env_options()
         outs = self._outcomes(kind, target)
-        env, out = self.chooser(idx, kind, env_opts, outs)
+        env, out = self.chooser(idx, kind, env_opts, outs, what)
         if env is not None and env not in env_opts:
             env = None
         if out not in outs:
@@ -884,7 +885,7 @@ class Stats:
 
 
 def _replay(faults: dict[int, Choice]):
-    def choose(idx: int, kind: str, env_opts, outs) -> Choice:
+    def choose(idx: int, kind: str, env_opts, outs, what: str = "") -> Choice:
         return faults.get(idx, CLEAN)
 
     return choose
@@ -1010,7 +1011,8 @@ class Harness:
                 f"{[lat.label(b.name) for lat in b.latent] or 'nothing'}")
         stats.schedules += 1
         if chooser is not None:
-            # A random chooser decided as it went: pin what it chose, for replay.
+            # A random or scripted chooser decided as it went: pin what it
+            # chose, for replay.
             scenario = dataclasses.replace(scenario, faults=tuple(sorted(chooser.made.items())))
         close = next((o for kind, o in b.outcomes if kind == "close"), None)
         # A fill during run 1 means the run met a trading market: the daily run
@@ -1172,12 +1174,36 @@ class _RandomChooser:
         self.rng, self.p_env, self.p_fault = rng, p_env, p_fault
         self.made: dict[int, Choice] = {}
 
-    def __call__(self, idx: int, kind: str, env_opts, outs) -> Choice:  # noqa: ANN001
+    def __call__(self, idx: int, kind: str, env_opts, outs, what: str = "") -> Choice:  # noqa: ANN001
         env = self.rng.choice(env_opts) if env_opts and self.rng.random() < self.p_env else None
         out = self.rng.choice(outs[1:]) if self.rng.random() < self.p_fault else "ok"
         if env is not None or out != "ok":
             self.made[idx] = (env, out)
         return env, out
+
+
+class Scripted:
+    """Faults picked by what each call is: a schedule too deep to explore, told as a story.
+
+    Each rule is (text the call's trace line contains, outcome[, times]), and
+    waits for the rule before it to be spent: so ("list_orders", "timeout", 3)
+    after a re-arm's refusal times out the next three listings after it, not
+    the first three of the run. Every other call is answered cleanly.
+    """
+
+    def __init__(self, *rules: tuple[str, str] | tuple[str, str, int]) -> None:
+        self.rules: list[list] = [[r[0], r[1], r[2] if len(r) > 2 else 1] for r in rules]
+        self.made: dict[int, Choice] = {}
+
+    def __call__(self, idx: int, kind: str, env_opts, outs, what: str = "") -> Choice:  # noqa: ANN001
+        if not self.rules or self.rules[0][0] not in what:
+            return CLEAN
+        rule = self.rules[0]
+        rule[2] -= 1
+        if rule[2] <= 0:
+            self.rules.pop(0)
+        self.made[idx] = (None, rule[1])
+        return None, rule[1]
 
 
 def explore_random(

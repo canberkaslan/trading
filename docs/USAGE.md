@@ -9,7 +9,7 @@ Bu sistemin **şu an** sana ne sağladığı, **ne komut çalıştıracağın**,
 ## 0. Bir kerelik kurulum (5 dk)
 
 ```bash
-git clone git@github.com:canberkaslan/trading.git
+git clone git@github.com:fusapp/trading.git
 cd trading/agent
 
 # Python venv + bağımlılıklar
@@ -185,7 +185,7 @@ aws --profile rootingo --region eu-west-1 secretsmanager list-secrets \
   --filters Key=name,Values=ai-trader/dev
 
 # Repo
-gh repo view canberkaslan/trading
+gh repo view fusapp/trading
 ```
 
 ---

@@ -94,7 +94,7 @@ EXPO_PUBLIC_API_URL=http://192.168.1.42:8000 pnpm ios
 
 3. **GitHub secrets ekle**
    ```bash
-   gh secret set EXPO_TOKEN -R canberkaslan/trading
+   gh secret set EXPO_TOKEN -R fusapp/trading
    # EAS credentials otomatik yönetilir, manuel Apple API key opsiyonel
    ```
 

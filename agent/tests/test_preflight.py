@@ -137,7 +137,7 @@ class TestAlertingGapsAreNotFailures:
 
         # The token was exercised with a read, and nothing was sent.
         assert [(m, p) for m, p, _ in fake_github.requests] == [
-            ("GET", "/repos/canberkaslan/trading/actions/workflows/box-alert.yml")
+            ("GET", "/repos/fusapp/trading/actions/workflows/box-alert.yml")
         ]
         assert fake_github.dispatches == []
         record = read_preflight(state_file)

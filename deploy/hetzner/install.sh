@@ -3,7 +3,7 @@
 # Hetzner (or any systemd Linux) box. Run AS the deploy user with sudo.
 #
 #   ssh deploy@<box>
-#   curl -fsSL https://raw.githubusercontent.com/canberkaslan/trading/main/deploy/hetzner/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/fusapp/trading/main/deploy/hetzner/install.sh | bash
 #   # then: edit /opt/ai-trader/secrets.env, fill in the keys
 #   sudo systemctl enable --now ai-trader.timer ai-trader-preflight.timer \
 #     ai-trader-backup.timer ai-trader-reconcile.timer \
@@ -20,7 +20,7 @@
 
 set -euo pipefail
 
-REPO_URL="${REPO_URL:-https://github.com/canberkaslan/trading.git}"
+REPO_URL="${REPO_URL:-https://github.com/fusapp/trading.git}"
 APP_DIR="/opt/ai-trader"
 AGENT_DIR="${APP_DIR}/agent"
 
@@ -112,7 +112,7 @@ OPS_ALERT_GITHUB_TOKEN=
 # Defaults to the repo the off-box watchdog files incidents on, which is public.
 # A private repo keeps book details off a public page and narrows what the
 # token can dispatch; it must carry box-alert.yml and scripts/box_alert_issue.py.
-#OPS_ALERT_GITHUB_REPO=canberkaslan/trading
+#OPS_ALERT_GITHUB_REPO=fusapp/trading
 
 # Local trade-log DB (sqlite on the box)
 TRADE_LOG_DB_URL=sqlite:////opt/ai-trader/agent/local.db

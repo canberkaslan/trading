@@ -383,7 +383,7 @@ def _daily_run_alert_env(run: Run) -> dict[str, str]:
 def test_a_blank_alert_key_in_dotenv_cannot_switch_alerting_off(tmp_path: Path) -> None:
     run = run_daily(
         tmp_path,
-        dotenv="HEALTHCHECK_URL=\nOPS_ALERT_GITHUB_TOKEN=\nOPS_ALERT_GITHUB_REPO=canberkaslan/trading\n",
+        dotenv="HEALTHCHECK_URL=\nOPS_ALERT_GITHUB_TOKEN=\nOPS_ALERT_GITHUB_REPO=fusapp/trading\n",
         OPS_ALERT_GITHUB_TOKEN="gh-test-token-not-real",
         OPS_ALERT_GITHUB_REPO="someone/private-ops",
         FAKE_RC_scripts_trade="1",

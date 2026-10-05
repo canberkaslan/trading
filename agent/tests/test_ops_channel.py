@@ -44,7 +44,7 @@ class TestGitHubChannel:
         # Not the watchdog's label: the watchdog closes its own issues when the
         # box answers, and must never close one of these.
         assert issue["labels"] == ["box-alert"]
-        assert fake_github.requests[-1][1] == "/repos/canberkaslan/trading/issues"
+        assert fake_github.requests[-1][1] == "/repos/fusapp/trading/issues"
 
     def test_the_box_dispatches_and_the_workflow_token_writes_the_issue(
         self, fake_github: FakeGitHub
@@ -57,7 +57,7 @@ class TestGitHubChannel:
         calls = list(zip(fake_github.requests, fake_github.auth_headers, strict=True))
         box = [(m, path) for (m, path, _), auth in calls if auth == f"Bearer {FAKE_GITHUB_TOKEN}"]
         assert box == [
-            ("POST", "/repos/canberkaslan/trading/actions/workflows/box-alert.yml/dispatches")
+            ("POST", "/repos/fusapp/trading/actions/workflows/box-alert.yml/dispatches")
         ]
         writes = [auth for (m, path, _), auth in calls if m == "POST" and "/issues" in path]
         assert writes == [f"Bearer {FAKE_WORKFLOW_TOKEN}"]
@@ -78,7 +78,7 @@ class TestGitHubChannel:
 
         assert delivery.delivered
         assert fake_github.opened == []
-        assert fake_github.comments[0][0] == "/repos/canberkaslan/trading/issues/9/comments"
+        assert fake_github.comments[0][0] == "/repos/fusapp/trading/issues/9/comments"
         assert "11 ticker(s) failed" in str(fake_github.comments[0][1]["body"])
 
     def test_other_kinds_and_pull_requests_are_not_mistaken_for_the_thread(
@@ -121,7 +121,7 @@ class TestGitHubChannel:
         send_ops_alert("Preflight FAILED (1)", "alpaca: 401", kind="preflight")
         assert len(fake_github.opened) == 1
         assert [path for path, _ in fake_github.comments] == [
-            "/repos/canberkaslan/trading/issues/41/comments"
+            "/repos/fusapp/trading/issues/41/comments"
         ]
 
     def test_a_kind_that_is_not_a_plain_token_is_sent_as_ops(

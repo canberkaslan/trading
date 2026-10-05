@@ -1,6 +1,6 @@
 # Handoff: AI Investment Agent UI (Modernist)
 
-Repo: `canberkaslan/trading` · hedef: `mobile/app/` (React Native + Expo) ve `agent/api/static/dashboard.html` (web paneli).
+Repo: `fusapp/trading` · hedef: `mobile/app/` (React Native + Expo) ve `agent/api/static/dashboard.html` (web paneli).
 
 ## Overview
 Paper-trading yapan 7 ajanlı LLM trader için operatör arayüzü: portföy + eval karnesi, ajan kararları ve çalışma günlüğü, emir onayı (cihaz kilidi), kill switch, risk limitleri, izleme listesi, sohbet (analiz), dersler, bildirimler, giriş. Web ve mobilde aynı bilgi mimarisi.

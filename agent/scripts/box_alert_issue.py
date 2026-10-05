@@ -35,7 +35,7 @@ import urllib.request
 from collections.abc import Callable, Mapping
 
 API = "https://api.github.com"
-DEFAULT_REPO = "canberkaslan/trading"
+DEFAULT_REPO = "fusapp/trading"
 ISSUE_LABEL = "box-alert"
 BOT_LOGIN = "github-actions[bot]"
 TIMEOUT_S = 15

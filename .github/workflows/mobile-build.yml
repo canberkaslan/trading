@@ -164,4 +164,4 @@ jobs:
         if: steps.changed.outputs.app == 'true' && env.EXPO_TOKEN == ''
         run: |
           echo "::warning::EXPO_TOKEN is not set — OTA not published."
-          echo "Add it with: gh secret set EXPO_TOKEN -R canberkaslan/trading"
+          echo "Add it with: gh secret set EXPO_TOKEN -R fusapp/trading"

@@ -59,7 +59,7 @@ GITHUB_TOKEN_ENV = "OPS_ALERT_GITHUB_TOKEN"
 GITHUB_REPO_ENV = "OPS_ALERT_GITHUB_REPO"
 #: Where the off-box watchdog files its incidents, so both alert sources land
 #: in the one place the owner already watches.
-DEFAULT_GITHUB_REPO = "canberkaslan/trading"
+DEFAULT_GITHUB_REPO = "fusapp/trading"
 GITHUB_API = "https://api.github.com"
 
 #: The workflow that writes the issue as github-actions[bot], and the branch

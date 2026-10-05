@@ -18,8 +18,10 @@ call itself: answered, timed out after its effect, timed out without it, timed
 out with the effect still in flight (it lands when a later choice says so, or
 overnight), a cancel left `pending_cancel` (for two calls, or until a later
 choice or the night settles it, landing or not), a bracket sibling cancelled
-with its leg, left live, or left pending, a 4xx refusal (429, 422). Choice 0
-everywhere is a clean, prompt broker.
+with its leg, left live, or left pending, a 4xx refusal (429, 422), or for an
+order listing, the book as it stood up to `MAX_LISTING_LAG` changes back while
+every per-order read and the holding are current. Choice 0 everywhere is a
+clean, prompt broker.
 
 `Harness` runs `scripts.manage_positions.main()` itself, with the flags the
 daily run passes, against that broker: run 1 on day D at 22:30 UTC plans a
@@ -114,6 +116,13 @@ CANCELABLE = RESERVING - {"pending_cancel"}
 COVERING = frozenset({"new", "accepted", "pending_new", "held", "partially_filled"})
 
 READ_OUTCOMES = ("ok", "timeout")
+#: How far behind the book a listing may be: list_orders may return the book
+#: as it stood up to this many changes back (a cancel or a fill that took
+#: effect, an order the broker took), while get_order, the client-id lookup
+#: and the holding read the book as it is. Alpaca's listing lags its
+#: per-order reads right after a write: GOOGL, 2026-10-05, three orders
+#: get_order had read canceled were still listed working seconds later.
+MAX_LISTING_LAG = 3
 CANCEL_OUTCOMES = (
     "ok", "pending", "pending_stuck", "timeout_applied", "timeout_lost", "timeout_late", "429",
 )
@@ -260,6 +269,16 @@ class ModelBroker:
         #: Weekdays with no session (`OPEN_HOLIDAY`): the clock and the
         #: calendar skip them.
         self.holidays: set[date] = set()
+        #: The book after each change in this run, oldest first: what a
+        #: listing that lags serves (`list_orders`). Each run starts it afresh
+        #: (`Harness._main`): the lag is seconds, not a night.
+        self.history: list[dict[str, Rec]] = []
+        self._kept: tuple | None = None
+        #: For each lagging listing served: the sells it showed working that
+        #: no longer work, by id.
+        self.stale: list[list[str]] = []
+        #: Run 1's exit code, once `Harness.evaluate` has it.
+        self.rc: int | None = None
 
     # ---- plumbing ----------------------------------------------------------
 
@@ -283,6 +302,9 @@ class ModelBroker:
         other.events = list(self.events)
         other.missed_at_open = list(self.missed_at_open)
         other.holidays = set(self.holidays)
+        # Each kept book is a copy no one changes, so the list can share them.
+        other.history = list(self.history)
+        other.stale = list(self.stale)
         other.chooser = lambda *_: CLEAN
         other.armed = False
         return other
@@ -311,12 +333,21 @@ class ModelBroker:
         self.violations.append((cls, message))
         self.trace(f"     !! {cls}: {message}")
 
+    def _keep(self) -> None:
+        """Keep the book as it is now, if it changed since it was last kept."""
+        state = tuple((r.id, r.status, r.qty, r.filled) for r in self.recs.values())
+        if state != self._kept:
+            self._kept = state
+            self.history.append({k: dataclasses.replace(r) for k, r in self.recs.items()})
+
     def _step(self, kind: str, what: str, target: Rec | None = None) -> str:
         """One broker call: time passes, then maybe an event, then the call's outcome."""
         self.elapsed += CALL_S
+        self._keep()
         self._tick()
+        self._keep()
         if not self.armed:
-            if self.tracing and kind not in ("read",):
+            if self.tracing and kind not in ("read", "list"):
                 self.events.append(f"     {self.stage}: {what}")
             return "ok"
         idx = self.n
@@ -334,6 +365,7 @@ class ModelBroker:
         if env is not None:
             self.trace(f"#{idx:<3} t={self.elapsed:6.2f}  [event] {self._describe_env(env)}")
             self._env(env)
+            self._keep()
         self.trace(f"#{idx:<3} t={self.elapsed:6.2f}  {what} -> {out}")
         return out
 
@@ -347,17 +379,18 @@ class ModelBroker:
                 self._land(lat)
 
     def _outcomes(self, kind: str, target: Rec | None) -> tuple[str, ...]:
-        if kind == "read":
-            return READ_OUTCOMES
-        if kind == "submit":
-            return SUBMIT_OUTCOMES
+        if kind == "list":
+            # Only as far back as this run's book has changed: a lag past its
+            # first state is that state, a choice no different from `ok`.
+            depth = min(MAX_LISTING_LAG, len(self.history) - 1)
+            return READ_OUTCOMES + tuple(f"lag{k}" for k in range(1, depth + 1))
         if kind == "cancel":
             if target is None or target.status not in CANCELABLE:
                 return DEAD_CANCEL_OUTCOMES
             if self._siblings(target, CANCELABLE):
                 return CANCEL_OUTCOMES + SIBLING_OUTCOMES
             return CANCEL_OUTCOMES
-        return ("ok",)
+        return {"read": READ_OUTCOMES, "submit": SUBMIT_OUTCOMES}.get(kind, ("ok",))
 
     # ---- the book ------------------------------------------------------------
 
@@ -612,17 +645,39 @@ class ModelBroker:
         return self._order(rec) if rec is not None else None
 
     def list_orders(self, status: str = "open", limit: int = 50, nested: bool = False):
-        self._read(f"list_orders({status})")
+        """The account's orders, as the book is now, or as it was `lagK` changes back.
+
+        A lagging listing shows each order as it stood then: one cancelled
+        since still working, one placed since not at all. get_order and the
+        holding are never behind (`MAX_LISTING_LAG`).
+        """
+        out = self._step("list", f"list_orders({status})")
+        if out == "timeout":
+            raise _timeout()
+        recs = self.recs
+        if out.startswith("lag"):
+            recs = self.history[-1 - int(out.removeprefix("lag"))]
+            self._note_stale(recs)
         if not nested:
-            return [self._order(r) for r in self.recs.values()]
+            return [self._order(r) for r in recs.values()]
         legs: dict[str, list[Rec]] = {}
-        for r in self.recs.values():
+        for r in recs.values():
             if r.parent is not None:
                 legs.setdefault(r.parent, []).append(r)
         return [
             self._order(r, tuple(self._order(leg) for leg in legs.get(r.id, ())))
-            for r in self.recs.values() if r.parent is None
+            for r in recs.values() if r.parent is None
         ]
+
+    def _note_stale(self, recs: dict[str, Rec]) -> None:
+        """Record which sells a lagging listing shows working that no longer work."""
+
+        def working(r: Rec | None) -> bool:
+            return r is not None and r.side == "sell" and r.status in COVERING and r.remaining > EPS
+
+        stale = sorted(oid for oid, r in recs.items() if working(r) and not working(self.recs[oid]))
+        self.stale.append(stale)
+        self.trace(f"     the listing is behind the book: shows working {', '.join(stale) or '-'}")
 
     def list_fill_activities(self) -> list[FillActivity]:
         self._read("list_fill_activities()")
@@ -823,6 +878,13 @@ class ModelBroker:
             if out not in SETTLED_WRITE_FAULTS:
                 return None
         return len(applied)
+
+    def lag_only(self) -> bool:
+        """Whether run 1 met a fault, and each was a listing that lagged the book (I10)."""
+        return bool(self.applied) and all(
+            kind == "list" and env is None and out.startswith("lag")
+            for kind, env, out in self.applied
+        )
 
     def describe(self) -> str:
         live = ", ".join(
@@ -1061,6 +1123,9 @@ class Harness:
         #: Each chooser `run2_chooser` made, in the order the runs met them.
         self.run2_choosers: list[Callable[..., Choice]] = []
         self._run2_memo: dict[tuple, Run2] = {}
+        #: (book, run 1's time, open or not) -> what run 1 ends in on a clean
+        #: broker: the close's status and the run's exit code (I10).
+        self._clean_memo: dict[tuple, tuple[str | None, int]] = {}
         real_close = mp.close_with_protection
         real_cover = getattr(mp, "cover_beside_exit", None)
 
@@ -1113,6 +1178,7 @@ class Harness:
         self.broker, self.variant, self.arming = broker, variant, arm
         _ClockDT.current = at
         broker.base_time, broker.elapsed, broker.mark = at, 0.0, MARK[variant]
+        broker.history, broker._kept = [], None
         previous = logging.root.manager.disable
         if not broker.tracing:
             logging.disable(logging.CRITICAL)
@@ -1167,7 +1233,7 @@ class Harness:
         b.chooser = chooser or _replay(dict(scenario.faults))
         b.market_open = self.market_open
         rc1 = self._main(b, self.run1_at, "due", arm=True)
-        b.market_open = False
+        b.market_open, b.rc = False, rc1
         b.trace(f"     == run 1 rc={rc1}; {b.describe()}; in flight: "
                 f"{[lat.label(b.name) for lat in b.latent] or 'nothing'}")
         stats.schedules += 1
@@ -1188,6 +1254,9 @@ class Harness:
         if close is None:
             stats.add(Finding("harness: no time exit in run 1", f"rc={rc1}", scenario))
             return b
+        if b.lag_only():
+            for cls, msg in self._check_lag(scenario.book, close, rc1, b):
+                add(cls, msg, scenario)
         after = _After(
             self, scenario, close, rc1, cover_wanted(scenario.book), add, stats, pick,
             b.settled_writes(),
@@ -1200,6 +1269,36 @@ class Harness:
             if trace:
                 b.events = n.events
         return b
+
+    def _clean_run1(self, book: str) -> tuple[str | None, int]:
+        """Run 1 on `book` against a clean broker: the close's status and the run's exit code."""
+        key = (book, self.run1_at, self.market_open)
+        if key not in self._clean_memo:
+            b = build_book(book)
+            b.market_open = self.market_open
+            rc = self._main(b, self.run1_at, "due", arm=True)
+            close = next((o for kind, o in b.outcomes if kind == "close"), None)
+            self._clean_memo[key] = (close.status if close else None, rc)
+        return self._clean_memo[key]
+
+    def _check_lag(
+        self, book: str, close: pc.CloseOutcome, rc1: int, b: ModelBroker
+    ) -> list[tuple[str, str]]:
+        """I10: listing lag alone ends run 1 as a clean broker does, close and exit code both.
+
+        A listing behind the book shows orders this close cancelled, and read
+        back by their own id, still working, and orders it placed not at all.
+        Taken at its word, that pages over a close that went as planned: the
+        GOOGL time exit of 2026-10-05 was called `unknown`, two sellers, rc 3.
+        """
+        status, rc = self._clean_run1(book)
+        if (close.status, rc1) == (status, rc):
+            return []
+        return [(
+            f"I10 listing lag alone turned {status} rc={rc} into {close.status} rc={rc1}",
+            f"{b.describe()} (close: {close.status}: {close.detail}; rc={rc1}; "
+            f"listed working though gone: {b.stale})",
+        )]
 
     @staticmethod
     def _check_run1(
@@ -1410,7 +1509,9 @@ class Scripted:
     Each rule is (text the call's trace line contains, outcome[, times]), and
     waits for the rule before it to be spent: so ("list_orders", "timeout", 3)
     after a re-arm's refusal times out the next three listings after it, not
-    the first three of the run. Every other call is answered cleanly.
+    the first three of the run. Every other call is answered cleanly. A rule
+    whose outcome is "ok" only marks a place in the story: the call it meets
+    is answered cleanly, and the next rule waits for a call after it.
     """
 
     def __init__(self, *rules: tuple[str, str] | tuple[str, str, int]) -> None:
@@ -1424,7 +1525,8 @@ class Scripted:
         rule[2] -= 1
         if rule[2] <= 0:
             self.rules.pop(0)
-        self.made[idx] = (None, rule[1])
+        if rule[1] != "ok":
+            self.made[idx] = (None, rule[1])
         return None, rule[1]
 
 

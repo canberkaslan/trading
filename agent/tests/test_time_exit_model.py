@@ -34,7 +34,13 @@ starts until run 1 ends, every answer it gives is a choice:
       gap fills every standing stop or none; or there is no session at all (a
       weekday exchange holiday: the timer runs Mon-Fri and daily_run.sh skips
       weekends only), and run 2 meets yesterday's exit still queued;
-  (h) partial fills: of a stop or our exit, in the run or at the open.
+  (h) partial fills: of a stop or our exit, in the run or at the open;
+  (i) a listing behind the book: list_orders returns the book as it stood one,
+      two or three changes back (a cancel or a fill that took effect, an order
+      the broker took), while get_order, the client-id lookup and the holding
+      are current. Alpaca's listing lags its per-order reads right after a
+      write: on 2026-10-05 GOOGL's verdict listed three sells working that the
+      release had read cancelled, one by one, seconds before.
 
 The model keeps the Alpaca rules the close relies on: an open sell reserves its
 shares, and while the lot is long a sell for more than is unreserved is refused
@@ -108,6 +114,14 @@ cancelled and never replaced has lost its way out as surely as a stop.
       beside a sell it reads as in doubt: the lot stays past its time exit
       for good, and the pass pages each night (rc 3) over a lot as covered
       as it was.
+  I10 Precision under a listing that lags. Where every fault run 1 met is a
+      listing behind the book (i), the close ends in the status, and run 1 in
+      the exit code, that a clean broker gives: a listing that still shows
+      working what the close read gone by its id, or does not show yet what
+      it placed, is no second seller and no bare share. GOOGL's time exit of
+      2026-10-05 went as planned and was called `unknown`, two sellers, rc 3.
+      With lag beside any other fault I1-I9 hold as before: what the close
+      takes from its own reads over the listing must hide no real gap.
 
 Exploration, all of it deterministic, for each of run 1's three times:
 
@@ -132,11 +146,11 @@ Exploration, all of it deterministic, for each of run 1's three times:
     schedule;
   * streaks: from each call of the clean run, each fault its kind allows, on
     3, 10 or 20 consecutive calls of that kind (every DELETE throttled, every
-    one lost in flight, every read timed out), with every night, open and
-    variant. The release sends a DELETE at each read until the order goes,
-    and what it decides at the end of its confirm window takes ten failures
-    in a row to reach: deeper than the bounded explorers go, and rarer than
-    the random sweep draws;
+    one lost in flight, every read timed out, every listing behind the book),
+    with every night, open and variant. The release sends a DELETE at each
+    read until the order goes, and what it decides at the end of its confirm
+    window takes ten failures in a row to reach: deeper than the bounded
+    explorers go, and rarer than the random sweep draws;
   * pinned: schedules deeper than the explorers reach, each found by a review
     and written down as the story it tells (`Scripted`, `TestDeepSchedules`).
 
@@ -158,6 +172,13 @@ exploration must find exactly those, so a new class fails the test and so does
 one that went away. The fix flips FIXED to True, and then the exploration must
 find nothing at all. Nothing here is xfail: every run explores in full and
 prints what it found.
+
+The listing lag (i) and I10 came after FIXED was flipped, committed before
+their fix against d879bb3. There the exploration found I10 alone, in two
+classes, `exit_submitted` rc 0 turned into `unknown` with rc 3 (the page) or
+with rc 1 (a second lagging listing hid the exit from the re-cover, whose
+back-fill the exit then refused), and nothing of I1-I9; and
+TestAListingBehindTheBook's replay of the GOOGL trace failed.
 """
 
 from __future__ import annotations
@@ -235,21 +256,22 @@ RUN1 = {
     "in-session": (tem.RUN1_AT, True),
 }
 
-#: Each exploration's floor, about three quarters of what it covers (505k
-#: scenarios after the close, either time, and 10.5k in the session): the
-#: margin the original 200k-of-266k floor kept. In the session the close
-#: defers at its first read, so there is little left to explore: the fills it
-#: meets, the re-cover, and run 2.
-EXHAUSTIVE_FLOOR = {"after-close": 378_000, "past-midnight": 378_000, "in-session": 7_800}
+#: Each exploration's floor, about three quarters of what it covers (599k
+#: scenarios after the close, either time, and 11.7k in the session; 505k
+#: and 10.5k before listings could lag): the margin the original
+#: 200k-of-266k floor kept. In the session the close defers at its first
+#: read, so there is little left to explore: the fills it meets, the
+#: re-cover, and run 2.
+EXHAUSTIVE_FLOOR = {"after-close": 449_000, "past-midnight": 449_000, "in-session": 8_800}
 
 #: The due-only exploration's floor, about three quarters of what it covers
-#: (91.6k scenarios after the close, either time, and 8.3k in the session).
-DUE_ONLY_FLOOR = {"after-close": 68_000, "past-midnight": 68_000, "in-session": 6_200}
+#: (111k scenarios after the close, either time, and 9.3k in the session).
+DUE_ONLY_FLOOR = {"after-close": 83_000, "past-midnight": 83_000, "in-session": 7_000}
 
 #: Each streak exploration's floor, about three quarters of what it covers
-#: (6.6k scenarios after the close, either time, and 0.7k in the session, the
+#: (7.4k scenarios after the close, either time, and 0.7k in the session, the
 #: due-only books' among them).
-STREAK_FLOOR = {"after-close": 4_900, "past-midnight": 4_900, "in-session": 550}
+STREAK_FLOOR = {"after-close": 5_500, "past-midnight": 5_500, "in-session": 550}
 
 #: (seed, schedules, per-call event rate, per-call fault rate).
 RANDOM = (
@@ -419,6 +441,30 @@ class TestDeepSchedules:
             ("cancel_order(tp-2", "ok+sib_pending"),
             ("-arm-", "422"),
         ))
+
+
+class TestAListingBehindTheBook:
+    """A listing read right after a write may not show it yet (i); I10 holds the close to it."""
+
+    def test_googl_on_2026_10_05_is_one_seller_not_two(self, harness: Harness) -> None:
+        # The live trace, on GOOGL's shape (`three_brackets`: a stop over most
+        # of the lot, three one-share brackets, take-profit new and stop
+        # held). The release cancels all seven sells and reads each one gone
+        # by its own id; the exit is accepted. The verdict's listing is three
+        # changes behind, and shows the last bracket's take-profit and stop
+        # and the standalone stop still working beside the exit, as the live
+        # one did. Taken at its word: `unknown`, "two sellers", rc 3, and the
+        # re-cover passed the lot over for the exit standing on it. A clean
+        # broker closes it with rc 0, and so must this.
+        chooser = tem.Scripted(("submit_order(market", "ok"), ("list_orders", "lag3"))
+        stats = Stats()
+        b = harness.evaluate(Scenario("three_brackets", ()), stats, chooser=chooser)
+        assert not chooser.rules, f"the schedule did not play out: {chooser.rules} left"
+        assert b.stale == [["sl-3", "stop-S", "tp-3"]], b.stale
+        (close,) = [o for kind, o in b.outcomes if kind == "close"]
+        assert (close.status, b.rc) == ("exit_submitted", 0), (close.detail, b.rc)
+        if stats.findings:
+            pytest.fail(report(harness, stats, "three_brackets: "), pytrace=False)
 
 
 class TestARunPastMidnight:

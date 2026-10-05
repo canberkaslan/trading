@@ -94,7 +94,7 @@ resource "aws_cognito_user_pool_client" "mobile" {
   name         = "ai-trader-${var.env}-mobile"
   user_pool_id = aws_cognito_user_pool.main.id
 
-  generate_secret              = false # public client (mobile)
+  generate_secret               = false # public client (mobile)
   prevent_user_existence_errors = "ENABLED"
 
   allowed_oauth_flows                  = ["code"]

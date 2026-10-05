@@ -14,9 +14,34 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
+      # gitleaks-action@v2 refuses to run on an organisation's repo without a
+      # paid licence, so it stopped scanning when the repo moved to fusapp.
+      # The CLI it wraps does the same scan with the same .gitleaks.toml and
+      # needs none. The binary is pinned by version and checksum.
+      - name: gitleaks
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o "$tarball" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${tarball}"
+          echo "${GITLEAKS_SHA256}  ${tarball}" | sha256sum -c -
+          tar -xzf "$tarball" gitleaks
+          # Same range the action scanned: the PR's commits, the pushed
+          # commits, or the whole history on the weekly run and a new branch.
+          range=""
+          if [[ "$EVENT" == "pull_request" ]]; then
+            range="${PR_BASE}..${PR_HEAD}"
+          elif [[ "$EVENT" == "push" && -n "$PUSH_BEFORE" && "$PUSH_BEFORE" != 0000000000000000000000000000000000000000 ]]; then
+            range="${PUSH_BEFORE}..${PUSH_AFTER}"
+          fi
+          ./gitleaks git --config .gitleaks.toml --redact --verbose --exit-code 1 ${range:+--log-opts="$range"} .
 
   codeql:
     runs-on: ubuntu-latest

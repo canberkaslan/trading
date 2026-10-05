@@ -512,10 +512,12 @@ class TestAFailedTimeExitIsCoveredInTheSamePass:
         # GOOGL's shape: a stop over 7 of 10 shares and three one-share
         # brackets, after a bad night. The first bracket went (take-profit and
         # stop cancelled) and its stop was never put back; the second's stop
-        # stands `held` with its take-profit gone, so the close sends nothing
-        # beside it and pages. The third's take-profit works beside its own
-        # stop. Counted as a sell still standing, it held the re-cover off,
-        # and the first bracket's share had no stop on any run after.
+        # stands `held` with its take-profit gone, and covers its share. The
+        # third's take-profit works beside its own stop and refuses its
+        # cancel, so the close sells nothing and leaves the lot as covered as
+        # it was. Counted as a sell still standing, that take-profit held the
+        # re-cover off, and the first bracket's share had no stop on any run
+        # after.
         caplog.set_level(logging.INFO, logger="manage_positions")
 
         def leg(oid: str, kind: str, status: str) -> Order:
@@ -537,11 +539,12 @@ class TestAFailedTimeExitIsCoveredInTheSamePass:
             ],
             fills=[_buy("XOM")],
             oco={"tp-1": "sl-1", "tp-2": "sl-2", "tp-3": "sl-3"},
+            cancel_refused={"tp-3"},
         )
 
         rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
 
-        assert rc == 3, "the second bracket's stop is still in doubt, and pages"
+        assert rc == 1, "the close failed, and left no share uncovered that a stop covered"
         assert "SKIP  re-cover" not in caplog.text
         stops = [(w[1]["qty"], w[1]["stop_price"]) for w in fake.writes
                  if w[0] == "submit_order" and w[1]["order_type"] == "stop"]

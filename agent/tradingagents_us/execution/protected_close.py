@@ -39,17 +39,19 @@ One call is one step, each state decided off the broker as it is then:
            it was sent and it did not sell the lot, is named in the outcome
            (`missed_exits`), whatever date its stamp carries.
   BLOCKED  a sell on the symbol is neither working nor gone (pending_cancel,
-           stopped, a leg whose pair ended), or works and is not one the
+           stopped, pending_replace), or works and is not one the
            release may cancel (a market sell: no bracket has one as a leg):
            nothing sent. It may still sell, or be about to stop protecting,
            and acting beside it is a guess. Not an exit of this lot whose day
            is over (`DAY_ENDED_STATUSES`): a day order, it sells nothing more.
   RELEASE  each working stop and take-profit is cancelled, a take-profit
            before its own stop, and confirmed by its status, with the DELETE
-           sent again while it still works. One that will not go ends the
-           release there (ABORT). Nothing else is ever released: an exit
-           already queued is the lot's way out, and cancelling it trades that
-           for a cancel that may stick and a resend.
+           sent again while it still works. A leg whose pair ended works all
+           the same: nothing has filled since the close, and a cascade that
+           has not landed by now is not on its way. One that will not go
+           ends the release there (ABORT). Nothing else is ever released: an
+           exit already queued is the lot's way out, and cancelling it trades
+           that for a cancel that may stick and a resend.
   SELL     the holding read after the release, sold at market under the stamp.
   VERIFY   a sell the broker did not refuse is settled by its reply, or by
            looking its stamp up.
@@ -115,7 +117,8 @@ DEAD_EXIT_STATUSES = FAILED_EXIT_STATUSES | DAY_ENDED_STATUSES
 
 #: A leg in one of these ends its bracket or OCO pair, and the broker cancels
 #: the other leg. Not `rejected` (it never stood) nor `replaced` (its successor
-#: stands in its place).
+#: stands in its place). Listed beside a leg, such a leg is its partner, and
+#: the pair is over: a cancel of the leg takes nothing else along (`_at_risk`).
 PAIR_ENDING_STATUSES = frozenset({"filled", "canceled", "expired"})
 
 #: Exit ids tried per symbol per day: the stamp, then `-r2` .. `-rN`. Alpaca
@@ -223,8 +226,8 @@ class _Book:
 
     #: Working sells, in the order they are to be released.
     live: tuple[Order, ...]
-    #: Sells in a status that is neither working nor gone, or working in a
-    #: pair whose other leg has ended: each may be on its way out.
+    #: Sells in a status that is neither working nor gone: each may be on its
+    #: way out.
     unclear: tuple[Order, ...]
     #: Order id -> id of the top-level order it was listed under: the pairing.
     group: Mapping[str, str]
@@ -241,6 +244,17 @@ class _Book:
     @property
     def standing(self) -> tuple[Order, ...]:
         return (*self.live, *self.unclear, *self.kept)
+
+    @property
+    def partners(self) -> frozenset[str]:
+        """The sells a pair can be made of, as `_at_risk` takes them.
+
+        Those standing, and the legs whose status ended their pair
+        (`PAIR_ENDING_STATUSES`): a leg listed beside one of those has its
+        partner, and that pair is over.
+        """
+        ended = (o.id for o in self.records.values() if o.status.lower() in PAIR_ENDING_STATUSES)
+        return frozenset((*(o.id for o in self.standing), *ended))
 
     def _per_group(self, orders: Sequence[Order]) -> float:
         by_group: dict[str, float] = {}
@@ -303,7 +317,7 @@ class _Release:
     """What the cancel step did: each released order before and after."""
 
     group: Mapping[str, str] = field(default_factory=dict)
-    #: Ids of the sells standing in the listing the release works from.
+    #: `_Book.partners` of the listing the release works from.
     listed: frozenset[str] = frozenset()
     pairs: list[tuple[Order, Order]] = field(default_factory=list)
     #: Orders sent a DELETE that was not refused outright: each may be
@@ -712,9 +726,16 @@ def _read_book(client: AlpacaClient, ticker: str, reason: str = "time") -> _Book
     also the only place a stop's take-profit partner shows. An order in a status
     that is neither working nor gone is neither protection nor its absence.
 
-    Nor is a working order whose pair has already ended: a take-profit that
-    filled, or a leg the broker cancelled, takes the other leg with it, and
-    for a while that leg still reads `held` with its cancel on the way.
+    A working leg whose pair has ended is working all the same, `live` like
+    any other. The close runs while the market is shut, so nothing filled
+    since the close, and a cascade cancel that has not landed by now is not
+    on its way: the pair ended at an earlier session, or an earlier run's
+    cancel took one leg and the other's never landed. Read as in doubt, it
+    held the lot's time exit off on every run, and paged each night over a
+    lot as covered as it was. Released, it is confirmed gone by its status
+    before anything is sold. Where this close's own release ended the pair,
+    the leg left standing is on its way out all the same: `_at_risk` says
+    so, by the pair it shares with the cancel.
 
     A working sell the release may not cancel (`_releasable`) is `kept`. An
     exit of this lot whose day is over (`day_ended_exit`) is gone.
@@ -728,9 +749,8 @@ def _read_book(client: AlpacaClient, ticker: str, reason: str = "time") -> _Book
         o.id for o in mine
         if not _is_protective(o) and exit_stamp_date(o.client_order_id, ticker, reason)
     )
-    ended = {group.get(o.id, o.id) for o in mine if o.status.lower() in PAIR_ENDING_STATUSES}
     working = [o for o in mine if _remaining(o) > QTY_EPSILON]
-    active = [o for o in working if _working(o) and group.get(o.id, o.id) not in ended]
+    active = [o for o in working if _working(o)]
     active_ids = {o.id for o in active}
     unclear = [
         o for o in working
@@ -752,8 +772,7 @@ def _blocked(book: _Book) -> str:
     parts = []
     if book.unclear:
         parts.append("sell order(s) in doubt: " + ", ".join(
-            f"{o.id}={o.status}" + (", its pair ended" if _working(o) else "")
-            for o in book.unclear
+            f"{o.id}={o.status}" for o in book.unclear
         ))
     if book.kept:
         parts.append("a sell the release may not cancel stands: " + ", ".join(
@@ -801,13 +820,18 @@ def _at_risk(
     may be the partner it does not show. That last only for an order the close
     found standing (`known`): one placed since was paired with nothing.
 
-    A partner is one of `sellers`: a sell that stood in either listing, or a
-    doubtful one. Not the filled entry a bracket's legs are listed under, nor
-    a leg that is gone. A stop the position pass ratcheted (`replace_order`)
-    keeps its take-profit's OCO link at the broker, while the listing may show
-    it at the top level, and its take-profit under the entry beside the leg it
-    replaced: counted by what is listed there, that take-profit has a partner
-    and the stop has none, and the stop it takes along reads as cover.
+    A partner is one of `sellers`: a sell that stood in either listing, a
+    doubtful one, or a leg whose status ended its pair (`_Book.partners`). A
+    take-profit listed beside its stop, filled, cancelled or expired, has its
+    partner, and the pair is over: its cancel takes no other stop along, and
+    a stop standing alone beside it is not on its way out for it. Not the
+    filled entry a bracket's legs are listed under (a buy), nor a `replaced`
+    leg, whose successor keeps the link: a stop the position pass ratcheted
+    (`replace_order`) keeps its take-profit's OCO link at the broker, while
+    the listing may show it at the top level, and its take-profit under the
+    entry beside the leg it replaced. Counted by what is listed there, that
+    take-profit has a partner and the stop has none, and the stop it takes
+    along reads as cover.
     """
     key = group.get(order.id, order.id)
     if any(group.get(d, d) == key for d in doubtful):
@@ -826,7 +850,7 @@ def _in_flight(ctx: _Ctx, book: _Book) -> frozenset[str]:
     """Standing orders a cancel is, or may be, on its way to: none of them is cover."""
     doubtful = {**ctx.release.touched, **{o.id: o for o in book.unclear}}
     group = {**ctx.book.group, **book.group}
-    sellers = {o.id for o in (*ctx.book.standing, *book.standing)} | doubtful.keys()
+    sellers = ctx.book.partners | book.partners | doubtful.keys()
     return frozenset(
         o.id for o in book.standing
         if o.id in doubtful
@@ -836,7 +860,7 @@ def _in_flight(ctx: _Ctx, book: _Book) -> frozenset[str]:
 
 def _release(client: AlpacaClient, book: _Book, sleep: Sleep) -> _Release:
     """Cancel each working sell in turn, and stop at the first that will not go."""
-    release = _Release(group=book.group, listed=frozenset(o.id for o in book.standing))
+    release = _Release(group=book.group, listed=book.partners)
     for order in book.live:
         final, error = _cancel_until_released(client, order, release, sleep)
         if not _released(final):

@@ -150,6 +150,13 @@ CLEAN: Choice = (None, "ok")
 #: The start books. Each is one 10-share long lot of XOM bought at 100.
 BOOKS = ("stop", "bracket", "two_stops", "partial", "queued", "ratcheted", "three_brackets")
 
+#: Start books the explorers take with run 2 in the `due` variant alone. In
+#: `dead_legs`, take-profits hold shares back with no stop under them, so a
+#: stop-only run 2 (`moved`) cannot back-fill those shares while they stand
+#: (the broker refuses it, held_for_orders), time exit or not, and I2 would
+#: judge the back-fill pass rather than the time exit.
+DUE_ONLY_BOOKS = ("dead_legs",)
+
 #: The `queued` book's exit: stamped the trade date before run 1's.
 PREV_STAMP = derive_exit_client_order_id(SYMBOL, (RUN1_AT - timedelta(days=1)).date(), "time")
 
@@ -829,7 +836,7 @@ class ModelBroker:
         """The state run 2 depends on: the holding and every sell, in the order sent.
 
         Dead sells too, not only those standing: run 2 reads them (an exit the
-        open refused is reported, a bracket leg whose pair ended is in doubt),
+        open refused is reported, a bracket leg whose pair ended pairs no other),
         and which came after which.
         """
         group_names: dict[str, int] = {}
@@ -899,6 +906,22 @@ def build_book(name: str) -> ModelBroker:
             b.add(Rec(f"tp-{i}", f"coid-tp-{i}", "sell", "limit", 1.0, "new",
                       limit_price=120.0, parent=entry, group=entry, role="tp"))
             b.add(Rec(f"sl-{i}", f"coid-sl-{i}", "sell", "stop", 1.0, "held",
+                      stop_price=90.0, parent=entry, group=entry, role="sl"))
+    elif name == "dead_legs":
+        # GOOGL's book on 10-04, scaled to ten shares: three one-share brackets
+        # whose stops are gone (listed canceled under their filled entries)
+        # while their take-profits still work, beside a seven-share stop. Each
+        # take-profit holds its share back with no stop under it, and its pair
+        # ended at an earlier session: nothing is on its way to it.
+        b.add(Rec("stop-S", "coid-stop-S", "sell", "stop", 7.0, "new", stop_price=90.0,
+                  role="stop"))
+        for i in (1, 2, 3):
+            entry = f"entry-{i}"
+            b.add(Rec(entry, f"tr-buy-XOM-2026081{i}", "buy", "market", 1.0, "filled",
+                      filled=1.0, tif="gtc", role="entry"))
+            b.add(Rec(f"tp-{i}", f"coid-tp-{i}", "sell", "limit", 1.0, "new",
+                      limit_price=120.0, parent=entry, group=entry, role="tp"))
+            b.add(Rec(f"sl-{i}", f"coid-sl-{i}", "sell", "stop", 1.0, "canceled",
                       stop_price=90.0, parent=entry, group=entry, role="sl"))
     else:
         raise ValueError(name)
@@ -1227,12 +1250,15 @@ class Harness:
 
     @staticmethod
     def _check_run2(r2: Run2, variant: str, o: ModelBroker) -> list[tuple[str, str]]:
-        """I1, I2, I3 and I7 after the next daily run, which met the book `o` left.
+        """I1, I2, I3, I7 and I9 after the next daily run, which met the book `o` left.
 
         I2 holds a run 2 that met a clean broker. One armed with faults
         (`Harness.run2_chooser`) is held to I8 instead: with at most two
         settled write faults, a lot run 2 found protected it leaves flat,
-        exiting or protected.
+        exiting or protected. I9, liveness: a clean run 2 on a lot still due
+        takes it out. Protected is not enough there: a close that sends
+        nothing, run after run, keeps the lot past its time exit for good,
+        and pages each night over a lot as covered as it was.
         """
         out: list[tuple[str, str]] = []
         rc2, e2, state = r2.rc, r2.kind, r2.state
@@ -1263,6 +1289,10 @@ class Harness:
                     f"I8 run 2 ends {e2} with {r2.writes} settled write fault(s) ({variant})",
                     tail,
                 ))
+        elif e2 == "protected" and variant == "due" and r2.writes == 0:
+            out.append(
+                (f"I9 a clean run 2 left a lot due for its time exit held ({variant})", tail)
+            )
         return out
 
 
@@ -1328,16 +1358,18 @@ def _options(env_opts: tuple[str, ...], outs: tuple[str, ...]) -> list[Choice]:
 
 
 def explore_bounded(
-    harness: Harness, book: str, max_faults: int, window: int | None = None
+    harness: Harness, book: str, max_faults: int, window: int | None = None,
+    variant: str | None = None,
 ) -> Stats:
     """Every schedule with at most `max_faults` non-clean choices, at any call.
 
     A later fault comes after an earlier one, within `window` calls of it when
-    given. Each schedule is checked under every night, open and run-2 variant.
+    given. Each schedule is checked under every night, open and run-2 variant,
+    or only `variant` when given.
     """
     stats = Stats()
     start = time.perf_counter()
-    base = harness.evaluate(Scenario(book, ()), stats)
+    base = harness.evaluate(Scenario(book, (), variant=variant), stats)
     frontier = [((), base.points, -1)]
     for depth in range(max_faults):
         nxt = []
@@ -1349,7 +1381,7 @@ def explore_bounded(
                     break
                 for choice in _options(env_opts, outs):
                     sched = (*faults, (idx, choice))
-                    b = harness.evaluate(Scenario(book, sched), stats)
+                    b = harness.evaluate(Scenario(book, sched, variant=variant), stats)
                     if depth + 1 < max_faults:
                         nxt.append((sched, b.points, idx))
         frontier = nxt
@@ -1426,20 +1458,23 @@ STREAK_LENGTHS = (3, 10, 20)
 
 
 def explore_streaks(
-    harness: Harness, book: str, lengths: Sequence[int] = STREAK_LENGTHS
+    harness: Harness, book: str, lengths: Sequence[int] = STREAK_LENGTHS,
+    variant: str | None = None,
 ) -> Stats:
     """Every streak: from each call of the clean run, each fault its kind allows, each length.
 
-    Each schedule is checked under every night, open and run-2 variant.
+    Each schedule is checked under every night, open and run-2 variant, or
+    only `variant` when given.
     """
     stats = Stats()
     start = time.perf_counter()
-    base = harness.evaluate(Scenario(book, ()), stats)
+    base = harness.evaluate(Scenario(book, (), variant=variant), stats)
     for idx, kind, _env_opts, outs in base.points:
         for outcome in outs[1:]:
             for length in lengths:
                 harness.evaluate(
-                    Scenario(book, ()), stats, chooser=Streak(idx, kind, outcome, length)
+                    Scenario(book, (), variant=variant), stats,
+                    chooser=Streak(idx, kind, outcome, length),
                 )
     stats.seconds = time.perf_counter() - start
     return stats

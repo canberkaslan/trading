@@ -102,6 +102,12 @@ cancelled and never replaced has lost its way out as surely as a stop.
       leave the broker itself in doubt. A run 2 armed the same way
       (`Harness.run2_chooser`, pinned schedules only) is held to the same
       end state on a lot it found protected, in place of I2.
+  I9  Liveness. A run 2 that met a clean broker takes a lot still due for its
+      time exit out: after it the lot is flat or exiting, not only
+      protected. I2 and I5 pass a close that sends nothing, run after run,
+      beside a sell it reads as in doubt: the lot stays past its time exit
+      for good, and the pass pages each night (rc 3) over a lot as covered
+      as it was.
 
 Exploration, all of it deterministic, for each of run 1's three times:
 
@@ -114,6 +120,12 @@ Exploration, all of it deterministic, for each of run 1's three times:
     schedule with at most two non-clean choices anywhere in run 1, and every
     schedule of three within ten calls of each other; for each, every night,
     every open (the holiday among them) and both run-2 variants;
+  * due only: the `dead_legs` book (GOOGL's book on 10-04: three one-share
+    take-profits whose bracket stops are gone, beside a seven-share stop),
+    explored as above with run 2 in the `due` variant alone. In `moved` the
+    back-fill pass cannot put a stop under a share a take-profit holds back
+    (the broker refuses it, held_for_orders), time exit or not, and I2 would
+    judge that pass rather than the close;
   * random: four fixed seeds, 6000 schedules each, with per-call event and
     fault rates from 3-10% and 12-30% (one seed draws no events at all: the
     after-hours run as it is scheduled); one night, open and variant drawn per
@@ -230,9 +242,14 @@ RUN1 = {
 #: meets, the re-cover, and run 2.
 EXHAUSTIVE_FLOOR = {"after-close": 378_000, "past-midnight": 378_000, "in-session": 7_800}
 
+#: The due-only exploration's floor, about three quarters of what it covers
+#: (91.6k scenarios after the close, either time, and 8.3k in the session).
+DUE_ONLY_FLOOR = {"after-close": 68_000, "past-midnight": 68_000, "in-session": 6_200}
+
 #: Each streak exploration's floor, about three quarters of what it covers
-#: (5.9k scenarios after the close, either time, and 0.6k in the session).
-STREAK_FLOOR = {"after-close": 4_400, "past-midnight": 4_400, "in-session": 480}
+#: (6.6k scenarios after the close, either time, and 0.7k in the session, the
+#: due-only books' among them).
+STREAK_FLOOR = {"after-close": 4_900, "past-midnight": 4_900, "in-session": 550}
 
 #: (seed, schedules, per-call event rate, per-call fault rate).
 RANDOM = (
@@ -290,12 +307,26 @@ def test_random_sweep(harness: Harness, run1: str) -> None:
     _judge(harness, stats, "random")
 
 
+@pytest.mark.slow
+@pytest.mark.parametrize("run1", list(RUN1))
+def test_due_only_exploration(harness: Harness, run1: str) -> None:
+    harness.run1_at, harness.market_open = RUN1[run1]
+    stats = Stats()
+    for max_faults, window in EXHAUSTIVE:
+        for book in tem.DUE_ONLY_BOOKS:
+            stats.merge(explore_bounded(harness, book, max_faults, window, variant="due"))
+    assert stats.scenarios >= DUE_ONLY_FLOOR[run1], "the exploration shrank"
+    _judge(harness, stats, "exhaustive")
+
+
 @pytest.mark.parametrize("run1", list(RUN1))
 def test_streak_exploration(harness: Harness, run1: str) -> None:
     harness.run1_at, harness.market_open = RUN1[run1]
     stats = Stats()
     for book in BOOKS:
         stats.merge(tem.explore_streaks(harness, book))
+    for book in tem.DUE_ONLY_BOOKS:
+        stats.merge(tem.explore_streaks(harness, book, variant="due"))
     assert stats.scenarios >= STREAK_FLOOR[run1], "the exploration shrank"
     _judge(harness, stats, "streak")
 
@@ -362,6 +393,18 @@ class TestDeepSchedules:
         # the stop along at the broker, OCO-linked as it still is.
         self._judge(harness, "ratcheted", tem.Scripted(("cancel_order(tp-A", "pending_stuck")))
 
+    @pytest.mark.parametrize("book", ["bracket", "three_brackets"])
+    def test_a_stop_a_take_profits_cancel_left_behind_is_released_the_next_run(
+        self, harness: Harness, book: str
+    ) -> None:
+        # One fault. The first take-profit's cancel lands and leaves its stop
+        # pending_cancel, and that cancel never lands: in the night the stop
+        # stands `held` again, its pair ended. Read as a cancel still on its
+        # way, it held every close after off (nothing sent, naked, rc 3) on a
+        # lot as covered as it was, and the time exit never came (I9).
+        tp = "tp-A" if book == "bracket" else "tp-1"
+        self._judge(harness, book, tem.Scripted((f"cancel_order({tp}", "ok+sib_pending")))
+
     def test_a_share_a_failed_re_arm_left_bare_beside_a_bracket_is_back_filled(
         self, harness: Harness
     ) -> None:
@@ -369,9 +412,9 @@ class TestDeepSchedules:
         # take-profit's cancel leaves its stop pending, and the re-arm of the
         # first bracket's one-share stop is refused: run 1 pages (rc 3). In
         # the night the pending cancel never lands, so that stop stands `held`
-        # with its pair ended, and every close after sends nothing beside it.
-        # The third take-profit, working beside its own stop, held the
-        # re-cover off: the first bracket's share had no stop after run 2.
+        # with its pair ended (a close after releases it with the rest). The
+        # third take-profit, working beside its own stop, held the re-cover
+        # off: the first bracket's share had no stop after run 2.
         self._judge(harness, "three_brackets", tem.Scripted(
             ("cancel_order(tp-2", "ok+sib_pending"),
             ("-arm-", "422"),
@@ -445,7 +488,7 @@ class TestARunPastMidnight:
 class TestTheModel:
     """The broker model keeps the rules the close relies on, and a clean run closes."""
 
-    @pytest.mark.parametrize("book", BOOKS)
+    @pytest.mark.parametrize("book", [*BOOKS, *tem.DUE_ONLY_BOOKS])
     def test_a_clean_broker_closes_every_book(self, harness: Harness, book: str) -> None:
         stats = Stats()
         b = harness.evaluate(Scenario(book, ()), stats)
@@ -601,6 +644,34 @@ class TestTheHarnessHasTeeth:
         assert "I8 run 2 ends naked with 2 settled write fault(s) (due)" in stats.findings, (
             sorted(stats.findings)
         )
+
+    @pytest.mark.parametrize("book", ["bracket", "three_brackets"])
+    def test_a_close_that_waits_on_a_leg_whose_pair_ended_long_ago(
+        self, monkeypatch: pytest.MonkeyPatch, book: str
+    ) -> None:
+        # The book read as it was before: a working leg whose pair ended is in
+        # doubt. A take-profit cancel that leaves its stop behind then holds
+        # the close off on every run after, on a lot as covered as it was:
+        # only liveness can tell.
+        real = pc._read_book
+
+        def stalled(client, ticker, reason="time"):  # noqa: ANN001, ANN202
+            got = real(client, ticker, reason)
+            ended = {
+                got.group.get(o.id, o.id) for o in got.records.values()
+                if o.status.lower() in pc.PAIR_ENDING_STATUSES
+            }
+            stuck = tuple(o for o in got.live if got.group.get(o.id, o.id) in ended)
+            return dataclasses.replace(
+                got, live=tuple(o for o in got.live if o not in stuck),
+                unclear=(*got.unclear, *stuck),
+            )
+
+        monkeypatch.setattr(pc, "_read_book", stalled)
+        stats = explore_bounded(Harness(monkeypatch), book, 1)
+        assert "I9 a clean run 2 left a lot due for its time exit held (due)" in (
+            stats.findings
+        ), sorted(stats.findings)
 
     def test_a_close_and_a_pass_that_put_nothing_back(
         self, monkeypatch: pytest.MonkeyPatch

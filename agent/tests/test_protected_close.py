@@ -386,21 +386,6 @@ class TestBeforeAnythingIsReleased:
         assert "stop-xom=held" in outcome.detail
         assert fake.writes == []
 
-    def test_a_stop_whose_take_profit_already_filled_is_left_alone(self) -> None:
-        # Its pair ended, so its cancel is on its way at the broker. The other
-        # stop M covers the lot on its own: nothing to page about.
-        filled_tp = _order("tp1", "limit", status="filled", filled_qty=10.0)
-        fake = _shut(
-            [_stop("M", price=85.0), filled_tp, _stop("sl1", status="held")],
-            oco={"tp1": "sl1"},
-        )
-
-        outcome = _close(fake)
-
-        assert outcome.status == "unchanged", outcome.detail
-        assert "sl1" in outcome.detail
-        assert fake.writes == []
-
     def test_an_unreadable_book_sends_nothing(self) -> None:
         fake = _shut([_stop()], lookup_fails=True)
 
@@ -421,6 +406,94 @@ class TestBeforeAnythingIsReleased:
 
         assert outcome.status == "unchanged" and "no unused exit id" in outcome.detail
         assert fake.writes == []
+
+
+def _dead_legs(**kw) -> FakeBroker:
+    """GOOGL's book on 10-04, in XOM: a stop on 29 of 32 shares, and three
+    one-share brackets whose take-profits still work and whose stops are gone,
+    listed canceled under them."""
+    return _shut(
+        [
+            _stop("stop-S", qty=29.0, price=85.0),
+            *(_order(f"tp-{i}", "limit", qty=1.0) for i in (1, 2, 3)),
+            *(_stop(f"sl-{i}", qty=1.0, status="canceled") for i in (1, 2, 3)),
+        ],
+        qty=32.0,
+        oco={f"tp-{i}": f"sl-{i}" for i in (1, 2, 3)},
+        **kw,
+    )
+
+
+class TestALegWhosePairEndedEarlier:
+    """A working leg whose bracket or OCO pair ended at an earlier session or run.
+
+    The market is shut, so nothing filled since the close, and a cascade
+    cancel that has not landed by the daily run is not on its way: the leg
+    stands, as any other take-profit or stop does. Read as in doubt, it held
+    the lot's time exit off on every run, and paged each night.
+    """
+
+    def test_take_profits_whose_stops_are_gone_are_released_and_the_lot_sold(self) -> None:
+        fake = _dead_legs()
+
+        outcome = _close(fake)
+
+        assert outcome.status == "exit_submitted", outcome.detail
+        assert _cancels(fake) == ["tp-1", "tp-2", "tp-3", "stop-S"]
+        assert [s["qty"] for s in _sells(fake)] == [32.0]
+        _assert_exiting_once(fake, qty=32.0)
+
+    def test_a_stop_its_take_profits_cancel_left_behind_is_released(self) -> None:
+        # An earlier close cancelled tp-1, and the cancel its stop got along
+        # never landed: sl-1 stands `held` with its pair ended, and covers
+        # its share as it did. 32 of 32 covered.
+        fake = _shut(
+            [
+                _stop("stop-S", qty=29.0, price=85.0),
+                _order("tp-1", "limit", qty=1.0, status="canceled"),
+                _stop("sl-1", qty=1.0, status="held"),
+                _order("tp-2", "limit", qty=1.0),
+                _stop("sl-2", qty=1.0, status="held"),
+            ],
+            qty=31.0,
+            oco={"tp-1": "sl-1", "tp-2": "sl-2"},
+        )
+
+        outcome = _close(fake)
+
+        assert outcome.status == "exit_submitted", outcome.detail
+        assert set(_cancels(fake)) == {"stop-S", "sl-1", "tp-2", "sl-2"}
+        assert [s["qty"] for s in _sells(fake)] == [31.0]
+        _assert_exiting_once(fake, qty=31.0)
+
+    def test_a_stop_whose_take_profit_filled_at_an_earlier_session_is_released(self) -> None:
+        filled_tp = _order("tp1", "limit", status="filled", filled_qty=10.0)
+        fake = _shut(
+            [_stop("M", price=85.0), filled_tp, _stop("sl1", status="held")],
+            oco={"tp1": "sl1"},
+        )
+
+        outcome = _close(fake)
+
+        assert outcome.status == "exit_submitted", outcome.detail
+        assert set(_cancels(fake)) == {"M", "sl1"}
+        assert [s["qty"] for s in _sells(fake)] == [10.0]
+        _assert_exiting_once(fake)
+
+    def test_a_stuck_take_profit_whose_stop_is_gone_takes_no_other_stop_along(self) -> None:
+        # tp-1's cancel sticks in pending_cancel, so nothing is sold. Its own
+        # stop is listed beside it, canceled: its pair is over, and its cancel
+        # takes nothing along. The 29-share stop was never sent a DELETE and
+        # covers what it covered: not on its way out, and no page.
+        fake = _dead_legs(cancel_stuck={"tp-1"})
+
+        outcome = _close(fake)
+
+        assert outcome.status == "unchanged", outcome.detail
+        assert "on its way out" not in outcome.detail
+        assert _cancels(fake) == ["tp-1"]
+        assert _sells(fake) == [] and _rearms(fake) == []
+        assert _stop_cover(fake) == 29.0
 
 
 class TestTheRelease:

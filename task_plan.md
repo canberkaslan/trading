@@ -1334,3 +1334,20 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
   Sadece TAM korunan pozisyonda fiyat dolar (kısmi/indeterminate → 0.0 = app'te "—"),
   çoklu stop'ta en yüksek; order book hatası snapshot'ı düşürmez. 6 yeni test, suite 1833 pass /
   2 fail = laptop ölü Alpaca key (401). Box'a DEPLOY EDİLMEDİ (prod pull #52 kararına bağlı).
+
+## Daily loop 2026-10-05 (prod-fusapp01 @5887545 → 53f4da8; eval gün 22 GO)
+- **Canlı durum** (box localhost): eval 1M **GO** — Sharpe 1.66, Sortino 3.01, MaxDD −1.62%,
+  +2.01% vs SPY −0.21%, 22/10 gün (değişmedi: hafta sonu). Equity $111,400.48, cash $24,238.03,
+  8 pozisyon, hepsinde `stop_loss` dolu (6b8452a canlı), günlük −$114 (−0.10%).
+  Yeni kodun (#90 time exit) ilk gerçek koşusu: **bugün 22:30 UTC** (preflight 21:45).
+- [x] **`scripts/deploy_webapp.sh`** — `/app` 503'ü bu script'e işaret ediyordu ama dosya hiç
+  yoktu; her web deploy elle export+tar+scp'ydi. Script: `EXPO_NO_DOTENV=1` + `env -i`,
+  EXPO_PUBLIC_* eas.json `preview` profilinden → laptop `.env` (dev token, stg URL) bundle'a giremez.
+  Değer bazlı leak gate: lokal `.env`'lerdeki KEY/SECRET/TOKEN/PASSWORD değerleri (≥12 char,
+  public EXPO_PUBLIC_* hariç, dev token dahil) bundle'da aranır, sadece isim raporlanır;
+  `EXPO_PUBLIC_DEV_API_TOKEN` referansı; profile API URL'i bundle'da yoksa WRONG TARGET.
+  İsim bazlı kontrol bilerek yok (settings.tsx "DEV_API_TOKEN" metni + client.ts localhost:8000
+  fallback'i ilk taslakta false-positive verdi). Atomic swap (2 rename), son 3 bak tutulur, smoke 200.
+  7 test (bash 3.2 ile), suite 2075 pass / 2 fail = laptop ölü Alpaca key 401. Prod'a script ile
+  deploy edildi + smoke yeşil; rollback `webapp.bak-20261005-061607`.
+- Not: GitHub `canberkaslan/trading` → `fusapp/trading`'e taşınmış (push redirect ile çalışıyor).

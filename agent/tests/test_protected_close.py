@@ -904,11 +904,15 @@ class TestTheSell:
         assert _stop_cover(fake) == 10.0
 
     def test_a_short_is_never_sold(self) -> None:
-        fake = FakeBroker([_position(side="short")])
+        # Alpaca reports a short with a negative qty ("qty": "-10", side
+        # "short"), as the model check's broker does. Read by its size alone,
+        # it is no holding at all, and the verdict called the lot closed.
+        fake = FakeBroker([_position(qty=-10.0, side="short")])
 
         outcome = _close(fake)
 
-        assert outcome.status == "unknown"
+        assert outcome.status == "unknown" and not outcome.ok, outcome.detail
+        assert "position is short, not long" in outcome.detail
         assert fake.writes == []
 
 

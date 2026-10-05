@@ -292,6 +292,7 @@ class _Truth:
     stop has gone.
     """
 
+    #: Signed, as Alpaca reports it: a short holding is negative.
     held: float
     side: str | None
     book: _Book
@@ -1211,7 +1212,9 @@ def _verdict(
     exit_kw = (
         {"exit_order_id": exit_now.id, "client_order_id": ctx.stamp} if exit_now else {}
     )
-    if truth.side is not None and truth.side != "long" and truth.held > QTY_EPSILON:
+    # The side before the size: Alpaca reports a short with a negative qty,
+    # which read by its size alone is no holding at all, and a close.
+    if truth.side not in (None, "long"):
         return _outcome(ctx, "unknown", f"{why}; position is {truth.side}, not long", placed)
     if truth.held <= QTY_EPSILON:
         return _flat_verdict(ctx, why, truth.book, exit_now, placed, exit_kw)

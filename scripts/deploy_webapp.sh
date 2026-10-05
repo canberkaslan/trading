@@ -124,7 +124,9 @@ deploy() {
   local dir="$1" stamp tarball
   stamp="$(date -u +%Y%m%d-%H%M%S)"
   tarball="${WORK}/webapp.tgz"
-  tar -C "${dir}" -czf "${tarball}" .
+  # COPYFILE_DISABLE: no ._* AppleDouble files or macOS xattrs for GNU tar to warn about.
+  COPYFILE_DISABLE=1 tar --no-xattrs -C "${dir}" -czf "${tarball}" . 2>/dev/null \
+    || tar -C "${dir}" -czf "${tarball}" .
   echo "==> uploading $(du -h "${tarball}" | cut -f1) to ${BOX}"
   scp -q -i "${SSH_KEY}" "${tarball}" "${BOX}:/tmp/webapp-${stamp}.tgz"
 

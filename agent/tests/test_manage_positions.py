@@ -277,6 +277,45 @@ class TestDryRunVersusSubmit:
         assert rcs == [0]
         assert fake.writes == EXPECTED_PLAN
 
+    def test_a_flatten_armed_while_the_pass_waits_for_the_lock_stops_its_writes(
+        self, db_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The pass reads the switch, then waits for the submit lock (an
+        # approval, a ticker). A FLATTEN_ALL armed during that wait hands the
+        # book to the flatten path, and the pass must see it once it may write.
+        import threading
+        import time as clock
+        from contextlib import contextmanager
+
+        from tradingagents_us.execution import submit_lock
+        from tradingagents_us.file_lock import exclusive
+
+        monkeypatch.setattr(submit_lock, "EXIT_TIMEOUT_S", 10.0)
+        waiting = threading.Event()
+        real_section = mp.submit_section
+
+        @contextmanager
+        def watched(**kw):
+            waiting.set()
+            with real_section(**kw) as held:
+                yield held
+
+        monkeypatch.setattr(mp, "submit_section", watched)
+        fake = _book()
+        rcs: list[int] = []
+        with exclusive(submit_lock.lock_path()):
+            t = threading.Thread(target=lambda: rcs.append(
+                _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+            ))
+            t.start()
+            assert waiting.wait(10), "the pass never reached the submit lock"
+            clock.sleep(0.2)
+            assert fake.writes == []
+            (tmp_path / "kill_switch.state").write_text("FLATTEN_ALL")
+        t.join(20)
+        assert rcs == [0]
+        assert fake.writes == []
+
     def test_without_backfill_a_naked_name_is_reported_not_protected(
         self, db_url: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:

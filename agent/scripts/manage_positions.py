@@ -95,6 +95,7 @@ import os
 import sys
 import time
 from collections.abc import Callable
+from contextlib import nullcontext
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -1004,16 +1005,18 @@ def main(argv: list[str] | None = None) -> int:
         for act in actions:
             _describe(act, args.submit)
 
-        if not _may_write(args.submit):
-            return 0
-
         unclosed: list[str] = []
         uncovered: list[str] = []
         unsettled: dict[str, str] = {}
         # Every order this pass sends is a stop or a close, so it spends no
         # cash: it takes the lock the BUY paths take when it can (so a BUY is
-        # never sized mid-pass), and goes ahead without it when it cannot.
-        with submit_section(exit_only=True):
+        # never sized mid-pass), and goes ahead without it when it cannot. A
+        # dry run writes nothing and takes no lock.
+        with submit_section(exit_only=True) if args.submit else nullcontext(False):
+            # Asked once the lock is held, or its wait gave up: that wait can
+            # last a minute, and a FLATTEN_ALL armed in it owns the book.
+            if not _may_write(args.submit):
+                return 0
             failures = _execute(
                 client, actions, today, unclosed=unclosed, uncovered=uncovered,
                 unsettled=unsettled,

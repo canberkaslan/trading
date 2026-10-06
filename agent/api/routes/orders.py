@@ -158,6 +158,11 @@ async def list_pending_orders(
 APPROVE_LOCK_TIMEOUT_S = 5.0
 #: The kill switch answers after this long even while the lock stays held.
 KILL_SWITCH_ANSWER_S = 5.0
+#: Once the flatten holds the lock, the answer waits this long for the broker
+#: (two calls of up to 15 s each). With the lock wait it stays inside the 30 s
+#: the app gives the kill switch (ORDER_ACTION_TIMEOUT_MS); a build that gives
+#: up at 10 s can miss the answer, but a failed flatten is paged either way.
+FLATTEN_ANSWER_S = 20.0
 #: A reject waits this long for an approval in flight, then records anyway.
 REJECT_LOCK_TIMEOUT_S = 5.0
 #: The caps a held BUY is re-checked against: the daily run's, which are the
@@ -553,7 +558,8 @@ def set_kill_switch(
     drops it, and the BUY that held the lock meets the armed switch at its POST.
 
     The lock can stay held for minutes (a time exit's close), and the app stops
-    listening long before. So after KILL_SWITCH_ANSWER_S this answers 202: the
+    listening long before. So a lock still held after KILL_SWITCH_ANSWER_S is
+    answered 202, as is a broker still closing after FLATTEN_ANSWER_S: the
     switch is armed, and the wait, and the flatten, carry on without the
     request; a RUN or PAUSE_NEW set before the flatten gets to run withdraws
     it. The flatten's outcome is in the audit trail either way, and a
@@ -577,13 +583,20 @@ def set_kill_switch(
     if body.state == "RUN":
         return resp
     flatten = body.state == "FLATTEN_ALL"
-    done, outcome = _behind_the_lock(repo, user, flatten=flatten)
-    if not done.wait(KILL_SWITCH_ANSWER_S):
+    entered, done, outcome = _behind_the_lock(repo, user, flatten=flatten)
+    if not entered.wait(KILL_SWITCH_ANSWER_S):
         resp["pending"] = (
             "armed; an order path holds the submit lock, and the flatten runs once it "
             "lets go; its outcome goes to the audit trail, and a failure is paged" if flatten else
             "armed; an order path holds the submit lock, and an order it is posting "
             "right now may still land"
+        )
+        response.status_code = 202
+        return resp
+    if not done.wait(FLATTEN_ANSWER_S):
+        resp["pending"] = (
+            "armed; the flatten is with the broker, which has not answered yet; its "
+            "outcome goes to the audit trail, and a failure is paged"
         )
         response.status_code = 202
         return resp
@@ -596,31 +609,36 @@ def set_kill_switch(
 
 def _behind_the_lock(
     repo: TradeLogRepository, user: str, *, flatten: bool
-) -> tuple[threading.Event, dict[str, Any]]:
+) -> tuple[threading.Event, threading.Event, dict[str, Any]]:
     """Pass through the submit lock, flattening under it, on a thread of its own.
 
-    The thread outlives a request that stopped waiting for it, so a flatten
-    still runs after the order in flight, never beside it; `_flatten_now`
-    records its outcome either way, and a failed flatten is paged.
+    Returns (entered, done, outcome): `entered` once the lock is held, or its
+    wait gave up; `done` once the pass is over. The thread outlives a request
+    that stopped waiting for it, so a flatten still runs after the order in
+    flight, never beside it; `_flatten_now` records its outcome either way,
+    and a failed flatten is paged.
     """
+    entered = threading.Event()
     done = threading.Event()
     outcome: dict[str, Any] = {}
 
     def run() -> None:
         try:
             with submit_section(exit_only=True):
+                entered.set()
                 if flatten:
                     outcome["summary"] = _flatten_if_still_armed(repo, user)
         except Exception as exc:  # noqa: BLE001 — raised by the request, if it still waits
             outcome["error"] = exc
         finally:
+            entered.set()  # a pass that failed before the lock is over, not waiting on it
             done.set()
         # After done: a request still waiting has its answer without this delay.
         if flatten and "error" in outcome:
             _page_failed_flatten(outcome["error"])
 
     threading.Thread(target=run, name="kill-switch", daemon=True).start()
-    return done, outcome
+    return entered, done, outcome
 
 
 def _flatten_if_still_armed(repo: TradeLogRepository, user: str) -> str:

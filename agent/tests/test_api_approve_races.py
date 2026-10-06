@@ -442,3 +442,36 @@ class TestAFlattenWithdrawnWhileItWaits:
         assert any(
             d.startswith("withdrawn") and withdrawn_to in d for d in _kill_details(env.repo)
         ), "the withdrawn flatten left no audit row"
+
+
+class TestAFlattenSlowerThanTheLockWait:
+    """The 202 is for a held lock. With the lock free, the answer is the flatten's."""
+
+    def test_a_partial_is_answered_as_one(self, env, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Nothing holds the lock; the broker takes longer than the lock wait
+        # to close the book, and one close is refused.
+        from api.routes import orders
+
+        monkeypatch.setattr(orders, "KILL_SWITCH_ANSWER_S", 0.3)
+        monkeypatch.setattr(
+            orders, "flatten_all", _failing_flatten(env.broker, "partial", delay_s=0.6)
+        )
+        r = env.client.post("/v1/orders/kill-switch", json={"state": "FLATTEN_ALL"})
+        assert r.status_code == 502
+        assert "PARTIAL" in r.json()["detail"]
+
+    def test_a_broker_slower_than_the_app_waits_is_not_blamed_on_the_lock(
+        self, env, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from api.routes import orders
+
+        monkeypatch.setattr(orders, "KILL_SWITCH_ANSWER_S", 0.3)
+        monkeypatch.setattr(orders, "FLATTEN_ANSWER_S", 0.3)
+        monkeypatch.setattr(
+            orders, "flatten_all", _failing_flatten(env.broker, "partial", delay_s=1.0)
+        )
+        r = env.client.post("/v1/orders/kill-switch", json={"state": "FLATTEN_ALL"})
+        assert r.status_code == 202
+        assert "lock" not in r.json()["pending"]
+        assert "broker" in r.json()["pending"]
+        assert env.pages.wait(5), "the late PARTIAL reached nobody"

@@ -205,8 +205,12 @@ export interface SymbolStopCoverage {
   naked_qty: number;
   /** Behind an order whose status the accounting does not recognise — neither. */
   indeterminate_qty: number;
-  /** Protection BEYOND the holding. A stop for more shares than are held opens
-   *  a short when it fires, so this is a fault, not a margin. */
+  /** Our own time exit sells these at the next open. No stop stands behind
+   *  them, but the exit reserves them — neither protected nor naked. */
+  exiting_qty: number;
+  /** Protection, with our own exit, BEYOND the holding. A stop for more shares
+   *  than are held, or one beside our exit, opens a short when it fires, so
+   *  this is a fault, not a margin. */
   excess_qty: number;
   stop_prices: number[];
   /** Safe to back-fill: naked shares, and nothing indeterminate on this name. */
@@ -218,6 +222,8 @@ export interface StopCoverage {
   protected_qty: number;
   naked_qty: number;
   indeterminate_qty: number;
+  /** Shares our own time exit sells at the next open; see SymbolStopCoverage. */
+  exiting_qty: number;
   /** 0 on an empty book — holding nothing is not an exposure. */
   naked_pct: number;
   symbols: SymbolStopCoverage[];
@@ -350,6 +356,20 @@ export interface TradesResponse {
   strategy?: ExitBucket | null;
   /** Rows with no stored class. Non-zero means `by_exit` does not add up. */
   unattributed?: number;
+  /** Same rows split by symbol, worst net P&L first. Sums to `stats`. */
+  by_ticker?: TickerStats[];
+}
+
+/** One symbol's realized record; `trades` is its sample size. */
+export interface TickerStats {
+  ticker: string;
+  trades: number;
+  wins: number;
+  losses: number;
+  win_rate: number;
+  net_pnl: number;
+  expectancy: number;
+  worst_trade: number;
 }
 
 /**

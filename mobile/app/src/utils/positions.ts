@@ -7,9 +7,10 @@ import type { Position } from '@/api/types';
 /**
  * The stop protecting a position, or null when this endpoint cannot say.
  *
- * `Position.stop_loss` is not a stop. The snapshot route hardcodes it to 0.0
- * with the note "broker-side leg lives on order, not position" — the real stop
- * is a bracket leg on the order, which the positions payload does not carry.
+ * `Position.stop_loss` is 0.0 whenever the backend cannot vouch for a stop:
+ * the real stop is a bracket leg on the order, and the snapshot route only
+ * fills a price in when every held share is behind a live stop (older
+ * backends send 0.0 for every position).
  *
  * So a raw `formatUsd(p.stop_loss)` renders "$0.00", which on a money screen
  * does not read as "unknown": it reads as a stop sitting at zero, i.e. a

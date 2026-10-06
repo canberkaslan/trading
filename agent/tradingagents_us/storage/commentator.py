@@ -23,7 +23,8 @@ decision (ADR-009, "Reports keep what the analyst wrote"). The rules:
   still a deletion. Reads skip an X post whose last check is over a day old.
 - Reads never return an item past its deadline, so a retention pass that runs
   late cannot put expired data in front of an analyst.
-- A purge removes the bytes, not just the row (`_zero_freed_space`).
+- A purge removes the bytes, not just the row (`_zero_freed_space`, and on a
+  file in WAL `release_purged_bytes` once the purge has committed).
 
 The purge runs every day from its own timer, whatever COMMENTATOR_FEED says
 (`ingest.enforce_retention`): data an evaluation stored while the flag was off
@@ -323,7 +324,11 @@ def mark_verified(session: Session, item_ids: Sequence[str], at: datetime) -> No
 
 
 def purge(session: Session, item_ids: Sequence[str]) -> int:
-    """Delete items and scrub their ids from decision refs. Returns rows deleted."""
+    """Delete items and scrub their ids from decision refs. Returns rows deleted.
+
+    On a SQLite file in WAL the bytes leave the disk only when the caller,
+    after committing, runs `release_purged_bytes`; `ingest._retain` does.
+    """
     ids = list(item_ids)
     if not ids:
         return 0
@@ -395,6 +400,47 @@ def purge_source(session: Session, source: str) -> int:
             )
         ),
     )
+
+
+class PurgedBytesRemainError(RuntimeError):
+    """A purge committed, but its bytes are still in local.db-wal and possibly local.db."""
+
+
+def release_purged_bytes(session: Session) -> None:
+    """After a purge has committed, get its bytes off the disk on a file in WAL too.
+
+    local.db runs in WAL (storage/engine.py). There `_zero_freed_space`'s
+    zeroed pages are appended to local.db-wal; the old pages, with the purged
+    paraphrases and post ids, stay in local.db until a checkpoint copies the
+    new ones over them, and stay in local.db-wal as earlier frames until they
+    are overwritten or the last connection closes. On the box the API holds a
+    pooled connection all day, so neither comes soon. Measured with 120
+    purged X items and an API connection held open: local.db-wal kept 484
+    copies of the paraphrase marker and 3,045 of the post-id prefix; with the
+    items checkpointed into local.db before the purge, as days of traffic do,
+    local.db itself kept 121 and 726. The rollback journal left 0 of each.
+
+    `wal_checkpoint(TRUNCATE)` copies every frame into local.db and cuts
+    local.db-wal to zero bytes, which left 0 of each in both files with the
+    API connection still open. It must wait for any reader on an older
+    snapshot and any writer, up to the busy timeout; when one outlasts that,
+    this raises, because the rows are gone (no read returns them) but their
+    bytes are not, and the retention unit must fail so someone looks. Run it
+    in a session of its own, after the purge's has committed: a checkpoint
+    cannot move frames a transaction is still using. On a rollback-journal
+    file or in memory the PRAGMA is a no-op; other databases are skipped.
+    """
+    bind = session.get_bind()
+    if bind.dialect.name != "sqlite":
+        return
+    busy, _, _ = session.execute(text("PRAGMA wal_checkpoint(TRUNCATE)")).one()
+    if busy:
+        raise PurgedBytesRemainError(
+            "purge committed, but another connection kept the checkpoint from finishing "
+            "within the busy timeout, so the purged items' bytes are still on disk; "
+            f'once it is idle, run as deploy: sqlite3 {bind.engine.url.database} '
+            '"PRAGMA wal_checkpoint(TRUNCATE)" and check that it prints 0|0|0'
+        )
 
 
 # ------------------------------------------------------------------ decision link

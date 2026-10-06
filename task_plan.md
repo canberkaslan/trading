@@ -84,7 +84,7 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 ### Round 4 later (post-go-live)
 - [x] **Fill reconciliation + realized P&L ledger** ✅ 2026-08-09 — see the daily-loop entry below.
       Reflection memory on realized fills is now UNBLOCKED (closed_trades is the input).
-- [ ] **Sizer has no cash / buying-power cap** (found 2026-08-09). `size_from_decision` sizes off
+- [x] **Sizer has no cash / buying-power cap** (found 2026-08-09). ✅ DONE in 6ebafe5 (`apply_cash_cap`, BUY-only, step 3b in sizer.py) — item was left open by mistake; closed 2026-10-01. `size_from_decision` sizes off
       `account_equity` only (sizer.py:98), so a fully-invested long book drifts into margin as it
       appreciates — the paper account sits at cash **-$510.54** on $109,574 equity (0.47% levered).
       Harmless on paper; on a funded live account that is real leverage plus margin interest, and
@@ -107,6 +107,19 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
 - 7a eval scorecard, 7b /analyze, 7c Ask tab + OTA
 - 7e Charts, 7f Analiz-Et deep-link, 7g Settings kill-switch+health, snapshot logger
 - cost-opt routing on branch (opt-in, not deployed)
+
+## Daily loop 2026-10-01 (🔴 BROKER 401 18. gün; box 77 commit geride ve pull'u tek blok)
+- **Canlı durum alınamadı.** trader-stg: `/readyz` degraded `alpaca:false`, `/v1/eval` 500, snapshot 502
+  (box 4ec0472). `trader.fusapp.com` başka origin (`alpaca:true`, dev token 401).
+- [x] **`docs/box-catchup-2026-10-01.md`**: 77 commit blast-radius'a göre 4 kovaya ayrıldı
+  (A execution/risk 16, B decision-quality 12, C read-only API/monitoring 14, D UI/CI/docs).
+  Key rotate = yeni kodu açan şalter → sıra: #52 kapat/revert → key hâlâ 401'ken pull → install.sh +
+  `User=ubuntu` sed + eval-report.timer → key rotate → ilk koşuyu canlı izle. Doğrulananlar:
+  15bf661 revert'i main'de temiz uygulanıyor; 4ec0472'ye e364701+94e71f8 temiz, f007e0b
+  `risk.py`'de çakışıyor (stop-coverage route box'ta yok). Box'ta `eval-report.timer` aktif değil.
+- [x] Backlog'daki "Sizer cash cap" maddesi 6ebafe5'te zaten yapılmıştı → kapatıldı.
+- **Sıradaki:** (a) Alpaca paper key rotate = Canberk, (b) #52 ambiguous-state tasarımı (branch) veya
+  revert kararı, (c) pull'dan önce bucket-C deploy branch'i seçeneği.
 
 ## Daily loop 2026-09-28 (🔴 BROKER 401 15. gün; backtest motoru çok-isimli portföyü ticker ortalamasıyla skorluyormuş)
 - **Canlı durum alınamadı (broker 401, gün 15).** trader-stg: `/readyz` degraded `alpaca:false`,
@@ -1293,3 +1306,68 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
   Realized ledger: 30 işlem, −$531.93 net, %26.7 win rate — yani app artık iki rakamı da gösteriyor.
 - Sıradaki: sizer cash cap (decision-path → test + supervised run; negatif cash 2. gün) ya da
   reflection memory on realized fills (branch) ya da per-ticker realized alt kırılımı (trade detay).
+
+## Daily loop 2026-10-03 (canlı trader okunabildi: prod-fusapp01, eval gün 21 NO-GO)
+- **Canlı durum** (box localhost üzerinden, prod-fusapp01 @46bca18, `/readyz` alpaca:true): eval 1M
+  **NO-GO** — Sharpe 0.96 (gate >1.0), MaxDD −1.62%, +1.22% vs SPY −0.21%, 21/10 gün. Equity
+  $111,514.70, cash $24,238, 8 pozisyon, günlük +$865 (+0.78%). Laptop dev token trader.fusapp.com'da
+  "invalid token" — box'ın token'ı farklı; okuma ssh + localhost ile yapıldı.
+- [x] **Watchdog iki farklı makineyi izliyordu**: `watchdog.yml` → trader-stg (yetim WAW kopya),
+  `watchdog-relay.yml` → trader.fusapp.com. Her ikisi artık `liveness.DEFAULT_HEALTH_URL`
+  (trader.fusapp.com); remedy metinleri `ssh agentmesh` / "Hetzner console" / trader-stg yerine
+  `BOX_SSH` / `HOST_CONSOLE` sabitlerini kullanıyor (public issue'ya origin IP sızmıyor).
+  3 regression test (eski kodda kırmızı, yenide yeşil) — biri iki workflow'un aynı URL'i probe
+  ettiğini dosyadan okuyarak sabitliyor. Suite 1827 pass / 2 fail = laptop'taki ölü Alpaca key (401).
+- [x] `docs/box-catchup-2026-10-01.md` başına düzeltme: gerçek hedef prod-fusapp01, 28 commit geride,
+  **key rotate = canlı trader'ı kırar**, #52 hâlâ blocker.
+- **Canberk'e kalan:** (a) `WATCHDOG_HOST` secret'ını prod-fusapp01 origin'ine çevir, (b) WAW
+  `ai-trader*.timer`'ları disable (her gece boşa ~$5–16 council), (c) #52 kararı → sonra prod pull.
+
+## Daily loop 2026-10-04 (eval gün 22 — GO; ama agent 21 run-day inert)
+- **Canlı durum** (prod-fusapp01 localhost, @46bca18, alpaca:true): eval 1M **GO** — Sharpe 1.66,
+  Sortino 3.01, MaxDD −1.62%, +2.01% vs SPY −0.21%, 22/10 gün. Equity $111,514.70, cash $24,238,
+  8 pozisyon. Stop coverage 0/278 naked. **Ama** inert_alert: 21 run-day, 4/192 emir broker'a
+  ulaştı (top blocker `rating=Hold` ×125, son broker ack 09-10) → GO tamamen tutulan pozisyonların
+  mark-to-market'i, agent'ın kendi kararı değil.
+- [x] **Snapshot `stop_loss` artık gerçek stop**: hardcoded 0.0 yerine order book'tan
+  (`status=all`+`nested`, stop-coverage ile aynı accounting, `risk.order_views` paylaşıldı).
+  Sadece TAM korunan pozisyonda fiyat dolar (kısmi/indeterminate → 0.0 = app'te "—"),
+  çoklu stop'ta en yüksek; order book hatası snapshot'ı düşürmez. 6 yeni test, suite 1833 pass /
+  2 fail = laptop ölü Alpaca key (401). Box'a DEPLOY EDİLMEDİ (prod pull #52 kararına bağlı).
+
+## Daily loop 2026-10-06 (prod-fusapp01 @ee5d55c; eval 1M GO, 19 gün; StockTwits 23 gündür ölüymüş)
+- **Canlı durum** (box localhost): eval 1M **GO** — Sharpe 2.51, Sortino 4.85, MaxDD −1.52%,
+  +2.32% vs SPY +1.20%, 19/10 gün. Equity $112,619.49, cash $24,238.03, 8 pozisyon, günlük
+  +$1,104.79 (+0.99%). İlk yeni-kod koşusu (10-05 22:30) exit=0, 0 errored; GOOGL time-exit sell
+  10-06 açılışında dolacak. "NAKED GOOGL" + verdict listing-lag yanlış alarmları ayrı worktree'lerde
+  (`fix/naked-alert-working-exit`, `fix/time-exit-verdict-listing-lag`) ilerliyor → bugün dokunulmadı.
+- [x] **StockTwits Cloudflare bot challenge'ı preflight'ta görünür** (ee5d55c, prod'a deploy +
+  box'ta canlı doğrulandı). Box'un ilk gecesinden (09-14) beri her ticker `<stocktwits unavailable:
+  HTTPError>` alıyor: endpoint iki Scaleway box'tan da `403 cf-mitigated: challenge` dönüyor.
+  Fetcher tasarım gereği sessiz degrade ediyor, kimse raporlamıyordu → sentiment analyst 23 gündür
+  sadece news + Reddit okuyor (Reddit de 429 yiyor, backoff+retry ile çoğunlukla geçiyor; AAPL düştü).
+  `_check_stocktwits()` warn-only: fetcher'ın kendi isteği (URL + UA + **urllib** — laptop'ta
+  challenge client'a göre deterministik değil: bir koşuda httpx 403 / urllib 200, öbüründe tersi),
+  challenge'ı "standing outage" diye geçici hatadan ayırıyor, asla fail/page etmiyor (rotate
+  edilecek key yok). Challenge'ı aşmak = bot-detection bypass → YAPILMAZ. 5 yeni test, 2080 pass /
+  2 fail = laptop Alpaca key 401 (doğrulandı). Karar yoluna dokunmuyor.
+- **Sıradaki:** (a) StockTwits için karar: kaynağı prompt'tan çıkar (decision change → branch +
+  supervised run) ya da resmi/ücretli feed; (b) naked-alert + verdict-lag branch'lerinin merge'ü;
+  (c) alarmlar hâlâ kimseye gitmiyor (push cihazı yok, HEALTHCHECK_URL/OPS_ALERT_GITHUB_TOKEN boş) = Canberk.
+
+## Daily loop 2026-10-05 (prod-fusapp01 @5887545 → 53f4da8; eval gün 22 GO)
+- **Canlı durum** (box localhost): eval 1M **GO** — Sharpe 1.66, Sortino 3.01, MaxDD −1.62%,
+  +2.01% vs SPY −0.21%, 22/10 gün (değişmedi: hafta sonu). Equity $111,400.48, cash $24,238.03,
+  8 pozisyon, hepsinde `stop_loss` dolu (6b8452a canlı), günlük −$114 (−0.10%).
+  Yeni kodun (#90 time exit) ilk gerçek koşusu: **bugün 22:30 UTC** (preflight 21:45).
+- [x] **`scripts/deploy_webapp.sh`** — `/app` 503'ü bu script'e işaret ediyordu ama dosya hiç
+  yoktu; her web deploy elle export+tar+scp'ydi. Script: `EXPO_NO_DOTENV=1` + `env -i`,
+  EXPO_PUBLIC_* eas.json `preview` profilinden → laptop `.env` (dev token, stg URL) bundle'a giremez.
+  Değer bazlı leak gate: lokal `.env`'lerdeki KEY/SECRET/TOKEN/PASSWORD değerleri (≥12 char,
+  public EXPO_PUBLIC_* hariç, dev token dahil) bundle'da aranır, sadece isim raporlanır;
+  `EXPO_PUBLIC_DEV_API_TOKEN` referansı; profile API URL'i bundle'da yoksa WRONG TARGET.
+  İsim bazlı kontrol bilerek yok (settings.tsx "DEV_API_TOKEN" metni + client.ts localhost:8000
+  fallback'i ilk taslakta false-positive verdi). Atomic swap (2 rename), son 3 bak tutulur, smoke 200.
+  7 test (bash 3.2 ile), suite 2075 pass / 2 fail = laptop ölü Alpaca key 401. Prod'a script ile
+  deploy edildi + smoke yeşil; rollback `webapp.bak-20261005-061607`.
+- Not: GitHub `canberkaslan/trading` → `fusapp/trading`'e taşınmış (push redirect ile çalışıyor).

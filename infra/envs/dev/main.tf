@@ -18,7 +18,7 @@ provider "aws" {
       Environment = "dev"
       Owner       = "canberk"
       ManagedBy   = "terraform"
-      Repository  = "github.com/canberkaslan/trading"
+      Repository  = "github.com/fusapp/trading"
     }
   }
 }

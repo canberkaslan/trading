@@ -44,7 +44,7 @@ CHANGES_URL = "https://en.wikipedia.org/wiki/Historical_components_of_the_S%26P_
 # Ordered by where the additions/removals table currently lives. WIKI_URL stays
 # in the list because that is where it lived until Wikipedia split the article.
 CHANGES_URLS = (CHANGES_URL, WIKI_URL)
-USER_AGENT = "Trading Research (https://github.com/canberkaslan/trading)"
+USER_AGENT = "Trading Research (https://github.com/fusapp/trading)"
 
 
 class SP500HistoryUnavailableError(RuntimeError):

@@ -52,7 +52,7 @@ from tradingagents_us.monitoring.relay import (  # noqa: E402
     planned_probes,
 )
 
-DEFAULT_ISSUE_REPO = "canberkaslan/trading"
+DEFAULT_ISSUE_REPO = "fusapp/trading"
 RELAY_WORKFLOW = "watchdog-relay.yml"
 DISPATCH_ATTEMPTS = 3
 DISPATCH_BACKOFF_S = 5.0

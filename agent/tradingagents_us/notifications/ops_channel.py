@@ -59,7 +59,7 @@ GITHUB_TOKEN_ENV = "OPS_ALERT_GITHUB_TOKEN"
 GITHUB_REPO_ENV = "OPS_ALERT_GITHUB_REPO"
 #: Where the off-box watchdog files its incidents, so both alert sources land
 #: in the one place the owner already watches.
-DEFAULT_GITHUB_REPO = "canberkaslan/trading"
+DEFAULT_GITHUB_REPO = "fusapp/trading"
 GITHUB_API = "https://api.github.com"
 
 #: The workflow that writes the issue as github-actions[bot], and the branch
@@ -135,14 +135,12 @@ def scrub(text: str) -> str:
 
 def _send_push(title: str, body: str, kind: str) -> ChannelResult:
     try:
-        from sqlalchemy import create_engine
-
         from tradingagents_us.notifications.sender import PushMessage, send_expo_push
-        from tradingagents_us.storage import TradeLogRepository
+        from tradingagents_us.storage import TradeLogRepository, make_engine
         from tradingagents_us.storage.device_tokens import list_all_tokens
 
         url = os.environ.get("TRADE_LOG_DB_URL", "sqlite:///./local.db")
-        repo = TradeLogRepository(engine=create_engine(url, future=True))
+        repo = TradeLogRepository(engine=make_engine(url))
         with repo.session() as s:
             tokens = list_all_tokens(s)
         if not tokens:

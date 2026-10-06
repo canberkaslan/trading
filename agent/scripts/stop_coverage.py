@@ -17,6 +17,10 @@ the resting leg of a bracket sits in status `held`, which Alpaca's "open" filter
 excludes, and it is returned as a child of its parent rather than at the top
 level. Asking the obvious way reports a fully bracketed book as having zero
 stops. See `risk.stop_coverage` for what that error costs.
+
+EXIT is a lot our own time exit is selling at the next open: its stops were
+released for the exit, which reserves every share. Not protected, not naked;
+see `execution.exit_cover` for which sells count.
 """
 
 from __future__ import annotations
@@ -26,6 +30,8 @@ import json
 from datetime import UTC, datetime
 
 from tradingagents_us.dataflows.alpaca_broker import AlpacaClient
+from tradingagents_us.execution.exit_cover import Opened, order_views, position_views
+from tradingagents_us.execution.protected_close import opened_after
 from tradingagents_us.risk.stop_coverage import (
     CoverageReport,
     OrderView,
@@ -40,29 +46,18 @@ from tradingagents_us.risk.stop_coverage import (
 ORDER_PAGE_LIMIT = 500
 
 
-def to_views(orders: list) -> list[OrderView]:
+def to_views(orders: list, opened: Opened | None = None) -> list[OrderView]:
     """Broker DTO → accounting input, children included.
 
     Keeps httpx out of the pure module, same split as `scripts/reconcile.py`.
+    With `opened` (the broker's calendar), our own working time exits are
+    flagged as such (`execution.exit_cover`).
     """
-    return [
-        OrderView(
-            symbol=o.symbol,
-            side=o.side.lower(),
-            order_type=o.order_type.lower(),
-            status=o.status.lower(),
-            remaining_qty=max(0.0, o.qty - o.filled_qty),
-            stop_price=o.stop_price,
-        )
-        for o in flatten_orders(orders)
-    ]
+    return order_views(flatten_orders(orders), opened)
 
 
 def to_positions(positions: list) -> list[PositionView]:
-    return [
-        PositionView(symbol=p.symbol, qty=abs(p.qty), side=p.side.lower())
-        for p in positions
-    ]
+    return position_views(positions)
 
 
 def payload(report: CoverageReport) -> dict:
@@ -72,6 +67,7 @@ def payload(report: CoverageReport) -> dict:
         "protected_qty": report.protected_qty,
         "naked_qty": report.naked_qty,
         "indeterminate_qty": report.indeterminate_qty,
+        "exiting_qty": report.exiting_qty,
         "naked_pct": round(report.naked_pct, 2),
         "has_indeterminate": report.has_indeterminate,
         "orphan_stop_symbols": list(report.orphan_stop_symbols),
@@ -83,6 +79,7 @@ def payload(report: CoverageReport) -> dict:
                 "protected_qty": s.protected_qty,
                 "naked_qty": s.naked_qty,
                 "indeterminate_qty": s.indeterminate_qty,
+                "exiting_qty": s.exiting_qty,
                 "excess_qty": s.excess_qty,
                 "stop_prices": list(s.stop_prices),
                 "stop_types": list(s.stop_types),
@@ -95,9 +92,9 @@ def payload(report: CoverageReport) -> dict:
 
 def format_report(report: CoverageReport) -> str:
     lines = [
-        f"{'SYM':<7}{'SIDE':<6}{'QTY':>7}{'PROT':>7}{'NAKED':>7}{'INDET':>7}"
+        f"{'SYM':<7}{'SIDE':<6}{'QTY':>7}{'PROT':>7}{'EXIT':>7}{'NAKED':>7}{'INDET':>7}"
         f"{'EXCESS':>8}  STOPS",
-        "-" * 76,
+        "-" * 83,
     ]
     for s in report.symbols:
         stops = (
@@ -107,14 +104,14 @@ def format_report(report: CoverageReport) -> str:
             stops += f" ({'/'.join(s.stop_types)})"
         lines.append(
             f"{s.symbol:<7}{s.position_side:<6}{s.position_qty:>7,.0f}"
-            f"{s.protected_qty:>7,.0f}{s.naked_qty:>7,.0f}{s.indeterminate_qty:>7,.0f}"
-            f"{s.excess_qty:>8,.0f}  {stops}"
+            f"{s.protected_qty:>7,.0f}{s.exiting_qty:>7,.0f}{s.naked_qty:>7,.0f}"
+            f"{s.indeterminate_qty:>7,.0f}{s.excess_qty:>8,.0f}  {stops}"
         )
-    lines.append("-" * 76)
+    lines.append("-" * 83)
     lines.append(
         f"{'TOTAL':<13}{report.total_qty:>7,.0f}{report.protected_qty:>7,.0f}"
-        f"{report.naked_qty:>7,.0f}{report.indeterminate_qty:>7,.0f}"
-        f"{'':>8}  {report.naked_pct:.1f}% naked"
+        f"{report.exiting_qty:>7,.0f}{report.naked_qty:>7,.0f}"
+        f"{report.indeterminate_qty:>7,.0f}{'':>8}  {report.naked_pct:.1f}% naked"
     )
 
     # Hazards last, so they are the thing left on screen.
@@ -124,13 +121,22 @@ def format_report(report: CoverageReport) -> str:
         lines.append(
             "WARNING: more protective quantity than shares held on "
             + ", ".join(f"{s.symbol} (+{s.excess_qty:,.0f})" for s in excess)
-            + " — a stop for more shares than are held opens a short when it triggers."
+            + " — a stop for more shares than are held, or one beside our exit,"
+            " opens a short when it triggers."
         )
     if report.orphan_stop_symbols:
         lines.append("")
         lines.append(
             "WARNING: protective orders with no position under them: "
             + ", ".join(report.orphan_stop_symbols)
+        )
+    leaving = [s for s in report.symbols if s.exiting_qty > 0]
+    if leaving:
+        lines.append("")
+        lines.append(
+            "NOTE: on their way out at the next open under our own time exit, with no stop: "
+            + ", ".join(f"{s.symbol} ({s.exiting_qty:,.0f})" for s in leaving)
+            + ". The exit reserves those shares; they are not naked."
         )
     if report.has_indeterminate:
         lines.append("")
@@ -149,7 +155,9 @@ def main() -> int:
 
     with AlpacaClient() as ac:
         positions = to_positions(ac.list_positions())
-        orders = to_views(ac.list_orders(status="all", limit=ORDER_PAGE_LIMIT, nested=True))
+        orders = to_views(
+            ac.list_orders(status="all", limit=ORDER_PAGE_LIMIT, nested=True), opened_after(ac)
+        )
 
     report = coverage(positions, orders)
     print(json.dumps(payload(report), indent=2) if args.json else format_report(report))

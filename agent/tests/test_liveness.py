@@ -386,3 +386,52 @@ class TestTheBoxReportOnItsOwnAlerting:
             < severity(STATE_PREFLIGHT_FAILED)
             < severity(STATE_BROKER_DOWN)
         )
+
+
+class TestRemediesNameTheLiveBox:
+    """A remedy is an instruction, so it must point at a host that exists.
+
+    Until 2026-10-03 every remedy still said `ssh agentmesh` and "the Hetzner
+    console" (decommissioned 2026-09-08), and `watchdog.yml` probed the orphaned
+    trader-stg copy while `watchdog-relay.yml` probed trader.fusapp.com — two
+    halves of one alerting path watching two different machines.
+    """
+
+    DEAD = ("agentmesh", "Hetzner", "trader-stg")
+
+    def _every_branch(self) -> list:
+        ready_broker = ReadinessProbe(broker_ok=False)
+        return [
+            classify(HealthProbe(reached_origin=False, status=530), _stale(), _host_silent()),
+            classify(HealthProbe(reached_origin=False, status=530), _stale(), _host_alive()),
+            classify(HealthProbe(reached_origin=False, status=530), _fresh()),
+            classify(HealthProbe(reached_origin=False, status=530), _unknown(), _host_alive()),
+            classify(HealthProbe(reached_origin=False, status=530), _unknown(), _host_silent()),
+            classify(HealthProbe(reached_origin=False, status=530), _unknown(), _host_absent()),
+            classify(HealthProbe(reached_origin=True, status=200), _stale()),
+            classify(HealthProbe(reached_origin=True, status=200), _fresh(), ready=ready_broker),
+        ]
+
+    def test_no_remedy_names_a_decommissioned_host(self) -> None:
+        for verdict in self._every_branch():
+            for dead in self.DEAD:
+                assert dead not in verdict.body(), (verdict.state, dead)
+
+    def test_recovery_curl_is_the_url_the_watchdog_probes(self) -> None:
+        from tradingagents_us.monitoring.liveness import DEFAULT_HEALTH_URL
+
+        bodies = " ".join(v.body() for v in self._every_branch())
+        assert f"curl -sS {DEFAULT_HEALTH_URL}" in bodies
+
+    def test_both_workflows_probe_the_same_box(self) -> None:
+        import re
+        from pathlib import Path
+
+        from tradingagents_us.monitoring.liveness import DEFAULT_HEALTH_URL
+
+        workflows = Path(__file__).resolve().parents[2] / ".github" / "workflows"
+        urls = {
+            name: re.findall(r"WATCHDOG_HEALTH_URL:\s*(\S+)", (workflows / name).read_text())
+            for name in ("watchdog.yml", "watchdog-relay.yml")
+        }
+        assert urls == {name: [DEFAULT_HEALTH_URL] for name in urls}

@@ -158,21 +158,29 @@ fi
 # run (close orders queue for Monday's open). The API already attempts the
 # flatten at flip time; kill_check is the backstop. Exit 1 from kill_check
 # means a FAILED/PARTIAL flatten — fail safe: skip the run, alert loudly.
+#
+# PAUSE_NEW is "no new entries", not "stop looking after what is held": the
+# decisions are skipped, and the position pass and the stop-coverage check
+# still run and still page. Skipping them too left a lot whose queued time
+# exit the open refused with neither stop nor exit, unnamed and unpaged, for
+# as long as the switch stayed on.
 run_snapshot_best_effort() {
   # Keep the eval snapshot chain unbroken on skip days (read-only, cheap).
   PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.snapshot 2>&1 | tee -a "$RUN_LOG" \
     || echo "  -> snapshot failed (non-fatal)" | tee -a "$RUN_LOG"
 }
 
+PAUSED=0
 set +e
 PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.kill_check 2>&1 | tee -a "$RUN_LOG"
 kc_rc=${PIPESTATUS[0]}
 set -e
-if [[ "$kc_rc" -ne 0 ]]; then
+if [[ "$kc_rc" -eq 75 ]]; then
+  echo "kill switch PAUSE_NEW — no decisions today; positions are still managed and checked" \
+    | tee -a "$RUN_LOG"
+  PAUSED=1
+elif [[ "$kc_rc" -ne 0 ]]; then
   case "$kc_rc" in
-    75) echo "kill switch PAUSE_NEW — skipping daily run" | tee -a "$RUN_LOG"
-        run_snapshot_best_effort
-        ping_healthcheck ;;
     76) echo "kill switch FLATTEN_ALL — close orders in, skipping daily run" | tee -a "$RUN_LOG"
         run_snapshot_best_effort
         ping_healthcheck ;;
@@ -190,6 +198,10 @@ fi
 DOW="$(date -u +%u)"   # 1=Mon .. 7=Sun
 if [[ "$DOW" -ge 6 ]]; then
   echo "weekend (dow=$DOW) — skipping, US market closed" | tee -a "$RUN_LOG"
+  if [[ "$PAUSED" -eq 1 ]]; then
+    run_snapshot_best_effort
+    ping_healthcheck
+  fi
   exit 0
 fi
 
@@ -245,12 +257,21 @@ elif [[ "$mp_rc" -ne 0 ]]; then
     --body "manage_positions rc=$mp_rc @ ${DATE}: see the FAILED, REFUSED, UNREFRESHED and exit budget lines in ${RUN_LOG}. Stops were not maintained where it failed or refused; a deferred time exit means more names read as due than one day may close."
 fi
 
+# The names to decide on: none under PAUSE_NEW, which skips the commentator
+# feed, every council and the order-flow check below with them.
+DECIDE="$UNIVERSE"
+if [[ "$PAUSED" -eq 1 ]]; then
+  DECIDE=""
+  echo "" | tee -a "$RUN_LOG"
+  echo "kill switch PAUSE_NEW — decisions skipped" | tee -a "$RUN_LOG"
+fi
+
 # Commentator feed (ADR-009): fetch and extract ONCE, before the tickers, so
 # every sentiment analyst reads the same cached items and none of them fetches.
 # Off unless COMMENTATOR_FEED=1; with it off this block prints nothing and runs
 # nothing. Best-effort: the script exits 0 on its own failures, and a hang is
 # cut short rather than eating the post-close window.
-if [[ "${COMMENTATOR_FEED:-0}" == "1" ]]; then
+if [[ "${COMMENTATOR_FEED:-0}" == "1" && -n "$DECIDE" ]]; then
   echo "" | tee -a "$RUN_LOG"
   echo "--- commentator feed ---" | tee -a "$RUN_LOG"
   # One live cutoff for the whole run, taken before the fetch: every ticker
@@ -351,10 +372,13 @@ on_signal() {
 }
 trap on_signal TERM INT
 
-echo "" | tee -a "$RUN_LOG"
-echo "--- councils: parallelism=$COUNCIL_PARALLELISM ---" | tee -a "$RUN_LOG"
+# Under PAUSE_NEW, DECIDE is empty: no council starts and none is reported.
+if [[ -n "$DECIDE" ]]; then
+  echo "" | tee -a "$RUN_LOG"
+  echo "--- councils: parallelism=$COUNCIL_PARALLELISM ---" | tee -a "$RUN_LOG"
+fi
 _idx=0
-for TICKER in $UNIVERSE; do
+for TICKER in $DECIDE; do
   _idx=$((_idx + 1))
   while [[ "$(jobs -rp | wc -l | tr -d ' ')" -ge "$COUNCIL_PARALLELISM" ]]; do
     sleep 0.2
@@ -372,7 +396,7 @@ trap - TERM INT
 rc_total=0
 failed_tickers=""
 _idx=0
-for TICKER in $UNIVERSE; do
+for TICKER in $DECIDE; do
   _idx=$((_idx + 1))
   _slot="$(slot_for "$_idx" "$TICKER")"
   echo "" | tee -a "$RUN_LOG"
@@ -408,9 +432,11 @@ echo "" | tee -a "$RUN_LOG"
 # Order-flow health check. A run where every decision is refused exits 0 and
 # logs clean — a policy refusal is a success by design — so nothing else in
 # this script would ever mention that the book stopped reaching the broker.
-# Deliberately below the kill-switch exits: a PAUSE_NEW/FLATTEN_ALL book is
-# inert on purpose and must not page. Always exits 0 (see the script).
-PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.inert_alert 2>&1 | tee -a "$RUN_LOG" || true
+# Not under PAUSE_NEW, and below the FLATTEN_ALL exit: such a book is inert on
+# purpose and must not page. Always exits 0 (see the script).
+if [[ "$PAUSED" -eq 0 ]]; then
+  PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.inert_alert 2>&1 | tee -a "$RUN_LOG" || true
+fi
 
 echo "" | tee -a "$RUN_LOG"
 # Stop-coverage check. `risk.stop_coverage` could always compute how much of the
@@ -418,7 +444,11 @@ echo "" | tee -a "$RUN_LOG"
 # pass found 75.5% naked. It then ran here behind `|| true` and exited 0 either
 # way, so a naked book was a log line. Exit 3 now means shares are held with no
 # protective stop, any other non-zero that coverage is unknown; both page on
-# every run they persist, and neither stops the rest of this script.
+# every run they persist, and neither stops the rest of this script. A lot the
+# position pass time-exited tonight is not naked: its stops are gone, but our
+# own exit reserves every share until the open sells them. It is counted as
+# `exiting` on the coverage line, and pages only if it is not that exit (a sell
+# that is not ours, one for fewer shares than held, one an open has met).
 naked_rc=0
 naked_out="$(PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.naked_alert 2>&1)" || naked_rc=$?
 printf '%s\n' "$naked_out" | tee -a "$RUN_LOG"
@@ -433,8 +463,12 @@ elif [[ "$naked_rc" -ne 0 ]]; then
     --body "Coverage of the book is unknown @ ${DATE}; see ${RUN_LOG}"
 fi
 
+PAUSED_NOTE=""
+if [[ "$PAUSED" -eq 1 ]]; then
+  PAUSED_NOTE=" PAUSE_NEW: no decisions, positions managed."
+fi
 echo "" | tee -a "$RUN_LOG"
-echo "Daily run complete. $rc_total ticker(s) errored." | tee -a "$RUN_LOG"
+echo "Daily run complete. $rc_total ticker(s) errored.${PAUSED_NOTE}" | tee -a "$RUN_LOG"
 
 if [[ "$rc_total" -gt 0 ]]; then
   # Alert the human (best-effort — notify_ops always exits 0) and exit
@@ -446,6 +480,6 @@ if [[ "$rc_total" -gt 0 ]]; then
   exit 1
 fi
 
-ping_healthcheck "" "Daily run complete @ ${DATE}. 0 ticker(s) errored."
+ping_healthcheck "" "Daily run complete @ ${DATE}. 0 ticker(s) errored.${PAUSED_NOTE}"
 
 exit 0

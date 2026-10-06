@@ -308,10 +308,10 @@ def main() -> int:
         max_cash_utilization=args.max_cash_utilization,
     )
 
-    from sqlalchemy import create_engine
+    from tradingagents_us.storage import make_engine
     repo = (
         None if args.no_persist
-        else TradeLogRepository(engine=create_engine(args.db_url, future=True))
+        else TradeLogRepository(engine=make_engine(args.db_url))
     )
 
     # The RUN's trading date anchors the idempotency key. Decisions finishing

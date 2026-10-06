@@ -52,6 +52,7 @@ from tradingagents_us.monitoring.incident_clock import (  # noqa: E402
     render_timeline,
 )
 from tradingagents_us.monitoring.liveness import (  # noqa: E402
+    DEFAULT_HEALTH_URL,
     BackupSignal,
     HealthProbe,
     HostProbe,
@@ -61,9 +62,8 @@ from tradingagents_us.monitoring.liveness import (  # noqa: E402
     severity,
 )
 
-DEFAULT_HEALTH_URL = "https://trader.fusapp.com/healthz"
 DEFAULT_BACKUP_REPO = "canberkaslan/trading-backups"
-DEFAULT_ISSUE_REPO = "canberkaslan/trading"
+DEFAULT_ISSUE_REPO = "fusapp/trading"
 ISSUE_LABEL = "watchdog"
 PROBE_TIMEOUT_S = 15
 

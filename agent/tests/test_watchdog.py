@@ -25,7 +25,7 @@ from tradingagents_us.monitoring.liveness import (
 )
 
 NOW = datetime(2026, 8, 25, 6, 30, tzinfo=UTC)
-REPO = "canberkaslan/trading"
+REPO = "fusapp/trading"
 
 
 class FakeGitHub:

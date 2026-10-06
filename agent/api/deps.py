@@ -25,10 +25,9 @@ from typing import Any
 
 import httpx
 from fastapi import Depends, Header, HTTPException, status
-from sqlalchemy import create_engine
 
 from tradingagents_us.dataflows.alpaca_broker import AlpacaClient
-from tradingagents_us.storage import TradeLogRepository
+from tradingagents_us.storage import TradeLogRepository, make_engine
 
 log = logging.getLogger(__name__)
 
@@ -37,7 +36,7 @@ log = logging.getLogger(__name__)
 def get_repo() -> TradeLogRepository:
     """Process-wide repository singleton, sqlite by default."""
     url = os.environ.get("TRADE_LOG_DB_URL", "sqlite:///./local.db")
-    return TradeLogRepository(engine=create_engine(url, future=True))
+    return TradeLogRepository(engine=make_engine(url))
 
 
 def get_alpaca() -> AlpacaClient:

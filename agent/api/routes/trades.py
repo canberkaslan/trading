@@ -13,6 +13,7 @@ win rate over bug-era trades next to a Sharpe that excludes them made the two
 numbers describe different books. `window=all` returns the full history, and
 `excluded_pre_eval` always reports how many rows the cutoff hides.
 
+`by_ticker` splits the same rows by symbol, worst net first.
 `by_exit` / `strategy` split the same rows by what closed each position, using
 the class stored at reconcile time (see `execution.exit_quality`). The blended
 `stats` expectancy is not the agent's exit record: on this account most of the
@@ -113,6 +114,50 @@ class TradeStatsItem(BaseModel):
     worst_trade: float
 
 
+class TickerStatsItem(BaseModel):
+    """One symbol's round trips, over the same rows as `stats`."""
+
+    ticker: str
+    trades: int
+    wins: int
+    losses: int
+    win_rate: float
+    net_pnl: float
+    # Per-trade expectancy for this name. With a handful of trades per symbol
+    # this is anecdote, not an edge estimate — `trades` travels with it so the
+    # app can grey it out below its own sample floor.
+    expectancy: float
+    worst_trade: float
+
+
+def _by_ticker(trades: list[ClosedTrade]) -> list[TickerStatsItem]:
+    """Split the returned rows by symbol, biggest losers first.
+
+    Ordered by net P&L ascending (ticker as tie-break) because the question
+    this answers is "where did the realized losses come from": a blended
+    expectancy hides whether one name or the whole book is bleeding.
+    """
+    groups: dict[str, list[ClosedTrade]] = {}
+    for t in trades:
+        groups.setdefault(t.symbol, []).append(t)
+    items = []
+    for symbol, rows in groups.items():
+        s = compute_stats(rows)
+        items.append(
+            TickerStatsItem(
+                ticker=symbol,
+                trades=s.trades,
+                wins=s.wins,
+                losses=s.losses,
+                win_rate=round(s.win_rate, 4),
+                net_pnl=round(s.net_pnl, 2),
+                expectancy=round(s.expectancy, 2),
+                worst_trade=round(s.worst_trade, 2),
+            )
+        )
+    return sorted(items, key=lambda i: (i.net_pnl, i.ticker))
+
+
 class TradesResponse(BaseModel):
     trades: list[ClosedTradeItem]
     stats: TradeStatsItem
@@ -139,6 +184,9 @@ class TradesResponse(BaseModel):
     # a partially-attributed ledger cannot render as a complete one; a non-zero
     # count here means `by_exit` does not add up to `stats`.
     unattributed: int = 0
+    # The same rows split by symbol. Sums to `stats` exactly (same rows, no
+    # attribution needed), unlike `by_exit`.
+    by_ticker: list[TickerStatsItem] = []
 
 
 @router.get("", response_model=TradesResponse)
@@ -219,6 +267,7 @@ async def list_trades(
         by_exit=[_bucket_item(b) for b in bucket_by_exit(attributed)],
         strategy=_bucket_item(strategy) if strategy is not None else None,
         unattributed=unattributed,
+        by_ticker=_by_ticker(trades),
         reconciled_at_utc=max((r.reconciled_at_utc for r in rows), default=None),
         window="eval" if scoped else "all_time",
         eval_start_utc=cutoff,

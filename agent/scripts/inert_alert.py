@@ -66,12 +66,10 @@ def save_state(path: Path, state: AlertState) -> None:
 
 
 def _report(days: int):
-    from sqlalchemy import create_engine
-
-    from tradingagents_us.storage import TradeLogRepository
+    from tradingagents_us.storage import TradeLogRepository, make_engine
 
     url = os.environ.get("TRADE_LOG_DB_URL", "sqlite:///./local.db")
-    repo = TradeLogRepository(engine=create_engine(url, future=True))
+    repo = TradeLogRepository(engine=make_engine(url))
     since = datetime.now(UTC) - timedelta(days=days)
     rows = repo.list_orders_since(since=since)
     return build_report(

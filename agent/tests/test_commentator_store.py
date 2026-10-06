@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -9,11 +10,15 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, inspect, select, text
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.pool import StaticPool
 
+from tests.commentator_fakes import FakeXAPI
+from tradingagents_us.dataflows.commentator import ingest
 from tradingagents_us.schemas import AgentDecision
-from tradingagents_us.storage import TradeLogRepository
+from tradingagents_us.storage import TradeLogRepository, make_engine
 from tradingagents_us.storage import commentator as store
+from tradingagents_us.storage import engine as engine_mod
 from tradingagents_us.storage.commentator import Extraction
 from tradingagents_us.storage.models import CommentatorItemRow, DecisionCommentatorRefRow
 
@@ -243,8 +248,8 @@ class TestPurgeAndRefs:
             assert store.newest_numeric_id(s, "x") == "1000"  # not "999"
 
 
-class TestPurgedBytes:
-    """A purge removes the bytes from local.db, not just the row (ADR-009).
+class _LiveFeedFile:
+    """X items stored, extracted, re-verified and cited in a file, as a live feed does.
 
     Each step opens its own engine, as the fetch, the daily run and the
     retention timer each run in their own process: a setting one connection
@@ -255,9 +260,12 @@ class TestPurgedBytes:
     ID_PREFIX = "77009900"
     N = 120
 
+    def _engine(self, db: Path) -> Engine:
+        return create_engine(f"sqlite:///{db}", future=True)
+
     @contextmanager
     def _process(self, db: Path) -> Iterator[TradeLogRepository]:
-        repo = TradeLogRepository(engine=create_engine(f"sqlite:///{db}", future=True))
+        repo = TradeLogRepository(engine=self._engine(db))
         try:
             yield repo
         finally:
@@ -289,6 +297,13 @@ class TestPurgedBytes:
             for d in range(10):
                 store.stash_decision_refs(f"dec-{d}", [("x", k) for k in keys[d::10]])
                 repo.save_decision(_decision(f"dec-{d}"))
+
+
+class TestPurgedBytes(_LiveFeedFile):
+    """A purge removes the bytes from local.db, not just the row (ADR-009).
+
+    Under the rollback journal; `TestPurgedBytesInWAL` is the box's own mode.
+    """
 
     @pytest.mark.parametrize("purge", ["deleted", "expired"])
     def test_nothing_of_a_purged_item_is_left_in_the_file(
@@ -322,3 +337,92 @@ class TestPurgedBytes:
             assert store.purge_expired(s, NOW) == 0
         with repo.engine.connect() as c:
             assert c.exec_driver_sql("PRAGMA secure_delete").scalar() == before == 0
+
+
+class TestPurgedBytesInWAL(_LiveFeedFile):
+    """The same rule in the box's mode: local.db in WAL, the API connected all day.
+
+    In WAL the zeroed pages of a purge are appended to local.db-wal, and the
+    old ones stay in local.db, and in earlier -wal frames, until a checkpoint.
+    Closing the last connection checkpoints, which hid this: so the API's
+    connection stays open here, as ai-trader-api's does, and the files are
+    read while it is. The purge runs through `ingest.enforce_retention`, what
+    the retention unit runs; a fetch's `ingest.run` starts with the same pass.
+    """
+
+    def _engine(self, db: Path) -> Engine:
+        return make_engine(f"sqlite:///{db}")
+
+    @contextmanager
+    def _api_connected(self, db: Path) -> Iterator[Connection]:
+        """ai-trader-api's pooled connection: open from start-up, and it has read.
+
+        Its first read registers it on the WAL. Until then, each step's
+        process closing would count as the last connection and checkpoint.
+        """
+        api = TradeLogRepository(engine=self._engine(db)).engine
+        try:
+            with api.connect() as conn:
+                conn.exec_driver_sql("SELECT count(*) FROM commentator_items").all()
+                yield conn
+        finally:
+            api.dispose()
+
+    def _retention_pass(self, repo: TradeLogRepository, purge: str) -> ingest.IngestReport:
+        if purge == "expired":
+            return ingest.enforce_retention(repo.session, x=None, now=NOW + timedelta(days=9))
+        if purge == "deleted":  # X no longer serves any of them
+            x = FakeXAPI([]).client()
+            return ingest.enforce_retention(repo.session, x=x, now=NOW + timedelta(hours=4))
+        # No token: the deletions cannot be checked, so every X post goes.
+        return ingest.enforce_retention(repo.session, x=None, now=NOW + timedelta(hours=4))
+
+    @pytest.mark.parametrize("purge", ["expired", "deleted", "unchecked"])
+    @pytest.mark.parametrize("checkpointed", [False, True], ids=["in-wal", "in-main-file"])
+    def test_nothing_of_a_purged_item_is_left_in_either_file(
+        self, tmp_path: Path, purge: str, checkpointed: bool
+    ) -> None:
+        db = tmp_path / "local.db"
+        with self._api_connected(db) as api:
+            self._live_cycle(db)
+            if checkpointed:  # days of traffic: the auto-checkpoint copied them into local.db
+                api.exec_driver_sql("PRAGMA wal_checkpoint(PASSIVE)").all()
+            with self._process(db) as repo:
+                report = self._retention_pass(repo, purge)
+                with repo.session() as s:
+                    refs = s.scalars(select(DecisionCommentatorRefRow.item_id)).all()
+            files = {f.name: f.read_bytes() for f in tmp_path.glob("local.db*")}
+        assert report.purged_expired + report.purged_deleted == self.N
+        assert len(refs) == self.N and set(refs) == {None}
+        assert {"local.db", "local.db-wal"} <= files.keys()  # in WAL, the API still on
+        # Per file: copies of the paraphrase, and of the post ids (items and refs).
+        left = {
+            name: (raw.count(self.MARK.encode()), raw.count(self.ID_PREFIX.encode()))
+            for name, raw in files.items()
+        }
+        assert left == dict.fromkeys(files, (0, 0))
+
+    def test_a_pass_whose_bytes_cannot_be_cleared_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # An API request reading through the whole pass keeps the checkpoint
+        # from finishing. The purge still commits, reads no longer return the
+        # items, but the bytes are on disk: the unit must fail so it pages,
+        # and the pass is not recorded.
+        monkeypatch.setattr(engine_mod, "BUSY_TIMEOUT_MS", 200)
+        db = tmp_path / "local.db"
+        with self._api_connected(db):
+            self._live_cycle(db)
+            reader = sqlite3.connect(db, isolation_level=None)
+            reader.execute("BEGIN")
+            assert reader.execute("SELECT count(*) FROM commentator_items").fetchone() == (
+                self.N,
+            )
+            with self._process(db) as repo:
+                with pytest.raises(store.PurgedBytesRemainError, match="wal_checkpoint"):
+                    self._retention_pass(repo, "unchecked")
+                with repo.session() as s:
+                    assert s.scalars(select(CommentatorItemRow)).all() == []
+                    assert store.status_at(s, store.RETENTION_PASS) is None
+            reader.execute("COMMIT")
+            reader.close()

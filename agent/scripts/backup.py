@@ -6,9 +6,15 @@ the equity snapshots, and the agent's learned reflections) lives on a single
 Hetzner disk. This ships a dated copy to S3 daily so a dead box can't erase
 the eval evidence.
 
+Restoring local.db: stop the ai-trader services, delete local.db-wal and
+local.db-shm, then put the restored file in place. The live DB runs in WAL
+mode (storage/engine.py); a leftover -wal beside a replaced local.db belongs to
+the old file, and SQLite reads it as "database disk image is malformed".
+
 Targets (each best-effort; missing files are skipped with a note):
-  - TRADE_LOG_DB_URL sqlite file  -> sqlite3 online .backup -> commentator
-                                     feed scrubbed (ADR-009) -> gzip
+  - TRADE_LOG_DB_URL sqlite file  -> sqlite3 online .backup (reads through
+                                     the WAL) -> commentator feed scrubbed
+                                     (ADR-009) -> gzip
   - EVAL_SNAPSHOT_FILE (JSONL)    -> gzip
   - ~/.tradingagents/memory/      -> tar.gz (reflection memory)
 
@@ -116,15 +122,38 @@ def _feed_ever_stored(conn: sqlite3.Connection, tables: set[str]) -> bool:
     return False
 
 
+def _single_file(conn: sqlite3.Connection) -> None:
+    """Turn a backup copy of a WAL database into a plain rollback-journal file.
+
+    The backup API copies the header too, so a copy of the WAL-mode local.db is
+    itself in WAL mode, and the scrub below would write into a `-wal` sidecar
+    that only reaches the file when the last connection closes and checkpoints.
+    The artifact is the file alone, so the feed's removal must be in the file
+    before it is read, not depend on a close-time checkpoint. Switching the
+    copy out of WAL checkpoints it and removes the sidecar now, and the artifact
+    restores as one self-contained file; storage/engine.py turns WAL back on
+    when a restored local.db is next opened on the box.
+    """
+    mode = conn.execute("PRAGMA journal_mode = DELETE").fetchone()[0]
+    if mode != "delete":
+        raise RuntimeError(f"backup copy stayed in journal mode {mode!r}; refusing to scrub")
+
+
 def _dump_sqlite_gz(db_path: Path) -> bytes:
     """Consistent online backup (sqlite3 backup API — safe against live writers),
     scrubbed of the commentator feed, gzipped in memory. local.db is ~2MB; fine
-    to buffer. The scrub runs on the temporary copy; the live DB is only read."""
+    to buffer. The scrub runs on the temporary copy; the live DB is only read.
+
+    local.db runs in WAL (storage/engine.py), so committed rows can sit in
+    `local.db-wal` until a checkpoint. The source is an ordinary read connection,
+    which reads through the WAL, so the copy has every row committed before the
+    backup started; the sidecars are never copied, and need not be."""
     with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
         src = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         dst = sqlite3.connect(tmp.name)
         try:
             src.backup(dst)
+            _single_file(dst)
             _scrub_for_off_box(dst)
         finally:
             dst.close()

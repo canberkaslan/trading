@@ -111,3 +111,78 @@ class TestTradingModeField:
     ) -> None:
         monkeypatch.setenv("ALPACA_BASE_URL", "https://api.alpaca.markets/v2")
         assert client.get("/healthz").json()["trading_mode"] == "live"
+
+
+def _order(symbol, side="sell", order_type="stop", status="held", qty=10.0,
+           filled=0.0, stop_price=90.0, legs=()):
+    o = MagicMock()
+    o.symbol, o.side, o.order_type, o.status = symbol, side, order_type, status
+    o.qty, o.filled_qty, o.stop_price = qty, filled, stop_price
+    o.legs = legs
+    return o
+
+
+def _position(symbol, qty):
+    p = MagicMock()
+    p.symbol, p.qty = symbol, qty
+    p.avg_entry_price, p.market_value = 100.0, 100.0 * qty
+    p.unrealized_pl, p.unrealized_plpc = 0.0, 0.0
+    return p
+
+
+class TestSnapshotStopLoss:
+    """`stop_loss` used to be hardcoded 0.0 on every position. It now carries the
+    live stop, but ONLY when the whole position is behind one — a price next to
+    a half-covered name reads as "protected" when it is not."""
+
+    def _stops(self, client: TestClient, positions, orders=None, orders_exc=None) -> dict:
+        from api.deps import get_alpaca
+        from api.main import app
+
+        cli = _mock_alpaca()
+        cli.list_positions.return_value = positions
+        if orders_exc is not None:
+            cli.list_orders.side_effect = orders_exc
+        else:
+            cli.list_orders.return_value = orders or []
+        app.dependency_overrides[get_alpaca] = lambda: cli
+        try:
+            r = client.get("/v1/portfolio/snapshot")
+            assert r.status_code == 200, r.text
+            return {p["ticker"]: p["stop_loss"] for p in r.json()["positions"]}
+        finally:
+            app.dependency_overrides.pop(get_alpaca, None)
+
+    def test_held_bracket_leg_is_reported(self, client: TestClient) -> None:
+        # The resting stop of a bracket is nested under its parent in status
+        # `held` — the shape that a naive `status=open` read misses entirely.
+        parent = _order("AAPL", side="buy", order_type="limit", status="filled",
+                        qty=10.0, filled=10.0, stop_price=None,
+                        legs=(_order("AAPL", order_type="limit", status="new", stop_price=None),
+                              _order("AAPL", stop_price=280.0)))
+        assert self._stops(client, [_position("AAPL", 10)], [parent]) == {"AAPL": 280.0}
+
+    def test_partly_covered_position_reports_no_stop(self, client: TestClient) -> None:
+        stops = self._stops(client, [_position("MSFT", 27)], [_order("MSFT", qty=10.0)])
+        assert stops == {"MSFT": 0.0}
+
+    def test_indeterminate_order_reports_no_stop(self, client: TestClient) -> None:
+        stops = self._stops(client, [_position("NVDA", 10)],
+                            [_order("NVDA", status="pending_cancel")])
+        assert stops == {"NVDA": 0.0}
+
+    def test_several_stops_report_the_highest(self, client: TestClient) -> None:
+        stops = self._stops(client, [_position("XOM", 20)],
+                            [_order("XOM", qty=10.0, stop_price=150.0),
+                             _order("XOM", qty=10.0, stop_price=155.0)])
+        assert stops == {"XOM": 155.0}
+
+    def test_terminal_stop_is_not_protection(self, client: TestClient) -> None:
+        stops = self._stops(client, [_position("UNH", 15)],
+                            [_order("UNH", qty=15.0, status="canceled")])
+        assert stops == {"UNH": 0.0}
+
+    def test_order_book_failure_degrades_to_unknown(self, client: TestClient) -> None:
+        stops = self._stops(client, [_position("META", 18)],
+                            orders_exc=RuntimeError("orders endpoint down"))
+        assert stops == {"META": 0.0}

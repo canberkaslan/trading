@@ -28,15 +28,24 @@ Exit codes, which daily_run.sh turns into pages:
        stop stands where it was, and without a page it would stand there
        every night. Also with --submit, a due time exit the exit budget
        held back: a bad input that reads the book as due is held to three
-       names only until a person looks.
+       names only until a person looks. Also a time exit deferred because the
+       market was open (a pass run by hand in the session), and a time exit
+       queued by an earlier run that the broker rejected, cancelled or expired
+       at the open, or left done for the day with shares unsold: the lot had
+       neither stop nor exit from then until now.
+       That last is read off the book for every held name, whatever this
+       pass then does with it (closes it again, back-fills it, or leaves it
+       to the exit budget), and named by the first run after it. Which open
+       it met is the broker's calendar's to say, not its stamp's date: a run
+       past 00:00 UTC stamps the date the next 22:30 run has too.
     3  a time exit may have left shares with no stop: a close ended `unknown`
        or `naked`, or the re-cover after it could not place what it had to.
        A cancel still on its way strips its stop after this run, while the
        coverage check at the end of the run still sees the stop standing, so
        this code is the only thing that can say so while the run is on. An
-       `unknown` close can also mean the opposite: a stop that could not be
-       confirmed off a book the exit already sold, which the coverage check
-       never pages on either.
+       `unknown` close can also mean an exit that may still land on shares no
+       stop reserves, a sell standing on a book already flat, or an end state
+       the broker would not show; the coverage check pages on none of them.
 
 Safety, in the order it matters:
 
@@ -54,14 +63,21 @@ Safety, in the order it matters:
     guess there is how you end up with two stops on one lot — a short position
     waiting for a gap down.
   * A time exit releases the stop before it sells, because the stop reserves the
-    shares, and it releases it in the one order that cannot double-sell:
-    cancel, confirm the cancel, sell the holding read after that, verify, and
-    re-arm the stop in the same pass if the sell did not go through
-    (`execution.protected_close`).
+    shares, and only while the market is shut, when nothing but its own
+    requests can move the lot: cancel, confirm the cancel, sell the holding
+    read after that, verify, re-arm the stop if the sell is not working, and
+    read the book once more for the verdict (`execution.protected_close`).
+    Between the exit and a re-armed stop the broker's share reservation lets
+    only one stand, whatever order lost replies come back in.
   * One pass time-exits at most 3 positions, or 25% of those examined if fewer
     (`position_manager.exit_budget`), so one bad input cannot liquidate the book
     through time exits in a single run. The budget is the trade date's: a pass
-    run again the same day counts the exits already stamped today against it.
+    run again the same day counts the exits already stamped today against it,
+    and a name whose exit an earlier date queued still waits for an open is
+    left to that exit, which counts against it too. That exit sells at the
+    open this pass's exits queue for: a rerun past 00:00 UTC stamps the next
+    date for the same open as the 22:30 run before it, and so does the run on
+    a weekday exchange holiday.
     The rest are reported as deferred, keep their stops, and with --submit
     fail the pass so it pages. Stop maintenance does not count against the
     budget. A stop moved to the last price is a close all the same, so the
@@ -78,10 +94,11 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from tradingagents_us.dataflows.alpaca_broker import AlpacaClient
+from tradingagents_us.dataflows.alpaca_broker import AlpacaClient, Order
 from tradingagents_us.dataflows.polygon import PolygonClient
 from tradingagents_us.execution.protected_close import (
     CLOSED_STATUSES,
@@ -90,6 +107,10 @@ from tradingagents_us.execution.protected_close import (
     CloseOutcome,
     close_with_protection,
     cover_beside_exit,
+    day_ended_exit,
+    exit_stamp_date,
+    missed_exits,
+    opened_after,
 )
 from tradingagents_us.execution.submit_lock import submit_section
 from tradingagents_us.log_redaction import install as install_log_redaction
@@ -126,6 +147,9 @@ LIVE_ORDER_STATUSES = frozenset({"held", "new", "accepted", "pending_new", "part
 #: Statuses in which a sell never sold a share and never will.
 _NEVER_SOLD = FAILED_EXIT_STATUSES | {"replaced"}
 
+#: (symbol, client id, status) of each sell on the book.
+Sells = frozenset[tuple[str, str, str]]
+
 #: Enough history for a 14-period ATR with room for holidays. Calendar days.
 BAR_LOOKBACK_DAYS = 60
 
@@ -158,7 +182,7 @@ UNCOVERED_STATUSES = frozenset({"unknown", "naked"})
 
 def _order_views(
     client: AlpacaClient,
-) -> tuple[list[OrderView], dict[tuple[str, float], str], frozenset[tuple[str, str]]]:
+) -> tuple[list[OrderView], dict[tuple[str, float], str], list[Order]]:
     """Every live order as a pure view, plus a map back to the broker order id.
 
     Two things this gets right that the obvious version does not:
@@ -176,9 +200,11 @@ def _order_views(
     pure view the coverage rules are written against) while amending a stop needs
     one. Keyed on symbol + stop price, which is unique for a live protective leg.
 
-    Last, (symbol, client id) for every sell that sold or may still sell, read
-    off the same listing: what today's time exits have spent of the exit
-    budget is counted from their stamps there (`_exited_on`).
+    Last, every sell, whatever its status, off the same listing: what
+    today's time exits have spent of the exit budget is counted from their
+    stamps there (`_exited_on`), which names an earlier date's exit is still
+    selling (`_exiting_before`), and which one the open refused
+    (`_report_missed_exits`).
     """
     raw = client.list_orders(status="all", limit=500, nested=True)
     flat = flatten_orders(raw)
@@ -199,17 +225,17 @@ def _order_views(
         for o in flat
         if o.stop_price is not None and o.status.lower() in LIVE_ORDER_STATUSES
     }
-    sells = frozenset(
-        (o.symbol, o.client_order_id)
-        for o in flat
-        if o.side.lower() == "sell" and o.status.lower() not in _NEVER_SOLD
-    )
-    return views, ids, sells
+    return views, ids, [o for o in flat if o.side.lower() == "sell"]
+
+
+def _sells(sell_orders: list[Order]) -> Sells:
+    """(symbol, client id, status) of each sell, as the budget's helpers read them."""
+    return frozenset((o.symbol, o.client_order_id, o.status.lower()) for o in sell_orders)
 
 
 def _read_book(
     client: AlpacaClient,
-) -> tuple[list[OrderView], dict[tuple[str, float], str], list, frozenset[tuple[str, str]]]:
+) -> tuple[list[OrderView], dict[tuple[str, float], str], list, list[Order]]:
     """The orders, then the holding, in that order and never the other.
 
     A sell that fills between two reads must show up as fewer shares held,
@@ -224,20 +250,33 @@ def _read_book(
     return orders, stop_ids, client.list_positions(), sells
 
 
-def _exited_on(sells: frozenset[tuple[str, str]], day: date) -> frozenset[str]:
+def _exited_on(sells: Sells, day: date) -> frozenset[str]:
     """The names a time exit sold, or is selling, under `day`'s stamp.
 
     The stamp or a retry of it (`-rN`), in a status that sold or still can:
-    what earlier passes on the same trade date spent of the exit budget.
+    what earlier passes on the same trade date spent of the exit budget. A
+    stop re-armed under a stamp (`<stamp>-r2-arm-...`) is a stop, not an
+    exit, and spends nothing.
     """
-    from tradingagents_us.execution.executor import derive_exit_client_order_id
+    return frozenset(
+        symbol for symbol, coid, status in sells
+        if status not in _NEVER_SOLD and exit_stamp_date(coid, symbol) == day
+    )
 
-    out = set()
-    for symbol, coid in sells:
-        stamp = derive_exit_client_order_id(symbol, day, "time")
-        if coid == stamp or coid.startswith(f"{stamp}-r"):
-            out.add(symbol)
-    return frozenset(out)
+
+def _exiting_before(sells: Sells, day: date) -> frozenset[str]:
+    """The names whose time exit, stamped on a trade date other than `day`, still works.
+
+    Queued for an open that has not come since (a weekday exchange holiday,
+    or a rerun past 00:00 UTC). The lot is on its way out: its close sends
+    nothing, and its exit spends a share of `day`'s exit budget, since it
+    sells at the open `day`'s exits queue for.
+    """
+    return frozenset(
+        symbol for symbol, coid, status in sells
+        if status in LIVE_ORDER_STATUSES
+        and exit_stamp_date(coid, symbol) not in (None, day)
+    )
 
 
 #: Daily bars and their dates, oldest first, as `_bars_for` returns them.
@@ -529,25 +568,10 @@ def _execute(
             elif isinstance(act, PlaceStop):
                 _place_backfill(client, act)
             else:
-                # Not DELETE /positions/{symbol}: the GTC stop reserves every
-                # share of a protected position, so the broker refused that
-                # close on exactly the positions that have one, and what it did
-                # close carried a broker id and booked as a flatten.
-                # close_with_protection releases the stop, confirms it, sells
-                # the holding read after the release under the time-exit stamp,
-                # and re-arms the stop in the same pass if the sell fails.
-                outcome = close_with_protection(
-                    client, act.ticker, trade_date=trade_date or datetime.now(UTC).date()
-                )
+                outcome = _close_on_age(client, act, trade_date)
+                failures += int(not outcome.ok)
                 if not outcome.ok:
-                    failures += 1
-                    if unclosed is not None:
-                        unclosed.append(act.ticker)
-                    if uncovered is not None and outcome.status in UNCOVERED_STATUSES:
-                        uncovered.append(f"{act.ticker} {outcome.status}")
-                    if unsettled is not None and outcome.client_order_id:
-                        unsettled[act.ticker] = outcome.client_order_id
-                _log_close(outcome)
+                    _hand_on(outcome, unclosed, uncovered, unsettled)
         except Exception as exc:  # noqa: BLE001 — one bad symbol must not stop the pass
             failures += 1
             log.error("%-6s FAILED: %s", act.ticker, exc)
@@ -560,6 +584,42 @@ def _execute(
     return failures
 
 
+def _close_on_age(client: AlpacaClient, act: TimeExit, trade_date: date | None) -> CloseOutcome:
+    """One time exit through `protected_close`, logged.
+
+    Not DELETE /positions/{symbol}: the GTC stop reserves every share of a
+    protected position, so the broker refused that close on exactly the
+    positions that have one, and what it did close carried a broker id and
+    booked as a flatten. close_with_protection releases the stop, sells the
+    holding read after the release under the time-exit stamp, re-arms the stop
+    if the sell is not working, and reads the verdict off the broker.
+
+    An earlier exit that the open refused is not counted here: the pass has
+    named it already, off its own listing (`_report_missed_exits`), whether
+    or not the name came due again.
+    """
+    outcome = close_with_protection(
+        client, act.ticker, trade_date=trade_date or datetime.now(UTC).date()
+    )
+    _log_close(outcome)
+    return outcome
+
+
+def _hand_on(
+    outcome: CloseOutcome,
+    unclosed: list[str] | None,
+    uncovered: list[str] | None,
+    unsettled: dict[str, str] | None,
+) -> None:
+    """Record what a close that did not close left for the rest of the pass."""
+    if unclosed is not None:
+        unclosed.append(outcome.ticker)
+    if uncovered is not None and outcome.status in UNCOVERED_STATUSES:
+        uncovered.append(f"{outcome.ticker} {outcome.status}")
+    if unsettled is not None and outcome.client_order_id:
+        unsettled[outcome.ticker] = outcome.client_order_id
+
+
 def _report_exit_budget(
     actions: list[Action],
     skips: list,
@@ -567,6 +627,7 @@ def _report_exit_budget(
     config: ManagementConfig,
     exited_today: frozenset[str],
     submitting: bool,
+    exiting: frozenset[str] = frozenset(),
 ) -> bool:
     """Say what the exit budget held back, in one line a person will read.
 
@@ -584,17 +645,54 @@ def _report_exit_budget(
         return False
     closing = sum(1 for a in actions if isinstance(a, TimeExit))
     book = len({m.ticker for m in examined} | exited_today)
+    queued = len(exiting - exited_today)
     log.warning(
         "exit budget: closing %d of %d due (budget %d of %d positions today, "
-        "%d closed earlier today); deferred: %s",
+        "%d closed earlier today%s); deferred: %s",
         closing,
         closing + len(deferred),
         exit_budget(book, config),
         book,
         len(exited_today),
+        f", {queued} queued earlier for the same open" if queued else "",
         ", ".join(deferred),
     )
     return submitting
+
+
+def _report_missed_exits(
+    sell_orders: list[Order],
+    positions: list,
+    opened: Callable[[datetime], bool],
+    submitting: bool,
+) -> bool:
+    """Name each held lot whose time exit, queued by an earlier run, the open did not fill.
+
+    The broker rejected, cancelled or expired it there, or filled only part,
+    and the lot spent the session with neither that exit nor the stop it
+    replaced. Read for every held name, not only those this pass closes
+    again: a lot the session moved out of the time exit's flat band is no
+    longer due, and one the exit budget defers is not closed, so the close
+    would never see the miss, and the back-fill that covers the lot tonight
+    would make the next coverage check read it as recovered.
+
+    `opened` says whether a session opened after an exit was sent
+    (`protected_close.opened_after`): an exit that met none has missed
+    nothing yet, whatever date its stamp carries.
+
+    True when the pass must fail for it: with --submit. A dry run only reports.
+    """
+    missed = {
+        p.symbol: found for p in positions
+        if (found := missed_exits(sell_orders, p.symbol, opened))
+    }
+    for symbol, found in sorted(missed.items()):
+        log.error(
+            "%-6s MISSED EXIT: an earlier time exit did not sell the lot at the open, "
+            "which then had no stop until this run: %s",
+            symbol, "; ".join(found),
+        )
+    return bool(missed) and submitting
 
 
 def _report_refusals(skips: list, submitting: bool) -> bool:
@@ -673,18 +771,30 @@ def _recover_unclosed(
 
     Stricter than the main pass, because a failed close is where the book is
     least settled: a name is left alone while any sell other than a working
-    stop still stands on it. That covers a stop still in `pending_cancel`, which
-    may yet fill; one in `stopped`, whose fill is on its way; an exit that
-    landed after all; a take-profit. Each reserves the shares or is about to
-    sell them, and a stop placed beside it is refused while the lot is held and
-    becomes a short once that sell fills.
+    stop or a working take-profit still stands on it. That covers a stop still
+    in `pending_cancel`, which may yet fill; one in `stopped`, whose fill is on
+    its way; an exit that landed after all; a take-profit whose cancel is on
+    its way. Each reserves the shares or is about to sell them, and a stop
+    placed beside it is refused while the lot is held and becomes a short once
+    that sell fills. Not an exit of the lot whose day is over
+    (`protected_close.day_ended_exit`): a day order, it sells nothing more, and
+    left standing in the count it kept the lot naked for good.
 
-    A name whose exit was sent and never ruled out (`unsettled`) is back-filled
-    all the same, since it may never land, but through
-    `protected_close.cover_beside_exit`: that exit can land between this read
-    and the stop's POST, fill, and leave the stop on a flat book, so the stamp
-    and the book are read again once the stop stands, and it is taken back if
-    the exit got there first. A name it settles either way is off `uncovered`.
+    Nor a take-profit that works: it sells only the shares it holds back, the
+    broker refuses a stop on those, and the back-fill is sized off the shares
+    no stop covers (`_naked_now`), so it never stands beside the take-profit on
+    the same shares, as the main pass's back-fill does not. Counted as standing,
+    a bracket's take-profit kept a lot added to by brackets (GOOGL: a stop on
+    most of it, three one-share brackets) from its back-fill on every run: a
+    share whose stop a failed close could not put back stayed without one for
+    as long as the lot stayed due.
+
+    A name whose exit was sent and never found (`unsettled`) is back-filled all
+    the same, since it may never land, but through
+    `protected_close.cover_beside_exit`: the exit can land beside the stop's
+    POST, and the broker then lets only the first of the two stand, so the
+    book is read again to say which. A name it settles either way is off
+    `uncovered`.
 
     Returns how many placements failed. A book it could not read, or a
     placement that failed, is also appended to `uncovered`: the names it was
@@ -692,7 +802,7 @@ def _recover_unclosed(
     """
     try:
         # Orders first, holding last (see `_read_book`).
-        orders, stop_ids, positions, _ = _read_book(client)
+        orders, stop_ids, positions, sell_orders = _read_book(client)
     except Exception as exc:  # noqa: BLE001 — reported and counted, never guessed past
         log.error("re-cover after failed exits: book unreadable, nothing placed: %s", exc)
         uncovered.append(f"re-cover could not read the book: {exc}")
@@ -702,11 +812,13 @@ def _recover_unclosed(
         return 0
 
     standing: dict[str, str] = {}
-    for o in orders:
-        gone = o.status in RELEASED_STATUSES or o.status == "replaced"
-        a_working_stop = o.order_type in PROTECTIVE_TYPES and o.status in LIVE_STATUSES
-        if o.side == "sell" and o.remaining_qty > QTY_EPSILON and not gone and not a_working_stop:
-            standing.setdefault(o.symbol, f"{o.order_type} sell in {o.status}")
+    for o in sell_orders:
+        kind, status = o.order_type.lower(), o.status.lower()
+        gone = status in RELEASED_STATUSES or status == "replaced" or day_ended_exit(o, o.symbol)
+        a_working_stop = kind in PROTECTIVE_TYPES and status in LIVE_STATUSES
+        a_take_profit = kind == "limit" and status in LIVE_ORDER_STATUSES
+        if o.qty - o.filled_qty > QTY_EPSILON and not (gone or a_working_stop or a_take_profit):
+            standing.setdefault(o.symbol, f"{kind} sell in {status}")
     for p in held:
         if p.symbol in standing:
             log.info("%-6s SKIP  re-cover: a %s still stands on it", p.symbol, standing[p.symbol])
@@ -729,17 +841,24 @@ def _recover_unclosed(
     if failed:
         uncovered.append(f"re-cover could not place {failed} back-fill stop(s)")
     for act in (a for a in backfills if a.ticker in unsettled):
-        failed += _cover_beside_exit(client, act, unsettled[act.ticker], uncovered)
+        row = by_symbol[act.ticker]
+        covered = min(row.protected_qty, row.position_qty)
+        failed += _cover_beside_exit(client, act, unsettled[act.ticker], uncovered, covered)
     return failed
 
 
 def _cover_beside_exit(
-    client: AlpacaClient, act: PlaceStop, stamp: str, uncovered: list[str]
+    client: AlpacaClient, act: PlaceStop, stamp: str, uncovered: list[str], covered: float
 ) -> int:
-    """One back-fill beside an exit that may still land; 1 if it is not settled."""
+    """One back-fill beside an exit that may still land; 1 if it is not settled.
+
+    `covered` is what the stops standing beside it covered when the back-fill
+    was sized: the verdict holds the lot to that and the back-fill both.
+    """
     try:
         outcome = cover_beside_exit(
-            client, act.ticker, stamp=stamp, qty=act.quantity, stop_price=act.stop_price
+            client, act.ticker, stamp=stamp, qty=act.quantity, stop_price=act.stop_price,
+            covered=covered,
         )
     except Exception as exc:  # noqa: BLE001 — one bad symbol must not stop the pass
         log.error("%-6s FAILED back-fill beside exit %s: %s", act.ticker, stamp, exc)
@@ -747,7 +866,9 @@ def _cover_beside_exit(
         return 1
     _log_close(outcome)
     if outcome.status in CLOSED_STATUSES or outcome.status == "unchanged":
-        # Protected, or gone with nothing standing: the close's doubt is settled.
+        # The back-fill stands beside what stood before it (`unchanged` holds
+        # the lot to both), or the lot is gone with nothing standing: the
+        # close's doubt is settled.
         uncovered[:] = [u for u in uncovered if not u.startswith(f"{act.ticker} ")]
         return 0
     uncovered.append(f"{act.ticker} {outcome.status} beside exit {stamp}")
@@ -831,18 +952,17 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # Local import: keeps the DB engine (and create_all) off the --help path.
-    from sqlalchemy import create_engine
-
-    from tradingagents_us.storage import TradeLogRepository
+    from tradingagents_us.storage import TradeLogRepository, make_engine
 
     repo = TradeLogRepository(
-        engine=create_engine(args.db_url, future=True) if args.db_url else None
+        engine=make_engine(args.db_url) if args.db_url else None
     )
 
     with AlpacaClient() as client:
         today = datetime.now(UTC).date()
         fresh, unrefreshed = _refresh_held(client, today) if args.refresh_bars else ({}, [])
-        orders, stop_ids, positions_raw, sells = _read_book(client)
+        orders, stop_ids, positions_raw, sell_orders = _read_book(client)
+        sells = _sells(sell_orders)
         if not positions_raw:
             log.info("no open positions")
             return 0
@@ -858,15 +978,20 @@ def main(argv: list[str] | None = None) -> int:
             client, repo, positions_raw, by_symbol, orders, stop_ids, entries, today, fresh
         )
 
-        exited_today = _exited_on(sells, today)
-        actions, skips = plan_actions(managed, bars_by_ticker, config, exited_today=exited_today)
+        exited_today, exiting = _exited_on(sells, today), _exiting_before(sells, today)
+        actions, skips = plan_actions(
+            managed, bars_by_ticker, config, exited_today=exited_today, exiting=exiting
+        )
 
         for skip in skips:
             log.info("%-6s SKIP  %-20s %s", skip.ticker, skip.reason, skip.detail)
         # Each names what it found in a line of its own; with --submit, any
         # of them fails the pass, and daily_run pages on that.
         failing = [
-            _report_exit_budget(actions, skips, managed, config, exited_today, args.submit),
+            _report_missed_exits(sell_orders, positions_raw, opened_after(client), args.submit),
+            _report_exit_budget(
+                actions, skips, managed, config, exited_today, args.submit, exiting
+            ),
             _report_refusals(skips, args.submit),
             _report_unrefreshed(skips, unrefreshed, args.submit),
         ]

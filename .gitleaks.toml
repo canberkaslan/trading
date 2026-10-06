@@ -71,4 +71,14 @@ regexes = [
   # any pull request — which is exactly the kind of finding that gets scrolled
   # past until the whole job is ignored.
   '''sent_key\s*==\s*"''',
+
+  # The planted values in agent/tests/test_deploy_webapp_leak_check.py. That
+  # test proves scripts/deploy_webapp.sh refuses a web bundle that carries a
+  # server secret or the dev bearer, so it needs strings shaped like them to
+  # plant. They are fixtures with a test prefix (`sk-test-`, `devtok-`), not
+  # credentials; neither matches the dev token on the laptop or on the box.
+  # Commit db85693 (2026-10-05) carries them, so they fail the full-history
+  # scan. Scope: these two assignment lines only, by name and prefix.
+  '''\bSECRET = "sk-test-''',
+  '''\bDEV_TOKEN = "devtok-''',
 ]

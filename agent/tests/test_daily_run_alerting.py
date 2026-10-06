@@ -326,6 +326,60 @@ def test_a_clean_position_pass_pages_nobody(tmp_path: Path) -> None:
     assert "scripts.manage_positions" in run.modules()
 
 
+# --- PAUSE_NEW ------------------------------------------------------------------
+#
+# PAUSE_NEW stops new entries, not the care of what is held. The run used to
+# skip everything on it, the position pass and the coverage check with the
+# decisions: a time exit queued the night before that the open refused left
+# its lot with neither stop nor exit, no run named it or back-filled it, and
+# nothing paged for as long as the switch stayed on.
+
+
+def test_pause_new_skips_the_decisions_and_still_manages_what_is_held(tmp_path: Path) -> None:
+    run = run_daily(tmp_path, FAKE_RC_scripts_kill_check="75")
+
+    assert run.rc == 0, run.output
+    modules = run.modules()
+    assert "scripts.trade" not in modules
+    assert "scripts.commentator_fetch" not in modules
+    assert "scripts.inert_alert" not in modules, "a paused book is inert on purpose"
+    (call,) = [c for c in run.calls if c[0] == "scripts.manage_positions"]
+    assert {"--backfill-stops", "--refresh-bars"} <= set(call[1:])
+    assert "scripts.naked_alert" in modules
+    assert modules.index("scripts.manage_positions") < modules.index("scripts.naked_alert")
+    assert run.ping_urls == [HC]
+
+
+def test_pause_new_still_pages_on_a_position_pass_that_left_shares_with_no_stop(
+    tmp_path: Path,
+) -> None:
+    run = run_daily(
+        tmp_path,
+        FAKE_RC_scripts_kill_check="75",
+        FAKE_RC_scripts_manage_positions="3",
+        FAKE_OUT_scripts_manage_positions=(
+            "UNCOVERED: shares may have no stop, now or once a pending cancel lands: XOM naked"
+        ),
+    )
+
+    (alert,) = run.alerts("position_pass")
+    assert "XOM naked" in alert["--body"]
+    assert run.rc == 0, run.output
+
+
+def test_pause_new_still_pages_on_a_naked_book(tmp_path: Path) -> None:
+    run = run_daily(
+        tmp_path,
+        FAKE_RC_scripts_kill_check="75",
+        FAKE_RC_scripts_naked_alert="3",
+        FAKE_OUT_scripts_naked_alert="NAKED: 10 of 10 shares (100.0%) have no protective stop: XOM",
+    )
+
+    (alert,) = run.alerts("naked_book")
+    assert "XOM" in alert["--body"]
+    assert run.rc == 0, run.output
+
+
 # --- agent/.env against systemd's values ------------------------------------
 #
 # systemd loads secrets.env, then the script sources agent/.env, and a plain
@@ -346,7 +400,7 @@ def _daily_run_alert_env(run: Run) -> dict[str, str]:
 def test_a_blank_alert_key_in_dotenv_cannot_switch_alerting_off(tmp_path: Path) -> None:
     run = run_daily(
         tmp_path,
-        dotenv="HEALTHCHECK_URL=\nOPS_ALERT_GITHUB_TOKEN=\nOPS_ALERT_GITHUB_REPO=canberkaslan/trading\n",
+        dotenv="HEALTHCHECK_URL=\nOPS_ALERT_GITHUB_TOKEN=\nOPS_ALERT_GITHUB_REPO=fusapp/trading\n",
         OPS_ALERT_GITHUB_TOKEN="gh-test-token-not-real",
         OPS_ALERT_GITHUB_REPO="someone/private-ops",
         FAKE_RC_scripts_trade="1",
@@ -411,6 +465,11 @@ def _deliver(argv: list[str], fake_github: FakeGitHub) -> dict[str, object]:
         ("naked_book", {"FAKE_RC_scripts_naked_alert": "1"}),
         ("position_pass", {"FAKE_RC_scripts_manage_positions": "3"}),
         ("position_pass", {"FAKE_RC_scripts_manage_positions": "1"}),
+        (
+            "position_pass",
+            {"FAKE_RC_scripts_kill_check": "75", "FAKE_RC_scripts_manage_positions": "3"},
+        ),
+        ("naked_book", {"FAKE_RC_scripts_kill_check": "75", "FAKE_RC_scripts_naked_alert": "3"}),
     ],
 )
 def test_every_page_the_run_raises_is_one_notify_ops_accepts(

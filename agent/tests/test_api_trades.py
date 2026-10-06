@@ -399,3 +399,42 @@ class TestExitAttribution:
         body = client.get("/v1/trades").json()
         assert body["by_exit"][0]["label"] == "flatten (outside the agent)"
         assert body["strategy"]["label"] == "strategy exits only"
+
+
+class TestByTicker:
+    def test_splits_returned_rows_by_symbol_worst_first(
+        self, client: TestClient, repo: TradeLogRepository
+    ) -> None:
+        repo.upsert_closed_trades([
+            _trade("t1", "AAPL", 100.0, day=0),
+            _trade("t2", "MSFT", -40.0, day=1),
+            _trade("t3", "MSFT", -10.0, day=2),
+            _trade("t4", "AAPL", -30.0, day=3),
+            _trade("t5", "NVDA", 0.0, day=4),
+        ])
+
+        body = client.get("/v1/trades").json()
+        split = body["by_ticker"]
+
+        assert [s["ticker"] for s in split] == ["MSFT", "NVDA", "AAPL"]
+        msft, nvda, aapl = split
+        assert (msft["trades"], msft["losses"], msft["net_pnl"]) == (2, 2, -50.0)
+        assert msft["expectancy"] == -25.0
+        assert msft["worst_trade"] == -40.0
+        assert (nvda["wins"], nvda["losses"], nvda["win_rate"]) == (0, 0, 0.0)
+        assert (aapl["wins"], aapl["losses"], aapl["win_rate"]) == (1, 1, 0.5)
+        # Same rows as `stats`, so the split must add back up to it exactly.
+        assert sum(s["trades"] for s in split) == body["stats"]["trades"]
+        assert round(sum(s["net_pnl"] for s in split), 2) == body["stats"]["net_pnl"]
+
+    def test_follows_the_ticker_filter_and_empty_ledger(
+        self, client: TestClient, repo: TradeLogRepository
+    ) -> None:
+        assert client.get("/v1/trades").json()["by_ticker"] == []
+
+        repo.upsert_closed_trades([
+            _trade("t1", "AAPL", 100.0, day=0),
+            _trade("t2", "MSFT", -40.0, day=1),
+        ])
+        split = client.get("/v1/trades", params={"ticker": "AAPL"}).json()["by_ticker"]
+        assert [s["ticker"] for s in split] == ["AAPL"]

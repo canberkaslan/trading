@@ -41,6 +41,14 @@ class TestSilence:
         # and paging on it would be paging on a guess.
         assert decide(facts(0.0, indet=80.0), NakedAlertState()) is None
 
+    def test_a_lot_our_time_exit_is_selling_does_not_page(self) -> None:
+        # 2026-10-05: GOOGL's 32 shares, stops released, our exit queued for
+        # the open. Not an exposure, so neither a page nor, the night after,
+        # a recovery from one.
+        exiting = facts(0.0, 278.0, exiting_qty=32.0, exiting_symbols=("GOOGL",))
+        assert decide(exiting, NakedAlertState()) is None
+        assert decide(facts(0.0, 246.0), NakedAlertState()) is None
+
 
 class TestFirstAlert:
     def test_pages_when_the_book_crosses_the_threshold(self) -> None:
@@ -68,6 +76,14 @@ class TestFirstAlert:
         alert = decide(facts(50.0), NakedAlertState())
         assert alert is not None
         assert "indeterminate" not in alert.body
+        assert "exiting" not in alert.body
+
+    def test_names_shares_on_their_way_out_apart_from_the_naked_ones(self) -> None:
+        alert = decide(
+            facts(50.0, exiting_qty=20.0, exiting_symbols=("GOOGL",)), NakedAlertState()
+        )
+        assert alert is not None
+        assert "20 shares are exiting" in alert.body
 
 
 class TestRepeatSuppression:
@@ -104,6 +120,16 @@ class TestRecovery:
 
     def test_never_reports_a_recovery_that_was_never_a_problem(self) -> None:
         assert decide(facts(1.0), NakedAlertState()) is None
+
+    def test_a_recovery_with_a_lot_on_its_way_out_does_not_call_it_protected(self) -> None:
+        first = decide(facts(40.0), NakedAlertState())
+        assert first is not None
+        rec = decide(
+            facts(0.0, exiting_qty=32.0, exiting_symbols=("GOOGL",)), first.next_state
+        )
+        assert rec is not None
+        assert "covered again" in rec.body
+        assert "32 shares are exiting at the next open under our time exit: GOOGL" in rec.body
 
     def test_a_relapse_after_recovery_pages_again(self) -> None:
         first = decide(facts(76.0), NakedAlertState())

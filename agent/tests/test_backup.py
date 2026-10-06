@@ -17,16 +17,16 @@ from __future__ import annotations
 
 import gzip
 import sqlite3
+import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine
 
 from scripts import backup
 from tradingagents_us.dataflows import commentator_supplement as cs
 from tradingagents_us.schemas import AgentDecision, AgentReasoning
-from tradingagents_us.storage import TradeLogRepository
+from tradingagents_us.storage import TradeLogRepository, make_engine
 from tradingagents_us.storage import commentator as store
 from tradingagents_us.storage.commentator import Extraction
 
@@ -78,9 +78,12 @@ def _restore(tmp_path: Path, artifact: bytes) -> sqlite3.Connection:
 
 @pytest.fixture
 def live_db(tmp_path: Path) -> Path:
-    """A box DB with a decision, a live feed item it read, and a purged one."""
+    """A box DB with a decision, a live feed item it read, and a purged one.
+
+    Opened through the factory, so it is in WAL as local.db is on the box.
+    """
     db = tmp_path / "local.db"
-    repo = TradeLogRepository(engine=create_engine(f"sqlite:///{db}", future=True))
+    repo = TradeLogRepository(engine=make_engine(f"sqlite:///{db}"))
     _put(repo, "youtube", "iIVDlDLd9yk", LIVE_MARK)
     with repo.session() as s:
         store.record_read(s, "youtube", at=NOW, covered_since=NOW - timedelta(days=14))
@@ -183,7 +186,7 @@ class TestFeedStaysOnTheBox:
         # Empty, they cost the copy nothing: no scrub, no VACUUM, so a DB that
         # VACUUM cannot rewrite still ships, as it did on main.
         db = tmp_path / "flag-off.db"
-        TradeLogRepository(create_engine(f"sqlite:///{db}"))
+        TradeLogRepository(make_engine(f"sqlite:///{db}"))
         statements: list[str] = []
         real_scrub = backup._scrub_for_off_box
 
@@ -199,3 +202,65 @@ class TestFeedStaysOnTheBox:
         assert statements, "the spy saw no statement; the check below would prove nothing"
         assert not [s for s in statements if s.startswith(("DELETE", "UPDATE", "VACUUM"))]
 
+
+
+class TestLocalDbInWal:
+    """local.db runs in WAL (storage/engine.py): a committed row can live only in -wal.
+
+    The backup copies through a read connection, which reads the WAL, so no
+    sidecar has to be shipped; and the copy is made a single rollback-journal
+    file before the scrub, so the scrub is in the artifact, not in a sidecar.
+    """
+
+    UNCHECKPOINTED = "COMMITTED-ONLY-IN-THE-WAL-7c41"
+
+    def test_a_row_committed_but_not_checkpointed_reaches_the_artifact(
+        self, tmp_path: Path
+    ) -> None:
+        db = tmp_path / "local.db"
+        wal = tmp_path / "local.db-wal"
+        # The pool keeps this engine's connections open, as the API's is on the
+        # box, so nothing closes the last connection and checkpoints.
+        repo = TradeLogRepository(engine=make_engine(f"sqlite:///{db}"))
+        repo.save_decision(AgentDecision(
+            ticker="META", market="US", quote_currency="USD", rating="Hold", reasoning=[],
+            timestamp_utc=NOW, decision_id="dec-wal", final_decision_text=self.UNCHECKPOINTED,
+        ))
+        # The precondition this test is about: committed, yet only in the WAL.
+        assert self.UNCHECKPOINTED.encode() in wal.read_bytes()
+        assert self.UNCHECKPOINTED.encode() not in db.read_bytes()
+
+        conn = _restore(tmp_path, backup._dump_sqlite_gz(db))
+        assert conn.execute(
+            "SELECT final_decision_text FROM agent_decisions WHERE decision_id = 'dec-wal'"
+        ).fetchall() == [(self.UNCHECKPOINTED,)]
+        # Still un-checkpointed: the backup read the live file, it did not move it.
+        assert self.UNCHECKPOINTED.encode() not in db.read_bytes()
+        repo.engine.dispose()
+
+    def test_the_artifact_is_one_rollback_journal_file(self, live_db: Path) -> None:
+        assert sqlite3.connect(live_db).execute("PRAGMA journal_mode").fetchone() == ("wal",)
+        raw = gzip.decompress(backup._dump_sqlite_gz(live_db))
+        # Header bytes 18/19 are the file format versions: 2 is WAL, 1 legacy.
+        # A WAL-mode artifact would need a -wal beside it to be complete.
+        assert raw[18:20] == b"\x01\x01"
+
+    def test_the_copy_leaves_no_sidecar_behind(
+        self, live_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        scratch = tmp_path / "scratch"
+        scratch.mkdir()
+        monkeypatch.setattr(tempfile, "tempdir", str(scratch))
+        backup._dump_sqlite_gz(live_db)
+        assert list(scratch.iterdir()) == []
+
+    def test_a_copy_that_cannot_leave_wal_is_refused_before_the_scrub(self) -> None:
+        class Stuck:
+            def execute(self, _sql: str) -> Stuck:
+                return self
+
+            def fetchone(self) -> tuple[str]:
+                return ("wal",)
+
+        with pytest.raises(RuntimeError, match="refusing to scrub"):
+            backup._single_file(Stuck())  # type: ignore[arg-type]

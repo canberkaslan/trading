@@ -14,8 +14,12 @@ keeps meaning "a key or dependency is broken", and the gaps are recorded for
 
 from __future__ import annotations
 
+import io
 from datetime import UTC, datetime, timedelta
+from email.message import Message
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import Request
 
 import httpx
 import pytest
@@ -50,6 +54,7 @@ def other_checks_pass(monkeypatch: pytest.MonkeyPatch, state_file: Path) -> None
     for name in _HARD_CHECKS:
         monkeypatch.setattr(preflight, name, lambda failures: None)
     monkeypatch.setattr(preflight, "_check_fred", lambda: None)
+    monkeypatch.setattr(preflight, "_check_stocktwits", lambda: "ok")
 
 
 def _anthropic_refused(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -137,7 +142,7 @@ class TestAlertingGapsAreNotFailures:
 
         # The token was exercised with a read, and nothing was sent.
         assert [(m, p) for m, p, _ in fake_github.requests] == [
-            ("GET", "/repos/canberkaslan/trading/actions/workflows/box-alert.yml")
+            ("GET", "/repos/fusapp/trading/actions/workflows/box-alert.yml")
         ]
         assert fake_github.dispatches == []
         record = read_preflight(state_file)
@@ -247,3 +252,116 @@ def test_a_record_that_cannot_be_written_never_fails_preflight(
 
     assert preflight.main() == 0
     assert "could not record the result" in capsys.readouterr().err
+
+
+class TestDbWritable:
+    """A SELECT passes on a WAL database whose sidecars cannot be written; a write does not."""
+
+    def _db(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        from sqlalchemy import text
+
+        from tradingagents_us.storage import make_engine
+
+        db = tmp_path / "local.db"
+        url = f"sqlite:///{db}"
+        engine = make_engine(url)
+        conn = engine.connect()  # held open, as the API does: keeps -wal/-shm on disk
+        conn.execute(text("CREATE TABLE t (x INTEGER)"))
+        conn.execute(text("INSERT INTO t VALUES (1)"))
+        conn.commit()
+        monkeypatch.setenv("TRADE_LOG_DB_URL", url)
+        return db, conn
+
+    def test_a_writable_db_passes(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        _db, conn = self._db(tmp_path, monkeypatch)
+        failures: list = []
+        try:
+            preflight._check_db(failures)
+        finally:
+            conn.close()
+        assert failures == []
+
+    def test_unwritable_sidecars_fail_the_check(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db, conn = self._db(tmp_path, monkeypatch)
+        sidecars = [Path(f"{db}-wal"), Path(f"{db}-shm")]
+        assert all(p.exists() for p in sidecars)  # the premise: WAL is on
+        for p in sidecars:
+            p.chmod(0o444)
+        failures: list = []
+        try:
+            preflight._check_db(failures)
+        finally:
+            for p in sidecars:
+                p.chmod(0o644)
+            conn.close()
+        assert failures, "a DB that cannot take the write lock must fail preflight"
+        assert failures[0][0] == "db"
+
+
+class TestStocktwitsIsReportedNotFailed:
+    """The sentiment analyst ran without StockTwits from 2026-09-14 and nothing said so.
+
+    The source answers a Cloudflare bot challenge to every request. Preflight now
+    names that on stderr, as a standing outage rather than a blip, and never fails
+    on it: there is no key to rotate.
+    """
+
+    def _answer(
+        self, monkeypatch: pytest.MonkeyPatch, status: int, headers: dict[str, str] | None = None
+    ) -> list[Request]:
+        seen: list[Request] = []
+
+        reply_headers = Message()
+        for key, value in (headers or {}).items():
+            reply_headers[key] = value
+
+        def fake_urlopen(req: Request, timeout: float) -> io.BytesIO:
+            seen.append(req)
+            if status != 200:
+                raise HTTPError(req.full_url, status, "Forbidden", reply_headers, None)
+            return io.BytesIO(b'{"messages": []}')
+
+        monkeypatch.setattr(preflight, "urlopen", fake_urlopen)
+        return seen
+
+    def test_a_bot_challenge_is_named_as_a_standing_outage(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self._answer(monkeypatch, 403, {"cf-mitigated": "challenge"})
+        msg = preflight._check_stocktwits()
+        assert "Cloudflare bot challenge" in msg and "standing outage" in msg
+        assert "Cloudflare bot challenge" in capsys.readouterr().err
+
+    def test_a_plain_403_is_not_called_a_challenge(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._answer(monkeypatch, 403)
+        msg = preflight._check_stocktwits()
+        assert msg == "StockTwits answered HTTP 403 (soft)"
+
+    def test_probe_sends_the_fetchers_own_request(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from tradingagents.dataflows.stocktwits import _UA
+
+        seen = self._answer(monkeypatch, 200)
+        assert preflight._check_stocktwits() == "ok"
+        assert seen[0].full_url.endswith("/api/2/streams/symbol/SPY.json")
+        assert seen[0].get_header("User-agent") == _UA
+
+    def test_unreachable_is_soft(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def boom(req: Request, timeout: float) -> io.BytesIO:
+            raise URLError("no route")
+
+        monkeypatch.setattr(preflight, "urlopen", boom)
+        assert preflight._check_stocktwits().startswith("StockTwits unreachable (soft)")
+
+    def test_a_dead_source_never_fails_preflight(
+        self, other_checks_pass: None, fake_github: FakeGitHub, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HEALTHCHECK_URL", HC)
+        monkeypatch.setattr(
+            preflight,
+            "_check_stocktwits",
+            lambda: "StockTwits blocked by a Cloudflare bot challenge (HTTP 403)",
+        )
+        assert preflight.main() == 0
+        assert fake_github.opened == []

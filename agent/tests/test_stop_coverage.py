@@ -9,6 +9,8 @@ second stop on shares that already have one.
 
 from __future__ import annotations
 
+import itertools
+
 import pytest
 
 from tradingagents_us.risk.stop_coverage import (
@@ -23,7 +25,10 @@ from tradingagents_us.risk.stop_coverage import (
 )
 
 
-def order(symbol="AAPL", side="sell", order_type="stop", status="held", qty=10.0, stop=190.0):
+def order(
+    symbol="AAPL", side="sell", order_type="stop", status="held", qty=10.0, stop=190.0,
+    own_exit=False,
+):
     return OrderView(
         symbol=symbol,
         side=side,
@@ -31,6 +36,14 @@ def order(symbol="AAPL", side="sell", order_type="stop", status="held", qty=10.0
         status=status,
         remaining_qty=qty,
         stop_price=stop,
+        own_exit=own_exit,
+    )
+
+
+def own_exit(symbol="GOOGL", qty=32.0, status="accepted"):
+    """Our time exit: one market sell for the lot, queued for the open."""
+    return order(
+        symbol=symbol, order_type="market", status=status, qty=qty, stop=None, own_exit=True
     )
 
 
@@ -189,6 +202,120 @@ def test_sell_stop_does_not_protect_a_short():
 def test_stop_on_a_different_symbol_does_not_protect():
     report = coverage([long_position("AAPL", 10)], [order(symbol="MSFT", qty=10)])
     assert report.symbols[0].naked_qty == 10
+
+
+# --------------------------------------------------------------------------
+# our own time exit: exiting, neither protected nor naked
+# --------------------------------------------------------------------------
+
+
+def test_our_working_exit_covers_the_lot_as_exiting():
+    """2026-10-05: GOOGL's stops released, one market sell for all 32 queued
+    for the open under the exit's stamp. Not naked, and not a stop either."""
+    report = coverage([long_position("GOOGL", 32)], [own_exit()])
+    row = report.symbols[0]
+    assert row.exiting_qty == 32
+    assert row.protected_qty == 0
+    assert row.naked_qty == 0
+    assert row.indeterminate_qty == 0
+    assert row.is_covered
+    assert not row.is_fully_protected  # no stop: a snapshot shows none
+    assert not row.is_actionable  # a back-fill beside it is refused, or a short
+    assert report.exiting_qty == 32
+    assert report.naked_pct == 0.0
+    assert report.protected_qty == 0
+
+
+def test_the_same_market_sell_not_flagged_as_ours_is_naked():
+    """By its stamp, never its type: anyone's market sell reserves the shares,
+    and nothing says when it goes away."""
+    foreign = order(symbol="GOOGL", order_type="market", status="accepted", qty=32, stop=None)
+    row = coverage([long_position("GOOGL", 32)], [foreign]).symbols[0]
+    assert row.naked_qty == 32
+    assert row.exiting_qty == 0
+    assert row.is_actionable
+
+
+def test_an_exit_for_fewer_shares_than_held_leaves_the_rest_naked():
+    row = coverage([long_position("GOOGL", 32)], [own_exit(qty=20)]).symbols[0]
+    assert row.exiting_qty == 20
+    assert row.naked_qty == 12
+    assert row.is_actionable
+    assert not row.is_covered
+
+
+def test_an_exit_covers_only_what_no_stop_covers():
+    row = coverage(
+        [long_position("GOOGL", 32)], [order(symbol="GOOGL", qty=10), own_exit(qty=22)]
+    ).symbols[0]
+    assert (row.protected_qty, row.exiting_qty, row.naked_qty) == (10, 22, 0)
+    assert row.excess_qty == 0
+    assert row.stop_prices == (190.0,)
+
+
+def test_an_exit_that_is_not_live_covers_nothing_and_leaves_no_doubt():
+    """Refused, expired, done for the day: a day order that sells nothing more.
+    Being cancelled, suspended, or in a status nobody knows: not the lot's way
+    out at the open. None of them is protection, so none is indeterminate."""
+    for status in sorted(TERMINAL_STATUSES | AMBIGUOUS_STATUSES | {"brand_new_status"}):
+        row = coverage([long_position("GOOGL", 32)], [own_exit(status=status)]).symbols[0]
+        assert (row.naked_qty, row.exiting_qty, row.indeterminate_qty) == (32, 0, 0), status
+
+
+def test_a_partially_filled_exit_covers_only_its_remainder():
+    row = coverage(
+        [long_position("GOOGL", 32)], [own_exit(qty=12, status="partially_filled")]
+    ).symbols[0]
+    assert row.exiting_qty == 12
+    assert row.naked_qty == 20
+
+
+def test_a_sell_flagged_as_our_exit_does_not_cover_a_short():
+    short = PositionView(symbol="GOOGL", qty=32, side="short")
+    row = coverage([short], [own_exit()]).symbols[0]
+    assert row.naked_qty == 32
+    assert row.exiting_qty == 0
+
+
+def test_a_stamped_stop_is_protection_counted_once():
+    row = coverage(
+        [long_position("GOOGL", 32)],
+        [order(symbol="GOOGL", qty=32, own_exit=True)],
+    ).symbols[0]
+    assert (row.protected_qty, row.exiting_qty, row.naked_qty) == (32, 0, 0)
+
+
+def test_a_stop_standing_beside_our_exit_is_excess():
+    """Two live sells for the same shares: whichever fills second is a short."""
+    row = coverage(
+        [long_position("GOOGL", 32)], [order(symbol="GOOGL", qty=32), own_exit()]
+    ).symbols[0]
+    assert row.excess_qty == 32
+    assert row.naked_qty == 0
+
+
+def test_an_exit_with_no_position_under_it_covers_no_other_name():
+    report = coverage([long_position("AAPL", 10)], [own_exit("GOOGL")])
+    assert report.symbols[0].naked_qty == 10
+    assert report.exiting_qty == 0
+
+
+def test_the_four_buckets_always_sum_to_the_holding():
+    """min(protected, held) + exiting + indeterminate + naked == held, in every mix."""
+    for held, stop, leaving, doubt in itertools.product(
+        (0.5, 1, 7, 32), (0, 3, 32, 40), (0, 5, 32, 50), (0, 4, 32)
+    ):
+        orders = [
+            order(symbol="GOOGL", qty=stop),
+            own_exit(qty=leaving),
+            order(symbol="GOOGL", status="pending_cancel", qty=doubt),
+        ]
+        row = coverage([long_position("GOOGL", held)], orders).symbols[0]
+        parts = (row.exiting_qty, row.indeterminate_qty, row.naked_qty)
+        assert all(p >= 0 for p in parts), (held, stop, leaving, doubt, row)
+        assert min(row.protected_qty, held) + sum(parts) == pytest.approx(held), (
+            held, stop, leaving, doubt, row,
+        )
 
 
 # --------------------------------------------------------------------------

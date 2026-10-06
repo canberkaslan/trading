@@ -20,7 +20,9 @@ it works. What is left in doubt is only its own requests: a cancel that has not
 landed, a POST whose reply was lost. Neither is assumed. Each is settled by
 reading the broker (the order's status, the client id it went under, the
 listing, the holding), and where no read settles it the step stops there, says
-so, and the next daily run reads the book again.
+so, and the next daily run reads the book again. The listing lags the others
+for seconds after a write, so one older than what the close read by id is read
+again until it catches up (`listing_behind`), and is unreadable if it never does.
 
 Between two sellers the broker is the arbiter. Alpaca refuses a sell for more
 than the holding less what open sells reserve, so an exit and a stop sized off
@@ -156,6 +158,14 @@ EXIT_LOOKUP_DELAYS_S = (1.0, 2.0, 4.0, 8.0, 8.0)
 #: Attempts at the broker's truth (the symbol's orders, then its holding), and
 #: the pauses between them.
 TRUTH_READ_DELAYS_S = (0.0, 1.0, 2.0)
+
+#: Pauses before each re-read of a listing that is behind this close's own
+#: reads (`listing_behind`). Alpaca's listing lags its per-order reads right
+#: after a write, and catches up: on 2026-10-05 GOOGL's verdict listed three
+#: sells working that get_order had read cancelled, and the broker showed one
+#: seller seconds later. A listing still behind after these (seven seconds)
+#: is no read of the book now, and counts as one that could not be read.
+LISTING_CATCH_UP_DELAYS_S = (1.0, 2.0, 4.0)
 
 #: How far back the calendar is read for the latest session's open: past the
 #: longest the exchange has stayed shut (four weekdays in September 2001, six
@@ -374,6 +384,11 @@ class _Ctx:
     wanted: float
     missed: tuple[str, ...] = ()
     reason: str = "time"
+    #: Orders read gone by their own id, and orders placed, before this
+    #: close began (`cover_beside_exit`: by the close it follows). A listing
+    #: must show them so before anything is decided off it (`_read_truth`).
+    gone: frozenset[str] = frozenset()
+    placed: frozenset[str] = frozenset()
 
 
 def _is_protective(order: Order) -> bool:
@@ -526,6 +541,8 @@ def cover_beside_exit(
     stop_price: float,
     covered: float = 0.0,
     sleep: Sleep | None = None,
+    released: Collection[str] = (),
+    rearmed: Collection[str] = (),
 ) -> CloseOutcome:
     """Back-fill a lot whose exit under `stamp` was sent and never found.
 
@@ -541,12 +558,19 @@ def cover_beside_exit(
     `qty`: held to `qty` alone, a back-fill that never stood read as done
     beside a stop that was there before it.
 
+    `released` and `rearmed` are the sells the close before it read gone by
+    id and the orders it placed: its verdict waits for a listing that shows
+    them so (`listing_behind`).
+
     `unchanged` when the stop stands (the exit can no longer land),
     `exit_submitted` when the exit got there first, and `naked` or `unknown`
     otherwise.
     """
     sleep = sleep or time.sleep
-    ctx = _Ctx(client, ticker, stamp, _NO_BOOK, _Release(), sleep, wanted=covered + qty)
+    ctx = _Ctx(
+        client, ticker, stamp, _NO_BOOK, _Release(), sleep, wanted=covered + qty,
+        gone=frozenset(released), placed=frozenset(rearmed),
+    )
     try:
         shut = _market_shut(client.clock())
     except Exception as exc:  # noqa: BLE001 — no clock, no write
@@ -920,12 +944,51 @@ def _send_cancel(client: AlpacaClient, order: Order, release: _Release) -> None:
     release.sent[order.id] = order
 
 
-def _read_truth(ctx: _Ctx) -> _Truth | str:
-    """The symbol's sells, then its holding, as the broker has them now.
+def listing_behind(
+    orders: Iterable[Order], gone: Iterable[str], placed: Iterable[str]
+) -> list[str]:
+    """How a listing (flattened) is older than reads by id: empty when it is not.
 
-    The error text instead when every attempt failed: the caller then has no
-    truth to act on and says so.
+    An order read gone (`RELEASED_STATUSES`) by its own id that the listing
+    still shows in another status, or one placed (its POST answered, or found
+    by its client id) that it does not show at all: the book as it stood
+    before a write a read by id has already seen. An order read gone and not
+    listed is no sign of either: an old one falls past the listing's limit.
     """
+    listed = {o.id: o.status.lower() for o in orders}
+    stale = [
+        f"{oid} listed {listed[oid]}" for oid in sorted(gone)
+        if oid in listed and listed[oid] not in RELEASED_STATUSES
+    ]
+    return stale + [f"{oid} not listed" for oid in sorted(placed) if oid not in listed]
+
+
+def _read_truth(ctx: _Ctx, placed: Iterable[str] = ()) -> _Truth | str:
+    """The symbol's sells, then its holding, off a listing no older than this close's own reads.
+
+    Read again while the listing is behind what the close read gone by id or
+    placed (`listing_behind`, `LISTING_CATCH_UP_DELAYS_S`): whatever such a
+    listing says, the book has moved past it. The error text instead when
+    every attempt failed, or the listing never caught up: the caller then
+    has no truth to act on and says so.
+    """
+    gone = ctx.gone | {after.id for _, after in ctx.release.pairs}
+    known = ctx.placed | set(placed)
+    for delay in (0.0, *LISTING_CATCH_UP_DELAYS_S):
+        if delay:
+            ctx.sleep(delay)
+        truth = _read_once(ctx)
+        if isinstance(truth, str):
+            return truth
+        behind = listing_behind(truth.book.records.values(), gone, known)
+        if not behind:
+            return truth
+    waited = sum(LISTING_CATCH_UP_DELAYS_S)
+    return f"the listing is still behind this close's own reads {waited:g}s on: {', '.join(behind)}"
+
+
+def _read_once(ctx: _Ctx) -> _Truth | str:
+    """The symbol's sells, then its holding, as listed now; the error text if unreadable."""
     error = ""
     for delay in TRUTH_READ_DELAYS_S:
         if delay:
@@ -1048,7 +1111,7 @@ def _put_back(
     never both. And where the fresh read shows the exit standing after all,
     nothing goes back beside it.
     """
-    truth = _read_truth(ctx)
+    truth = _read_truth(ctx, [exit_order.id] if exit_order else [])
     if isinstance(truth, str):
         cover = sum(_remaining(o) for o in ctx.release.protective)
         placed = _place_stops(ctx, ctx.release.protective, cover)
@@ -1206,7 +1269,7 @@ def _settle(
     placed = placed or _Placed()
     if placed.errors:
         why += f"; re-arm failed: {'; '.join(placed.errors)}"
-    truth = _read_truth(ctx)
+    truth = _read_truth(ctx, [*placed.ids, *([exit_order.id] if exit_order else [])])
     if isinstance(truth, str):
         return _outcome(
             ctx, "unknown", f"{why}; the end state could not be read: {truth}", placed,

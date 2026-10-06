@@ -42,6 +42,7 @@ from tradingagents_us.execution.protected_close import (
     CANCEL_CONFIRM_INTERVAL_S,
     CANCEL_CONFIRM_POLLS,
     CANCEL_SETTLE_DELAYS_S,
+    LISTING_CATCH_UP_DELAYS_S,
     MAX_CLIENT_ID_LEN,
     MIN_TIME_TO_OPEN,
     _fit,
@@ -1031,6 +1032,71 @@ class TestTheVerdict:
         outcome = _close(fake)
 
         assert outcome.status == "naked" and "sells 10 of 15" in outcome.detail
+
+
+class TestAListingBehindTheCloseOwnReads:
+    """A listing older than what the close read by id is read again until it catches up.
+
+    Alpaca's listing lags its per-order reads right after a write, and
+    catches up within seconds (`lists_behind`). On 2026-10-05 GOOGL's verdict
+    listed three sells working that the release had read cancelled one by
+    one, and paged "two sellers" over a lot whose one seller was its exit.
+    """
+
+    def test_the_googl_shape_is_one_seller_once_the_listing_catches_up(self) -> None:
+        # A stop over most of the lot and two one-share brackets: all five
+        # sells released and read cancelled, the exit accepted, and the
+        # verdict's first two listings still the book from before any of it.
+        fake = _shut(
+            [_stop("stop-s", qty=8.0), _stop("sl-a", qty=1.0, status="held"),
+             _stop("sl-b", qty=1.0, status="held"),
+             _order("tp-a", "limit", qty=1.0), _order("tp-b", "limit", qty=1.0)],
+            oco={"tp-a": "sl-a", "tp-b": "sl-b"}, lists_behind=2,
+        )
+        sleeps: list[float] = []
+
+        outcome = _close(fake, sleeps)
+
+        assert outcome.status == "exit_submitted" and outcome.ok, outcome.detail
+        assert sleeps == list(LISTING_CATCH_UP_DELAYS_S[:2])
+        _assert_exiting_once(fake)
+
+    def test_a_listing_that_never_catches_up_is_no_read_of_the_book(self) -> None:
+        fake = _shut([_stop()], lists_behind=10**6)
+        sleeps: list[float] = []
+
+        outcome = _close(fake, sleeps)
+
+        assert outcome.status == "unknown" and not outcome.ok
+        assert "still behind this close's own reads" in outcome.detail
+        assert "stop-xom listed new" in outcome.detail and "not listed" in outcome.detail
+        assert sleeps == list(LISTING_CATCH_UP_DELAYS_S), "bounded, then it pages"
+        _assert_exiting_once(fake)
+
+    def test_a_refused_exit_puts_back_a_stop_the_listing_still_shows(self) -> None:
+        # Taken at its word, that listing has the released stop standing:
+        # nothing goes back, and the lot is left with no stop at all.
+        fake = _shut([_stop()], refuse_sell={"XOM"}, lists_behind=2)
+
+        outcome = _close(fake)
+
+        assert outcome.status == "unchanged", outcome.detail
+        assert _rearms(fake) == [(10.0, 90.0)]
+        _assert_protected_once(fake)
+
+    def test_a_back_fill_refused_beside_a_stop_its_close_released_is_naked(self) -> None:
+        # The close released the stop, read it cancelled, and never found its
+        # exit; the back-fill is refused. A listing still showing that stop is
+        # no cover, and the pass must not take the lot off its uncovered list.
+        fake = _shut([_stop()], refuse_stop={"XOM"}, lists_behind=2)
+        fake.cancel_order("stop-xom")
+
+        outcome = cover_beside_exit(
+            fake, "XOM", stamp=STAMP, qty=10.0, stop_price=90.0, sleep=lambda _: None,
+            released=["stop-xom"],
+        )
+
+        assert outcome.status == "naked", outcome.detail
 
 
 class TestAnExitThatDidNotSellAtTheOpen:

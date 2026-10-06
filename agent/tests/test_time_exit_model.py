@@ -184,7 +184,9 @@ back-fill the exit then refused), and nothing of I1-I9; and
 TestAListingBehindTheBook's replay of the GOOGL trace failed. With the lag
 made eventually consistent (`LISTING_CATCH_UP`), against main 0d6ab41, the
 exploration found the same two classes and nothing else, and the replay
-failed the same way: `unknown`, "two sellers", rc 3.
+failed the same way: `unknown`, "two sellers", rc 3. The fix reads a listing
+again, for seconds, while it is older than what the close read by id
+(`protected_close.listing_behind`); with it the exploration finds nothing.
 """
 
 from __future__ import annotations

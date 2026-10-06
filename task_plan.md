@@ -1335,6 +1335,26 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
   çoklu stop'ta en yüksek; order book hatası snapshot'ı düşürmez. 6 yeni test, suite 1833 pass /
   2 fail = laptop ölü Alpaca key (401). Box'a DEPLOY EDİLMEDİ (prod pull #52 kararına bağlı).
 
+## Daily loop 2026-10-06 (prod-fusapp01 @ee5d55c; eval 1M GO, 19 gün; StockTwits 23 gündür ölüymüş)
+- **Canlı durum** (box localhost): eval 1M **GO** — Sharpe 2.51, Sortino 4.85, MaxDD −1.52%,
+  +2.32% vs SPY +1.20%, 19/10 gün. Equity $112,619.49, cash $24,238.03, 8 pozisyon, günlük
+  +$1,104.79 (+0.99%). İlk yeni-kod koşusu (10-05 22:30) exit=0, 0 errored; GOOGL time-exit sell
+  10-06 açılışında dolacak. "NAKED GOOGL" + verdict listing-lag yanlış alarmları ayrı worktree'lerde
+  (`fix/naked-alert-working-exit`, `fix/time-exit-verdict-listing-lag`) ilerliyor → bugün dokunulmadı.
+- [x] **StockTwits Cloudflare bot challenge'ı preflight'ta görünür** (ee5d55c, prod'a deploy +
+  box'ta canlı doğrulandı). Box'un ilk gecesinden (09-14) beri her ticker `<stocktwits unavailable:
+  HTTPError>` alıyor: endpoint iki Scaleway box'tan da `403 cf-mitigated: challenge` dönüyor.
+  Fetcher tasarım gereği sessiz degrade ediyor, kimse raporlamıyordu → sentiment analyst 23 gündür
+  sadece news + Reddit okuyor (Reddit de 429 yiyor, backoff+retry ile çoğunlukla geçiyor; AAPL düştü).
+  `_check_stocktwits()` warn-only: fetcher'ın kendi isteği (URL + UA + **urllib** — laptop'ta
+  challenge client'a göre deterministik değil: bir koşuda httpx 403 / urllib 200, öbüründe tersi),
+  challenge'ı "standing outage" diye geçici hatadan ayırıyor, asla fail/page etmiyor (rotate
+  edilecek key yok). Challenge'ı aşmak = bot-detection bypass → YAPILMAZ. 5 yeni test, 2080 pass /
+  2 fail = laptop Alpaca key 401 (doğrulandı). Karar yoluna dokunmuyor.
+- **Sıradaki:** (a) StockTwits için karar: kaynağı prompt'tan çıkar (decision change → branch +
+  supervised run) ya da resmi/ücretli feed; (b) naked-alert + verdict-lag branch'lerinin merge'ü;
+  (c) alarmlar hâlâ kimseye gitmiyor (push cihazı yok, HEALTHCHECK_URL/OPS_ALERT_GITHUB_TOKEN boş) = Canberk.
+
 ## Daily loop 2026-10-05 (prod-fusapp01 @5887545 → 53f4da8; eval gün 22 GO)
 - **Canlı durum** (box localhost): eval 1M **GO** — Sharpe 1.66, Sortino 3.01, MaxDD −1.62%,
   +2.01% vs SPY −0.21%, 22/10 gün (değişmedi: hafta sonu). Equity $111,400.48, cash $24,238.03,

@@ -1074,6 +1074,18 @@ class TestAListingBehindTheCloseOwnReads:
         assert sleeps == list(LISTING_CATCH_UP_DELAYS_S), "bounded, then it pages"
         _assert_exiting_once(fake)
 
+    def test_one_that_never_catches_up_still_names_the_exit_the_close_holds(self) -> None:
+        # The exit's POST was answered. What follows the close (the re-cover,
+        # a back-fill beside the exit) waits for a listing that shows it, and
+        # only by its id: dropped here, a listing from before the exit was
+        # taken read as current, and the lot as naked beside an exit "never found".
+        fake = _shut([_stop()], lists_behind=10**6)
+
+        outcome = _close(fake)
+
+        (exit_order,) = fake.created
+        assert (outcome.exit_order_id, outcome.client_order_id) == (exit_order.id, STAMP)
+
     def test_a_refused_exit_puts_back_a_stop_the_listing_still_shows(self) -> None:
         # Taken at its word, that listing has the released stop standing:
         # nothing goes back, and the lot is left with no stop at all.

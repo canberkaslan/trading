@@ -1283,6 +1283,7 @@ def _settle(
         return _outcome(
             ctx, "unknown", f"{why}; the end state could not be read: {truth}", placed,
             client_order_id=ctx.stamp if exit_open or exit_order else None,
+            exit_order_id=exit_order.id if exit_order else None,
         )
     return _verdict(ctx, why, truth, exit_order, exit_open, placed)
 

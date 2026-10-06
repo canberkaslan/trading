@@ -961,6 +961,25 @@ class TestAListingAfterATimeExitHasCaughtUpWithIt:
         assert uncovered == ["XOM unknown", f"XOM naked beside exit {XOM_EXIT_ID}"]
         assert sleeps == list(LISTING_CATCH_UP_DELAYS_S[:2])
 
+    def test_a_back_fill_beside_an_exit_is_handed_the_exit_its_close_holds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The lot's closes went on as a generator, spent on the released
+        # stops before the orders placed were read off it: cover_beside_exit
+        # never waited for a listing that shows the exit or a re-arm.
+        handed: dict = {}
+        monkeypatch.setattr(
+            mp, "cover_beside_exit",
+            lambda *a, **kw: handed.update(kw) or CloseOutcome("XOM", "unchanged", ""),
+        )
+        close = dataclasses.replace(self.CLOSE, exit_order_id="market-XOM-1", rearmed=("re",))
+
+        mp._cover_beside_exit(
+            FakeBroker([]), PlaceStop("XOM", 10.0, 90.0, 2.0), XOM_EXIT_ID, [], 0.0, [close]
+        )
+
+        assert (handed["released"], handed["rearmed"]) == ({"stop-xom"}, {"market-XOM-1", "re"})
+
     def test_a_lot_s_lagging_listing_holds_up_no_other_lot(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1043,6 +1062,50 @@ class TestALotsListingThatNeverCatchesUpThroughThePass:
         assert "re-cover could not read the book for T0: listing behind: stop-T0 listed new" in (
             caplog.text
         )
+
+
+class _ListsTheExitLate(FakeBroker):
+    """After the exit's POST: four listings still show the stop working and no exit, six
+    more the stop cancelled and still no exit. get_order and the holding are current."""
+
+    late = 0
+
+    def list_orders(self, status: str = "open", limit: int = 50, nested: bool = False):
+        listed = super().list_orders(status, limit, nested)
+        if not self._sold or self.late >= 10:
+            return listed
+        self.late += 1
+        listed = [o for o in listed if o.client_order_id != XOM_EXIT_ID]
+        if self.late <= 4:
+            listed = [dataclasses.replace(o, status="new") if o.id == "stop-xom" else o
+                      for o in listed]
+        return listed
+
+
+class TestAnExitTheListingNeverShowedThroughThePass:
+    def test_the_re_cover_waits_for_it_and_places_nothing_beside_it(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The exit is accepted and holds every share. The close's listings
+        # never catch up, and it pages `unknown`. The re-cover's first listing
+        # shows the stop gone and no exit yet: it is older than the exit's
+        # POST reply, and off it the lot read naked, got a back-fill beside
+        # its exit (refused, held_for_orders 10), and was paged as naked
+        # beside an exit "never found".
+        caplog.set_level(logging.INFO, logger="manage_positions")
+        monkeypatch.setattr(mp.time, "sleep", lambda _: None)
+        fake = _ListsTheExitLate(
+            positions=[_position("XOM", 100.5)], orders=[_stop("stop-xom", "XOM", 90.0)],
+            fills=[_buy("XOM")], exit_status="accepted",
+        )
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        (exit_order,) = fake.created
+        assert rc == mp.EXIT_UNCOVERED
+        assert fake.writes == [("cancel_order", "stop-xom"), XOM_EXIT], "nothing beside the exit"
+        assert f"order {exit_order.id} ({XOM_EXIT_ID})" in caplog.text
+        assert "never found" not in caplog.text
 
 
 class _SoldWhileXomIsReleased(FakeBroker):

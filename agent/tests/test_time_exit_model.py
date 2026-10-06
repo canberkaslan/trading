@@ -41,9 +41,11 @@ starts until run 1 ends, every answer it gives is a choice:
       are current. Alpaca's listing lags its per-order reads right after a
       write: on 2026-10-05 GOOGL's verdict listed three sells working that the
       release had read cancelled, one by one, seconds before. And it catches
-      up, as Alpaca's did seconds later: once the book stops changing, at most
-      `LISTING_CATCH_UP` (two) listings in a row lag it, and every one after
-      them is current until the next change.
+      up, as Alpaca's did seconds later: on the model's clock, a listing
+      `LISTING_CATCH_UP_S` (five seconds) after the last change is current
+      until the next one, so a close that lists again at once may meet the
+      same lag, and only one that waits sees it caught up. Or it never
+      catches up (`stuckK`): it serves that book to the end of the run.
 
 The model keeps the Alpaca rules the close relies on: an open sell reserves its
 shares, and while the lot is long a sell for more than is unreserved is refused
@@ -110,7 +112,9 @@ cancelled and never replaced has lost its way out as surely as a stop.
       Not a cancel left pending or a bracket sibling left behind: those
       leave the broker itself in doubt. A listing behind the book (i) is an
       answered read, and no fault here: what it shows stale or leaves out
-      the close read by its id. A run 2 armed the same way
+      the close read by its id. One that never catches up holds I8 to one
+      such write, and not to rc 0 or 1: the close and the re-cover then
+      have no listing to decide from, and page. A run 2 armed the same way
       (`Harness.run2_chooser`, pinned schedules only) is held to the same
       end state on a lot it found protected, in place of I2.
   I9  Liveness. A run 2 that met a clean broker takes a lot still due for its
@@ -125,8 +129,12 @@ cancelled and never replaced has lost its way out as surely as a stop.
       working what the close read gone by its id, or does not show yet what
       it placed, is no second seller and no bare share. GOOGL's time exit of
       2026-10-05 went as planned and was called `unknown`, two sellers, rc 3.
-      With lag beside any other fault I1-I9 hold as before: what the close
-      takes from its own reads over the listing must hide no real gap.
+      A listing that never catches up may end run 1 in the page (rc 3)
+      instead. Either way run 1 takes at most `LISTING_PATIENCE_S` (30 s)
+      longer than against a clean broker: one that waits for the listing
+      for good pages no one. With lag beside any other fault I1-I9 hold as
+      before: what the close takes from its own reads over the listing must
+      hide no real gap.
 
 Exploration, all of it deterministic, for each of run 1's three times:
 
@@ -184,10 +192,11 @@ classes, `exit_submitted` rc 0 turned into `unknown` with rc 3 (the page) or
 with rc 1 (a second lagging listing hid the exit from the re-cover, whose
 back-fill the exit then refused), and nothing of I1-I9; and
 TestAListingBehindTheBook's replay of the GOOGL trace failed. With the lag
-made eventually consistent (`LISTING_CATCH_UP`), against main 0d6ab41, the
-exploration found the same two classes, and the replay failed the same way:
-`unknown`, "two sellers", rc 3. That was before I8 held a lagging listing
-beside a refused or lost write (`ModelBroker.settled_writes`). Since then,
+made eventually consistent (then in listings, now `LISTING_CATCH_UP_S`),
+against main 0d6ab41, the exploration found the same two classes, and the
+replay failed the same way: `unknown`, "two sellers", rc 3. That was before
+I8 held a lagging listing beside a refused or lost write
+(`ModelBroker.settled_writes`). Since then,
 0d6ab41's after-close exhaustive exploration finds 557 violations in six
 classes: the two of I10 (56), I8 rc 3 over a lot fully covered at the start
 with at most one such write (439), and I8 shares left with no stop after
@@ -198,7 +207,14 @@ back-fill, and 4 shares spend the night with no stop. On main, a lagging
 listing beside a refused exit leaves shares naked, not only a false page.
 The fix reads a listing again, for seconds, while it is older than what the
 close read by id (`protected_close.listing_behind`); with it the exploration
-finds nothing.
+finds nothing. The lag was first counted in listings: two in a row at most.
+That passed a close that read again with no wait, one that read 200 times,
+and one that decided off its last stale listing, since no listing past the
+second ever lagged. On the clock, and stuck for good, it catches them
+(TestTheHarnessHasTeeth), save a re-cover that decides off a stale listing:
+on one lot the broker refuses a back-fill sized off one beside the stops or
+the exit standing, so that breaks no invariant, and only
+test_manage_positions holds the re-cover to the page.
 """
 
 from __future__ import annotations
@@ -276,22 +292,22 @@ RUN1 = {
     "in-session": (tem.RUN1_AT, True),
 }
 
-#: Each exploration's floor, about three quarters of what it covers (599k
-#: scenarios after the close, either time, and 11.7k in the session; 505k
-#: and 10.5k before listings could lag): the margin the original
-#: 200k-of-266k floor kept. In the session the close defers at its first
-#: read, so there is little left to explore: the fills it meets, the
-#: re-cover, and run 2.
-EXHAUSTIVE_FLOOR = {"after-close": 449_000, "past-midnight": 449_000, "in-session": 8_800}
+#: Each exploration's floor, about three quarters of what it covers (772k
+#: scenarios after the close, either time, and 13.0k in the session; 599k
+#: and 11.7k with the lag counted in listings and never stuck, 505k and
+#: 10.5k before listings could lag): the margin the original 200k-of-266k
+#: floor kept. In the session the close defers at its first read, so there
+#: is little left to explore: the fills it meets, the re-cover, and run 2.
+EXHAUSTIVE_FLOOR = {"after-close": 579_000, "past-midnight": 579_000, "in-session": 9_700}
 
 #: The due-only exploration's floor, about three quarters of what it covers
-#: (111k scenarios after the close, either time, and 9.3k in the session).
-DUE_ONLY_FLOOR = {"after-close": 83_000, "past-midnight": 83_000, "in-session": 7_000}
+#: (143k scenarios after the close, either time, and 10.4k in the session).
+DUE_ONLY_FLOOR = {"after-close": 107_000, "past-midnight": 107_000, "in-session": 7_800}
 
 #: Each streak exploration's floor, about three quarters of what it covers
-#: (7.4k scenarios after the close, either time, and 0.7k in the session, the
+#: (8.1k scenarios after the close, either time, and 0.7k in the session, the
 #: due-only books' among them).
-STREAK_FLOOR = {"after-close": 5_500, "past-midnight": 5_500, "in-session": 550}
+STREAK_FLOOR = {"after-close": 6_000, "past-midnight": 6_000, "in-session": 550}
 
 #: (seed, schedules, per-call event rate, per-call fault rate).
 RANDOM = (
@@ -486,6 +502,29 @@ class TestAListingBehindTheBook:
         if stats.findings:
             pytest.fail(report(harness, stats, "three_brackets: "), pytrace=False)
 
+    @pytest.mark.parametrize(("book", "script"), [
+        # Four listings in a row behind the book: the verdict's, then the
+        # re-cover's after a refused exit. Only a wait gets past the lag.
+        ("three_brackets", (("submit_order(market", "ok"), ("list_orders", "lag3", 4))),
+        ("stop", (("submit_order(market", "422"), ("list_orders", "ok", 2),
+                  ("list_orders", "lag1", 4))),
+        # Stuck for good: at the verdict, and at the put-back after a refused
+        # exit, which then puts back what the release read gone, by id.
+        ("three_brackets", (("submit_order(market", "ok"), ("list_orders", "stuck3"))),
+        ("stop", (("submit_order(market", "422"), ("list_orders", "stuck1"))),
+        ("two_stops", (("submit_order(market", "422"), ("list_orders", "stuck1"))),
+    ], ids=["verdict-lags-4", "re-cover-lags-4", "verdict-stuck", "put-back-stuck",
+            "put-back-stuck-2"])
+    def test_a_lag_past_three_listings_or_one_that_never_ends(
+        self, harness: Harness, book: str, script: tuple
+    ) -> None:
+        chooser = tem.Scripted(*script)
+        stats = Stats()
+        harness.evaluate(Scenario(book, ()), stats, chooser=chooser)
+        assert not chooser.rules, f"the schedule did not play out: {chooser.rules} left"
+        if stats.findings:
+            pytest.fail(report(harness, stats, f"{book}: "), pytrace=False)
+
 
 class TestARunPastMidnight:
     """Run 1 past 00:00 UTC stamps its exit with the trade date run 2 has too.
@@ -610,7 +649,8 @@ class TestTheModel:
 
     def test_a_listing_behind_the_book_catches_up_once_the_book_stops_changing(self) -> None:
         # However hard the chooser pulls the listing back, it lags a write for
-        # LISTING_CATCH_UP listings at most, and the next write starts it over.
+        # LISTING_CATCH_UP_S on the clock at most, read again at once or not,
+        # and the next write starts it over.
         b = build_book("stop")
         b.armed = True
         b.chooser = lambda i, kind, env, outs, what="": (
@@ -621,13 +661,31 @@ class TestTheModel:
             return {o.id: o.status for o in b.list_orders(status="all") if o.side == "sell"}
 
         b.cancel_order("stop-A")
-        assert [listed() for _ in range(4)] == [
-            *[{"stop-A": "new"}] * tem.LISTING_CATCH_UP, *[{"stop-A": "canceled"}] * 2
-        ]
+        assert [listed() for _ in range(10)] == [{"stop-A": "new"}] * 10, "no wait, no catch-up"
+        b.sleep(tem.LISTING_CATCH_UP_S)
+        assert listed() == {"stop-A": "canceled"}
         new = b.submit_order(symbol="XOM", qty=10, side="sell", order_type="stop",
                              time_in_force="gtc", stop_price=90.0, client_order_id="re")
         assert new.id not in listed(), "a write starts the lag over"
-        assert b.stale == [["stop-A"]] * (tem.LISTING_CATCH_UP + 1)
+        b.sleep(tem.LISTING_CATCH_UP_S)
+        assert new.id in listed()
+        assert b.stale == [["stop-A"]] * 11
+
+    def test_a_listing_stuck_behind_the_book_never_catches_up_in_that_run(
+        self, harness: Harness
+    ) -> None:
+        b = build_book("stop")
+        b.armed = True
+        b.chooser = lambda i, kind, env, outs, what="": (
+            None, "stuck1" if "stuck1" in outs else "ok"
+        )
+        b.cancel_order("stop-A")
+        for _ in range(5):
+            assert [(o.id, o.status) for o in b.list_orders(status="all")] == [("stop-A", "new")]
+            b.sleep(60.0)
+        b.armed = False
+        harness._main(b, tem.RUN2_AT, "due", arm=False)
+        assert b.frozen is None, "the next run starts with a listing as current as its reads"
 
     def test_a_client_order_id_is_unique(self) -> None:
         b = build_book("stop")
@@ -787,4 +845,73 @@ class TestTheHarnessHasTeeth:
         monkeypatch.setattr(pc, "_rearm", lambda ctx, truth: pc._Placed())
         monkeypatch.setattr(mp, "_recover_unclosed", lambda *a, **kw: 0)
         stats = explore_bounded(Harness(monkeypatch), "stop", 1)
+        assert any(c.startswith("I8 naked") for c in stats.findings), sorted(stats.findings)
+
+    def test_a_close_that_lists_again_at_once_while_the_listing_lags(
+        self, monkeypatch: pytest.MonkeyPatch, harness: Harness
+    ) -> None:
+        # GOOGL's verdict, its four listings with no wait between them: all
+        # four come inside the seconds the listing lags, and the close pages
+        # over a lot a clean broker closes (rc 0). Only a lag counted on the
+        # clock can tell: counted in listings, the third caught up, wait or not.
+        monkeypatch.setattr(pc, "LISTING_CATCH_UP_DELAYS_S", (0.0, 0.0, 0.0))
+        stats = Stats()
+        chooser = tem.Scripted(("submit_order(market", "ok"), ("list_orders", "lag3", 4))
+        harness.evaluate(Scenario("three_brackets", ()), stats, chooser=chooser)
+        assert not chooser.rules, f"the schedule did not play out: {chooser.rules} left"
+        assert "I10 listing lag alone turned exit_submitted rc=0 into unknown rc=3" in (
+            stats.findings
+        ), sorted(stats.findings)
+
+    def test_a_re_cover_that_lists_again_at_once_while_the_listing_lags(
+        self, monkeypatch: pytest.MonkeyPatch, harness: Harness
+    ) -> None:
+        # The exit refused and the stop put back: `unchanged`, rc 1. The
+        # re-cover's four listings, with no wait between them, all come
+        # before the listing shows the re-arm, and it pages (rc 3) over a
+        # lot as covered as it was, after one write the broker settled (I8).
+        monkeypatch.setattr(mp, "LISTING_CATCH_UP_DELAYS_S", (0.0, 0.0, 0.0))
+        stats = Stats()
+        chooser = tem.Scripted(
+            ("submit_order(market", "422"), ("list_orders", "ok", 2), ("list_orders", "lag1", 4)
+        )
+        harness.evaluate(Scenario("stop", ()), stats, chooser=chooser)
+        assert not chooser.rules, f"the schedule did not play out: {chooser.rules} left"
+        assert any(c.startswith("I8 rc=3") for c in stats.findings), sorted(stats.findings)
+
+    @pytest.mark.parametrize("module", [pc, mp], ids=["close", "re-cover"])
+    def test_one_that_waits_on_a_listing_that_never_catches_up_for_minutes(
+        self, monkeypatch: pytest.MonkeyPatch, harness: Harness, module: object
+    ) -> None:
+        # GOOGL's verdict listing stuck three changes back for good. The close
+        # and the re-cover after it each wait their seconds and page (rc 3);
+        # one that reads it again 200 times pages no sooner than minutes on.
+        monkeypatch.setattr(module, "LISTING_CATCH_UP_DELAYS_S", (1.0,) * 200)
+        stats = Stats()
+        chooser = tem.Scripted(("submit_order(market", "ok"), ("list_orders", "stuck3"))
+        harness.evaluate(Scenario("three_brackets", ()), stats, chooser=chooser)
+        assert not chooser.rules, f"the schedule did not play out: {chooser.rules} left"
+        assert any(c.startswith("I10 run 1 waited") for c in stats.findings), sorted(
+            stats.findings
+        )
+
+    def test_a_close_that_decides_off_a_listing_that_never_caught_up(
+        self, monkeypatch: pytest.MonkeyPatch, harness: Harness
+    ) -> None:
+        # The exit refused, and the put-back's listing stuck one change back
+        # for good: it shows stop-A working, which the release read cancelled.
+        # Taken at its word once the wait runs out, nothing goes back and the
+        # lot spends the night with no stop, after one write the broker
+        # settled. Paging there instead puts back what the release read gone.
+        real = pc._read_truth
+
+        def stale_at_end(ctx, placed=()):  # noqa: ANN001, ANN202
+            truth = real(ctx, placed)
+            return pc._read_once(ctx) if isinstance(truth, str) and "behind" in truth else truth
+
+        monkeypatch.setattr(pc, "_read_truth", stale_at_end)
+        stats = Stats()
+        chooser = tem.Scripted(("submit_order(market", "422"), ("list_orders", "stuck1"))
+        harness.evaluate(Scenario("stop", ()), stats, chooser=chooser)
+        assert not chooser.rules, f"the schedule did not play out: {chooser.rules} left"
         assert any(c.startswith("I8 naked") for c in stats.findings), sorted(stats.findings)

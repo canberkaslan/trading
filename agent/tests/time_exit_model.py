@@ -21,9 +21,12 @@ choice or the night settles it, landing or not), a bracket sibling cancelled
 with its leg, left live, or left pending, a 4xx refusal (429, 422), or for an
 order listing, the book as it stood up to `MAX_LISTING_LAG` changes back while
 every per-order read and the holding are current. The lag is eventually
-consistent, as Alpaca's is: once `LISTING_CATCH_UP` listings have been served
-since the book last changed, every listing is current until it changes again.
-Choice 0 everywhere is a clean, prompt broker.
+consistent, as Alpaca's is, on the model's clock: a listing served
+`LISTING_CATCH_UP_S` after the book last changed is current until it changes
+again, so one read again at once may lag as the last did, and one read after
+a wait has caught up. Or it never catches up (`stuckK`): every listing after it,
+to the end of the run, is that same book. Choice 0 everywhere is a clean,
+prompt broker.
 
 Time is the model's own: `Harness` hands the code under test `ModelBroker.sleep`
 as `time.sleep` and the model's clock as `time.monotonic`, so every wait the
@@ -130,15 +133,21 @@ READ_OUTCOMES = ("ok", "timeout")
 #: per-order reads right after a write: GOOGL, 2026-10-05, three orders
 #: get_order had read canceled were still listed working seconds later.
 MAX_LISTING_LAG = 3
-#: How many listings in a row may lag, once the book stops changing. Alpaca's
-#: listing is eventually consistent: it catches up with no further write, and
-#: the GOOGL listing showed one seller seconds after it showed three. So,
-#: counted from the last change to the book (a write that took effect, a fill,
-#: a late landing), the first `LISTING_CATCH_UP` list_orders calls may each be
-#: behind, and every one after them is current until the book changes again.
-#: Counted in calls, not seconds: a close that reads again at once gains
-#: nothing by it, and one that waits between reads is held to the same count.
-LISTING_CATCH_UP = 2
+#: How long a listing may lag, once the book stops changing. Alpaca's listing
+#: is eventually consistent: it catches up with no further write, and the
+#: GOOGL listing showed one seller seconds after it showed three. So, on the
+#: model's clock and counted from the last change to the book (a write that
+#: took effect, a fill, a late landing), a listing served within this many
+#: seconds may be behind, and every one after is current until the book
+#: changes again. Counted in seconds, not calls: a close that lists again at
+#: once may read the same lag again, and only one that waits reads it caught up.
+LISTING_CATCH_UP_S = 5.0
+#: Or the listing never catches up, for the rest of the run (`stuckK`): the
+#: close then has no listing to decide from, and pages. However long that
+#: lasts, it may cost run 1 this many seconds of its clock over the same run
+#: against a clean broker, no more: a close or a re-cover that keeps waiting
+#: for it pages no one until the six-hour unit timeout kills the run.
+LISTING_PATIENCE_S = 30.0
 CANCEL_OUTCOMES = (
     "ok", "pending", "pending_stuck", "timeout_applied", "timeout_lost", "timeout_late", "429",
 )
@@ -290,8 +299,11 @@ class ModelBroker:
         #: (`Harness._main`): the lag is seconds, not a night.
         self.history: list[dict[str, Rec]] = []
         self._kept: tuple | None = None
-        #: list_orders calls since the book last changed (`LISTING_CATCH_UP`).
-        self.listed_since_change = 0
+        #: When the book last changed, on the model's clock (`LISTING_CATCH_UP_S`).
+        self.changed_at = 0.0
+        #: The book a listing that never catches up serves to the end of the
+        #: run (`stuckK`), once one did.
+        self.frozen: dict[str, Rec] | None = None
         #: For each lagging listing served: the sells it showed working that
         #: no longer work, by id.
         self.stale: list[list[str]] = []
@@ -331,6 +343,7 @@ class ModelBroker:
         return self.base_time + timedelta(seconds=self.elapsed)
 
     def sleep(self, seconds: float) -> None:
+        self._keep()  # a change the last call made dates from before the wait
         self.elapsed += seconds
 
     def _new_id(self, role: str) -> str:
@@ -357,12 +370,12 @@ class ModelBroker:
         if state != self._kept:
             self._kept = state
             self.history.append({k: dataclasses.replace(r) for k, r in self.recs.items()})
-            self.listed_since_change = 0
+            self.changed_at = self.elapsed
 
     def _step(self, kind: str, what: str, target: Rec | None = None) -> str:
         """One broker call: time passes, then maybe an event, then the call's outcome."""
-        self.elapsed += CALL_S
         self._keep()
+        self.elapsed += CALL_S
         self._tick()
         self._keep()
         if not self.armed:
@@ -401,11 +414,13 @@ class ModelBroker:
         if kind == "list":
             # Only as far back as this run's book has changed: a lag past its
             # first state is that state, a choice no different from `ok`. And
-            # none once the listing has caught up (`LISTING_CATCH_UP`).
+            # none once the listing has caught up (`LISTING_CATCH_UP_S`), or
+            # is stuck for good (`frozen`), which `ok` then serves.
             depth = min(MAX_LISTING_LAG, len(self.history) - 1)
-            if self.listed_since_change >= LISTING_CATCH_UP:
+            if self.frozen is not None or self.elapsed - self.changed_at >= LISTING_CATCH_UP_S:
                 depth = 0
-            return READ_OUTCOMES + tuple(f"lag{k}" for k in range(1, depth + 1))
+            lags = range(1, depth + 1)
+            return (*READ_OUTCOMES, *(f"lag{k}" for k in lags), *(f"stuck{k}" for k in lags))
         if kind == "cancel":
             if target is None or target.status not in CANCELABLE:
                 return DEAD_CANCEL_OUTCOMES
@@ -672,15 +687,19 @@ class ModelBroker:
         A lagging listing shows each order as it stood then: one cancelled
         since still working, one placed since not at all. get_order and the
         holding are never behind (`MAX_LISTING_LAG`), and the listing catches
-        up once the book stops changing (`LISTING_CATCH_UP`).
+        up once the book stops changing (`LISTING_CATCH_UP_S`), unless it is
+        `stuckK`: then it serves that book to the end of the run.
         """
         out = self._step("list", f"list_orders({status})")
-        self.listed_since_change += 1
         if out == "timeout":
             raise _timeout()
         recs = self.recs
-        if out.startswith("lag"):
-            recs = self.history[-1 - int(out.removeprefix("lag"))]
+        if out.startswith(("lag", "stuck")):
+            recs = self.history[-1 - int(out.removeprefix("lag").removeprefix("stuck"))]
+            if out.startswith("stuck"):
+                self.frozen = recs
+        recs = self.frozen if self.frozen is not None else recs
+        if recs is not self.recs:
             self._note_stale(recs)
         if not nested:
             return [self._order(r) for r in recs.values()]
@@ -899,6 +918,8 @@ class ModelBroker:
         every order it shows stale or leaves out the close read by its id.
         Counted as one, I8 skipped every schedule with a lag in it, and no
         check held a refused write beside a lagging listing to precision.
+        One that never catches up is no fault here either, but I8 holds it
+        to less (`Harness._check_precision`).
         """
         applied = [a for a in self.applied[since:] if not _lagged(*a)]
         for kind, env, out in applied:
@@ -940,7 +961,7 @@ class ModelBroker:
 
 def _lagged(kind: str, env: str | None, out: str) -> bool:
     """Whether a choice is a listing behind the book, and nothing else."""
-    return kind == "list" and env is None and out.startswith("lag")
+    return kind == "list" and env is None and out.startswith(("lag", "stuck"))
 
 
 def build_book(name: str) -> ModelBroker:
@@ -1155,8 +1176,8 @@ class Harness:
         self.run2_choosers: list[Callable[..., Choice]] = []
         self._run2_memo: dict[tuple, Run2] = {}
         #: (book, run 1's time, open or not) -> what run 1 ends in on a clean
-        #: broker: the close's status and the run's exit code (I10).
-        self._clean_memo: dict[tuple, tuple[str | None, int]] = {}
+        #: broker: the close's status, the run's exit code and how long it took (I10).
+        self._clean_memo: dict[tuple, tuple[str | None, int, float]] = {}
         real_close = mp.close_with_protection
         real_cover = getattr(mp, "cover_beside_exit", None)
 
@@ -1209,7 +1230,7 @@ class Harness:
         self.broker, self.variant, self.arming = broker, variant, arm
         _ClockDT.current = at
         broker.base_time, broker.elapsed, broker.mark = at, 0.0, MARK[variant]
-        broker.history, broker._kept, broker.listed_since_change = [], None, 0
+        broker.history, broker._kept, broker.changed_at, broker.frozen = [], None, 0.0, None
         previous = logging.root.manager.disable
         if not broker.tracing:
             logging.disable(logging.CRITICAL)
@@ -1290,7 +1311,7 @@ class Harness:
                 add(cls, msg, scenario)
         after = _After(
             self, scenario, close, rc1, cover_wanted(scenario.book), add, stats, pick,
-            b.settled_writes(),
+            b.settled_writes(), b.frozen is not None,
         )
         nights = [scenario.night] if scenario.night is not None else b.night_choices()
         if pick is not None and scenario.night is None:
@@ -1301,15 +1322,15 @@ class Harness:
                 b.events = n.events
         return b
 
-    def _clean_run1(self, book: str) -> tuple[str | None, int]:
-        """Run 1 on `book` against a clean broker: the close's status and the run's exit code."""
+    def _clean_run1(self, book: str) -> tuple[str | None, int, float]:
+        """Run 1 on `book` against a clean broker: the close's status, rc and seconds."""
         key = (book, self.run1_at, self.market_open)
         if key not in self._clean_memo:
             b = build_book(book)
             b.market_open = self.market_open
             rc = self._main(b, self.run1_at, "due", arm=True)
             close = next((o for kind, o in b.outcomes if kind == "close"), None)
-            self._clean_memo[key] = (close.status if close else None, rc)
+            self._clean_memo[key] = (close.status if close else None, rc, b.elapsed)
         return self._clean_memo[key]
 
     def _check_lag(
@@ -1321,15 +1342,25 @@ class Harness:
         back by their own id, still working, and orders it placed not at all.
         Taken at its word, that pages over a close that went as planned: the
         GOOGL time exit of 2026-10-05 was called `unknown`, two sellers, rc 3.
+        One that never catches up (`stuckK`) may end it in the page instead,
+        and either way the wait costs run 1 seconds, not minutes.
         """
-        status, rc = self._clean_run1(book)
-        if (close.status, rc1) == (status, rc):
-            return []
-        return [(
-            f"I10 listing lag alone turned {status} rc={rc} into {close.status} rc={rc1}",
+        status, rc, seconds = self._clean_run1(book)
+        state = (
             f"{b.describe()} (close: {close.status}: {close.detail}; rc={rc1}; "
-            f"listed working though gone: {b.stale})",
-        )]
+            f"listed working though gone: {b.stale})"
+        )
+        out = []
+        stuck = b.frozen is not None
+        if (close.status, rc1) != (status, rc) and not (stuck and rc1 == mp.EXIT_UNCOVERED):
+            why = "a listing that never caught up" if stuck else "listing lag alone"
+            out.append((f"I10 {why} turned {status} rc={rc} into {close.status} rc={rc1}", state))
+        if b.elapsed - seconds > LISTING_PATIENCE_S:
+            out.append((
+                f"I10 run 1 waited over {LISTING_PATIENCE_S:g}s on a listing behind the book",
+                f"{b.elapsed - seconds:.1f}s longer than against a clean broker; {state}",
+            ))
+        return out
 
     @staticmethod
     def _check_run1(
@@ -1355,7 +1386,7 @@ class Harness:
     @staticmethod
     def _check_precision(
         close: pc.CloseOutcome, rc1: int, e1: str, n: ModelBroker, writes: int | None,
-        full: bool,
+        full: bool, stuck: bool = False,
     ) -> list[tuple[str, str]]:
         """I8: what a schedule of refused or lost writes, every read answered, must end in.
 
@@ -1367,14 +1398,19 @@ class Harness:
         knows it did, and exits 0 or 1, not 3: on a book that was fully
         covered at the start (`full`), since a back-fill of shares that were
         already naked is not the time exit's to vouch for.
+
+        Where a listing never caught up (`stuck`), the close and the re-cover
+        have none to decide from and page: I8 asks no rc 0 or 1 of them, nor
+        a re-cover behind a re-arm that failed. One such write still ends the
+        night flat, exiting or protected, off what the close read by id alone.
         """
-        if writes is None or writes > 2 or e1 == "short":
+        if writes is None or writes > (1 if stuck else 2) or e1 == "short":
             return []
         state = f"{n.describe()} (close: {close.status}; rc={rc1})"
         out: list[tuple[str, str]] = []
         if e1 not in ("flat", "exiting", "protected"):
             out.append((f"I8 {e1} after run 1 with {writes} refused or lost write(s)", state))
-        if writes <= 1 and full and rc1 == mp.EXIT_UNCOVERED:
+        if writes <= 1 and full and rc1 == mp.EXIT_UNCOVERED and not stuck:
             out.append((f"I8 rc=3 after run 1 with {writes} refused or lost write(s)", state))
         return out
 
@@ -1440,6 +1476,8 @@ class _After:
     pick: random.Random | None
     #: `ModelBroker.settled_writes` of run 1.
     writes: int | None = None
+    #: Whether a listing in run 1 never caught up (`ModelBroker.frozen`).
+    stuck: bool = False
 
     def night(self, b: ModelBroker, choice: tuple[str, ...]) -> ModelBroker:
         """Settle what run 1 left in flight one way, check, then every open after it."""
@@ -1450,7 +1488,7 @@ class _After:
         e1 = n.kind(self.wanted)
         n.trace(f"     == after the night: {e1}; {n.describe()}")
         precision = Harness._check_precision(
-            self.close, self.rc1, e1, n, self.writes, self.wanted >= QTY - EPS
+            self.close, self.rc1, e1, n, self.writes, self.wanted >= QTY - EPS, self.stuck
         )
         for cls, msg in (*Harness._check_run1(self.close, self.rc1, e1, n), *precision):
             self.add(cls, msg, sc)

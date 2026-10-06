@@ -1091,6 +1091,58 @@ class TestALotsListingThatNeverCatchesUpThroughThePass:
         )
 
 
+class _ListsStopT1AfterT0sBackFill(_RefusesReArms):
+    """The first listing after T0's back-fill is the book from before stop-T1's cancel.
+
+    Once, as Alpaca's listing lags; get_order, the client-id lookup and the
+    holding are current.
+    """
+
+    before_t1: dict[str, Order] | None = None
+
+    def cancel_order(self, order_id: str) -> dict:
+        if order_id == "stop-T1" and self.before_t1 is None:
+            self.before_t1 = dict(self.orders)
+        return super().cancel_order(order_id)
+
+    def submit_order(self, **kw) -> Order:
+        order = super().submit_order(**kw)
+        if (kw["symbol"], kw["order_type"]) == ("T0", "stop") and self.before_t1 is not None:
+            self.behind, self._behind_left = self.before_t1, 1
+        return order
+
+
+class TestEachLotsBackFillWaitsOnItsOwnClose:
+    def test_a_listing_behind_another_lot_s_close_is_read_again(
+        self, aged_book_db: str, monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # T0's and T1's exits and re-arms are refused. T1's back-fill is sized
+        # off the listing right after T0's, two changes behind (stop-T1's
+        # cancel, T0's back-fill; every stop is at its trail, so nothing is
+        # ratcheted between): it still shows stop-T1 working. Taken as it
+        # comes, T1 reads covered, its back-fill is skipped, and the lot
+        # spends the night with no stop.
+        caplog.set_level(logging.INFO, logger="manage_positions")
+        sleeps: list[float] = []
+        monkeypatch.setattr(mp.time, "sleep", sleeps.append)
+        fake = _ListsStopT1AfterT0sBackFill(
+            positions=[_position(s, 100.5) for s in AGED],
+            orders=[_stop(f"stop-{s}", s, 94.0) for s in AGED],
+            fills=[_buy(s) for s in AGED],
+            refuse_sell={"T0", "T1"},
+        )
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", aged_book_db)
+
+        assert rc == mp.EXIT_UNCOVERED, "the closes paged"
+        assert "replace_order" not in {w[0] for w in fake.writes}
+        for lot in ("T0", "T1"):
+            assert [(o.qty, o.stop_price) for o in fake.live_sells(lot)] == [(10.0, 94.0)], lot
+        assert "SKIP  back-fill" not in caplog.text
+        assert sleeps[-1] == LISTING_CATCH_UP_DELAYS_S[0], "one catch-up wait, for T1"
+
+
 class _ListsTheExitLate(FakeBroker):
     """After the exit's POST: four listings still show the stop working and no exit, six
     more the stop cancelled and still no exit. get_order and the holding are current."""

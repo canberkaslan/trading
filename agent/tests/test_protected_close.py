@@ -1140,6 +1140,43 @@ class TestAListingBehindTheCloseOwnReads:
         assert outcome.status == "naked", outcome.detail
         assert fake.live_sells("XOM") == []
 
+    def test_a_back_fill_beside_an_exit_waits_for_the_stop_its_close_put_back(self) -> None:
+        # The close put 6 of 10 shares back under rearm-6 and never found its
+        # exit; the other 4 are back-filled. The listing right after the
+        # back-fill shows it and not yet rearm-6, as GOOGL's showed the exit
+        # and not the cancels sent before it. Taken as it comes, 4 of 10
+        # covered, a lot under two standing stops was paged naked.
+        fake = _ListsTheBackFillFirst(
+            [_position()], [_stop("rearm-6", qty=6.0, coid=_rearm_id(STAMP, "stop-a"))]
+        )
+        sleeps: list[float] = []
+
+        outcome = cover_beside_exit(
+            fake, "XOM", stamp=STAMP, qty=4.0, stop_price=88.0, covered=6.0,
+            sleep=sleeps.append, rearmed=["rearm-6"],
+        )
+
+        assert outcome.status == "unchanged", outcome.detail
+        assert sleeps == [LISTING_CATCH_UP_DELAYS_S[0]]
+
+
+class _ListsTheBackFillFirst(FakeBroker):
+    """The first listing after a stop's POST shows that stop, and not yet `rearm-6`."""
+
+    hide = 0
+
+    def submit_order(self, **kw) -> Order:
+        order = super().submit_order(**kw)
+        self.hide = 1
+        return order
+
+    def list_orders(self, status: str = "open", limit: int = 50, nested: bool = False):
+        listed = super().list_orders(status, limit, nested)
+        if self.hide:
+            self.hide -= 1
+            listed = [o for o in listed if o.id != "rearm-6"]
+        return listed
+
 
 class _KillsTheNext(FakeBroker):
     """Takes the next order of `kind`, rejects it at once, and loses the reply.

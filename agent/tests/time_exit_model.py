@@ -894,8 +894,13 @@ class ModelBroker:
         (`SETTLED_WRITE_FAULTS`). Such a schedule hides nothing a careful
         close cannot read back, which is what I8 holds it to. Run 1's choices
         are `applied` from the start; a later run's from `since` on.
+
+        A listing behind the book is an answered read, and no fault here:
+        every order it shows stale or leaves out the close read by its id.
+        Counted as one, I8 skipped every schedule with a lag in it, and no
+        check held a refused write beside a lagging listing to precision.
         """
-        applied = self.applied[since:]
+        applied = [a for a in self.applied[since:] if not _lagged(*a)]
         for kind, env, out in applied:
             if env is not None or kind not in ("submit", "cancel"):
                 return None
@@ -905,10 +910,7 @@ class ModelBroker:
 
     def lag_only(self) -> bool:
         """Whether run 1 met a fault, and each was a listing that lagged the book (I10)."""
-        return bool(self.applied) and all(
-            kind == "list" and env is None and out.startswith("lag")
-            for kind, env, out in self.applied
-        )
+        return bool(self.applied) and all(_lagged(*a) for a in self.applied)
 
     def describe(self) -> str:
         live = ", ".join(
@@ -934,6 +936,11 @@ class ModelBroker:
             sells.append((r.type, r.role, r.status, round(r.remaining, 6), round(r.filled, 6),
                           r.stop_price, r.limit_price, r.tif, g, r.parent is not None))
         return (round(self.held, 6), tuple(sells))
+
+
+def _lagged(kind: str, env: str | None, out: str) -> bool:
+    """Whether a choice is a listing behind the book, and nothing else."""
+    return kind == "list" and env is None and out.startswith("lag")
 
 
 def build_book(name: str) -> ModelBroker:

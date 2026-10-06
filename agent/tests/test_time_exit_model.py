@@ -108,7 +108,9 @@ cancelled and never replaced has lost its way out as surely as a stop.
       exits 0 or 1, not 3 (on a book fully covered at the start: a failed
       back-fill of shares that were naked before is not the time exit's).
       Not a cancel left pending or a bracket sibling left behind: those
-      leave the broker itself in doubt. A run 2 armed the same way
+      leave the broker itself in doubt. A listing behind the book (i) is an
+      answered read, and no fault here: what it shows stale or leaves out
+      the close read by its id. A run 2 armed the same way
       (`Harness.run2_chooser`, pinned schedules only) is held to the same
       end state on a lot it found protected, in place of I2.
   I9  Liveness. A run 2 that met a clean broker takes a lot still due for its
@@ -747,6 +749,27 @@ class TestTheHarnessHasTeeth:
         assert "I9 a clean run 2 left a lot due for its time exit held (due)" in (
             stats.findings
         ), sorted(stats.findings)
+
+    def test_a_close_that_takes_a_stop_it_released_as_standing_off_a_lagging_listing(
+        self, monkeypatch: pytest.MonkeyPatch, harness: Harness
+    ) -> None:
+        # The exit refused, and the put-back's listing one change behind: it
+        # still shows the released stop working. Taken at its word, nothing
+        # goes back and the close pages naked (rc 3) over a write the broker
+        # settled by itself. Only I8 can tell, and only if a lagging listing
+        # counts as the answered read it is, not as a fault.
+        real = pc.listing_behind
+
+        def blind(orders, gone, placed):  # noqa: ANN001, ANN202
+            return real(orders, (), placed)
+
+        monkeypatch.setattr(pc, "listing_behind", blind)
+        monkeypatch.setattr(mp, "listing_behind", blind)
+        stats = Stats()
+        chooser = tem.Scripted(("submit_order(market", "422"), ("list_orders", "lag1"))
+        harness.evaluate(Scenario("stop", ()), stats, chooser=chooser)
+        assert not chooser.rules, f"the schedule did not play out: {chooser.rules} left"
+        assert any(c.startswith("I8 rc=3") for c in stats.findings), sorted(stats.findings)
 
     def test_a_close_and_a_pass_that_put_nothing_back(
         self, monkeypatch: pytest.MonkeyPatch

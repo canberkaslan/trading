@@ -168,6 +168,15 @@ def _refuse_if_killed(repo: TradeLogRepository, user: str, order_id: str) -> Non
         raise HTTPException(409, f"kill switch is {ks_state} — approvals disabled")
 
 
+def _refuse_if_submitted(repo: TradeLogRepository, order_id: str) -> None:
+    """A double tap: the other tap may have sent the order while this one waited."""
+    with repo.session() as s:
+        row = s.get(TradeOrderRow, order_id)
+        broker_order_id = row.broker_order_id if row is not None else None
+    if broker_order_id is not None:
+        raise HTTPException(409, f"order already submitted: broker={broker_order_id}")
+
+
 def _refuse_if_unaffordable(
     alpaca: AlpacaClient, order: TradeOrder, price: float | None,
     prices: dict[str, float | None],
@@ -277,9 +286,11 @@ def _submit_locked(
     # held order stays PENDING for another tap.
     try:
         with submit_section(exit_only=not is_buy, timeout_s=APPROVE_LOCK_TIMEOUT_S):
-            # Re-checked under the lock: the switch may have been flipped, or
-            # the cash spent, while this request waited for it.
+            # Re-checked under the lock: the switch may have been flipped, the
+            # order sent by another tap, or the cash spent, while this request
+            # waited for it.
             _refuse_if_killed(repo, user, order_id)
+            _refuse_if_submitted(repo, order_id)
             if alpaca is not None:
                 ref = current_price or order.limit_price or decision.entry_price
                 _refuse_if_unaffordable(alpaca, order, ref, prices)
@@ -287,12 +298,17 @@ def _submit_locked(
                 order, config=ExecutionConfig(dry_run=False),
                 decision=decision, current_price=current_price,
             )
+            # Recorded before the lock is let go, so a second tap waiting on
+            # it finds the order at the broker. The held row exists already;
+            # a refusal carries no broker id, and merging that None in would
+            # erase the id another tap recorded.
+            if result.broker_order_id is not None:
+                repo.save_order(order, broker_order_id=result.broker_order_id)
+            repo.append_update(result.update)
     except SubmitLockUnavailableError as exc:
         raise HTTPException(
             503, f"another order path is sizing against this account; retry shortly ({exc})"
         ) from exc
-    repo.save_order(order, broker_order_id=result.broker_order_id)
-    repo.append_update(result.update)
 
     if not result.submitted:
         raise HTTPException(

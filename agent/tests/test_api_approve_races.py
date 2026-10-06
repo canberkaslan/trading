@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import itertools
 import threading
+import time
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,12 +19,14 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 
-from tradingagents_us.execution import executor
+from tradingagents_us.execution import executor, submit_lock
 from tradingagents_us.execution.flatten import FlattenResult
+from tradingagents_us.file_lock import exclusive
 from tradingagents_us.schemas import AgentDecision, AgentReasoning, OrderUpdate, TradeOrder
 from tradingagents_us.storage import TradeLogRepository
+from tradingagents_us.storage.models import OrderUpdateRow, TradeOrderRow
 
 #: How long the approval waits at the broker for a racing tap to land first.
 _RACE_WINDOW_S = 1.0
@@ -39,6 +42,8 @@ class _Broker:
         self.events: list[str] = []
         self.before_submit: Callable[[], None] = lambda: None
         self.on_flatten: Callable[[], None] = lambda: None
+        #: Round trip of a lookup that finds the order already live.
+        self.duplicate_lookup_s = 0.0
         self._ids = itertools.count(1)
         self._lock = threading.Lock()
         self._http = SimpleNamespace(get=lambda url: SimpleNamespace(json=self._open_orders))
@@ -61,6 +66,8 @@ class _Broker:
 
     def get_order_by_client_order_id(self, coid: str) -> SimpleNamespace | None:
         oid = self.live.get(coid)
+        if oid is not None:
+            time.sleep(self.duplicate_lookup_s)
         return None if oid is None else SimpleNamespace(id=oid, status="accepted", filled_qty=0.0)
 
     def submit_order(self, *, symbol: str, qty: int, side: str, client_order_id: str,
@@ -184,3 +191,40 @@ class TestKillSwitchTappedMidApprove:
         # "paused" means no BUY goes out after it: the one already past its
         # check is in before the tap is answered.
         assert sent_before_the_answer == ["broker accepts BUY AAPL x5 tif=gtc"]
+
+
+def _statuses(repo: TradeLogRepository) -> list[str]:
+    with repo.session() as s:
+        rows = s.execute(
+            select(OrderUpdateRow).where(OrderUpdateRow.order_id == "ord-1")
+            .order_by(OrderUpdateRow.id)
+        ).scalars().all()
+        return [r.status for r in rows]
+
+
+class TestDoubleTapApprove:
+    def test_the_second_tap_never_unrecords_the_live_buy(self, env) -> None:
+        # A run ticker holds the lock, so both taps pass the unlocked "already
+        # submitted?" check before either can submit. The broker is slow to
+        # answer the second tap's duplicate lookup, as a network round trip is.
+        env.broker.duplicate_lookup_s = 0.2
+        results: list[int] = []
+
+        def tap() -> None:
+            results.append(env.client.post("/v1/orders/ord-1/approve").status_code)
+
+        with exclusive(submit_lock.lock_path()):
+            taps = [threading.Thread(target=tap) for _ in range(2)]
+            for t in taps:
+                t.start()
+            time.sleep(0.5)  # both are now waiting on the lock
+        for t in taps:
+            t.join(20)
+
+        assert sorted(results) == [200, 409]
+        assert list(env.broker.live.values()) == ["b-1"]
+        # The trade log still knows the order is at the broker, so /cancel
+        # can reach it, and it does not read as rejected.
+        with env.repo.session() as s:
+            assert s.get(TradeOrderRow, "ord-1").broker_order_id == "b-1"
+        assert _statuses(env.repo) == ["PENDING", "ACCEPTED"]

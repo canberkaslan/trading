@@ -283,6 +283,9 @@ def test_a_stamped_stop_is_protection_counted_once():
         [order(symbol="GOOGL", qty=32, own_exit=True)],
     ).symbols[0]
     assert (row.protected_qty, row.exiting_qty, row.naked_qty) == (32, 0, 0)
+    # Counted once: were the stop also read as our exit, it would stand beside
+    # itself and be reported as more protection than shares held.
+    assert row.excess_qty == 0
 
 
 def test_a_stop_standing_beside_our_exit_is_excess():

@@ -10,7 +10,8 @@ sends an ops alert (push AND a GitHub issue, see notifications.ops_channel)
 and exits 1 (visible in systemctl status); on success it exits 0 quietly.
 
 Hard checks: Alpaca (account + paper URL), Anthropic key, Polygon, Finnhub,
-OpenRouter (only when LLM_COUNCIL=1), DB writable, disk. FRED is warn-only.
+OpenRouter (only when LLM_COUNCIL=1), DB writable, disk. FRED and StockTwits
+are warn-only.
 
 Alerting gaps (no HEALTHCHECK_URL; no GitHub alert token, or one GitHub
 refuses or that expires within days) are reported separately and do NOT set
@@ -29,6 +30,9 @@ import os
 import shutil
 import sys
 from datetime import UTC
+from pathlib import Path
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 import httpx
 
@@ -150,6 +154,52 @@ def _check_fred() -> None:
             fc.series("DGS3MO", start=today - timedelta(days=14), end=today)
     except Exception as exc:
         print(f"preflight: FRED check failed (soft): {exc}", file=sys.stderr)
+
+
+def _check_stocktwits() -> str:
+    """Warn-only — say out loud when the sentiment analyst is running without StockTwits.
+
+    The fetcher degrades to an "<stocktwits unavailable>" placeholder by design,
+    so a dead source never fails a run, and nothing else ever reported it. From
+    the box's first night (2026-09-14) every ticker got the placeholder: the
+    endpoint answers 403 with `cf-mitigated: challenge`, a Cloudflare bot
+    challenge that no key or User-Agent fixes, and the analyst's sentiment read
+    has been news + Reddit only since. A challenge is reported as a standing
+    outage, not a network blip, so a reader does not wait for it to clear.
+
+    Probes the exact request the fetcher sends: same URL, User-Agent and
+    transport. urllib, not httpx, because the challenge is not deterministic
+    per client (one laptop run passed urllib and challenged httpx). Never
+    a failure: there is nothing to rotate, and the pipeline already tells the
+    model the source is missing.
+    """
+    vendor = str(Path(__file__).resolve().parent.parent / "vendor" / "tradingagents")
+    if vendor not in sys.path:
+        sys.path.insert(0, vendor)
+    try:
+        from tradingagents.dataflows.stocktwits import _API, _UA
+    except ImportError as exc:
+        msg = f"StockTwits probe could not load the fetcher (soft): {exc}"
+        print(f"preflight: {msg}", file=sys.stderr)
+        return msg
+    req = Request(
+        _API.format(ticker="SPY"), headers={"User-Agent": _UA, "Accept": "application/json"}
+    )
+    try:
+        with urlopen(req, timeout=15.0):
+            return "ok"
+    except HTTPError as exc:
+        if (exc.headers.get("cf-mitigated") or "").lower() == "challenge":
+            msg = (
+                f"StockTwits blocked by a Cloudflare bot challenge (HTTP {exc.code}): "
+                "standing outage, sentiment analyst runs on news + Reddit only (soft)"
+            )
+        else:
+            msg = f"StockTwits answered HTTP {exc.code} (soft)"
+    except Exception as exc:
+        msg = f"StockTwits unreachable (soft): {exc}"
+    print(f"preflight: {msg}", file=sys.stderr)
+    return msg
 
 
 def _check_db(failures: list[Failure]) -> None:
@@ -292,6 +342,7 @@ def main() -> int:
     _check_finnhub(failures)
     _check_openrouter(failures)
     _check_fred()
+    _check_stocktwits()
     _check_db(failures)
     _check_disk(failures)
 

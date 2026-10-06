@@ -16,6 +16,9 @@ So the policy is to give up quickly and say so:
   and stays open for the rest of the run, so the next ten tickers do not each
   rediscover that the source is refusing us.
 
+Reddit keeps its own one-minute 429 back-off: its limiter refuses a sooner
+retry and lets that one through (sentiment_supplement.py).
+
 "The run" is every ticker process of one daily run. Each ticker is its own
 process, so a breaker held in memory would reset for every ticker and never
 save anything; the daily run sets `RUN_STATE_DIR_ENV` to a directory of its

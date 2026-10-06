@@ -33,24 +33,27 @@ from collections.abc import Callable
 from typing import Any
 
 from tradingagents_us.dataflows.apewisdom import apewisdom_block
-from tradingagents_us.dataflows.fail_fast import (
-    HTTP_READ_TIMEOUT_S,
-    RETRY_BASE_S,
-    RunBreaker,
-    retry_delay,
-)
+from tradingagents_us.dataflows.fail_fast import HTTP_READ_TIMEOUT_S, RunBreaker
 
 log = logging.getLogger(__name__)
 
 # After this many consecutive failures, stop calling Reddit for the rest of the
-# run. Measured: last night's run logged nineteen 429s, each backing off about
-# a minute — roughly twenty minutes of a one-hour-fifty run spent asleep
-# waiting for a source that was refusing us on every single ticker.
+# run. A failure is a ticker for which every subreddit was refused, the
+# vendor's one back-off included.
 #
-# Two is not impatience. One failure is a blip; two in a row from a per-IP rate
-# limiter means the limiter has us, and the next ticker will be refused too.
-# ApeWisdom aggregates the same corpus keylessly, so the wait buys nothing that
-# is not already in the block beside it.
+# That back-off is the vendor's own, about a minute before its single retry,
+# and it is kept: the vendor measured that a retry 8, 10 or 30 s after a 429
+# still gets one, and one after 60 s goes through. On the box a search often
+# gets a 429 and its retry a minute later gets the posts (2026-10-05: back-offs
+# of 60-70 s, twice per ticker). A short retry fails every time, and two such
+# tickers would open the breaker and drop Reddit's posts for the rest of the
+# night; with StockTwits answering 403, they are the sentiment analyst's only
+# post-level social source.
+#
+# Two is not impatience. One failure is a blip; two in a row, each after a
+# minute's back-off, means the limiter has us, and the next ticker will be
+# refused too. ApeWisdom aggregates the same corpus keylessly, so the wait
+# buys nothing that is not already in the block beside it.
 #
 # "The run" is every ticker of one daily run. The count used to live in this
 # process, and daily_run.sh starts one process per ticker, so it reset for
@@ -69,38 +72,6 @@ def _record(success: bool) -> None:
 
 def _reddit_is_giving_up() -> bool:
     return _BREAKER.is_open()
-
-
-def _tune_vendor_backoff() -> bool:
-    """Bound the vendored Reddit client's own 429 back-off to the fail-fast cap.
-
-    It waits out a headerless 429 for about a minute and honours
-    ``Retry-After`` up to sixty seconds, before its one retry, because its own
-    measurements found a sooner retry still 429s. That is a minute per ticker
-    spent on one optional subreddit, which a council cannot afford. The retry
-    stays, bounded by `RETRY_AFTER_CAP_S`; a limiter that refuses it is left to
-    the breaker, which spares the next tickers even that.
-    """
-    try:
-        from tradingagents.dataflows import reddit as vendor
-    except ImportError:
-        return False
-    if not hasattr(vendor, "_RETRY_FALLBACK_SECONDS") or not hasattr(
-        vendor, "_retry_after_seconds"
-    ):
-        return False
-    vendor._RETRY_FALLBACK_SECONDS = RETRY_BASE_S
-    current = vendor._retry_after_seconds
-    if getattr(current, "_fail_fast", False):
-        return True
-
-    def capped(exc: Any) -> float | None:
-        header = exc.headers.get("Retry-After") if getattr(exc, "headers", None) else None
-        return None if header is None else retry_delay(header)
-
-    capped._fail_fast = True  # type: ignore[attr-defined]
-    vendor._retry_after_seconds = capped
-    return True
 
 
 def supplement(reddit_block: str, ticker: str) -> str:
@@ -152,7 +123,6 @@ def install() -> bool:
         return False
     if getattr(original, "_supplemented", False):
         return True
-    _tune_vendor_backoff()
     takes_timeout = _accepts_timeout(original)
 
     def supplemented(ticker: str, *args: Any, **kwargs: Any) -> str:

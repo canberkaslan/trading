@@ -1,4 +1,4 @@
-"""Reddit fails fast: 5 s timeouts, a capped 429 back-off, a run-wide breaker.
+"""Reddit fails fast: 5 s timeouts and a run-wide breaker; the 429 back-off is the vendor's.
 
 Drives the real vendored fetcher through the sentiment supplement, with
 `urlopen` and the fetcher's clock mocked: nothing reaches Reddit, nothing
@@ -14,6 +14,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from urllib.error import HTTPError
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -58,8 +59,6 @@ def slept(monkeypatch: pytest.MonkeyPatch) -> list[float]:
 def _wired(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(ss, "apewisdom_block", lambda t: f"[ApeWisdom — {t}] 3 mentions")
     monkeypatch.setattr(analyst, "fetch_reddit_posts", vendor.fetch_reddit_posts)
-    monkeypatch.setattr(vendor, "_RETRY_FALLBACK_SECONDS", vendor._RETRY_FALLBACK_SECONDS)
-    monkeypatch.setattr(vendor, "_retry_after_seconds", vendor._retry_after_seconds)
     ss._BREAKER.reset()
     assert ss.install()
     yield
@@ -81,7 +80,7 @@ def test_requests_use_the_short_timeout(
     assert "not an absence of discussion" in out
 
 
-def test_a_long_retry_after_is_capped(
+def test_a_retry_after_is_honoured_before_the_one_retry(
     monkeypatch: pytest.MonkeyPatch, slept: list[float]
 ) -> None:
     opener = _Urlopen(_429("60"))
@@ -89,17 +88,16 @@ def test_a_long_retry_after_is_capped(
     _fetch("NVDA")
     # One retry on the first subreddit, none on the rest (the vendor's rule).
     assert len(opener.timeouts) == SUBS + 1
-    assert max(slept) <= fail_fast.RETRY_AFTER_CAP_S
-    # Before: a 60 s sleep here, per ticker.
-    assert sum(slept) <= fail_fast.RETRY_AFTER_CAP_S + (SUBS - 1) * 1.2
+    assert max(slept) == 60.0
 
 
-def test_a_headerless_429_waits_the_short_jittered_base(
+def test_a_headerless_429_waits_the_vendors_minute(
     monkeypatch: pytest.MonkeyPatch, slept: list[float]
 ) -> None:
+    # The vendor measured a retry 8, 10 or 30 s later still 429s.
     monkeypatch.setattr(vendor, "urlopen", _Urlopen(_429(None)))
     _fetch("NVDA")
-    assert max(slept) <= fail_fast.RETRY_BASE_S * (1 + fail_fast.JITTER_FRACTION)
+    assert max(slept) >= vendor._RETRY_FALLBACK_SECONDS * 0.8
 
 
 def test_a_429_storm_opens_the_breaker_for_the_rest_of_the_run(
@@ -180,3 +178,50 @@ def test_one_refused_subreddit_is_not_a_refused_ticker(
         monkeypatch.setattr(vendor, "urlopen", _Feed(refuse_first=2))  # the 429 and its retry
         assert "recent posts mentioning" in _fetch(ticker)
     assert not fail_fast.RunBreaker("reddit", ss._FAILURE_LIMIT).is_open()
+
+
+class _Limiter:
+    """Reddit's per-IP limiter as the vendor measured it, on a fake clock.
+
+    It refuses the first search for each ticker, and anything within
+    `WINDOW_S` of a refusal: a retry 8, 10 or 30 s later still gets a 429, one
+    a minute later goes through (vendor reddit.py, `_RETRY_FALLBACK_SECONDS`).
+    """
+
+    WINDOW_S = 45.0
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.last_refusal: float | None = None
+        self.seen: set[str] = set()
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+    def __call__(self, req: Any, timeout: float) -> Any:
+        ticker = parse_qs(urlparse(req.full_url).query)["q"][0]
+        recent = self.last_refusal is not None and self.now - self.last_refusal < self.WINDOW_S
+        if ticker not in self.seen or recent:
+            self.seen.add(ticker)
+            self.last_refusal = self.now
+            raise _429(None)
+        return io.BytesIO(_FEED)
+
+
+def test_a_night_of_first_search_429s_still_reads_every_ticker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The box on 2026-10-05: a 429 and a back-off of about a minute per
+    # ticker, and the retry got through. A retry the limiter is known to
+    # refuse would lose the posts, then open the breaker for the whole run.
+    monkeypatch.setenv(fail_fast.RUN_STATE_DIR_ENV, str(tmp_path))
+    limiter = _Limiter()
+    monkeypatch.setattr(vendor, "urlopen", limiter)
+    monkeypatch.setattr(
+        vendor, "time",
+        SimpleNamespace(sleep=limiter.sleep, strftime=time.strftime, gmtime=time.gmtime),
+    )
+    tickers = ("SPY", "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "JPM",
+               "XOM", "UNH")
+    read = [t for t in tickers if f"recent posts mentioning {t}" in _fetch(t)]
+    assert read == list(tickers)

@@ -890,7 +890,11 @@ class TestAListingAfterATimeExitHasCaughtUpWithIt:
     def test_a_stop_the_close_put_back_is_waited_for_too(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # The listing has caught up with the cancel, not with the re-arm: all
+        # it is behind on is the stop the close put back, and off it the lot
+        # reads naked under that stop.
         sleeps = self._released(monkeypatch, behind=1)
+        self.fake.list_orders()
         rearm = self.fake.submit_order(
             symbol="XOM", qty=10.0, side="sell", order_type="stop", time_in_force="gtc",
             stop_price=90.0, client_order_id="re-arm",

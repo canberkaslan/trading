@@ -26,6 +26,12 @@ Three things deliberately do NOT page:
     not recognise is not evidence of naked exposure, and paging on it would be
     paging on a guess. It is carried in the BODY of an alert that fires for
     other reasons, so the reader knows the number has a soft edge.
+  * A lot our own time exit is selling at the next open (`exiting`, see
+    `risk.stop_coverage`). It has no stop, and needs none: the exit reserves
+    every share of it and the market is shut. Counted as naked, every
+    time-exit night paged, and the night after announced a recovery. It is
+    named in the body of any alert that fires, so "protected" never stands
+    for "on its way out".
 """
 
 from __future__ import annotations
@@ -89,10 +95,24 @@ class CoverageFacts:
     indeterminate_qty: float
     naked_symbols: tuple[str, ...] = ()
     run_date: str | None = None
+    #: Shares no stop covers that our own working time exit holds back, and
+    #: whose. Not naked, not protected: on their way out at the next open.
+    exiting_qty: float = 0.0
+    exiting_symbols: tuple[str, ...] = ()
 
     @property
     def naked_pct(self) -> float:
         return (self.naked_qty / self.total_qty * 100.0) if self.total_qty > 0 else 0.0
+
+    def exiting_note(self) -> str:
+        """' 32 shares are exiting at the next open under our time exit: GOOGL.', or ''."""
+        if self.exiting_qty <= 0:
+            return ""
+        names = ", ".join(self.exiting_symbols)
+        return (
+            f" {self.exiting_qty:.0f} shares are exiting at the next open under our"
+            f" time exit{': ' + names if names else ''}."
+        )
 
 
 def decide(
@@ -120,8 +140,9 @@ def decide(
             kind="recovered",
             title="✅ Stop coverage restored",
             body=(
-                f"{100.0 - pct:.0f}% of the book is protected again "
+                f"{100.0 - pct:.0f}% of the book is covered again "
                 f"({facts.naked_qty:.0f} of {facts.total_qty:.0f} shares still naked)."
+                f"{facts.exiting_note()}"
             ),
             next_state=replace(
                 state, last_kind="recovered", last_naked_pct=pct, last_run_date=facts.run_date
@@ -145,7 +166,7 @@ def decide(
         title=f"⚠️ {pct:.0f}% of the book has no stop",
         body=(
             f"{facts.naked_qty:.0f} of {facts.total_qty:.0f} shares are unprotected"
-            f"{': ' + names + more if names else ''}.{caveat}"
+            f"{': ' + names + more if names else ''}.{caveat}{facts.exiting_note()}"
         ),
         next_state=replace(
             state, last_kind="naked", last_naked_pct=pct, last_run_date=facts.run_date

@@ -648,6 +648,17 @@ export default function RiskScreen() {
                       korumalı da sayılmıyor, korumasız da.
                     </Text>
                   ) : null}
+                  {/* A lot our own time exit sells at the open: its stops were
+                      released for the exit, which holds every share back. Not
+                      stopped, so never counted as protected; not naked either. */}
+                  {coverage.data.exiting_qty > 0 ? (
+                    <Text style={styles.helper}>
+                      {`${coverage.data.exiting_qty.toFixed(0)} lot zaman çıkışında (${coverage.data.symbols
+                        .filter((sym) => sym.exiting_qty > 0)
+                        .map((sym) => sym.symbol)
+                        .join(', ')}) — stopu yok; çıkış emri lotu ayırıyor ve açılışta satıyor.`}
+                    </Text>
+                  ) : null}
                   {/* The prototype's naked rows sit on `--downSoft`: the one
                       place on this screen where a row is itself the warning. */}
                   {coverage.data.symbols
@@ -663,6 +674,7 @@ export default function RiskScreen() {
                         <Text style={styles.nakedText} numberOfLines={2}>
                           {sym.naked_qty.toFixed(0)} lot stopsuz
                           {sym.protected_qty > 0 ? ` · ${sym.protected_qty.toFixed(0)} korumalı` : ''}
+                          {sym.exiting_qty > 0 ? ` · ${sym.exiting_qty.toFixed(0)} çıkışta` : ''}
                         </Text>
                       </View>
                     ))}

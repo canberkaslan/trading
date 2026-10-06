@@ -326,8 +326,9 @@ def coverage(
         exit_qty = sum(o.remaining_qty for o in leaving)
         indeterminate = sum(o.remaining_qty for o in maybe)
 
-        # Excess is measured against live sells of ours only. An ambiguous order
-        # is not evidence of over-protection any more than it is of protection.
+        # Excess is measured against live stops and our own live exit only. An
+        # ambiguous order is not evidence of over-protection any more than it is
+        # of protection.
         excess = max(0.0, protective_qty + exit_qty - position.qty)
         # protected + exiting + indeterminate + naked == held, by construction:
         # each bucket takes no more than what the ones before it left.

@@ -42,6 +42,7 @@ class _Broker:
         self.events: list[str] = []
         self.before_submit: Callable[[], None] = lambda: None
         self.on_flatten: Callable[[], None] = lambda: None
+        self.on_account: Callable[[], None] = lambda: None
         #: Round trip of a lookup that finds the order already live.
         self.duplicate_lookup_s = 0.0
         self._ids = itertools.count(1)
@@ -56,6 +57,7 @@ class _Broker:
         ]
 
     def account(self) -> SimpleNamespace:
+        self.on_account()
         return SimpleNamespace(
             cash=100_000.0, portfolio_value=100_000.0, last_equity=100_000.0,
             trading_blocked=False, pattern_day_trader=False,
@@ -191,6 +193,32 @@ class TestKillSwitchTappedMidApprove:
         # "paused" means no BUY goes out after it: the one already past its
         # check is in before the tap is answered.
         assert sent_before_the_answer == ["broker accepts BUY AAPL x5 tif=gtc"]
+
+
+class TestFlattenThatCouldNotWait:
+    def test_a_buy_past_its_check_is_not_posted_after_the_flatten(
+        self, env, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The approval is past its locked kill-switch check, then the broker is
+        # slow on the reads before the POST. The flatten stops waiting for the
+        # lock and runs first; the BUY must not go out behind it as a live gtc
+        # bracket that outlives FLATTEN_ALL.
+        monkeypatch.setattr(submit_lock, "EXIT_TIMEOUT_S", 0.3)
+        past_check, flattened = threading.Event(), threading.Event()
+        env.broker.on_account = lambda: (past_check.set(), flattened.wait(5))
+        env.broker.on_flatten = flattened.set
+        results: dict[str, int] = {}
+        t = threading.Thread(target=lambda: results.__setitem__(
+            "approve", env.client.post("/v1/orders/ord-1/approve").status_code
+        ))
+        t.start()
+        assert past_check.wait(10), "the approval never got past its locked check"
+        r = env.client.post("/v1/orders/kill-switch", json={"state": "FLATTEN_ALL"})
+        t.join(20)
+        assert r.status_code == 200
+        assert env.broker.events == ["FLATTEN_ALL"]
+        assert env.broker.live == {}
+        assert results == {"approve": 422}
 
 
 def _statuses(repo: TradeLogRepository) -> list[str]:

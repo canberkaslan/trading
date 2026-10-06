@@ -44,10 +44,12 @@ def fake_github(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Fak
 
 @pytest.fixture(autouse=True)
 def _isolated_run_coordination(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Keep the run-wide breakers and the host-wide submit lock out of the suite.
+    """Keep the run-wide breakers, the submit lock and the kill switch out of the suite.
 
     A developer box can be mid daily run: its breaker files and its submit lock
-    must neither leak into a test nor be taken by one.
+    must neither leak into a test nor be taken by one. Every live BUY reads the
+    kill switch, so a checkout's armed switch must not refuse a test's BUY.
     """
     monkeypatch.delenv("TRADINGAGENTS_RUN_STATE_DIR", raising=False)
     monkeypatch.setenv("TRADE_SUBMIT_LOCK_PATH", str(tmp_path / "trade-submit.lock"))
+    monkeypatch.setenv("KILL_SWITCH_PATH", str(tmp_path / "kill_switch.state"))

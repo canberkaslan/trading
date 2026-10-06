@@ -141,6 +141,39 @@ class TestLiveSubmissionMocked:
         assert result.submitted
 
 
+class TestKillSwitchAtThePost:
+    def _client(self):
+        cli = TestLiveSubmissionMocked()._mock_client()
+        cli.list_positions.return_value = [MagicMock(symbol="AAPL", side="long", qty=10)]
+        return cli
+
+    def test_a_buy_is_refused_when_the_switch_was_armed_after_its_check(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        switch = tmp_path / "kill.state"
+        monkeypatch.setenv("KILL_SWITCH_PATH", str(switch))
+        for state in ("PAUSE_NEW", "FLATTEN_ALL"):
+            switch.write_text(state)
+            cli = self._client()
+            result = submit_order(_order(), client=cli, config=ExecutionConfig(dry_run=False))
+            assert not result.submitted
+            assert result.update.status == "REJECTED"
+            assert result.refusal_reasons == [
+                f"kill_switch={state}: armed after this BUY was checked"
+            ]
+            assert not result.error  # a policy refusal, not a broker failure
+            cli.submit_order.assert_not_called()
+
+    def test_a_sell_is_not_held_by_a_pause(self, tmp_path, monkeypatch) -> None:
+        switch = tmp_path / "kill.state"
+        monkeypatch.setenv("KILL_SWITCH_PATH", str(switch))
+        switch.write_text("PAUSE_NEW")
+        cli = self._client()
+        sell = _order().model_copy(update={"side": "SELL"})
+        result = submit_order(sell, client=cli, config=ExecutionConfig(dry_run=False))
+        assert result.submitted
+
+
 class TestBracketOrder:
     def _mock_client_for_bracket(self):
         from unittest.mock import MagicMock

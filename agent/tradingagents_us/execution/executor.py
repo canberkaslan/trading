@@ -22,6 +22,7 @@ from datetime import UTC, date, datetime, timedelta
 import httpx
 
 from ..dataflows.alpaca_broker import AlpacaClient
+from ..risk.kill_switch import FileKillSwitchReader
 from ..schemas import AgentDecision, OrderStatus, OrderUpdate, TradeOrder
 from .exit_quality import AGENT_EXIT_CLIENT_ID_PREFIX, EXIT_REASON_CLASSES
 
@@ -306,6 +307,25 @@ def submit_order(
                         error_message=changed, timestamp_utc=now,
                     ),
                     refusal_reasons=[changed],
+                )
+
+        if order.side == "BUY":
+            # The kill switch, read again as the last step before the POST.
+            # Callers check it earlier, and the reads since (account, open
+            # orders, positions, the duplicate lookup) can outlast the time a
+            # flatten waits for the submit lock: a BUY sent after the flatten
+            # ran would sit at the broker as a live bracket until the next run.
+            switch = FileKillSwitchReader().read()
+            if switch != "RUN":
+                reason = f"kill_switch={switch}: armed after this BUY was checked"
+                return ExecutionResult(
+                    submitted=False,
+                    dry_run=False,
+                    update=OrderUpdate(
+                        order_id=order.order_id, status="REJECTED",
+                        error_message=reason, timestamp_utc=now,
+                    ),
+                    refusal_reasons=[reason],
                 )
 
         # Broker-side protective legs. Stop and take-profit attach

@@ -497,11 +497,12 @@ def set_kill_switch(
     DynamoDB reader exists for a future multi-host split.
 
     An armed state answers only after passing through the submit lock. Every
-    BUY re-reads the switch under that lock right before it is sent (approve
-    here, trade.py through its circuit breaker), so a BUY already past its
-    check is in before this answers, and the flatten then cancels it; any
-    later BUY sees the new state. The wait is exit-only: a lock that stays
-    held delays the flatten by at most EXIT_TIMEOUT_S, never drops it.
+    live BUY reads the switch under that lock as the last step before its POST
+    (the executor), so a BUY already past that read is in before this
+    answers, and the flatten then cancels it; any later BUY sees the new
+    state. The wait is exit-only: a lock that stays held delays the flatten by
+    at most EXIT_TIMEOUT_S, never drops it, and the BUY that held the lock
+    meets the armed switch at its POST.
     """
     flag_path = default_kill_switch_path()
     # Atomic replace — a crash mid-write must never leave a truncated file

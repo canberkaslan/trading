@@ -537,9 +537,10 @@ def _naked_now(client: AlpacaClient, ticker: str, closes: Iterable[CloseOutcome]
     sell stop on a flat book as a short-sale stop. So the back-fill is sized
     off orders read now and the holding read after them, as `_read_book` has
     it: 0 when the lot is gone or not long. Raises when its protection is
-    ambiguous now, so nothing is placed and the pass fails.
+    ambiguous now, so nothing is placed and the pass fails. It waits only on
+    this lot's own closes: a listing behind on another lot's says nothing of this one.
     """
-    orders = _order_views(client, closes)[0]
+    orders = _order_views(client, [c for c in closes if c.ticker == ticker])[0]
     lot = next((p for p in client.list_positions() if p.symbol == ticker), None)
     if lot is None or lot.side != "long":
         return 0.0
@@ -836,21 +837,23 @@ def _recover_unclosed(
     book is read again to say which. A name it settles either way is off
     `uncovered`.
 
-    Every listing it reads is one that has caught up with what the pass's
-    closes (`closes`) read by id (`_listing`): right after them, Alpaca's
-    may still show the stops they released, or not yet the ones they put back.
+    Every listing it reads is one that has caught up with what the closes of
+    the names it was handed (`closes`) read by id (`_listing`): right after
+    them, Alpaca's may still show the stops they released, or not yet the
+    ones they put back.
 
     Returns how many placements failed. A book it could not read, or a
     placement that failed, is also appended to `uncovered`: the names it was
     handed may have shares with no stop, and it could not put one there.
     """
-    closes = closes or []
+    closes = [c for c in closes or [] if c.ticker in tickers]
     try:
         # Orders first, holding last (see `_read_book`).
         orders, stop_ids, positions, sell_orders = _read_book(client, closes)
     except Exception as exc:  # noqa: BLE001 — reported and counted, never guessed past
         log.error("re-cover after failed exits: book unreadable, nothing placed: %s", exc)
-        uncovered.append(f"re-cover could not read the book: {exc}")
+        names = ", ".join(sorted(tickers))
+        uncovered.append(f"re-cover could not read the book for {names}: {exc}")
         return 1
     held = [p for p in positions if p.symbol in tickers]
     if not held:

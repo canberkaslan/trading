@@ -942,6 +942,37 @@ class TestAListingAfterATimeExitHasCaughtUpWithIt:
         assert (failed, uncovered) == (0, []), "the back-fill stands: the doubt is settled"
         assert sleeps == list(LISTING_CATCH_UP_DELAYS_S[:2])
 
+    def test_a_lot_s_lagging_listing_holds_up_no_other_lot(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # XOM's listing never catches up. MSFT, naked, had no close in the
+        # pass, and AAPL's re-cover finds it sold: neither waits on XOM.
+        sleeps = self._released(monkeypatch, behind=10**6)
+        self.fake.positions["MSFT"] = _position("MSFT", 200.0, avg=150.0)
+        uncovered: list[str] = []
+
+        failed = mp._execute(
+            self.fake, [PlaceStop("MSFT", 10.0, 180.0, 2.0)], TODAY, closes=[self.CLOSE]
+        )
+        failed += mp._recover_unclosed(
+            self.fake, None, {"AAPL"}, {}, TODAY, None, uncovered, closes=[self.CLOSE]
+        )
+
+        assert (failed, uncovered, sleeps) == (0, [], [])
+        assert [o.qty for o in self.fake.live_sells("MSFT")] == [10.0]
+
+    def test_a_re_cover_the_listing_holds_up_names_its_lots(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._released(monkeypatch, behind=10**6)
+        uncovered: list[str] = []
+
+        mp._recover_unclosed(
+            self.fake, None, {"XOM"}, {}, TODAY, None, uncovered, closes=[self.CLOSE]
+        )
+
+        assert uncovered[0].startswith("re-cover could not read the book for XOM: ")
+
     def test_with_no_close_before_it_a_listing_is_taken_as_it_comes(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

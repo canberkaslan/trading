@@ -63,6 +63,24 @@ def read_open_buys(client: Any) -> list[PendingBuy]:
     return open_buys
 
 
+def pending_buy_exposure(
+    open_buys: list[PendingBuy], price_of: Callable[[str], float | None]
+) -> dict[str, float]:
+    """Notional of open BUYs per symbol: exposure the book is about to hold.
+
+    Tonight's earlier tickers' BUYs have not filled yet, so the positions list
+    does not show them, and the single-name and sector caps would let several
+    BUYs into one sector that together break it. An unpriceable one is left
+    out here; the cash budget already refuses new exposure in that case.
+    """
+    exposure: dict[str, float] = {}
+    for buy in open_buys:
+        price = buy.limit_price or price_of(buy.symbol)
+        if price and buy.unfilled_qty > 0:
+            exposure[buy.symbol] = exposure.get(buy.symbol, 0.0) + buy.unfilled_qty * price
+    return exposure
+
+
 def spendable_now(
     client: Any, price_of: Callable[[str], float | None]
 ) -> tuple[float | None, list[PendingBuy]]:

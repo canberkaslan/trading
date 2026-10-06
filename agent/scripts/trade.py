@@ -42,7 +42,7 @@ from tradingagents_us.dataflows.alpaca_broker import AlpacaClient  # noqa: E402
 from tradingagents_us.dataflows.polygon import PolygonClient  # noqa: E402
 from tradingagents_us.dataflows.sector_map import UNKNOWN_SECTOR, sector_for  # noqa: E402
 from tradingagents_us.execution import ExecutionConfig, submit_order  # noqa: E402
-from tradingagents_us.execution.book import read_open_buys  # noqa: E402
+from tradingagents_us.execution.book import pending_buy_exposure, read_open_buys  # noqa: E402
 from tradingagents_us.execution.submit_lock import (  # noqa: E402
     SubmitLockUnavailableError,
     submit_section,
@@ -535,24 +535,6 @@ def _money(value: float | None) -> str:
     return "unpriceable" if value is None else f"${value:,.2f}"
 
 
-def _pending_buy_exposure(
-    open_buys: list[PendingBuy], price_of: Callable[[str], float | None]
-) -> dict[str, float]:
-    """Notional of open BUYs per symbol: exposure the book is about to hold.
-
-    Tonight's earlier tickers' BUYs have not filled yet, so the positions list
-    does not show them, and the single-name and sector caps would let several
-    BUYs into one sector that together break it. An unpriceable one is left
-    out here; the cash budget already refuses new exposure in that case.
-    """
-    exposure: dict[str, float] = {}
-    for buy in open_buys:
-        price = buy.limit_price or price_of(buy.symbol)
-        if price and buy.unfilled_qty > 0:
-            exposure[buy.symbol] = exposure.get(buy.symbol, 0.0) + buy.unfilled_qty * price
-    return exposure
-
-
 def _act_on_decision(
     args: argparse.Namespace,
     limits: PortfolioLimits,
@@ -667,7 +649,7 @@ def _act_on_decision(
     # and the caps must see them. Priced from the limit (no Polygon call here,
     # under the lock) and, failing that, from the prices already fetched.
     exposure_by_ticker = dict(existing_by_ticker)
-    for sym, value in _pending_buy_exposure(
+    for sym, value in pending_buy_exposure(
         book.open_buys, lambda s: _known_price(s, market)
     ).items():
         exposure_by_ticker[sym] = exposure_by_ticker.get(sym, 0.0) + value

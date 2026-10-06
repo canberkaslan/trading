@@ -12,14 +12,21 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from tradingagents_us.dataflows.alpaca_broker import AlpacaClient
+from tradingagents_us.dataflows.sector_map import UNKNOWN_SECTOR, sector_for
 from tradingagents_us.execution import ExecutionConfig, submit_order
-from tradingagents_us.execution.book import read_open_buys, spendable_now
+from tradingagents_us.execution.book import pending_buy_exposure, read_open_buys, spendable_now
 from tradingagents_us.execution.flatten import flatten_all
 from tradingagents_us.execution.submit_lock import (
     SubmitLockUnavailableError,
     submit_section,
 )
+from tradingagents_us.risk.cash_budget import PendingBuy
 from tradingagents_us.risk.kill_switch import FileKillSwitchReader, default_kill_switch_path
+from tradingagents_us.risk.portfolio_limits import (
+    PortfolioContext,
+    PortfolioLimits,
+    check_limits,
+)
 from tradingagents_us.schemas import KillSwitchState, OrderUpdate, TradeOrder
 from tradingagents_us.storage import TradeLogRepository
 from tradingagents_us.storage.models import AgentDecisionRow, TradeOrderRow
@@ -142,6 +149,9 @@ async def list_pending_orders(
 
 #: A tap waits this long for a daily-run ticker to finish sizing, then 503s.
 APPROVE_LOCK_TIMEOUT_S = 15.0
+#: The caps a held BUY is re-checked against: the daily run's, which are the
+#: defaults (daily_run.sh passes trade.py no cap flags).
+APPROVE_LIMITS = PortfolioLimits()
 
 
 def _previous_close(ticker: str) -> float | None:
@@ -180,8 +190,8 @@ def _refuse_if_submitted(repo: TradeLogRepository, order_id: str) -> None:
 def _refuse_if_unaffordable(
     alpaca: AlpacaClient, order: TradeOrder, price: float | None,
     prices: dict[str, float | None],
-) -> None:
-    """A held BUY is re-costed against the cash the account has NOW.
+) -> list[PendingBuy]:
+    """A held BUY is re-costed against the cash the account has NOW; returns the open BUYs.
 
     It was sized when it was held, possibly days ago; tonight's daily run may
     have committed that cash since. Priced from prices fetched before the lock
@@ -189,7 +199,7 @@ def _refuse_if_unaffordable(
     or a missing reference price refuses rather than guesses.
     """
     try:
-        spendable, _ = spendable_now(alpaca, prices.get)
+        spendable, open_buys = spendable_now(alpaca, prices.get)
     except Exception as exc:  # noqa: BLE001 — no cash figure, no BUY
         raise HTTPException(503, f"could not read the account to re-check cash: {exc}") from exc
     if price is None or spendable is None:
@@ -203,6 +213,61 @@ def _refuse_if_unaffordable(
             409, f"BUY needs ${notional:,.2f} but only ${spendable:,.2f} is spendable now; "
                  f"it stays PENDING"
         )
+    return open_buys
+
+
+def _refuse_if_over_caps(
+    alpaca: AlpacaClient, order: TradeOrder, price: float,
+    prices: dict[str, float | None], sectors: dict[str, str], open_buys: list[PendingBuy],
+) -> None:
+    """A held BUY is re-checked against the single-name and sector caps NOW.
+
+    Tonight's run may have filled this name, or its sector, up to the cap
+    since the order was held, and the run cannot see a held order: it lives
+    only in the DB. The exposure is the daily run's: positions plus open BUYs.
+    Correlation and liquidity are not measured again here (that would take
+    market data under the lock); they were checked when the order was sized.
+    """
+    try:
+        equity = alpaca.account().portfolio_value
+        positions = alpaca.list_positions()
+    except Exception as exc:  # noqa: BLE001 — no book, no BUY
+        raise HTTPException(503, f"could not read the account to re-check the caps: {exc}") from exc
+    by_ticker = {p.symbol: abs(p.market_value) for p in positions}
+    for sym, value in pending_buy_exposure(open_buys, prices.get).items():
+        by_ticker[sym] = by_ticker.get(sym, 0.0) + value
+    by_sector: dict[str, float] = {}
+    for sym, value in by_ticker.items():
+        sec = sectors.get(sym, UNKNOWN_SECTOR)
+        by_sector[sec] = by_sector.get(sec, 0.0) + value
+    ok, reasons = check_limits(
+        order.ticker, sectors.get(order.ticker, UNKNOWN_SECTOR), order.quantity * price,
+        avg_daily_volume_usd=float("inf"),
+        ctx=PortfolioContext(
+            equity=equity,
+            existing_position_values_by_ticker=by_ticker,
+            existing_position_values_by_sector=by_sector,
+            high_correlation_count=0,
+        ),
+        limits=APPROVE_LIMITS,
+    )
+    if not ok:
+        raise HTTPException(
+            409, f"BUY would break the portfolio caps now ({'; '.join(reasons)}); "
+                 f"it stays PENDING"
+        )
+
+
+def _sectors(alpaca: AlpacaClient, symbols: set[str]) -> dict[str, str]:
+    """Sector of every name the locked cap check can meet, looked up before it.
+
+    A lookup can be a Polygon call, and none is made under the lock. A name
+    found only under the lock goes in the "Unknown" bucket the cap counts.
+    """
+    names = set(symbols)
+    with contextlib.suppress(Exception):
+        names.update(p.symbol for p in alpaca.list_positions())
+    return {sym: sector_for(sym) for sym in names}
 
 
 # A plain `def`, not `async def`: FastAPI runs it in its threadpool. The lock
@@ -255,14 +320,16 @@ def approve_order(
     # Only a BUY reads the account (to re-check its cash); a SELL needs no
     # broker client here at all.
     alpaca = _account_client() if is_buy else None
+    sectors: dict[str, str] = {}
     try:
         if alpaca is not None:
             with contextlib.suppress(Exception):
                 for pending in read_open_buys(alpaca):
                     if pending.symbol not in prices:
                         prices[pending.symbol] = _previous_close(pending.symbol)
+            sectors = _sectors(alpaca, set(prices))
         return _submit_locked(repo, user, order_id, order, decision, current_price,
-                              prices, alpaca)
+                              prices, sectors, alpaca)
     finally:
         if alpaca is not None:
             with contextlib.suppress(Exception):
@@ -276,7 +343,7 @@ def _account_client() -> AlpacaClient:
 def _submit_locked(
     repo: TradeLogRepository, user: str, order_id: str, order: TradeOrder,
     decision: Any, current_price: float | None, prices: dict[str, float | None],
-    alpaca: AlpacaClient | None,
+    sectors: dict[str, str], alpaca: AlpacaClient | None,
 ) -> dict:
     is_buy = alpaca is not None
 
@@ -287,13 +354,14 @@ def _submit_locked(
     try:
         with submit_section(exit_only=not is_buy, timeout_s=APPROVE_LOCK_TIMEOUT_S):
             # Re-checked under the lock: the switch may have been flipped, the
-            # order sent by another tap, or the cash spent, while this request
-            # waited for it.
+            # order sent by another tap, or the cash or the caps used up, while
+            # this request waited for it.
             _refuse_if_killed(repo, user, order_id)
             _refuse_if_submitted(repo, order_id)
             if alpaca is not None:
                 ref = current_price or order.limit_price or decision.entry_price
-                _refuse_if_unaffordable(alpaca, order, ref, prices)
+                open_buys = _refuse_if_unaffordable(alpaca, order, ref, prices)
+                _refuse_if_over_caps(alpaca, order, ref, prices, sectors, open_buys)
             result = submit_order(
                 order, config=ExecutionConfig(dry_run=False),
                 decision=decision, current_price=current_price,

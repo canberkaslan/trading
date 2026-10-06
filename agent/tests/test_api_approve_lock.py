@@ -32,17 +32,25 @@ def _row(side: str, qty: int = 5) -> SimpleNamespace:
 
 
 class _Broker:
-    """Alpaca stand-in: settled cash and a list of open orders."""
+    """Alpaca stand-in: settled cash, equity, positions and open orders."""
 
     base_url = "https://paper.invalid/v2"
 
-    def __init__(self, cash: float, open_orders: list[dict] | None = None) -> None:
+    def __init__(
+        self, cash: float, open_orders: list[dict] | None = None, *,
+        equity: float | None = None, positions: list[SimpleNamespace] | None = None,
+    ) -> None:
         self.cash = cash
+        self.equity = cash if equity is None else equity
+        self.positions = positions or []
         orders = open_orders or []
         self._http = SimpleNamespace(get=lambda url: SimpleNamespace(json=lambda: orders))
 
     def account(self) -> SimpleNamespace:
-        return SimpleNamespace(cash=self.cash)
+        return SimpleNamespace(cash=self.cash, portfolio_value=self.equity)
+
+    def list_positions(self) -> list[SimpleNamespace]:
+        return list(self.positions)
 
     def close(self) -> None:
         pass
@@ -129,6 +137,35 @@ def test_a_buy_the_cash_no_longer_covers_is_refused(api) -> None:
     r = api.approve()  # 5 x $100 = $500
     assert r.status_code == 409
     assert "spendable now" in r.json()["detail"]
+    assert api.submitted == []
+
+
+def test_a_buy_the_name_cap_no_longer_has_room_for_is_refused(api) -> None:
+    # Tonight's run filled AAPL to its 10% cap: an open 100-share BUY at about
+    # $100 on $100k. The held 60-share AAPL BUY was sized before it, and the
+    # run could not see it.
+    api.broker = _Broker(cash=100_000.0, open_orders=[
+        {"symbol": "AAPL", "side": "buy", "qty": "100", "filled_qty": "0",
+         "limit_price": None, "submitted_at": "2026-10-06T22:31:00Z"},
+    ])
+    api.qty = 60
+    r = api.approve()
+    assert r.status_code == 409
+    assert "position_pct" in r.json()["detail"]
+    assert api.submitted == []
+
+
+def test_a_buy_its_sector_no_longer_has_room_for_is_refused(api) -> None:
+    # MSFT and NVDA hold 28% of $100k in Information Technology; another 5% of
+    # AAPL would take the sector past its 30% cap.
+    api.broker = _Broker(cash=72_000.0, equity=100_000.0, positions=[
+        SimpleNamespace(symbol="MSFT", market_value=14_000.0),
+        SimpleNamespace(symbol="NVDA", market_value=14_000.0),
+    ])
+    api.qty = 50
+    r = api.approve()
+    assert r.status_code == 409
+    assert "sector_pct" in r.json()["detail"]
     assert api.submitted == []
 
 

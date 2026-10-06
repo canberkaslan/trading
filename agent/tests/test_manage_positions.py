@@ -942,6 +942,25 @@ class TestAListingAfterATimeExitHasCaughtUpWithIt:
         assert (failed, uncovered) == (0, []), "the back-fill stands: the doubt is settled"
         assert sleeps == list(LISTING_CATCH_UP_DELAYS_S[:2])
 
+    def test_a_refused_back_fill_beside_an_exit_is_no_cover_from_the_released_stop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # XOM's exit was never found and its back-fill is refused: only the
+        # close's read of stop-xom, handed on, says a listing still showing
+        # that stop is old. Taken as it comes, the lot reads covered.
+        sleeps = self._released(monkeypatch, behind=2)
+        self.fake.refuse_stop = {"XOM"}
+        uncovered = ["XOM unknown"]
+
+        failed = mp._cover_beside_exit(
+            self.fake, PlaceStop("XOM", 10.0, 90.0, 2.0), XOM_EXIT_ID, uncovered, 0.0,
+            [self.CLOSE],
+        )
+
+        assert failed == 1
+        assert uncovered == ["XOM unknown", f"XOM naked beside exit {XOM_EXIT_ID}"]
+        assert sleeps == list(LISTING_CATCH_UP_DELAYS_S[:2])
+
     def test_a_lot_s_lagging_listing_holds_up_no_other_lot(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

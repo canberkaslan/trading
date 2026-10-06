@@ -2,7 +2,8 @@
 
 Every path that sends orders for the account takes this lock: the daily run's
 tickers (scripts/trade.py, now several at once), the position pass
-(scripts/manage_positions.py) and a mobile approval (api/routes/orders.py).
+(scripts/manage_positions.py), a mobile approval (api/routes/orders.py) and
+the kill switch's flatten (the API's and scripts/kill_check.py's).
 A BUY is sized against the cash the account has left, so two BUYs sized from
 the same read overspend it; the lock makes each one read the book after the
 previous one's order is in.

@@ -388,8 +388,10 @@ async def cancel_order(
     }
 
 
+# A plain `def`, like approve: an armed state waits on the submit lock below,
+# and that wait must not stall the event loop.
 @router.post("/kill-switch")
-async def set_kill_switch(
+def set_kill_switch(
     body: KillSwitchUpdate,
     user: str = Depends(require_admin),
     repo: TradeLogRepository = Depends(get_repo),
@@ -400,6 +402,13 @@ async def set_kill_switch(
     the daily_run.sh pre-check (which also executes FLATTEN_ALL). The
     single-box file backend is fine while API + trader share a host; the
     DynamoDB reader exists for a future multi-host split.
+
+    An armed state answers only after passing through the submit lock. Every
+    BUY re-reads the switch under that lock right before it is sent (approve
+    here, trade.py through its circuit breaker), so a BUY already past its
+    check is in before this answers, and the flatten then cancels it; any
+    later BUY sees the new state. The wait is exit-only: a lock that stays
+    held delays the flatten by at most EXIT_TIMEOUT_S, never drops it.
     """
     flag_path = default_kill_switch_path()
     # Atomic replace — a crash mid-write must never leave a truncated file
@@ -415,41 +424,49 @@ async def set_kill_switch(
     with contextlib.suppress(Exception):
         repo.append_kill_event(state=body.state, actor=user, source="api")
 
-    # FLATTEN_ALL executes NOW, not at the next 22:30 UTC run — the switch
-    # is a panic button, hours of latency defeats it. kill_check remains
-    # the daily backstop if this attempt fails.
     flatten_summary: str | None = None
-    if body.state == "FLATTEN_ALL":
-        try:
-            result = flatten_all()
-        except Exception as exc:
-            with contextlib.suppress(Exception):
-                repo.append_kill_event(
-                    state="FLATTEN_ALL", actor=user, source="api",
-                    detail=f"immediate flatten FAILED: {exc}",
-                )
-            raise HTTPException(
-                502,
-                f"kill switch armed, but immediate flatten failed: {exc} — "
-                f"the daily-run backstop will retry",
-            ) from exc
-        with contextlib.suppress(Exception):
-            repo.append_kill_event(
-                state="FLATTEN_ALL", actor=user, source="api",
-                detail=("noop: " if result.noop else ("executed: " if result.ok else "partial: "))
-                + result.summary,
-            )
-        if not result.ok:
-            raise HTTPException(
-                502,
-                f"kill switch armed, but flatten was PARTIAL: {result.summary}",
-            )
-        flatten_summary = result.summary
+    if body.state != "RUN":
+        with submit_section(exit_only=True):
+            if body.state == "FLATTEN_ALL":
+                flatten_summary = _flatten_now(repo, user)
 
     resp = {"state": body.state, "path": flag_path}
     if flatten_summary is not None:
         resp["flatten"] = flatten_summary
     return resp
+
+
+def _flatten_now(repo: TradeLogRepository, user: str) -> str:
+    """FLATTEN_ALL executes NOW, not at the next 22:30 UTC run.
+
+    The switch is a panic button, hours of latency defeats it. kill_check
+    remains the daily backstop if this attempt fails.
+    """
+    try:
+        result = flatten_all()
+    except Exception as exc:
+        with contextlib.suppress(Exception):
+            repo.append_kill_event(
+                state="FLATTEN_ALL", actor=user, source="api",
+                detail=f"immediate flatten FAILED: {exc}",
+            )
+        raise HTTPException(
+            502,
+            f"kill switch armed, but immediate flatten failed: {exc} — "
+            f"the daily-run backstop will retry",
+        ) from exc
+    with contextlib.suppress(Exception):
+        repo.append_kill_event(
+            state="FLATTEN_ALL", actor=user, source="api",
+            detail=("noop: " if result.noop else ("executed: " if result.ok else "partial: "))
+            + result.summary,
+        )
+    if not result.ok:
+        raise HTTPException(
+            502,
+            f"kill switch armed, but flatten was PARTIAL: {result.summary}",
+        )
+    return result.summary
 
 
 @router.get("/kill-switch")

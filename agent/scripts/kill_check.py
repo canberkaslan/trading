@@ -75,9 +75,14 @@ def main() -> int:
 
     # FLATTEN_ALL — backstop execution (API already tried at flip time)
     from tradingagents_us.execution.flatten import flatten_all
+    from tradingagents_us.execution.submit_lock import submit_section
 
     try:
-        result = flatten_all()
+        # Under the submit lock, so an order between its own kill-switch check
+        # and the broker (an approval) is in first and gets flattened too.
+        # Exit-only: a lock that stays held delays the flatten, never drops it.
+        with submit_section(exit_only=True):
+            result = flatten_all()
     except Exception as exc:
         detail = f"flatten FAILED: {exc}"
         print(f"kill_check: {detail}", file=sys.stderr)

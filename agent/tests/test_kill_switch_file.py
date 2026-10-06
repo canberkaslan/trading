@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tradingagents_us.execution.flatten import FlattenResult
 from tradingagents_us.risk.kill_switch import FileKillSwitchReader
 
 
@@ -188,3 +189,41 @@ class TestKillCheckExitCodes:
         ):
             assert kc.main() == 1
         assert "FAILED" in audit.call_args.args[1]
+
+    def test_the_backstop_flatten_waits_for_an_order_mid_submit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # An approval holds the submit lock from its kill-switch check to its
+        # broker submit. A flatten that does not wait for it lets that BUY in
+        # after the book was flattened.
+        import threading
+        import time
+
+        from tradingagents_us.execution import submit_lock
+        from tradingagents_us.file_lock import exclusive
+
+        kc = self._run_main(tmp_path, monkeypatch, "FLATTEN_ALL")
+        events: list[str] = []
+        holding = threading.Event()
+
+        def approval_mid_submit() -> None:
+            with exclusive(submit_lock.lock_path()):
+                holding.set()
+                time.sleep(0.5)
+                events.append("approved BUY sent")
+
+        def flatten() -> FlattenResult:
+            events.append("FLATTEN_ALL")
+            return FlattenResult(ok=True, noop=True, summary="book already flat")
+
+        t = threading.Thread(target=approval_mid_submit)
+        t.start()
+        assert holding.wait(10)
+        with (
+            patch("tradingagents_us.execution.flatten.flatten_all", flatten),
+            patch.object(kc, "_audit"),
+            patch.object(kc, "_notify"),
+        ):
+            assert kc.main() == 76
+        t.join(10)
+        assert events == ["approved BUY sent", "FLATTEN_ALL"]

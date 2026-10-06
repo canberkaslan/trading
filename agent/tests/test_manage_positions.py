@@ -34,7 +34,11 @@ from tradingagents_us.dataflows.alpaca_broker import (
     Position,
 )
 from tradingagents_us.execution.executor import derive_exit_client_order_id
-from tradingagents_us.execution.protected_close import _rearm_id
+from tradingagents_us.execution.protected_close import (
+    LISTING_CATCH_UP_DELAYS_S,
+    CloseOutcome,
+    _rearm_id,
+)
 from tradingagents_us.risk.position_manager import PlaceStop, RatchetStop, TimeExit
 from tradingagents_us.storage import TradeLogRepository
 from tradingagents_us.storage.price_cache import write_bars
@@ -840,6 +844,87 @@ class TestThePassReadsOrdersBeforeTheHolding:
         assert "MSFT" not in fake.positions
         assert fake.live_sells("MSFT") == [], "a sell stop on a flat book is a short"
         assert rc == 0
+
+
+class TestAListingAfterATimeExitHasCaughtUpWithIt:
+    """The re-cover's listings wait for one that shows what the pass's closes read by id.
+
+    Right after a close, Alpaca's listing may still show the stop it released
+    and read cancelled, or not yet the one it put back: read as it comes, the
+    re-cover finds the lot covered by a stop that is gone, or naked under one
+    that stands, and back-fills off that.
+    """
+
+    #: XOM's time exit released its stop and read it cancelled.
+    CLOSE = CloseOutcome("XOM", "unchanged", "exit refused", released=("stop-xom",))
+
+    def _released(self, monkeypatch: pytest.MonkeyPatch, behind: int) -> list[float]:
+        sleeps: list[float] = []
+        monkeypatch.setattr(mp.time, "sleep", sleeps.append)
+        self.fake = FakeBroker(
+            positions=[_position("XOM", 100.5)], orders=[_stop("stop-xom", "XOM", 90.0)],
+            lists_behind=behind,
+        )
+        self.fake.cancel_order("stop-xom")
+        return sleeps
+
+    def test_a_listing_still_showing_the_released_stop_is_read_again(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sleeps = self._released(monkeypatch, behind=2)
+
+        *_, sells = mp._read_book(self.fake, [self.CLOSE])
+
+        assert [o.status for o in sells] == ["canceled"]
+        assert sleeps == list(LISTING_CATCH_UP_DELAYS_S[:2])
+
+    def test_one_that_never_catches_up_is_an_unreadable_book(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sleeps = self._released(monkeypatch, behind=10**6)
+
+        with pytest.raises(RuntimeError, match="stop-xom listed new"):
+            mp._read_book(self.fake, [self.CLOSE])
+        assert sleeps == list(LISTING_CATCH_UP_DELAYS_S)
+
+    def test_a_stop_the_close_put_back_is_waited_for_too(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sleeps = self._released(monkeypatch, behind=1)
+        rearm = self.fake.submit_order(
+            symbol="XOM", qty=10.0, side="sell", order_type="stop", time_in_force="gtc",
+            stop_price=90.0, client_order_id="re-arm",
+        )
+        close = dataclasses.replace(self.CLOSE, rearmed=(rearm.id,))
+
+        assert mp._naked_now(self.fake, "XOM", [close]) == 0.0
+        assert sleeps == [LISTING_CATCH_UP_DELAYS_S[0]]
+
+    def test_a_back_fill_beside_an_exit_waits_on_its_own_lot_only(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # XOM's exit was never found, and its back-fill is placed beside it.
+        # AAPL's close placed an exit too, which XOM's listing never shows.
+        sleeps = self._released(monkeypatch, behind=2)
+        aapl = CloseOutcome("AAPL", "exit_submitted", "", exit_order_id="market-AAPL-9")
+        uncovered = ["XOM unknown"]
+
+        failed = mp._cover_beside_exit(
+            self.fake, PlaceStop("XOM", 10.0, 90.0, 2.0), XOM_EXIT_ID, uncovered, 0.0,
+            [aapl, self.CLOSE],
+        )
+
+        assert (failed, uncovered) == (0, []), "the back-fill stands: the doubt is settled"
+        assert sleeps == list(LISTING_CATCH_UP_DELAYS_S[:2])
+
+    def test_with_no_close_before_it_a_listing_is_taken_as_it_comes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sleeps = self._released(monkeypatch, behind=2)
+
+        *_, sells = mp._read_book(self.fake)
+
+        assert [o.status for o in sells] == ["new"] and sleeps == []
 
 
 class _SoldWhileXomIsReleased(FakeBroker):

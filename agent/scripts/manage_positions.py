@@ -94,7 +94,7 @@ import logging
 import os
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -103,12 +103,14 @@ from tradingagents_us.dataflows.polygon import PolygonClient
 from tradingagents_us.execution.protected_close import (
     CLOSED_STATUSES,
     FAILED_EXIT_STATUSES,
+    LISTING_CATCH_UP_DELAYS_S,
     RELEASED_STATUSES,
     CloseOutcome,
     close_with_protection,
     cover_beside_exit,
     day_ended_exit,
     exit_stamp_date,
+    listing_behind,
     missed_exits,
     opened_after,
 )
@@ -179,8 +181,36 @@ EXIT_UNCOVERED = 3
 UNCOVERED_STATUSES = frozenset({"unknown", "naked"})
 
 
+def _read_by_id(closes: Iterable[CloseOutcome]) -> tuple[set[str], set[str]]:
+    """The sells this pass's time exits read gone by their own id, and the orders they placed."""
+    gone = {oid for c in closes for oid in c.released}
+    placed = {oid for c in closes for oid in (*c.rearmed, c.exit_order_id) if oid}
+    return gone, placed
+
+
+def _listing(client: AlpacaClient, closes: Iterable[CloseOutcome]) -> list[Order]:
+    """Every order, nested, off a listing no older than what this pass's time exits read by id.
+
+    Alpaca's listing lags its per-order reads for seconds after a write
+    (`protected_close.LISTING_CATCH_UP_DELAYS_S`). One that still shows a sell
+    a close read cancelled, or not yet an order it placed, is the book before
+    that close: off it the re-cover reads a lot covered by a stop that is
+    gone, or naked under one that stands. Listed again until it catches up;
+    raises if it never does, so nothing is placed off it.
+    """
+    gone, placed = _read_by_id(closes)
+    for delay in (0.0, *LISTING_CATCH_UP_DELAYS_S):
+        if delay:
+            time.sleep(delay)
+        raw = client.list_orders(status="all", limit=500, nested=True)
+        behind = listing_behind(flatten_orders(raw), gone, placed)
+        if not behind:
+            return raw
+    raise RuntimeError(f"order listing still behind the time exits' reads: {', '.join(behind)}")
+
+
 def _order_views(
-    client: AlpacaClient,
+    client: AlpacaClient, closes: Iterable[CloseOutcome] = ()
 ) -> tuple[list[OrderView], dict[tuple[str, float], str], list[Order]]:
     """Every live order as a pure view, plus a map back to the broker order id.
 
@@ -204,8 +234,11 @@ def _order_views(
     stamps there (`_exited_on`), which names an earlier date's exit is still
     selling (`_exiting_before`), and which one the open refused
     (`_report_missed_exits`).
+
+    `closes` are this pass's time exits so far: the listing is read again
+    until it has caught up with them (`_listing`).
     """
-    raw = client.list_orders(status="all", limit=500, nested=True)
+    raw = _listing(client, closes)
     flat = flatten_orders(raw)
 
     views = [
@@ -233,7 +266,7 @@ def _sells(sell_orders: list[Order]) -> Sells:
 
 
 def _read_book(
-    client: AlpacaClient,
+    client: AlpacaClient, closes: Iterable[CloseOutcome] = ()
 ) -> tuple[list[OrderView], dict[tuple[str, float], str], list, list[Order]]:
     """The orders, then the holding, in that order and never the other.
 
@@ -245,7 +278,7 @@ def _read_book(
     first and the same fill shows as a position that is gone. The same rule as
     `protected_close._read_truth`.
     """
-    orders, stop_ids, sells = _order_views(client)
+    orders, stop_ids, sells = _order_views(client, closes)
     return orders, stop_ids, client.list_positions(), sells
 
 
@@ -494,7 +527,7 @@ def _describe(act: Action, submitting: bool) -> None:
         )
 
 
-def _naked_now(client: AlpacaClient, ticker: str) -> float:
+def _naked_now(client: AlpacaClient, ticker: str, closes: Iterable[CloseOutcome] = ()) -> float:
     """The shares of `ticker` no stop covers, off the broker's book as it is now.
 
     The plan's figure comes from a read taken before any of the pass's writes,
@@ -506,7 +539,7 @@ def _naked_now(client: AlpacaClient, ticker: str) -> float:
     it: 0 when the lot is gone or not long. Raises when its protection is
     ambiguous now, so nothing is placed and the pass fails.
     """
-    orders = _order_views(client)[0]
+    orders = _order_views(client, closes)[0]
     lot = next((p for p in client.list_positions() if p.symbol == ticker), None)
     if lot is None or lot.side != "long":
         return 0.0
@@ -518,9 +551,11 @@ def _naked_now(client: AlpacaClient, ticker: str) -> float:
     return row.naked_qty
 
 
-def _place_backfill(client: AlpacaClient, act: PlaceStop) -> None:
+def _place_backfill(
+    client: AlpacaClient, act: PlaceStop, closes: Iterable[CloseOutcome] = ()
+) -> None:
     """One back-fill stop, for no more than the shares `_naked_now` finds naked."""
-    qty = min(act.quantity, _naked_now(client, act.ticker))
+    qty = min(act.quantity, _naked_now(client, act.ticker, closes))
     if qty <= QTY_EPSILON:
         log.info(
             "%-6s SKIP  back-fill: no naked shares now, sold or covered since the plan",
@@ -548,6 +583,7 @@ def _execute(
     unclosed: list[str] | None = None,
     uncovered: list[str] | None = None,
     unsettled: dict[str, str] | None = None,
+    closes: list[CloseOutcome] | None = None,
 ) -> int:
     """Apply the plan. One bad symbol must not stop the rest of the pass.
 
@@ -557,7 +593,10 @@ def _execute(
     one that may have left shares with no stop to `uncovered`, so it can say so.
     One whose exit was sent and never ruled out goes into `unsettled`, keyed to
     its stamp: that exit can still land, and a back-fill must look for it.
+    Each close's outcome goes into `closes`, and every listing after it waits
+    for one that has caught up with what it read by id (`_listing`).
     """
+    closes = [] if closes is None else closes
     failures = 0
     for act in actions:
         try:
@@ -565,9 +604,10 @@ def _execute(
                 replaced = client.replace_order(act.stop_order_id, stop_price=act.new_stop)
                 log.info("%-6s ratcheted, new order %s", act.ticker, replaced.id)
             elif isinstance(act, PlaceStop):
-                _place_backfill(client, act)
+                _place_backfill(client, act, closes)
             else:
                 outcome = _close_on_age(client, act, trade_date)
+                closes.append(outcome)
                 failures += int(not outcome.ok)
                 if not outcome.ok:
                     _hand_on(outcome, unclosed, uncovered, unsettled)
@@ -755,6 +795,7 @@ def _recover_unclosed(
     uncovered: list[str],
     unsettled: dict[str, str] | None = None,
     fresh: dict[str, Series] | None = None,
+    closes: list[CloseOutcome] | None = None,
 ) -> int:
     """Back-fill, from a fresh broker read, the names a time exit left open.
 
@@ -795,13 +836,18 @@ def _recover_unclosed(
     book is read again to say which. A name it settles either way is off
     `uncovered`.
 
+    Every listing it reads is one that has caught up with what the pass's
+    closes (`closes`) read by id (`_listing`): right after them, Alpaca's
+    may still show the stops they released, or not yet the ones they put back.
+
     Returns how many placements failed. A book it could not read, or a
     placement that failed, is also appended to `uncovered`: the names it was
     handed may have shares with no stop, and it could not put one there.
     """
+    closes = closes or []
     try:
         # Orders first, holding last (see `_read_book`).
-        orders, stop_ids, positions, sell_orders = _read_book(client)
+        orders, stop_ids, positions, sell_orders = _read_book(client, closes)
     except Exception as exc:  # noqa: BLE001 — reported and counted, never guessed past
         log.error("re-cover after failed exits: book unreadable, nothing placed: %s", exc)
         uncovered.append(f"re-cover could not read the book: {exc}")
@@ -836,28 +882,34 @@ def _recover_unclosed(
     for act in backfills:
         _describe(act, True)
     unsettled = unsettled or {}
-    failed = _execute(client, [a for a in backfills if a.ticker not in unsettled], today)
+    failed = _execute(
+        client, [a for a in backfills if a.ticker not in unsettled], today, closes=closes
+    )
     if failed:
         uncovered.append(f"re-cover could not place {failed} back-fill stop(s)")
     for act in (a for a in backfills if a.ticker in unsettled):
         row = by_symbol[act.ticker]
         covered = min(row.protected_qty, row.position_qty)
-        failed += _cover_beside_exit(client, act, unsettled[act.ticker], uncovered, covered)
+        failed += _cover_beside_exit(
+            client, act, unsettled[act.ticker], uncovered, covered, closes
+        )
     return failed
 
 
 def _cover_beside_exit(
-    client: AlpacaClient, act: PlaceStop, stamp: str, uncovered: list[str], covered: float
+    client: AlpacaClient, act: PlaceStop, stamp: str, uncovered: list[str], covered: float,
+    closes: Iterable[CloseOutcome] = (),
 ) -> int:
     """One back-fill beside an exit that may still land; 1 if it is not settled.
 
     `covered` is what the stops standing beside it covered when the back-fill
     was sized: the verdict holds the lot to that and the back-fill both.
     """
+    gone, placed = _read_by_id(c for c in closes if c.ticker == act.ticker)
     try:
         outcome = cover_beside_exit(
             client, act.ticker, stamp=stamp, qty=act.quantity, stop_price=act.stop_price,
-            covered=covered,
+            covered=covered, released=gone, rearmed=placed,
         )
     except Exception as exc:  # noqa: BLE001 — one bad symbol must not stop the pass
         log.error("%-6s FAILED back-fill beside exit %s: %s", act.ticker, stamp, exc)
@@ -1009,15 +1061,18 @@ def main(argv: list[str] | None = None) -> int:
         unclosed: list[str] = []
         uncovered: list[str] = []
         unsettled: dict[str, str] = {}
+        closes: list[CloseOutcome] = []
         failures = _execute(
-            client, actions, today, unclosed=unclosed, uncovered=uncovered, unsettled=unsettled
+            client, actions, today, unclosed=unclosed, uncovered=uncovered, unsettled=unsettled,
+            closes=closes,
         )
         if unclosed:
             log.warning(
                 "re-cover: time exits left %s open; re-reading the book", ", ".join(unclosed)
             )
             failures += _recover_unclosed(
-                client, repo, set(unclosed), entries, today, config, uncovered, unsettled, fresh
+                client, repo, set(unclosed), entries, today, config, uncovered, unsettled, fresh,
+                closes,
             )
         if uncovered:
             log.error(

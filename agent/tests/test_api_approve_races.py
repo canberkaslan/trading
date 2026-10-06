@@ -409,3 +409,36 @@ class TestAFlattenThatFailsAfterItsAnswer:
         assert "FLATTEN_ALL" in title
         assert words in body
         assert kind == "kill_switch"
+
+
+def _kill_details(repo: TradeLogRepository) -> list[str]:
+    with repo.session() as s:
+        return [d for d in s.execute(select(KillSwitchEventRow.detail)).scalars().all() if d]
+
+
+class TestAFlattenWithdrawnWhileItWaits:
+    @pytest.mark.parametrize("withdrawn_to", ["RUN", "PAUSE_NEW"])
+    def test_it_is_not_sent_once_the_lock_is_had(
+        self, env, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, withdrawn_to: str
+    ) -> None:
+        # The 202 leaves the flatten waiting behind the lock, and the operator
+        # takes it back. The book must not be liquidated with the switch
+        # reading RUN, nor the BUYs placed since under RUN cancelled.
+        from api.routes import orders
+
+        monkeypatch.setattr(orders, "KILL_SWITCH_ANSWER_S", 0.3)
+        with exclusive(submit_lock.lock_path()):
+            r = env.client.post("/v1/orders/kill-switch", json={"state": "FLATTEN_ALL"})
+            assert r.status_code == 202
+            back = env.client.post("/v1/orders/kill-switch", json={"state": withdrawn_to})
+            assert back.status_code in (200, 202)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not (
+            env.broker.events or any(d.startswith("withdrawn") for d in _kill_details(env.repo))
+        ):
+            time.sleep(0.05)
+        assert env.broker.events == []
+        assert (tmp_path / "kill.state").read_text() == withdrawn_to
+        assert any(
+            d.startswith("withdrawn") and withdrawn_to in d for d in _kill_details(env.repo)
+        ), "the withdrawn flatten left no audit row"

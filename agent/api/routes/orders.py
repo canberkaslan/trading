@@ -555,7 +555,8 @@ def set_kill_switch(
     The lock can stay held for minutes (a time exit's close), and the app stops
     listening long before. So after KILL_SWITCH_ANSWER_S this answers 202: the
     switch is armed, and the wait, and the flatten, carry on without the
-    request. The flatten's outcome is in the audit trail either way, and a
+    request; a RUN or PAUSE_NEW set before the flatten gets to run withdraws
+    it. The flatten's outcome is in the audit trail either way, and a
     flatten that fails is paged, since no request may be left to carry it.
     """
     flag_path = default_kill_switch_path()
@@ -609,7 +610,7 @@ def _behind_the_lock(
         try:
             with submit_section(exit_only=True):
                 if flatten:
-                    outcome["summary"] = _flatten_now(repo, user)
+                    outcome["summary"] = _flatten_if_still_armed(repo, user)
         except Exception as exc:  # noqa: BLE001 — raised by the request, if it still waits
             outcome["error"] = exc
         finally:
@@ -620,6 +621,23 @@ def _behind_the_lock(
 
     threading.Thread(target=run, name="kill-switch", daemon=True).start()
     return done, outcome
+
+
+def _flatten_if_still_armed(repo: TradeLogRepository, user: str) -> str:
+    """Flatten, unless the switch was taken off FLATTEN_ALL while this waited.
+
+    Read again once the lock is had, or its wait gave up: that wait can last a
+    minute, and a RUN or PAUSE_NEW tapped in it withdraws the flatten. Sending
+    it anyway would liquidate the book with the switch reading RUN, and cancel
+    the brackets placed under RUN since.
+    """
+    state = FileKillSwitchReader().read()
+    if state == "FLATTEN_ALL":
+        return _flatten_now(repo, user)
+    summary = f"withdrawn: the switch reads {state} by the time the flatten could run; nothing sent"
+    with contextlib.suppress(Exception):
+        repo.append_kill_event(state="FLATTEN_ALL", actor=user, source="api", detail=summary)
+    return summary
 
 
 def _page_failed_flatten(exc: Exception) -> None:

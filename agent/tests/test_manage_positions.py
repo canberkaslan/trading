@@ -1021,18 +1021,45 @@ class TestAListingAfterATimeExitHasCaughtUpWithIt:
         assert [o.status for o in sells] == ["new"] and sleeps == []
 
 
-class _ListsAStopWorkingForGood(FakeBroker):
-    """A listing that never shows `stop-T0` gone, whatever get_order reads; every re-arm refused."""
-
-    def list_orders(self, status: str = "open", limit: int = 50, nested: bool = False):
-        listed = super().list_orders(status, limit, nested)
-        return [dataclasses.replace(o, status="new") if o.id == "stop-T0" else o for o in listed]
+class _RefusesReArms(FakeBroker):
+    """Every stop a close puts back is turned down with a 4xx; a back-fill is placed."""
 
     def submit_order(self, **kw) -> Order:
         if "-arm-" in (kw.get("client_order_id") or ""):
             self._record("submit_order", kw)
             raise AlpacaRequestError("POST", "/orders", 422, "stop price must be below market")
         return super().submit_order(**kw)
+
+
+class TestTheReCoverWaitsForAListingThatCaughtUpWithTheClose:
+    """Through main(): the re-cover after a failed close reads a listing no older than it."""
+
+    def test_a_lot_whose_exit_and_re_arm_were_refused_is_back_filled(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The listing is five listings behind each write: through all of the
+        # close's own reads, which give up, it still shows the stop the close
+        # released and read cancelled. Taken as it comes, the re-cover's first
+        # listing covers the lot with that stop, and the lot spends the night
+        # with none.
+        monkeypatch.setattr(mp.time, "sleep", lambda _: None)
+        fake = _RefusesReArms(
+            positions=[_position("XOM", 100.5)], orders=[_stop("stop-xom", "XOM", 90.0)],
+            fills=[_buy("XOM")], refuse_sell={"XOM"}, lists_behind=5,
+        )
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        assert rc == mp.EXIT_UNCOVERED, "the close could not read its end state"
+        assert [(o.qty, o.stop_price) for o in fake.live_sells("XOM")] == [(10.0, 94.0)]
+
+
+class _ListsAStopWorkingForGood(_RefusesReArms):
+    """A listing that never shows `stop-T0` gone, whatever get_order reads."""
+
+    def list_orders(self, status: str = "open", limit: int = 50, nested: bool = False):
+        listed = super().list_orders(status, limit, nested)
+        return [dataclasses.replace(o, status="new") if o.id == "stop-T0" else o for o in listed]
 
 
 class TestALotsListingThatNeverCatchesUpThroughThePass:

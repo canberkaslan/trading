@@ -14,6 +14,14 @@ const API_URL = (Constants.expoConfig?.extra?.apiUrl ?? 'http://localhost:8000')
  * gates order approval and the kill switch cannot ship inside the bundle.
  */
 
+/**
+ * Approve and the kill switch can wait on the server's submit lock (up to 5 s)
+ * and then on the broker (a flatten's closes). Given up on at the default 10 s,
+ * a switch the server DID arm read as "sunucuya ulaşılamadı", and a PARTIAL
+ * flatten's 502 arrived after the app stopped listening.
+ */
+export const ORDER_ACTION_TIMEOUT_MS = 30_000;
+
 export const apiClient: KyInstance = ky.create({
   prefixUrl: API_URL,
   timeout: 10_000,

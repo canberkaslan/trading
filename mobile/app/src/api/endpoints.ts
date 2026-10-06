@@ -2,7 +2,7 @@
  * Typed wrappers over the FastAPI backend.
  */
 
-import { apiClient } from './client';
+import { apiClient, ORDER_ACTION_TIMEOUT_MS } from './client';
 import type {
   Actionability,
   AgentDecision,
@@ -114,7 +114,7 @@ export const api = {
 
   approveOrder: (orderId: string) =>
     apiClient
-      .post(`v1/orders/${orderId}/approve`)
+      .post(`v1/orders/${orderId}/approve`, { timeout: ORDER_ACTION_TIMEOUT_MS })
       .json<{ order_id: string; broker_order_id: string; status: string }>(),
   rejectOrder: (orderId: string) =>
     apiClient
@@ -132,7 +132,7 @@ export const api = {
     apiClient.get('v1/orders/kill-switch').json<{ state: KillSwitchState }>(),
   setKillSwitch: (state: KillSwitchState) =>
     apiClient
-      .post('v1/orders/kill-switch', { json: { state } })
+      .post('v1/orders/kill-switch', { json: { state }, timeout: ORDER_ACTION_TIMEOUT_MS })
       .json<{ state: KillSwitchState }>(),
 
   // Notifications

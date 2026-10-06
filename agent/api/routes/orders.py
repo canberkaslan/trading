@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import contextlib
 import os
+import threading
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy import select
 
@@ -147,8 +148,13 @@ async def list_pending_orders(
     return out
 
 
+# The app gives up on a request after 10 s (mobile/app/src/api/client.ts), and
+# builds already installed keep that. A wait on the submit lock here stays well
+# inside it, so the answer, a PARTIAL flatten's above all, reaches the operator.
 #: A tap waits this long for a daily-run ticker to finish sizing, then 503s.
-APPROVE_LOCK_TIMEOUT_S = 15.0
+APPROVE_LOCK_TIMEOUT_S = 5.0
+#: The kill switch answers after this long even while the lock stays held.
+KILL_SWITCH_ANSWER_S = 5.0
 #: The caps a held BUY is re-checked against: the daily run's, which are the
 #: defaults (daily_run.sh passes trade.py no cap flags).
 APPROVE_LIMITS = PortfolioLimits()
@@ -486,6 +492,7 @@ async def cancel_order(
 @router.post("/kill-switch")
 def set_kill_switch(
     body: KillSwitchUpdate,
+    response: Response,
     user: str = Depends(require_admin),
     repo: TradeLogRepository = Depends(get_repo),
 ) -> dict[str, str]:
@@ -496,13 +503,17 @@ def set_kill_switch(
     single-box file backend is fine while API + trader share a host; the
     DynamoDB reader exists for a future multi-host split.
 
-    An armed state answers only after passing through the submit lock. Every
-    live BUY reads the switch under that lock as the last step before its POST
-    (the executor), so a BUY already past that read is in before this
-    answers, and the flatten then cancels it; any later BUY sees the new
-    state. The wait is exit-only: a lock that stays held delays the flatten by
-    at most EXIT_TIMEOUT_S, never drops it, and the BUY that held the lock
-    meets the armed switch at its POST.
+    An armed state passes through the submit lock. Every live BUY reads the
+    switch under that lock as the last step before its POST (the executor), so
+    a BUY already past that read is in before the lock is had, and the flatten
+    then cancels it; any later BUY sees the new state. The wait is exit-only: a
+    lock that stays held delays the flatten by at most EXIT_TIMEOUT_S, never
+    drops it, and the BUY that held the lock meets the armed switch at its POST.
+
+    The lock can stay held for minutes (a time exit's close), and the app stops
+    listening long before. So after KILL_SWITCH_ANSWER_S this answers 202: the
+    switch is armed, and the wait, and the flatten, carry on without the
+    request. The flatten's outcome is in the audit trail either way.
     """
     flag_path = default_kill_switch_path()
     # Atomic replace — a crash mid-write must never leave a truncated file
@@ -518,16 +529,51 @@ def set_kill_switch(
     with contextlib.suppress(Exception):
         repo.append_kill_event(state=body.state, actor=user, source="api")
 
-    flatten_summary: str | None = None
-    if body.state != "RUN":
-        with submit_section(exit_only=True):
-            if body.state == "FLATTEN_ALL":
-                flatten_summary = _flatten_now(repo, user)
-
     resp = {"state": body.state, "path": flag_path}
-    if flatten_summary is not None:
-        resp["flatten"] = flatten_summary
+    if body.state == "RUN":
+        return resp
+    flatten = body.state == "FLATTEN_ALL"
+    done, outcome = _behind_the_lock(repo, user, flatten=flatten)
+    if not done.wait(KILL_SWITCH_ANSWER_S):
+        resp["pending"] = (
+            "armed; an order path holds the submit lock, and the flatten runs once it "
+            "lets go; its outcome goes to the audit trail" if flatten else
+            "armed; an order path holds the submit lock, and an order it is posting "
+            "right now may still land"
+        )
+        response.status_code = 202
+        return resp
+    if "error" in outcome:
+        raise outcome["error"]
+    if flatten:
+        resp["flatten"] = outcome["summary"]
     return resp
+
+
+def _behind_the_lock(
+    repo: TradeLogRepository, user: str, *, flatten: bool
+) -> tuple[threading.Event, dict[str, Any]]:
+    """Pass through the submit lock, flattening under it, on a thread of its own.
+
+    The thread outlives a request that stopped waiting for it, so a flatten
+    still runs after the order in flight, never beside it; `_flatten_now`
+    records its outcome either way.
+    """
+    done = threading.Event()
+    outcome: dict[str, Any] = {}
+
+    def run() -> None:
+        try:
+            with submit_section(exit_only=True):
+                if flatten:
+                    outcome["summary"] = _flatten_now(repo, user)
+        except Exception as exc:  # noqa: BLE001 — raised by the request, if it still waits
+            outcome["error"] = exc
+        finally:
+            done.set()
+
+    threading.Thread(target=run, name="kill-switch", daemon=True).start()
+    return done, outcome
 
 
 def _flatten_now(repo: TradeLogRepository, user: str) -> str:

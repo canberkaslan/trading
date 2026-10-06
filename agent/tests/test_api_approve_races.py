@@ -26,7 +26,7 @@ from tradingagents_us.execution.flatten import FlattenResult
 from tradingagents_us.file_lock import exclusive
 from tradingagents_us.schemas import AgentDecision, AgentReasoning, OrderUpdate, TradeOrder
 from tradingagents_us.storage import TradeLogRepository
-from tradingagents_us.storage.models import OrderUpdateRow, TradeOrderRow
+from tradingagents_us.storage.models import KillSwitchEventRow, OrderUpdateRow, TradeOrderRow
 
 #: How long the approval waits at the broker for a racing tap to land first.
 _RACE_WINDOW_S = 1.0
@@ -137,7 +137,6 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[SimpleNames
         broker.on_flatten()
         return FlattenResult(ok=True, noop=True, summary="book already flat; open orders cancelled")
 
-    monkeypatch.setattr(orders, "APPROVE_LOCK_TIMEOUT_S", 10.0)
     monkeypatch.setattr(orders, "_previous_close", lambda ticker: 100.0)
     monkeypatch.setattr(orders, "_account_client", lambda: broker)
     monkeypatch.setattr(orders, "flatten_all", fake_flatten)
@@ -219,6 +218,60 @@ class TestFlattenThatCouldNotWait:
         assert env.broker.events == ["FLATTEN_ALL"]
         assert env.broker.live == {}
         assert results == {"approve": 422}
+
+
+#: The app gives up on a request after this long (ky `timeout`,
+#: mobile/app/src/api/client.ts), and builds already installed keep it.
+_APP_TIMEOUT_S = 10.0
+
+
+class TestAnswersBeforeTheAppGivesUp:
+    """The submit lock can stay held for minutes (a time exit's close)."""
+
+    def test_a_pause_is_answered_while_the_lock_stays_held(self, env, tmp_path) -> None:
+        with exclusive(submit_lock.lock_path()):
+            started = time.monotonic()
+            r = env.client.post("/v1/orders/kill-switch", json={"state": "PAUSE_NEW"})
+            elapsed = time.monotonic() - started
+        assert elapsed < _APP_TIMEOUT_S, f"answered after {elapsed:.1f}s"
+        assert r.status_code == 202
+        assert (tmp_path / "kill.state").read_text() == "PAUSE_NEW"
+
+    def test_an_approval_is_answered_while_the_lock_stays_held(self, env) -> None:
+        with exclusive(submit_lock.lock_path()):
+            started = time.monotonic()
+            r = env.client.post("/v1/orders/ord-1/approve")
+            elapsed = time.monotonic() - started
+        assert elapsed < _APP_TIMEOUT_S, f"answered after {elapsed:.1f}s"
+        assert r.status_code == 503
+        assert env.broker.events == []
+
+    def test_a_flatten_behind_a_long_hold_answers_then_runs_after_it(
+        self, env, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from api.routes import orders
+
+        monkeypatch.setattr(orders, "KILL_SWITCH_ANSWER_S", 0.3)
+        flattened = threading.Event()
+        env.broker.on_flatten = flattened.set
+        with exclusive(submit_lock.lock_path()):
+            r = env.client.post("/v1/orders/kill-switch", json={"state": "FLATTEN_ALL"})
+            assert r.status_code == 202
+            assert "audit" in r.json()["pending"]
+            # Not beside the order path that holds the lock: after it.
+            assert not flattened.wait(0.3)
+        assert flattened.wait(10), "the flatten never ran once the lock was let go"
+        assert env.broker.events == ["FLATTEN_ALL"]
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not _flatten_recorded(env.repo):
+            time.sleep(0.05)
+        assert _flatten_recorded(env.repo), "the late flatten left no audit row"
+
+
+def _flatten_recorded(repo: TradeLogRepository) -> bool:
+    with repo.session() as s:
+        details = s.execute(select(KillSwitchEventRow.detail)).scalars().all()
+    return any(d and d.startswith("noop: ") for d in details)
 
 
 def _statuses(repo: TradeLogRepository) -> list[str]:

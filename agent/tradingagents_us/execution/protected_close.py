@@ -212,6 +212,8 @@ class CloseOutcome:
     client_order_id: str | None = None
     released: tuple[str, ...] = ()
     rearmed: tuple[str, ...] = ()
+    #: Its exit or a stop it put back, read dead by its own id (`_Ctx.dead`).
+    dead: tuple[str, ...] = ()
     #: This lot's last time exit, when a session opened after it was sent and
     #: it ended without selling the lot (refused, cancelled or expired there,
     #: or done for the day with shares unsold): the lot had neither stop nor
@@ -389,6 +391,9 @@ class _Ctx:
     #: must show them so before anything is decided off it (`_read_truth`).
     gone: frozenset[str] = frozenset()
     placed: frozenset[str] = frozenset()
+    #: Its own exit or stop that a read by id found dead (`RELEASED_STATUSES`):
+    #: as gone as a released stop, to a listing (`_read_truth`).
+    dead: set[str] = field(default_factory=set)
 
 
 def _is_protective(order: Order) -> bool:
@@ -972,7 +977,7 @@ def _read_truth(ctx: _Ctx, placed: Iterable[str] = ()) -> _Truth | str:
     every attempt failed, or the listing never caught up: the caller then
     has no truth to act on and says so.
     """
-    gone = ctx.gone | {after.id for _, after in ctx.release.pairs}
+    gone = ctx.gone | ctx.dead | {after.id for _, after in ctx.release.pairs}
     known = ctx.placed | set(placed)
     for delay in (0.0, *LISTING_CATCH_UP_DELAYS_S):
         if delay:
@@ -1047,6 +1052,8 @@ def _sell_released(ctx: _Ctx) -> CloseOutcome:
 
 def _settle_exit(ctx: _Ctx, exit_order: Order, why: str) -> CloseOutcome:
     """VERIFY with the exit in hand: a dead one re-arms, any other is read in the verdict."""
+    if _released(exit_order):
+        ctx.dead.add(exit_order.id)
     if exit_order.status.lower() in FAILED_EXIT_STATUSES:
         return _put_back(ctx, f"exit {ctx.stamp} {exit_order.status}", exit_order=exit_order)
     return _settle(ctx, why, exit_order=exit_order)
@@ -1252,6 +1259,8 @@ def _post_stop(
     if _working(found):
         return found, "", False
     if found is not None:
+        if _released(found):
+            ctx.dead.add(found.id)
         spent = _duplicate(sent) and found.status.lower() in _GONE_STATUSES
         return None, f"{sent} (then {found.status})", spent
     return None, f"{sent} (not found{f': {lookup_error}' if lookup_error else ''})", False
@@ -1393,5 +1402,6 @@ def _outcome(
         detail += f"; an earlier exit did not sell the lot: {'; '.join(ctx.missed)}"
     return CloseOutcome(
         ctx.ticker, status, detail,
-        released=ctx.release.ids, rearmed=placed.ids, missed_exits=ctx.missed, **kw,  # type: ignore[arg-type]
+        released=ctx.release.ids, rearmed=placed.ids, dead=tuple(sorted(ctx.dead)),
+        missed_exits=ctx.missed, **kw,  # type: ignore[arg-type]
     )

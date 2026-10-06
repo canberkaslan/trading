@@ -22,6 +22,7 @@ that precondition were ever broken.
 
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import json
 from datetime import UTC, date, datetime, timedelta
@@ -1097,6 +1098,64 @@ class TestAListingBehindTheCloseOwnReads:
         )
 
         assert outcome.status == "naked", outcome.detail
+
+    def test_an_exit_read_dead_by_its_stamp_is_no_exit_while_the_listing_shows_it(
+        self,
+    ) -> None:
+        # Rejected as soon as it was taken, its reply lost, and found
+        # rejected by its stamp: two listings that still show it accepted
+        # are the book before the rejection, not an exit on its way out.
+        fake = _KillsTheNext("market", [_position()], [_stop()], exit_status="accepted")
+        sleeps: list[float] = []
+
+        outcome = _close(fake, sleeps)
+
+        assert outcome.status == "unchanged" and not outcome.ok, outcome.detail
+        assert _rearms(fake) == [(10.0, 90.0)]
+        _assert_protected_once(fake)
+        assert sleeps[-2:] == list(LISTING_CATCH_UP_DELAYS_S[:2])
+        assert outcome.dead == (fake.created[0].id,), "manage_positions waits on it too"
+
+    def test_a_re_arm_read_dead_by_its_id_covers_nothing_while_the_listing_shows_it(
+        self,
+    ) -> None:
+        # The exit refused, the re-arm's reply lost, and the stop found
+        # rejected by its client id: listed `new` twice more, it is no cover.
+        fake = _KillsTheNext("stop", [_position()], [_stop()], refuse_sell={"XOM"})
+
+        outcome = _close(fake)
+
+        assert outcome.status == "naked", outcome.detail
+        assert fake.live_sells("XOM") == []
+
+
+class _KillsTheNext(FakeBroker):
+    """Takes the next order of `kind`, rejects it at once, and loses the reply.
+
+    get_order and the client-id lookup read it rejected; the two listings
+    after it still show it as it was taken (`lists_behind`, for one order).
+    """
+
+    def __init__(self, kind: str, *args, **kw) -> None:
+        super().__init__(*args, **kw)
+        self.kind = kind
+        self.stale: dict[str, Order] = {}
+        self.stale_left = 0
+
+    def submit_order(self, **kw) -> Order:
+        order = super().submit_order(**kw)
+        if kw["order_type"] != self.kind or self.stale:
+            return order
+        self.stale, self.stale_left = {order.id: order}, 2
+        self.orders[order.id] = dataclasses.replace(order, status="rejected")
+        raise httpx.ReadTimeout("reply lost; the order was rejected")
+
+    def list_orders(self, status: str = "open", limit: int = 50, nested: bool = False):
+        listed = super().list_orders(status, limit, nested)
+        if self.stale_left:
+            self.stale_left -= 1
+            listed = [self.stale.get(o.id, o) for o in listed]
+        return listed
 
 
 class TestAnExitThatDidNotSellAtTheOpen:

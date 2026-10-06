@@ -900,6 +900,27 @@ class TestAListingAfterATimeExitHasCaughtUpWithIt:
         assert mp._naked_now(self.fake, "XOM", [close]) == 0.0
         assert sleeps == [LISTING_CATCH_UP_DELAYS_S[0]]
 
+    def test_an_exit_its_close_read_dead_is_waited_for_too(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The listing has caught up with the released stop, not with the
+        # exit the close read cancelled by its id: listed accepted, the lot
+        # reads as on its way out, and the re-cover skips it.
+        sleeps = self._released(monkeypatch, behind=1)
+        self.fake.exit_status = "accepted"
+        exit_ = self.fake.submit_order(
+            symbol="XOM", qty=10.0, side="sell", order_type="market", time_in_force="day",
+            client_order_id=XOM_EXIT_ID,
+        )
+        self.fake.list_orders()
+        self.fake.cancel_order(exit_.id)
+        close = dataclasses.replace(self.CLOSE, exit_order_id=exit_.id, dead=(exit_.id,))
+
+        *_, sells = mp._read_book(self.fake, [close])
+
+        assert {o.id: o.status for o in sells}[exit_.id] == "canceled"
+        assert sleeps == [LISTING_CATCH_UP_DELAYS_S[0]]
+
     def test_a_back_fill_beside_an_exit_waits_on_its_own_lot_only(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

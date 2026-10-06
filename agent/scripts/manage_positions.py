@@ -182,8 +182,8 @@ UNCOVERED_STATUSES = frozenset({"unknown", "naked"})
 
 
 def _read_by_id(closes: Iterable[CloseOutcome]) -> tuple[set[str], set[str]]:
-    """The sells this pass's time exits read gone by their own id, and the orders they placed."""
-    gone = {oid for c in closes for oid in c.released}
+    """The orders this pass's time exits read gone by their own id, and the orders they placed."""
+    gone = {oid for c in closes for oid in (*c.released, *c.dead)}
     placed = {oid for c in closes for oid in (*c.rearmed, c.exit_order_id) if oid}
     return gone, placed
 

@@ -166,7 +166,8 @@ class TestRedditCircuitBreaker:
         calls: list[str] = []
         results = iter([
             "<Reddit unavailable: failed>",
-            "r/stocks: 3 posts",
+            # What the vendor returns for posts found over RSS, word for word.
+            "r/stocks — 3 recent posts mentioning B (via RSS feed; scores/comments unavailable):",
             "<Reddit unavailable: failed>",
             "<Reddit unavailable: failed>",
         ])

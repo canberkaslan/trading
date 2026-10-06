@@ -7,6 +7,7 @@ sleeps for real.
 
 from __future__ import annotations
 
+import io
 import sys
 import time
 from pathlib import Path
@@ -126,3 +127,56 @@ def test_the_breaker_spans_ticker_processes(
     monkeypatch.setattr(vendor, "urlopen", opener)
     assert "Reddit skipped" in _fetch("XOM")
     assert opener.timeouts == []
+
+
+_FEED = b"""<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <title>Earnings thread</title>
+    <published>2026-10-05T14:00:00+00:00</published>
+    <content type="html">&lt;p&gt;numbers look fine&lt;/p&gt;</content>
+  </entry>
+</feed>"""
+
+
+class _Feed:
+    """Reddit answering every search with a post, as its RSS feed serves it."""
+
+    def __init__(self, refuse_first: int = 0) -> None:
+        self.refuse_first = refuse_first
+        self.calls = 0
+
+    def __call__(self, req: Any, timeout: float) -> Any:
+        self.calls += 1
+        if self.calls <= self.refuse_first:
+            raise _429("60")
+        return io.BytesIO(_FEED)
+
+
+def test_a_healthy_reddit_is_never_skipped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, slept: list[float]
+) -> None:
+    # Every block the RSS path returns says "scores/comments unavailable" in
+    # its header. That is a success, and it must not count toward the breaker.
+    monkeypatch.setenv(fail_fast.RUN_STATE_DIR_ENV, str(tmp_path))
+    opener = _Feed()
+    monkeypatch.setattr(vendor, "urlopen", opener)
+    tickers = ("SPY", "AAPL", "MSFT", "NVDA")
+    for ticker in tickers:
+        out = _fetch(ticker)
+        assert "Reddit skipped" not in out
+        assert f"recent posts mentioning {ticker}" in out
+    assert opener.calls == len(tickers) * SUBS
+    assert not fail_fast.RunBreaker("reddit", ss._FAILURE_LIMIT).is_open()
+
+
+def test_one_refused_subreddit_is_not_a_refused_ticker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, slept: list[float]
+) -> None:
+    # The limiter let the other subreddits through: it does not have us, and
+    # the next ticker is worth asking.
+    monkeypatch.setenv(fail_fast.RUN_STATE_DIR_ENV, str(tmp_path))
+    for ticker in ("AAPL", "MSFT", "NVDA"):
+        monkeypatch.setattr(vendor, "urlopen", _Feed(refuse_first=2))  # the 429 and its retry
+        assert "recent posts mentioning" in _fetch(ticker)
+    assert not fail_fast.RunBreaker("reddit", ss._FAILURE_LIMIT).is_open()

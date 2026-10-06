@@ -120,6 +120,21 @@ def _accepts_timeout(fn: Callable[..., Any]) -> bool:
     return "timeout" in params
 
 
+#: How the vendor's block begins when no subreddit could be fetched at all.
+_ALL_REFUSED_PREFIX = "<reddit unavailable"
+
+
+def _every_source_refused(block: str) -> bool:
+    """Whether the vendor's text says no subreddit could be fetched.
+
+    Only that counts as a failure. "unavailable" alone is no sign of one: every
+    block of posts fetched over RSS carries "scores/comments unavailable" in
+    its header, and a subreddit that failed beside others that answered means
+    the limiter let us through.
+    """
+    return block.lstrip().lower().startswith(_ALL_REFUSED_PREFIX)
+
+
 def install() -> bool:
     """Rebind `fetch_reddit_posts` inside the sentiment analyst. Idempotent.
 
@@ -170,7 +185,7 @@ def install() -> bool:
         # successful call can still mean every source was refused. Counting
         # only exceptions would leave the breaker permanently open-eyed while
         # the run slept through nineteen of exactly this.
-        _record(success="unavailable" not in block.lower())
+        _record(success=not _every_source_refused(block))
         return supplement(block, ticker)
 
     supplemented._supplemented = True  # type: ignore[attr-defined]

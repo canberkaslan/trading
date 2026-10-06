@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import threading
 from datetime import UTC, datetime
@@ -21,6 +22,7 @@ from tradingagents_us.execution.submit_lock import (
     SubmitLockUnavailableError,
     submit_section,
 )
+from tradingagents_us.notifications.ops_channel import send_ops_alert
 from tradingagents_us.risk.cash_budget import PendingBuy
 from tradingagents_us.risk.kill_switch import FileKillSwitchReader, default_kill_switch_path
 from tradingagents_us.risk.portfolio_limits import (
@@ -36,6 +38,7 @@ from tradingagents_us.storage.repository import row_to_decision
 from ..deps import get_alpaca, get_repo, require_admin, require_token
 
 router = APIRouter()
+log = logging.getLogger(__name__)
 
 
 class OrderListItem(BaseModel):
@@ -552,7 +555,8 @@ def set_kill_switch(
     The lock can stay held for minutes (a time exit's close), and the app stops
     listening long before. So after KILL_SWITCH_ANSWER_S this answers 202: the
     switch is armed, and the wait, and the flatten, carry on without the
-    request. The flatten's outcome is in the audit trail either way.
+    request. The flatten's outcome is in the audit trail either way, and a
+    flatten that fails is paged, since no request may be left to carry it.
     """
     flag_path = default_kill_switch_path()
     # Atomic replace — a crash mid-write must never leave a truncated file
@@ -576,7 +580,7 @@ def set_kill_switch(
     if not done.wait(KILL_SWITCH_ANSWER_S):
         resp["pending"] = (
             "armed; an order path holds the submit lock, and the flatten runs once it "
-            "lets go; its outcome goes to the audit trail" if flatten else
+            "lets go; its outcome goes to the audit trail, and a failure is paged" if flatten else
             "armed; an order path holds the submit lock, and an order it is posting "
             "right now may still land"
         )
@@ -596,7 +600,7 @@ def _behind_the_lock(
 
     The thread outlives a request that stopped waiting for it, so a flatten
     still runs after the order in flight, never beside it; `_flatten_now`
-    records its outcome either way.
+    records its outcome either way, and a failed flatten is paged.
     """
     done = threading.Event()
     outcome: dict[str, Any] = {}
@@ -610,9 +614,30 @@ def _behind_the_lock(
             outcome["error"] = exc
         finally:
             done.set()
+        # After done: a request still waiting has its answer without this delay.
+        if flatten and "error" in outcome:
+            _page_failed_flatten(outcome["error"])
 
     threading.Thread(target=run, name="kill-switch", daemon=True).start()
     return done, outcome
+
+
+def _page_failed_flatten(exc: Exception) -> None:
+    """Send a failed flatten to the ops channels (push + GitHub issue).
+
+    The request's 502 is not enough: a request that answered 202 is gone by the
+    time the flatten runs, and even a 502 misses an app that stopped listening.
+    The positions whose close failed have already lost their stop legs, and the
+    next retry is the 22:30 UTC kill_check. `send_ops_alert` never raises.
+    """
+    detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+    delivery = send_ops_alert(
+        "Kill switch FLATTEN_ALL did not complete",
+        f"{detail}. Check the book now: positions left open may have no stop.",
+        kind="kill_switch",
+    )
+    if not delivery.delivered:
+        log.error("failed flatten reached no ops channel: %s", delivery.describe())
 
 
 def _flatten_now(repo: TradeLogRepository, user: str) -> str:

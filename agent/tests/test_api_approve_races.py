@@ -24,6 +24,7 @@ from sqlalchemy import create_engine, select
 from tradingagents_us.execution import executor, submit_lock
 from tradingagents_us.execution.flatten import FlattenResult
 from tradingagents_us.file_lock import exclusive
+from tradingagents_us.notifications.ops_channel import ChannelResult, Delivery
 from tradingagents_us.schemas import AgentDecision, AgentReasoning, OrderUpdate, TradeOrder
 from tradingagents_us.storage import TradeLogRepository
 from tradingagents_us.storage.models import KillSwitchEventRow, OrderUpdateRow, TradeOrderRow
@@ -90,6 +91,22 @@ class _Broker:
         pass
 
 
+class _Pager:
+    """Stands in for the ops alert channels (push + GitHub issue)."""
+
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str, str]] = []
+        self._paged = threading.Event()
+
+    def __call__(self, title: str, body: str, kind: str = "ops") -> Delivery:
+        self.sent.append((title, body, kind))
+        self._paged.set()
+        return Delivery((ChannelResult("push", True, "sent to 1 device(s)"),))
+
+    def wait(self, timeout_s: float) -> bool:
+        return self._paged.wait(timeout_s)
+
+
 def _decision() -> AgentDecision:
     return AgentDecision(
         ticker="AAPL", market="US", quote_currency="USD", rating="Buy",
@@ -130,6 +147,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[SimpleNames
     ))
 
     broker = _Broker()
+    pages = _Pager()
 
     def fake_flatten(client: Any = None) -> FlattenResult:
         broker.events.append("FLATTEN_ALL")
@@ -141,9 +159,10 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[SimpleNames
     monkeypatch.setattr(orders, "_account_client", lambda: broker)
     monkeypatch.setattr(orders, "flatten_all", fake_flatten)
     monkeypatch.setattr(executor, "AlpacaClient", lambda: broker)
+    monkeypatch.setattr(orders, "send_ops_alert", pages)
     app.dependency_overrides[get_repo] = lambda: repo
     with TestClient(app) as client:
-        yield SimpleNamespace(client=client, repo=repo, broker=broker)
+        yield SimpleNamespace(client=client, repo=repo, broker=broker, pages=pages)
     app.dependency_overrides.pop(get_repo, None)
 
 
@@ -344,3 +363,49 @@ class TestDoubleTapApprove:
         with env.repo.session() as s:
             assert s.get(TradeOrderRow, "ord-1").broker_order_id == "b-1"
         assert _statuses(env.repo) == ["PENDING", "ACCEPTED"]
+
+
+#: What a 207 with one refused close turns into (execution/flatten.py).
+_PARTIAL = FlattenResult(
+    ok=False,
+    summary="PARTIAL flatten: 1/2 submitted, FAILED: MSFT: status=403 — failed positions "
+    "may be UNPROTECTED (stop legs were cancelled)",
+    submitted=["AAPL"], failed=["MSFT: status=403"],
+)
+
+
+def _failing_flatten(broker: _Broker, failure: str, delay_s: float = 0.0) -> Callable[..., Any]:
+    def flatten(client: Any = None) -> FlattenResult:
+        broker.events.append("FLATTEN_ALL")
+        time.sleep(delay_s)
+        if failure == "raises":
+            raise RuntimeError("DELETE /v2/positions timed out")
+        return _PARTIAL
+
+    return flatten
+
+
+class TestAFlattenThatFailsAfterItsAnswer:
+    """The request answered 202 and is gone; the failure must still reach a human."""
+
+    @pytest.mark.parametrize(("failure", "words"), [
+        ("partial", "UNPROTECTED"), ("raises", "timed out"),
+    ])
+    def test_it_is_paged(
+        self, env, monkeypatch: pytest.MonkeyPatch, failure: str, words: str
+    ) -> None:
+        # A time exit's close holds the lock for minutes; the flatten runs, and
+        # fails, long after the app was told it was sent.
+        from api.routes import orders
+
+        monkeypatch.setattr(orders, "KILL_SWITCH_ANSWER_S", 0.3)
+        monkeypatch.setattr(orders, "flatten_all", _failing_flatten(env.broker, failure))
+        with exclusive(submit_lock.lock_path()):
+            r = env.client.post("/v1/orders/kill-switch", json={"state": "FLATTEN_ALL"})
+            assert r.status_code == 202
+        assert env.pages.wait(5), "the failed flatten reached nobody"
+        assert env.broker.events == ["FLATTEN_ALL"]
+        [(title, body, kind)] = env.pages.sent
+        assert "FLATTEN_ALL" in title
+        assert words in body
+        assert kind == "kill_switch"

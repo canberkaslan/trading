@@ -27,6 +27,8 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     from api.main import app
 
     repo = MagicMock()
+    # A failed flatten is paged; never through the live channels from here.
+    monkeypatch.setattr("api.routes.orders.send_ops_alert", MagicMock())
     app.dependency_overrides[get_repo] = lambda: repo
     yield TestClient(app)
     app.dependency_overrides.pop(get_repo, None)

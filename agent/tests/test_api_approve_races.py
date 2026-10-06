@@ -220,6 +220,41 @@ class TestFlattenThatCouldNotWait:
         assert results == {"approve": 422}
 
 
+class TestRejectWhileAnApprovalIsInFlight:
+    def test_a_reject_answered_during_the_wait_is_not_sent_after_it(
+        self, env, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The approval waits on a run ticker's lock; the operator taps Reject
+        # and is told "REJECTED". The approval must not send the order once it
+        # gets the lock.
+        from api.routes import orders
+
+        monkeypatch.setattr(orders, "REJECT_LOCK_TIMEOUT_S", 0.3, raising=False)
+        results: dict[str, int] = {}
+        with exclusive(submit_lock.lock_path()):
+            t = threading.Thread(target=lambda: results.__setitem__(
+                "approve", env.client.post("/v1/orders/ord-1/approve").status_code
+            ))
+            t.start()
+            time.sleep(0.3)  # the approval now waits on the lock
+            results["reject"] = env.client.post("/v1/orders/ord-1/reject").status_code
+        t.join(20)
+        assert env.broker.events == []
+        assert results["approve"] == 409
+        assert _statuses(env.repo) == ["PENDING", "REJECTED"]
+
+    def test_a_reject_waits_for_the_approval_already_past_its_checks(self, env) -> None:
+        release = threading.Event()
+        t, results = _approve_held_at_the_broker(env, release)
+        r = env.client.post("/v1/orders/ord-1/reject")
+        t.join(20)
+        assert results == {"approve": 200}
+        # Not "REJECTED" for an order that is live at the broker: /cancel.
+        assert r.status_code == 409
+        assert "/cancel" in r.json()["detail"]
+        assert _statuses(env.repo) == ["PENDING", "ACCEPTED"]
+
+
 #: The app gives up on a request after this long (ky `timeout`,
 #: mobile/app/src/api/client.ts), and builds already installed keep it.
 _APP_TIMEOUT_S = 10.0

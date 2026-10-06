@@ -93,9 +93,11 @@ def api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         return 100.0
 
     repo = MagicMock()
-    repo.session.return_value.__enter__.return_value.get.side_effect = (
+    session = repo.session.return_value.__enter__.return_value
+    session.get.side_effect = (
         lambda _model, key: _row(state.side, state.qty) if key == "ord-1" else object()
     )
+    session.execute.return_value.scalar_one_or_none.return_value = None  # never rejected
     app.dependency_overrides[get_repo] = lambda: repo
     monkeypatch.setattr(orders, "row_to_decision", lambda _row: MagicMock(entry_price=100.0))
     monkeypatch.setattr(orders, "submit_order", fake_submit)

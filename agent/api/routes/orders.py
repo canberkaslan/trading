@@ -155,6 +155,8 @@ async def list_pending_orders(
 APPROVE_LOCK_TIMEOUT_S = 5.0
 #: The kill switch answers after this long even while the lock stays held.
 KILL_SWITCH_ANSWER_S = 5.0
+#: A reject waits this long for an approval in flight, then records anyway.
+REJECT_LOCK_TIMEOUT_S = 5.0
 #: The caps a held BUY is re-checked against: the daily run's, which are the
 #: defaults (daily_run.sh passes trade.py no cap flags).
 APPROVE_LIMITS = PortfolioLimits()
@@ -191,6 +193,21 @@ def _refuse_if_submitted(repo: TradeLogRepository, order_id: str) -> None:
         broker_order_id = row.broker_order_id if row is not None else None
     if broker_order_id is not None:
         raise HTTPException(409, f"order already submitted: broker={broker_order_id}")
+
+
+def _refuse_if_rejected(repo: TradeLogRepository, order_id: str) -> None:
+    """The operator may have rejected the order while this approval waited."""
+    from tradingagents_us.storage.models import OrderUpdateRow
+
+    with repo.session() as s:
+        rejected = s.execute(
+            select(OrderUpdateRow.id).where(
+                OrderUpdateRow.order_id == order_id,
+                OrderUpdateRow.status == "REJECTED",
+            ).limit(1)
+        ).scalar_one_or_none()
+    if rejected is not None:
+        raise HTTPException(409, "order was rejected while this approval waited; not sent")
 
 
 def _refuse_if_unaffordable(
@@ -369,10 +386,11 @@ def _submit_locked(
     try:
         with submit_section(exit_only=not is_buy, timeout_s=APPROVE_LOCK_TIMEOUT_S):
             # Re-checked under the lock: the switch may have been flipped, the
-            # order sent by another tap, or the cash or the caps used up, while
-            # this request waited for it.
+            # order sent by another tap or rejected, or the cash or the caps
+            # used up, while this request waited for it.
             _refuse_if_killed(repo, user, order_id)
             _refuse_if_submitted(repo, order_id)
+            _refuse_if_rejected(repo, order_id)
             if alpaca is not None:
                 ref = current_price or order.limit_price or decision.entry_price
                 open_buys = _refuse_if_unaffordable(alpaca, order, ref, prices)
@@ -408,27 +426,48 @@ def _submit_locked(
     }
 
 
+# A plain `def`, like approve: it waits on the submit lock.
 @router.post("/{order_id}/reject")
-async def reject_order(
+def reject_order(
     order_id: str,
+    response: Response,
     user: str = Depends(require_admin),
     repo: TradeLogRepository = Depends(get_repo),
 ) -> dict:
     """User-rejected: record a REJECTED update so the order disappears from
-    the pending list. No broker call (nothing was submitted)."""
+    the pending list. No broker call (nothing was submitted).
+
+    Recorded under the submit lock: an approval of this order that is past its
+    checks finishes first, and this then answers that the order is at the
+    broker; one still waiting finds the REJECTED row and sends nothing. The
+    wait is exit-only, like the kill switch's: a lock still held after
+    REJECT_LOCK_TIMEOUT_S records the reject anyway and answers 202.
+    """
+    _refuse_if_at_broker(repo, order_id)
+    with submit_section(exit_only=True, timeout_s=REJECT_LOCK_TIMEOUT_S) as locked:
+        _refuse_if_at_broker(repo, order_id)
+        repo.append_update(OrderUpdate(
+            order_id=order_id, status="REJECTED",
+            error_message="user_rejected",
+            timestamp_utc=datetime.now(UTC),
+        ))
+    resp = {"order_id": order_id, "status": "REJECTED"}
+    if not locked:
+        response.status_code = 202
+        resp["pending"] = (
+            "an order path held the submit lock; an approval already past its checks "
+            "may still have sent this order, see /v1/orders"
+        )
+    return resp
+
+
+def _refuse_if_at_broker(repo: TradeLogRepository, order_id: str) -> None:
     with repo.session() as s:
         order_row = s.get(TradeOrderRow, order_id)
         if order_row is None:
             raise HTTPException(404, f"order not found: {order_id}")
         if order_row.broker_order_id is not None:
             raise HTTPException(409, "order already at broker; use /cancel")
-
-    repo.append_update(OrderUpdate(
-        order_id=order_id, status="REJECTED",
-        error_message="user_rejected",
-        timestamp_utc=datetime.now(UTC),
-    ))
-    return {"order_id": order_id, "status": "REJECTED"}
 
 
 @router.post("/{order_id}/cancel")

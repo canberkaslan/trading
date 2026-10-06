@@ -169,6 +169,22 @@ def test_a_buy_its_sector_no_longer_has_room_for_is_refused(api) -> None:
     assert api.submitted == []
 
 
+def test_a_name_that_filled_during_the_wait_is_not_counted_as_unknown(api) -> None:
+    # MSFT holds 20% of $100k in Information Technology. While this tap waited
+    # on the lock, another tap's NVDA BUY filled: $9k more of the sector that
+    # the pre-lock read never saw. Bucketed as "Unknown", it would let 90 AAPL
+    # take the sector to 38% against its 30% cap.
+    msft = SimpleNamespace(symbol="MSFT", market_value=20_000.0)
+    nvda = SimpleNamespace(symbol="NVDA", market_value=9_000.0)
+    api.broker = _Broker(cash=71_000.0, equity=100_000.0)
+    api.broker.list_positions = lambda: [msft, nvda] if _lock_held() else [msft]
+    api.qty = 90
+    r = api.approve()
+    assert r.status_code == 409
+    assert "NVDA" in r.json()["detail"]
+    assert api.submitted == []
+
+
 def test_no_market_data_call_is_made_under_the_lock(api) -> None:
     api.broker = _Broker(cash=10_000.0, open_orders=[
         {"symbol": "MSFT", "side": "buy", "qty": "1", "filled_qty": "0",

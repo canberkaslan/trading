@@ -236,10 +236,19 @@ def _refuse_if_over_caps(
     by_ticker = {p.symbol: abs(p.market_value) for p in positions}
     for sym, value in pending_buy_exposure(open_buys, prices.get).items():
         by_ticker[sym] = by_ticker.get(sym, 0.0) + value
+    # A name that joined the book while this request waited (another tap's BUY
+    # filled) was never looked up. Counted as "Unknown" it would drop out of
+    # its real sector, so refuse the way an unpriced pending BUY refuses.
+    unlooked = sorted(sym for sym in by_ticker if sym not in sectors)
+    if unlooked:
+        raise HTTPException(
+            409, f"no sector looked up for {', '.join(unlooked)}: it joined the book while "
+                 f"this approval waited, or the position read before it failed; it stays "
+                 f"PENDING, tap again"
+        )
     by_sector: dict[str, float] = {}
     for sym, value in by_ticker.items():
-        sec = sectors.get(sym, UNKNOWN_SECTOR)
-        by_sector[sec] = by_sector.get(sec, 0.0) + value
+        by_sector[sectors[sym]] = by_sector.get(sectors[sym], 0.0) + value
     ok, reasons = check_limits(
         order.ticker, sectors.get(order.ticker, UNKNOWN_SECTOR), order.quantity * price,
         avg_daily_volume_usd=float("inf"),
@@ -262,7 +271,7 @@ def _sectors(alpaca: AlpacaClient, symbols: set[str]) -> dict[str, str]:
     """Sector of every name the locked cap check can meet, looked up before it.
 
     A lookup can be a Polygon call, and none is made under the lock. A name
-    found only under the lock goes in the "Unknown" bucket the cap counts.
+    found only under the lock refuses the BUY (`_refuse_if_over_caps`).
     """
     names = set(symbols)
     with contextlib.suppress(Exception):

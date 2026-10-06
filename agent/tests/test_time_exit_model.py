@@ -40,7 +40,10 @@ starts until run 1 ends, every answer it gives is a choice:
       the broker took), while get_order, the client-id lookup and the holding
       are current. Alpaca's listing lags its per-order reads right after a
       write: on 2026-10-05 GOOGL's verdict listed three sells working that the
-      release had read cancelled, one by one, seconds before.
+      release had read cancelled, one by one, seconds before. And it catches
+      up, as Alpaca's did seconds later: once the book stops changing, at most
+      `LISTING_CATCH_UP` (two) listings in a row lag it, and every one after
+      them is current until the next change.
 
 The model keeps the Alpaca rules the close relies on: an open sell reserves its
 shares, and while the lot is long a sell for more than is unreserved is refused
@@ -178,7 +181,10 @@ their fix against d879bb3. There the exploration found I10 alone, in two
 classes, `exit_submitted` rc 0 turned into `unknown` with rc 3 (the page) or
 with rc 1 (a second lagging listing hid the exit from the re-cover, whose
 back-fill the exit then refused), and nothing of I1-I9; and
-TestAListingBehindTheBook's replay of the GOOGL trace failed.
+TestAListingBehindTheBook's replay of the GOOGL trace failed. With the lag
+made eventually consistent (`LISTING_CATCH_UP`), against main 0d6ab41, the
+exploration found the same two classes and nothing else, and the replay
+failed the same way: `unknown`, "two sellers", rc 3.
 """
 
 from __future__ import annotations
@@ -587,6 +593,27 @@ class TestTheModel:
         b.cancel_order("tp-A")
         assert b.recs["sl-A"].status == "canceled"
         assert b.reserved() == 0.0
+
+    def test_a_listing_behind_the_book_catches_up_once_the_book_stops_changing(self) -> None:
+        # However hard the chooser pulls the listing back, it lags a write for
+        # LISTING_CATCH_UP listings at most, and the next write starts it over.
+        b = build_book("stop")
+        b.armed = True
+        b.chooser = lambda i, kind, env, outs, what="": (
+            None, max((o for o in outs if o.startswith("lag")), default="ok")
+        )
+
+        def listed() -> dict[str, str]:
+            return {o.id: o.status for o in b.list_orders(status="all") if o.side == "sell"}
+
+        b.cancel_order("stop-A")
+        assert [listed() for _ in range(4)] == [
+            *[{"stop-A": "new"}] * tem.LISTING_CATCH_UP, *[{"stop-A": "canceled"}] * 2
+        ]
+        new = b.submit_order(symbol="XOM", qty=10, side="sell", order_type="stop",
+                             time_in_force="gtc", stop_price=90.0, client_order_id="re")
+        assert new.id not in listed(), "a write starts the lag over"
+        assert b.stale == [["stop-A"]] * (tem.LISTING_CATCH_UP + 1)
 
     def test_a_client_order_id_is_unique(self) -> None:
         b = build_book("stop")

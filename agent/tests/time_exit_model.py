@@ -20,8 +20,15 @@ overnight), a cancel left `pending_cancel` (for two calls, or until a later
 choice or the night settles it, landing or not), a bracket sibling cancelled
 with its leg, left live, or left pending, a 4xx refusal (429, 422), or for an
 order listing, the book as it stood up to `MAX_LISTING_LAG` changes back while
-every per-order read and the holding are current. Choice 0 everywhere is a
-clean, prompt broker.
+every per-order read and the holding are current. The lag is eventually
+consistent, as Alpaca's is: once `LISTING_CATCH_UP` listings have been served
+since the book last changed, every listing is current until it changes again.
+Choice 0 everywhere is a clean, prompt broker.
+
+Time is the model's own: `Harness` hands the code under test `ModelBroker.sleep`
+as `time.sleep` and the model's clock as `time.monotonic`, so every wait the
+close makes, a listing it reads again among them, passes on the model's clock
+and costs no wall time.
 
 `Harness` runs `scripts.manage_positions.main()` itself, with the flags the
 daily run passes, against that broker: run 1 on day D at 22:30 UTC plans a
@@ -123,6 +130,15 @@ READ_OUTCOMES = ("ok", "timeout")
 #: per-order reads right after a write: GOOGL, 2026-10-05, three orders
 #: get_order had read canceled were still listed working seconds later.
 MAX_LISTING_LAG = 3
+#: How many listings in a row may lag, once the book stops changing. Alpaca's
+#: listing is eventually consistent: it catches up with no further write, and
+#: the GOOGL listing showed one seller seconds after it showed three. So,
+#: counted from the last change to the book (a write that took effect, a fill,
+#: a late landing), the first `LISTING_CATCH_UP` list_orders calls may each be
+#: behind, and every one after them is current until the book changes again.
+#: Counted in calls, not seconds: a close that reads again at once gains
+#: nothing by it, and one that waits between reads is held to the same count.
+LISTING_CATCH_UP = 2
 CANCEL_OUTCOMES = (
     "ok", "pending", "pending_stuck", "timeout_applied", "timeout_lost", "timeout_late", "429",
 )
@@ -274,6 +290,8 @@ class ModelBroker:
         #: (`Harness._main`): the lag is seconds, not a night.
         self.history: list[dict[str, Rec]] = []
         self._kept: tuple | None = None
+        #: list_orders calls since the book last changed (`LISTING_CATCH_UP`).
+        self.listed_since_change = 0
         #: For each lagging listing served: the sells it showed working that
         #: no longer work, by id.
         self.stale: list[list[str]] = []
@@ -339,6 +357,7 @@ class ModelBroker:
         if state != self._kept:
             self._kept = state
             self.history.append({k: dataclasses.replace(r) for k, r in self.recs.items()})
+            self.listed_since_change = 0
 
     def _step(self, kind: str, what: str, target: Rec | None = None) -> str:
         """One broker call: time passes, then maybe an event, then the call's outcome."""
@@ -381,8 +400,11 @@ class ModelBroker:
     def _outcomes(self, kind: str, target: Rec | None) -> tuple[str, ...]:
         if kind == "list":
             # Only as far back as this run's book has changed: a lag past its
-            # first state is that state, a choice no different from `ok`.
+            # first state is that state, a choice no different from `ok`. And
+            # none once the listing has caught up (`LISTING_CATCH_UP`).
             depth = min(MAX_LISTING_LAG, len(self.history) - 1)
+            if self.listed_since_change >= LISTING_CATCH_UP:
+                depth = 0
             return READ_OUTCOMES + tuple(f"lag{k}" for k in range(1, depth + 1))
         if kind == "cancel":
             if target is None or target.status not in CANCELABLE:
@@ -649,9 +671,11 @@ class ModelBroker:
 
         A lagging listing shows each order as it stood then: one cancelled
         since still working, one placed since not at all. get_order and the
-        holding are never behind (`MAX_LISTING_LAG`).
+        holding are never behind (`MAX_LISTING_LAG`), and the listing catches
+        up once the book stops changing (`LISTING_CATCH_UP`).
         """
         out = self._step("list", f"list_orders({status})")
+        self.listed_since_change += 1
         if out == "timeout":
             raise _timeout()
         recs = self.recs
@@ -1178,7 +1202,7 @@ class Harness:
         self.broker, self.variant, self.arming = broker, variant, arm
         _ClockDT.current = at
         broker.base_time, broker.elapsed, broker.mark = at, 0.0, MARK[variant]
-        broker.history, broker._kept = [], None
+        broker.history, broker._kept, broker.listed_since_change = [], None, 0
         previous = logging.root.manager.disable
         if not broker.tracing:
             logging.disable(logging.CRITICAL)

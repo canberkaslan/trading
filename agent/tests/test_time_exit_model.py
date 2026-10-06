@@ -185,10 +185,20 @@ with rc 1 (a second lagging listing hid the exit from the re-cover, whose
 back-fill the exit then refused), and nothing of I1-I9; and
 TestAListingBehindTheBook's replay of the GOOGL trace failed. With the lag
 made eventually consistent (`LISTING_CATCH_UP`), against main 0d6ab41, the
-exploration found the same two classes and nothing else, and the replay
-failed the same way: `unknown`, "two sellers", rc 3. The fix reads a listing
-again, for seconds, while it is older than what the close read by id
-(`protected_close.listing_behind`); with it the exploration finds nothing.
+exploration found the same two classes, and the replay failed the same way:
+`unknown`, "two sellers", rc 3. That was before I8 held a lagging listing
+beside a refused or lost write (`ModelBroker.settled_writes`). Since then,
+0d6ab41's after-close exhaustive exploration finds 557 violations in six
+classes: the two of I10 (56), I8 rc 3 over a lot fully covered at the start
+with at most one such write (439), and I8 shares left with no stop after
+run 1 (62). One of these: book two_stops, the exit refused, the put-back's
+listing one change behind still shows stop-B working, so 6 of the 10 shares
+go back; the re-cover's, three behind, shows stop-A and stop-B and places no
+back-fill, and 4 shares spend the night with no stop. On main, a lagging
+listing beside a refused exit leaves shares naked, not only a false page.
+The fix reads a listing again, for seconds, while it is older than what the
+close read by id (`protected_close.listing_behind`); with it the exploration
+finds nothing.
 """
 
 from __future__ import annotations

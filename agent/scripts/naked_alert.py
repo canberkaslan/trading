@@ -14,6 +14,16 @@ into an ops alert on every run the book is naked:
     3  shares are held with no protective stop; the `NAKED:` line says which
     1  the check itself could not run, so coverage is unknown
 
+Covered means a live stop, or our own time exit still waiting for the open
+(`exiting`, see `execution.exit_cover`). The night a time exit goes out, the
+lot has no stop: its stops were released for the exit, which reserves every
+share and sells them at the open. Read as naked, that night paged "NAKED" over
+GOOGL's 32 shares on 2026-10-05, and the night after, the lot sold, announced
+a recovery. Exiting shares are counted and named on the `stop coverage:` line
+instead. A sell that is not our exit, an exit for fewer shares than are held,
+one an open has met, and a short with no buy stop are still naked, and still
+exit 3.
+
 The caller owns the page about a naked book, so this script never sends one
 itself; sending it here too would page twice on the same run. It announces
 only the all-clear, once, on the first covered run after a naked one, since
@@ -39,6 +49,8 @@ if str(_AGENT_ROOT) not in sys.path:
     sys.path.insert(0, str(_AGENT_ROOT))
 
 from tradingagents_us.dataflows.alpaca_broker import AlpacaClient  # noqa: E402
+from tradingagents_us.execution.exit_cover import order_views, position_views  # noqa: E402
+from tradingagents_us.execution.protected_close import opened_after  # noqa: E402
 from tradingagents_us.notifications.naked_alert import (  # noqa: E402
     CoverageFacts,
     NakedAlertState,
@@ -49,12 +61,7 @@ from tradingagents_us.risk.kill_switch import (  # noqa: E402
     FileKillSwitchReader,
     default_kill_switch_path,
 )
-from tradingagents_us.risk.stop_coverage import (  # noqa: E402
-    OrderView,
-    PositionView,
-    coverage,
-    flatten_orders,
-)
+from tradingagents_us.risk.stop_coverage import coverage, flatten_orders  # noqa: E402
 
 EXIT_COVERED = 0
 EXIT_CHECK_FAILED = 1
@@ -94,23 +101,18 @@ def collect_facts() -> CoverageFacts:
     `held`, which Alpaca's "open" filter excludes, and it is returned under its
     parent. Asking the obvious way reports a fully bracketed book as having zero
     stops — which would page every single day about nothing.
+
+    Our own time exits are told apart by their stamp and by the broker's
+    calendar (`execution.exit_cover`), read only when the book has one; a
+    calendar that cannot be read vouches for none of them, and logs why.
+    Positions keep their side: a short is protected by a buy stop only.
     """
     with AlpacaClient() as client:
-        positions = client.list_positions()
+        positions = position_views(client.list_positions())
         orders = flatten_orders(client.list_orders(status="all", limit=500, nested=True))
+        views = order_views(orders, opened_after(client))
 
-    views = [
-        OrderView(
-            symbol=o.symbol,
-            side=o.side.lower(),
-            order_type=o.order_type.lower(),
-            status=o.status.lower(),
-            remaining_qty=max(0.0, o.qty - o.filled_qty),
-            stop_price=o.stop_price,
-        )
-        for o in orders
-    ]
-    report = coverage([PositionView(p.symbol, p.qty, "long") for p in positions], views)
+    report = coverage(positions, views)
 
     return CoverageFacts(
         total_qty=report.total_qty,
@@ -118,11 +120,13 @@ def collect_facts() -> CoverageFacts:
         indeterminate_qty=report.indeterminate_qty,
         naked_symbols=tuple(s.symbol for s in report.symbols if s.naked_qty > 0),
         run_date=datetime.now(UTC).date().isoformat(),
+        exiting_qty=report.exiting_qty,
+        exiting_symbols=tuple(s.symbol for s in report.symbols if s.exiting_qty > 0),
     )
 
 
 def has_naked_exposure(facts: CoverageFacts, kill_switch: str) -> bool:
-    """Any held share without a stop, outside a deliberate flatten.
+    """Any held share with neither a stop nor our own working exit, outside a deliberate flatten.
 
     No threshold. The daily run reaches this check after the close and after
     the position pass has back-filled stops, so there is no in-flight partial
@@ -138,11 +142,24 @@ def naked_summary(facts: CoverageFacts) -> str:
     caveat = (
         f"; {facts.indeterminate_qty:.0f} more indeterminate" if facts.indeterminate_qty > 0 else ""
     )
+    leaving = (
+        f"; {facts.exiting_qty:.0f} exiting under our own time exit"
+        if facts.exiting_qty > 0
+        else ""
+    )
     return (
         f"{facts.naked_qty:.0f} of {facts.total_qty:.0f} shares "
         f"({facts.naked_pct:.1f}%) have no protective stop"
-        f"{': ' + names + more if names else ''}{caveat}"
+        f"{': ' + names + more if names else ''}{caveat}{leaving}"
     )
+
+
+def exiting_summary(facts: CoverageFacts) -> str:
+    """'exiting 32 (GOOGL)': shares our own time exit sells at the open, by name."""
+    names = ", ".join(facts.exiting_symbols[:_NAMED_SYMBOLS])
+    extra = len(facts.exiting_symbols) - _NAMED_SYMBOLS
+    more = f" +{extra} more" if extra > 0 else ""
+    return f"exiting {facts.exiting_qty:.0f}" + (f" ({names}{more})" if names else "")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -161,7 +178,8 @@ def main(argv: list[str] | None = None) -> int:
 
     print(
         f"stop coverage: {facts.naked_qty:.0f}/{facts.total_qty:.0f} naked "
-        f"({facts.naked_pct:.1f}%), indeterminate {facts.indeterminate_qty:.0f}, ks={ks}"
+        f"({facts.naked_pct:.1f}%), {exiting_summary(facts)}, "
+        f"indeterminate {facts.indeterminate_qty:.0f}, ks={ks}"
     )
     path = state_path()
 

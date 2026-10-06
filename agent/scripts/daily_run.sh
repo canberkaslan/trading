@@ -329,7 +329,11 @@ echo "" | tee -a "$RUN_LOG"
 # pass found 75.5% naked. It then ran here behind `|| true` and exited 0 either
 # way, so a naked book was a log line. Exit 3 now means shares are held with no
 # protective stop, any other non-zero that coverage is unknown; both page on
-# every run they persist, and neither stops the rest of this script.
+# every run they persist, and neither stops the rest of this script. A lot the
+# position pass time-exited tonight is not naked: its stops are gone, but our
+# own exit reserves every share until the open sells them. It is counted as
+# `exiting` on the coverage line, and pages only if it is not that exit (a sell
+# that is not ours, one for fewer shares than held, one an open has met).
 naked_rc=0
 naked_out="$(PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.naked_alert 2>&1)" || naked_rc=$?
 printf '%s\n' "$naked_out" | tee -a "$RUN_LOG"

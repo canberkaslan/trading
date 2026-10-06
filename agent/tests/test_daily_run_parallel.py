@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.test_daily_run_alerting import RUN_DATE, Run, run_daily
+from tests.test_daily_run_alerting import HC, RUN_DATE, Run, run_daily
 
 pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
 
@@ -201,3 +201,35 @@ def test_the_run_shares_one_state_dir_and_cleans_it_up(tmp_path: Path) -> None:
     [state_dir] = dirs
     assert state_dir.startswith(str(tmp_path))
     assert not Path(state_dir).exists(), "the run's breaker state outlived the run"
+
+
+# --- the position pass and PAUSE_NEW, at any bound ------------------------------
+#
+# The parallel councils sit where the sequential loop sat: after the position
+# pass, and only over the names to decide on. PAUSE_NEW leaves none, so it
+# starts no council however many may run at once, and still manages and checks
+# what is held.
+
+
+def test_the_position_pass_ends_before_the_first_council_starts(tmp_path: Path) -> None:
+    run, _ = _run(tmp_path, COUNCIL_PARALLELISM="3")
+    assert run.rc == 0, run.output
+    modules = run.modules()
+    trades = [i for i, m in enumerate(modules) if m == "scripts.trade"]
+    assert len(trades) == len(UNIVERSE.split())
+    assert modules.index("scripts.manage_positions") < min(trades)
+    assert max(trades) < modules.index("scripts.naked_alert")
+
+
+def test_pause_new_starts_no_council_at_any_bound(tmp_path: Path) -> None:
+    run, hook_dir = _run(tmp_path, COUNCIL_PARALLELISM="3", FAKE_RC_scripts_kill_check="75")
+    assert run.rc == 0, run.output
+    modules = run.modules()
+    assert "scripts.trade" not in modules
+    assert not (hook_dir / "peaks").exists(), "a council started under PAUSE_NEW"
+    assert "--- councils" not in run.output
+    assert "[council]" not in run.output
+    assert "scripts.manage_positions" in modules
+    assert "scripts.naked_alert" in modules
+    assert "PAUSE_NEW: no decisions, positions managed." in run.output
+    assert run.ping_urls == [HC]

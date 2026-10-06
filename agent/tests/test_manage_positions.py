@@ -1002,6 +1002,49 @@ class TestAListingAfterATimeExitHasCaughtUpWithIt:
         assert [o.status for o in sells] == ["new"] and sleeps == []
 
 
+class _ListsAStopWorkingForGood(FakeBroker):
+    """A listing that never shows `stop-T0` gone, whatever get_order reads; every re-arm refused."""
+
+    def list_orders(self, status: str = "open", limit: int = 50, nested: bool = False):
+        listed = super().list_orders(status, limit, nested)
+        return [dataclasses.replace(o, status="new") if o.id == "stop-T0" else o for o in listed]
+
+    def submit_order(self, **kw) -> Order:
+        if "-arm-" in (kw.get("client_order_id") or ""):
+            self._record("submit_order", kw)
+            raise AlpacaRequestError("POST", "/orders", 422, "stop price must be below market")
+        return super().submit_order(**kw)
+
+
+class TestALotsListingThatNeverCatchesUpThroughThePass:
+    """Two time exits fail; the listing never catches up with one of them."""
+
+    def test_the_other_lot_is_still_back_filled(
+        self, aged_book_db: str, monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # T0's and T1's exits and re-arms are refused, and both lots are left
+        # with no stop. The listing has caught up with T1's close, never with
+        # T0's: T1 is back-filled off it, as main does, and T0 alone is a book
+        # the re-cover could not read.
+        monkeypatch.setattr(mp.time, "sleep", lambda _: None)
+        fake = _ListsAStopWorkingForGood(
+            positions=[_position(s, 100.5) for s in AGED],
+            orders=[_stop(f"stop-{s}", s, 90.0) for s in AGED],
+            fills=[_buy(s) for s in AGED],
+            refuse_sell={"T0", "T1"},
+        )
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", aged_book_db)
+
+        assert rc == mp.EXIT_UNCOVERED, "T0 is still in doubt"
+        assert [(o.qty, o.stop_price) for o in fake.live_sells("T1")] == [(10.0, 94.0)]
+        assert fake.live_sells("T0") == []
+        assert "re-cover could not read the book for T0: listing behind: stop-T0 listed new" in (
+            caplog.text
+        )
+
+
 class _SoldWhileXomIsReleased(FakeBroker):
     """Another seller closes MSFT the moment the pass cancels XOM's stop."""
 

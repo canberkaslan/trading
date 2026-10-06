@@ -188,7 +188,9 @@ def _read_by_id(closes: Iterable[CloseOutcome]) -> tuple[set[str], set[str]]:
     return gone, placed
 
 
-def _listing(client: AlpacaClient, closes: Iterable[CloseOutcome]) -> list[Order]:
+def _listing(
+    client: AlpacaClient, closes: Iterable[CloseOutcome], lagging: dict[str, str] | None = None
+) -> list[Order]:
     """Every order, nested, off a listing no older than what this pass's time exits read by id.
 
     Alpaca's listing lags its per-order reads for seconds after a write
@@ -196,21 +198,31 @@ def _listing(client: AlpacaClient, closes: Iterable[CloseOutcome]) -> list[Order
     a close read cancelled, or not yet an order it placed, is the book before
     that close: off it the re-cover reads a lot covered by a stop that is
     gone, or naked under one that stands. Listed again until it catches up;
-    raises if it never does, so nothing is placed off it.
+    raises if it never does, so nothing is placed off it. Given `lagging`,
+    names there instead each lot whose own closes it is still behind, and
+    returns it: what it says of the other lots is as current as their reads.
     """
-    gone, placed = _read_by_id(closes)
+    closes = list(closes)
     for delay in (0.0, *LISTING_CATCH_UP_DELAYS_S):
         if delay:
             time.sleep(delay)
         raw = client.list_orders(status="all", limit=500, nested=True)
-        behind = listing_behind(flatten_orders(raw), gone, placed)
+        flat = flatten_orders(raw)
+        behind = {
+            t: ", ".join(b) for t in sorted({c.ticker for c in closes})
+            if (b := listing_behind(flat, *_read_by_id([c for c in closes if c.ticker == t])))
+        }
         if not behind:
             return raw
-    raise RuntimeError(f"order listing still behind the time exits' reads: {', '.join(behind)}")
+    if lagging is None:
+        why = ", ".join(behind.values())
+        raise RuntimeError(f"order listing still behind the time exits' reads: {why}")
+    lagging.update(behind)
+    return raw
 
 
 def _order_views(
-    client: AlpacaClient, closes: Iterable[CloseOutcome] = ()
+    client: AlpacaClient, closes: Iterable[CloseOutcome] = (), lagging: dict[str, str] | None = None
 ) -> tuple[list[OrderView], dict[tuple[str, float], str], list[Order]]:
     """Every live order as a pure view, plus a map back to the broker order id.
 
@@ -236,9 +248,9 @@ def _order_views(
     (`_report_missed_exits`).
 
     `closes` are this pass's time exits so far: the listing is read again
-    until it has caught up with them (`_listing`).
+    until it has caught up with them (`_listing`, and `lagging`).
     """
-    raw = _listing(client, closes)
+    raw = _listing(client, closes, lagging)
     flat = flatten_orders(raw)
 
     views = [
@@ -266,7 +278,7 @@ def _sells(sell_orders: list[Order]) -> Sells:
 
 
 def _read_book(
-    client: AlpacaClient, closes: Iterable[CloseOutcome] = ()
+    client: AlpacaClient, closes: Iterable[CloseOutcome] = (), lagging: dict[str, str] | None = None
 ) -> tuple[list[OrderView], dict[tuple[str, float], str], list, list[Order]]:
     """The orders, then the holding, in that order and never the other.
 
@@ -278,7 +290,7 @@ def _read_book(
     first and the same fill shows as a position that is gone. The same rule as
     `protected_close._read_truth`.
     """
-    orders, stop_ids, sells = _order_views(client, closes)
+    orders, stop_ids, sells = _order_views(client, closes, lagging)
     return orders, stop_ids, client.list_positions(), sells
 
 
@@ -840,24 +852,29 @@ def _recover_unclosed(
     Every listing it reads is one that has caught up with what the closes of
     the names it was handed (`closes`) read by id (`_listing`): right after
     them, Alpaca's may still show the stops they released, or not yet the
-    ones they put back.
+    ones they put back. A name whose own closes it never catches up with is
+    a book it could not read; the rest are re-covered off it all the same.
 
     Returns how many placements failed. A book it could not read, or a
     placement that failed, is also appended to `uncovered`: the names it was
     handed may have shares with no stop, and it could not put one there.
     """
     closes = [c for c in closes or [] if c.ticker in tickers]
+    lagging: dict[str, str] = {}
     try:
         # Orders first, holding last (see `_read_book`).
-        orders, stop_ids, positions, sell_orders = _read_book(client, closes)
+        orders, stop_ids, positions, sell_orders = _read_book(client, closes, lagging)
     except Exception as exc:  # noqa: BLE001 — reported and counted, never guessed past
         log.error("re-cover after failed exits: book unreadable, nothing placed: %s", exc)
         names = ", ".join(sorted(tickers))
         uncovered.append(f"re-cover could not read the book for {names}: {exc}")
         return 1
-    held = [p for p in positions if p.symbol in tickers]
+    for name, why in lagging.items():
+        log.error("%-6s re-cover: book unreadable, nothing placed: listing behind: %s", name, why)
+        uncovered.append(f"re-cover could not read the book for {name}: listing behind: {why}")
+    held = [p for p in positions if p.symbol in tickers and p.symbol not in lagging]
     if not held:
-        return 0
+        return len(lagging)
 
     standing: dict[str, str] = {}
     for o in sell_orders:
@@ -896,7 +913,7 @@ def _recover_unclosed(
         failed += _cover_beside_exit(
             client, act, unsettled[act.ticker], uncovered, covered, closes
         )
-    return failed
+    return failed + len(lagging)
 
 
 def _cover_beside_exit(

@@ -160,14 +160,46 @@ def test_the_lock_is_reentrant_within_a_thread(tmp_path: Path) -> None:
         pass
 
 
-def test_install_is_idempotent_and_the_council_installs_it() -> None:
+def test_install_is_idempotent() -> None:
     before = TradingMemoryLog.store_decision
     assert memory_lock.install()
     assert TradingMemoryLog.store_decision is before
 
-    from tradingagents_us.graph import pipeline
 
-    pipeline._install_memory_lock()
-    for name in ("store_decision", "update_with_outcome", "batch_update_with_outcomes",
-                 "load_entries"):
-        assert getattr(getattr(TradingMemoryLog, name), "_memory_locked", False), name
+# A fresh interpreter, as each `scripts.trade` council is: nothing has installed
+# the lock yet, so only propagate() can have put it there by the time the graph
+# (and with it every memory-log read and write) is built. The graph is a stub
+# that looks and stops, so no model is called.
+COUNCIL_INSTALLS = """
+    from tradingagents.agents.utils.memory import TradingMemoryLog
+    from tradingagents.graph import trading_graph
+    from tradingagents_us.graph import memory_lock, pipeline
+
+    def locked():
+        return all(getattr(getattr(TradingMemoryLog, name), "_memory_locked", False)
+                   for name in memory_lock._LOCKED_METHODS)
+
+    class Built(Exception):
+        pass
+
+    class Graph:
+        def __init__(self, *args, **kwargs):
+            raise Built(locked())
+
+    pipeline._load_env = lambda: None  # never a real agent/.env
+    trading_graph.TradingAgentsGraph = Graph
+    print("before", locked())
+    try:
+        pipeline.propagate("AAPL", "2026-10-07")
+    except Built as built:
+        print("at_graph", built.args[0])
+"""
+
+
+def test_a_council_installs_the_lock_before_its_graph_is_built() -> None:
+    proc = _spawn(COUNCIL_INSTALLS)
+    out, _ = proc.communicate(timeout=120)
+    assert proc.returncode == 0, out
+    lines = out.splitlines()
+    assert "before False" in lines, out
+    assert "at_graph True" in lines, out

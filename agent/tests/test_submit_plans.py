@@ -211,11 +211,15 @@ class World:
         with ThreadPoolExecutor(max_workers=parallelism) as pool:
             return list(pool.map(one, tickers))
 
-    def submit(self, tickers: list[str], *, run_id: str = RUN_ID, submit: bool = True) -> int:
+    def submit(
+        self, tickers: list[str], *, run_id: str = RUN_ID, submit: bool = True,
+        ticker_timeout: str | None = None,
+    ) -> int:
         """Pass 2: one `scripts.submit_plans` over the records."""
         argv = [
             "--plan-dir", str(self.plan_dir), "--run-id", run_id, "--date", RUN_DATE,
-            "--db-url", self.db_url, *(["--submit"] if submit else []), *tickers,
+            "--db-url", self.db_url, *(["--submit"] if submit else []),
+            *(["--ticker-timeout", ticker_timeout] if ticker_timeout else []), *tickers,
         ]
         return submit_plans.main(argv)
 
@@ -461,6 +465,69 @@ def test_one_tickers_crash_does_not_cost_the_rest(
     monkeypatch.setattr(trade_cli, "read_book", flaky)
     assert world.submit(["AAPL", "MSFT"]) == 1
     assert world.broker.submitted == [("MSFT", "buy", 100)]
+
+
+def test_a_stuck_ticker_costs_only_itself(
+    world: World, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """Today each ticker is its own process under TICKER_TIMEOUT_S, so one hung
+    call costs that ticker only. The submit pass sends them all from one process:
+    a stall no client timeout bounds (a DNS hang) on AAPL held up the XOM exit
+    behind it until the whole pass was killed, and the exit was never sent."""
+    import time
+
+    assert world.plan(["AAPL", "XOM"]) == [0, 0]
+    real = trade_cli.read_book
+
+    def stuck(ticker: str, limits):  # noqa: ANN001
+        if ticker == "AAPL":
+            time.sleep(60)
+        return real(ticker, limits)
+
+    monkeypatch.setattr(trade_cli, "read_book", stuck)
+    started = time.monotonic()
+    assert world.submit(["AAPL", "XOM"], ticker_timeout="1") == 1
+    assert time.monotonic() - started < 30, "the stuck ticker was waited out"
+    assert world.broker.submitted == [("XOM", "sell", 20)]
+    out = capsys.readouterr().out
+    assert "AAPL TIMED OUT after 1s" in out
+    assert "  -> AAPL FAILED (rc=124)" in out
+    assert "  -> XOM done" in out
+
+
+def test_a_deadline_in_a_price_read_ends_the_ticker_and_sends_nothing_for_it(
+    world: World, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """The price read turns any Exception into "no price", and a BUY with no
+    price skips its entry checks. A deadline that struck there and read as a
+    missing price would send the BUY it was meant to stop."""
+    import time
+
+    from tradingagents_us.dataflows import polygon
+
+    assert world.plan(["AAPL", "XOM"]) == [0, 0]
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if "/AAPL/" in request.url.path:
+            time.sleep(60)
+        return httpx.Response(200, json={"results": [{"c": 100.0}]})
+
+    real_init = polygon.PolygonClient.__init__
+
+    def init(
+        self: polygon.PolygonClient, api_key: str | None = None, timeout_s: float = 30.0
+    ) -> None:
+        real_init(self, api_key="test-key", timeout_s=timeout_s)
+        self._http.close()
+        self._http = httpx.Client(base_url=polygon.BASE, transport=httpx.MockTransport(handle))
+
+    monkeypatch.setattr(polygon.PolygonClient, "__init__", init)
+    monkeypatch.setattr(trade_cli, "_fetch_current_price", _REAL_FETCH_CURRENT_PRICE)
+    started = time.monotonic()
+    assert world.submit(["AAPL", "XOM"], ticker_timeout="1") == 1
+    assert time.monotonic() - started < 30, "the stuck price read was waited out"
+    assert world.broker.submitted == [("XOM", "sell", 20)]
+    assert "  -> AAPL FAILED (rc=124)" in capsys.readouterr().out
 
 
 def test_the_submit_pass_reports_each_ticker(world: World, capsys: pytest.CaptureFixture) -> None:

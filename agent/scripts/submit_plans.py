@@ -21,6 +21,13 @@ daily_run.sh counts, and the exit code is 1 when any failed. A failure is what
 it is in the sequential run (a broker error, an unsizable decision), plus a
 record that is missing or refused.
 
+Each ticker has its own deadline, `--ticker-timeout` (daily_run.sh passes
+TICKER_TIMEOUT_S), as each has its own process in the sequential run: a ticker
+still going at it ends `  -> TICKER FAILED (rc=124)` and the pass moves on to
+the next, so one hung call does not hold up the exits behind it. The alarm can
+only cut in between Python steps, so a call stuck in C that never gives way is
+left to the whole pass's timeout in daily_run.sh.
+
 The price reads are the one thing paced. The sequential run's are a council
 apart; here they come back to back, and past the price feed's budget a read
 comes back None, which skips the entry checks for a BUY (see PacedPrices).
@@ -30,7 +37,9 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import os
+import signal
 import sys
 import time
 from collections.abc import Callable
@@ -92,6 +101,51 @@ class PacedPrices:
         return price
 
 
+class TickerTimeout(BaseException):  # noqa: N818 — reads as what happened, like KeyboardInterrupt
+    """A ticker ran past its deadline.
+
+    Not an Exception: the trade path catches Exception broadly to carry on
+    without a datum (a price read that fails returns None, and a BUY with no
+    price skips its entry checks), and a deadline must end the ticker, not
+    be read as a missing price and let it carry on.
+    """
+
+
+#: GNU timeout's DURATION suffixes, which TICKER_TIMEOUT_S is written in.
+_DURATION_UNITS = {"s": 1.0, "m": 60.0, "h": 3600.0, "d": 86400.0}
+
+
+def _duration(value: str) -> float:
+    """A GNU `timeout` DURATION (`600`, `0600`, `30m`, `1.5h`) in seconds; 0 is none."""
+    number, unit = value, "s"
+    if value[-1:] in _DURATION_UNITS:
+        number, unit = value[:-1], value[-1]
+    try:
+        seconds = float(number) * _DURATION_UNITS[unit]
+    except ValueError:
+        seconds = math.nan
+    if not math.isfinite(seconds) or seconds < 0:
+        raise argparse.ArgumentTypeError(f"not a duration: {value!r}")
+    return seconds
+
+
+def _within(seconds: float, call: Callable[..., int], *args: object) -> int:
+    """`call(*args)`, raising TickerTimeout into it once `seconds` have passed."""
+    if not seconds:
+        return call(*args)
+
+    def on_alarm(signum: int, frame: object) -> None:
+        raise TickerTimeout
+
+    previous = signal.signal(signal.SIGALRM, on_alarm)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        return call(*args)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Send the decisions a parallel daily run recorded, one at a time."
@@ -102,6 +156,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--submit", action="store_true",
                         help="Actually submit to Alpaca (default: dry run)")
     parser.add_argument("--db-url", default=os.environ.get("LOCAL_DATABASE_URL", "sqlite:///./local.db"))
+    parser.add_argument("--ticker-timeout", type=_duration, default=0.0,
+                        help="Each ticker's deadline, as GNU timeout takes it (default: none)")
     parser.add_argument("tickers", nargs="+", help="In the order to submit them")
     return parser
 
@@ -164,7 +220,10 @@ def main(argv: list[str] | None = None) -> int:
         for ticker in opts.tickers:
             print(f"\n--- {ticker} submit @ {opts.date.isoformat()} ---")
             try:
-                rc = submit_one(opts, ticker, repo)
+                rc = _within(opts.ticker_timeout, submit_one, opts, ticker, repo)
+            except TickerTimeout:
+                print(f"  {ticker} TIMED OUT after {opts.ticker_timeout:g}s — moving on")
+                rc = 124
             except Exception:  # noqa: BLE001 — one ticker's crash must not cost the rest
                 log.exception("submit of %s failed", ticker)
                 rc = 1

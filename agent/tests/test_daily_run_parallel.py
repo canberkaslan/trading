@@ -54,12 +54,12 @@ rc="FAIL_${ticker}"
 exit "${!rc:-0}"
 """
 
-# argv: --plan-dir DIR --run-id ID --date D [--submit] TICKER...
+# argv: --plan-dir DIR --run-id ID --date D --ticker-timeout T [--submit] TICKER...
 SUBMIT_HOOK = r"""#!/usr/bin/env bash
 echo $$ > "$HOOK_DIR/submit.pid"
 ls "$HOOK_DIR/running" 2>/dev/null | wc -l | tr -d ' ' > "$HOOK_DIR/submit.in_flight"
 ls "$2" > "$HOOK_DIR/submit.records"
-shift 6
+shift 8
 [[ "${1:-}" == "--submit" ]] && shift
 if [[ -n "${SUBMIT_CRASH:-}" ]]; then exit "$SUBMIT_CRASH"; fi
 sleep "${SUBMIT_SLEEP:-0}"
@@ -113,7 +113,7 @@ def _opt(argv: list[str], flag: str) -> str:
 
 def _submit_tickers(argv: list[str]) -> list[str]:
     rest = argv[1:]
-    for flag in ("--plan-dir", "--run-id", "--date"):
+    for flag in ("--plan-dir", "--run-id", "--date", "--ticker-timeout"):
         i = rest.index(flag)
         del rest[i : i + 2]
     return [a for a in rest if a != "--submit"]
@@ -373,6 +373,9 @@ def test_the_submit_pass_has_a_ticker_timeout_for_each_ticker_it_sends(
     assert timeouts["scripts.trade"] == [ticker_timeout] * 5
     assert timeouts["scripts.submit_plans"] == [pass_timeout]
     assert ("WARNING: TICKER_TIMEOUT_S" in run.output) is (ticker_timeout == "30m")
+    # And each ticker in it its own, as in the sequential run: one stuck ticker
+    # must not hold up the exits behind it until the whole pass is killed.
+    assert _opt(submit_call, "--ticker-timeout") == ticker_timeout
 
 
 # --- PAUSE_NEW --------------------------------------------------------------------
@@ -496,6 +499,7 @@ def test_the_argv_the_script_builds_is_one_each_half_accepts(tmp_path: Path) -> 
     [argv] = _calls(run, "scripts.submit_plans")
     opts = submit_plans.build_parser().parse_args(argv[1:])
     assert opts.submit and opts.tickers == ["AAPL", "MSFT"]
+    assert opts.ticker_timeout == 1800.0  # TICKER_TIMEOUT_S's default
     assert opts.date.isoformat() == RUN_DATE
 
 

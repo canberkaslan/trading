@@ -39,6 +39,7 @@ from tradingagents_us.dataflows.alpaca_broker import Account, AlpacaClient  # no
 from tradingagents_us.dataflows.polygon import PolygonClient  # noqa: E402
 from tradingagents_us.dataflows.sector_map import sector_for  # noqa: E402
 from tradingagents_us.execution import ExecutionConfig, submit_order  # noqa: E402
+from tradingagents_us.execution.plans import write_plan  # noqa: E402
 from tradingagents_us.graph.pipeline import (  # noqa: E402
     _parse_pm_output,
     _parse_trader_output,
@@ -200,6 +201,14 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Save the order as PENDING (no broker call) — "
                              "wait for mobile approval")
     parser.add_argument("--refuse-outside-hours", action="store_true")
+    parser.add_argument("--plan-dir", default=None,
+                        help="First pass of a parallel daily run: council and size, then "
+                             "record the decision for scripts.submit_plans in this "
+                             "directory. No broker write of any kind; refused with "
+                             "--submit or --hold")
+    parser.add_argument("--run-id", default=None,
+                        help="With --plan-dir: the run the record belongs to. The submit "
+                             "pass refuses a record from any other run")
     parser.add_argument("--no-persist", action="store_true",
                         help="Skip writing to the trade log DB")
     parser.add_argument("--db-url", default=os.environ.get("LOCAL_DATABASE_URL", "sqlite:///./local.db"),
@@ -240,7 +249,8 @@ def read_book(ticker: str, limits: PortfolioLimits) -> Book:
             existing_by_ticker[p.symbol] = abs(p.market_value)
             if p.symbol == ticker:
                 held_qty = int(p.qty)
-        # daily_run.sh runs this script once per ticker as a separate process, all
+        # daily_run.sh sizes the tickers one at a time (this script once per
+        # ticker, or scripts.submit_plans once per recorded decision), all
         # before any of the post-close orders fill. Without reserving what earlier
         # tickers already committed, all eleven size against the same cash balance
         # and the sum blows straight through it.
@@ -562,7 +572,14 @@ def main(argv: list[str] | None = None) -> int:
     install_log_redaction()
     _load_env()
 
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.plan_dir and (args.submit or args.hold):
+        parser.error("--plan-dir records the order for the submit pass and sends "
+                     "nothing; it cannot be combined with --submit or --hold")
+    if args.plan_dir and not args.run_id:
+        parser.error("--plan-dir needs --run-id: the submit pass refuses a record "
+                     "it cannot tie to its own run")
     # One set of caps for the whole run. The pre-council gate and the sizer must
     # budget with the same cash utilization, or the gate councils names the
     # sizer then cannot afford (or skips names it could).
@@ -631,6 +648,17 @@ def main(argv: list[str] | None = None) -> int:
     if sized is None:
         return 1
     order, current_price = sized
+
+    if args.plan_dir:
+        # The parallel daily run's first pass ends here, before anything that
+        # can reach the broker. scripts/submit_plans.py takes the decision from
+        # the record and sizes it again against the book as it stands then.
+        path = write_plan(args.plan_dir, run_id=args.run_id, run_date=run_date,
+                          decision=decision, order=order)
+        print("\n=== PLANNED, NOT SENT ===")
+        print(f"  Recorded:    {path}")
+        print("  The submit pass sizes it again against the book as it stands then.")
+        return 0
 
     return execute(args, repo, order, decision, current_price, run_date)
 

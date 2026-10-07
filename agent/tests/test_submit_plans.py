@@ -397,8 +397,10 @@ def test_without_submit_the_pass_is_a_dry_run(world: World) -> None:
         (lambda w: w.broker.hold("AAPL", 100), "trimmed_to_zero_by_portfolio_caps"),
         # 25% of the book now in tech: another 10% breaks the 30% sector cap.
         (lambda w: (w.broker.hold("MSFT", 150), w.broker.hold("NVDA", 100)), "sector_pct="),
-        # The cash went elsewhere.
-        (lambda w: setattr(w.broker, "cash", 0.0), "trimmed_to_zero_by_cash_cap"),
+        # The cash went elsewhere, all but $99. One share at the $98 last price
+        # passes the gate; at the $100 entry the cash cap affords none.
+        (lambda w: (setattr(w.broker, "cash", 99.0), w.prices.__setitem__("AAPL", 98.0)),
+         "trimmed_to_zero_by_cash_cap"),
         # The price ran to the target: no headroom left (executor guard).
         (lambda w: w.prices.__setitem__("AAPL", 126.0), "no_tp_headroom"),
         # The price fell onto the stop (executor guard).
@@ -522,8 +524,8 @@ def test_a_name_the_sequential_gate_skips_is_councilled_but_never_sent(
     The pre-council gate skips a name the cash cannot buy one share of. In the
     sequential run NVDA comes after two BUYs that take all the cash, so it is
     never councilled. The councils of pass 1 all run before any order exists,
-    so NVDA is councilled (the cost of one council) and then refused at submit
-    time by the same cash cap: a refusal row, and nothing more at the broker.
+    so NVDA is councilled (the cost of one council) and then stopped at submit
+    time by the same gate: nothing at the broker and no order row, as today.
     """
     tickers = ["AAPL", "MSFT", "NVDA"]
     today = _make_world(tmp_path, monkeypatch, "sequential")
@@ -538,10 +540,37 @@ def test_a_name_the_sequential_gate_skips_is_councilled_but_never_sent(
     assert split.submit(tickers) == 0
 
     assert split.broker.writes == today.broker.writes
-    assert split.order_rows()[:2] == today.order_rows()
-    [nvda] = split.order_rows()[2:]
-    assert nvda.ticker == "NVDA" and not nvda.approved
-    assert any(r.startswith("trimmed_to_zero_by_cash_cap") for r in nvda.reasons)
+    assert split.order_rows() == today.order_rows()
+
+
+def test_an_entry_below_the_price_does_not_buy_what_the_gate_would_skip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sizer's cash cap prices shares at the decision's entry, but the order
+    is a market order at whatever the price is. With $95 left and an entry of
+    $94 under a $100 last price, the cash cap allows one share the gate (one
+    share at the last price) refuses: the sequential run never councils NVDA,
+    and the submit pass must not buy it either."""
+    tickers = ["AAPL", "MSFT", "NVDA"]
+
+    def make(name: str) -> World:
+        w = _make_world(tmp_path, monkeypatch, name)
+        w.broker.cash = 20_095.0
+        nvda = _decision("NVDA", "Buy")
+        w.decisions["NVDA"] = nvda.model_copy(update={"entry_price": 94.0, "stop_loss": 89.0})
+        return w
+
+    today = make("sequential")
+    assert today.sequential(tickers) == [0, 0, 0]
+    assert today.councils == ["AAPL", "MSFT"]
+    assert today.broker.submitted == [("AAPL", "buy", 100), ("MSFT", "buy", 100)]
+
+    split = make("parallel")
+    assert split.plan(tickers, parallelism=3) == [0, 0, 0]
+    assert split.submit(tickers) == 0
+
+    assert split.broker.writes == today.broker.writes
+    assert split.order_rows() == today.order_rows()
 
 
 def test_a_decision_for_another_name_fails_the_council_loudly(world: World) -> None:

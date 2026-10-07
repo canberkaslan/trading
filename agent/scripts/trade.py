@@ -63,7 +63,7 @@ from tradingagents_us.risk.market_inputs import (  # noqa: E402
     rolling_price_stats,
 )
 from tradingagents_us.risk.portfolio_limits import PortfolioContext, PortfolioLimits  # noqa: E402
-from tradingagents_us.risk.precouncil import should_council  # noqa: E402
+from tradingagents_us.risk.precouncil import CouncilGate, should_council  # noqa: E402
 from tradingagents_us.risk.sizer import MarketContext, size_from_decision  # noqa: E402
 from tradingagents_us.schemas import AgentDecision, AgentReasoning, TradeOrder  # noqa: E402
 from tradingagents_us.storage import TradeLogRepository  # noqa: E402
@@ -314,6 +314,20 @@ def read_book(ticker: str, limits: PortfolioLimits) -> Book:
         print(f"  Open BUYs: {len(open_buys)} reserving ${reserved:,.2f} "
               f"-> spendable ${spendable:,.2f}")
     return Book(acct, existing_by_ticker, held_qty, spendable)
+
+
+def council_gate(ticker: str, book: Book, limits: PortfolioLimits) -> CouncilGate:
+    """Can an order for `ticker` possibly be placed against `book`? One share at
+    the last price, with the sizer's cash utilization. The sequential run asks
+    before its council; scripts.submit_plans asks again before it sizes, against
+    the book the earlier orders of the run left."""
+    return should_council(
+        ticker,
+        held_qty=book.held_qty,
+        spendable=book.spendable,
+        price=_fetch_current_price(ticker),
+        max_cash_utilization=limits.max_cash_utilization,
+    )
 
 
 def size_order(
@@ -613,13 +627,7 @@ def main(argv: list[str] | None = None) -> int:
     # its business: that judgement belongs to the sizer, with the council's
     # output in hand. And a held name is never skipped, because the council is
     # this system's only discretionary exit.
-    _gate = should_council(
-        args.ticker,
-        held_qty=book.held_qty,
-        spendable=book.spendable,
-        price=_fetch_current_price(args.ticker),
-        max_cash_utilization=limits.max_cash_utilization,
-    )
+    _gate = council_gate(args.ticker, book, limits)
     if not _gate.run:
         # No decision row is written, so this line is the only record that the
         # ticker was considered at all.

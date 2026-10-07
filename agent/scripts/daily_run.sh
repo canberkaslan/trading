@@ -313,8 +313,9 @@ fi
 #
 # The one difference: the pre-council gate in pass 1 sees the book before any
 # of this run's orders, so a name the sequential run would skip for want of
-# cash is councilled (one council's cost) and then refused by the cash cap in
-# pass 2. What reaches the broker is the same.
+# cash is councilled (one council's cost). Pass 2 asks the same gate again
+# against the book as it stands then and sends nothing for it, so what reaches
+# the broker is the same.
 #
 # A record is used at most once and only by this run (scripts/submit_plans.py),
 # and the directory holding them is removed when the run ends, however it ends.

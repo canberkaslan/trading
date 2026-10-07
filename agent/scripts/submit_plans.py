@@ -84,6 +84,14 @@ def submit_one(opts: argparse.Namespace, ticker: str, repo: TradeLogRepository) 
 
     trade._print_decision(decision)
     book = trade.read_book(ticker, limits)
+    # The sequential run's pre-council gate, against the book as it stands now.
+    # Pass 1 asked it before any of this run's orders existed, and the sizer's
+    # cash cap is no substitute: it prices shares at the decision's entry, while
+    # the order is a market order at whatever the price is.
+    gate = trade.council_gate(ticker, book, limits)
+    if not gate.run:
+        print(f"\n=== NOT SENT ===\n  {ticker}: {gate.reason}")
+        return 0
     sized = trade.size_order(args, limits, repo, decision, book)
     if sized is None:
         return 1

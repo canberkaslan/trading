@@ -49,6 +49,8 @@ import {
 
 import * as storage from '@/utils/storage';
 
+import { secureStoreKey } from './secureStoreKey';
+
 /** The public web config, from app.config.ts `extra.firebase`. */
 type FirebaseConfig = {
   apiKey: string;
@@ -74,16 +76,16 @@ export function isConfigured(): boolean {
 /**
  * AsyncStorage's shape over the storage module already in the build.
  *
- * Note the size caveat: on native this lands in the OS keystore, and
- * SecureStore warns past 2 KB. Firebase's persisted auth state is normally
- * well under that, but a write that fails leaves the session in memory only —
- * the user is signed in until the app restarts, which degrades to today's
- * behaviour rather than breaking.
+ * On native this lands in the OS keystore, which accepts only a narrow key
+ * alphabet; Firebase's keys (`firebase:authUser:<apiKey>:[DEFAULT]`) are
+ * outside it, so every key goes through `secureStoreKey`. A write that fails
+ * does NOT degrade to an in-memory session: Firebase awaits it, and the
+ * sign-in itself rejects (as `auth/internal-error`).
  */
 const persistenceAdapter = {
-  getItem: (key: string) => storage.getItemAsync(key),
-  setItem: (key: string, value: string) => storage.setItemAsync(key, value),
-  removeItem: (key: string) => storage.deleteItemAsync(key),
+  getItem: (key: string) => storage.getItemAsync(secureStoreKey(key)),
+  setItem: (key: string, value: string) => storage.setItemAsync(secureStoreKey(key), value),
+  removeItem: (key: string) => storage.deleteItemAsync(secureStoreKey(key)),
 };
 
 let cachedAuth: Auth | null = null;

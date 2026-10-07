@@ -26,6 +26,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import NamedTuple
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -278,6 +279,8 @@ def _make_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str) -> W
     monkeypatch.setattr(trade_cli, "average_dollar_volume", lambda t: 5e8)
     monkeypatch.setattr(trade_cli, "count_correlated", lambda t, book: 0)
     monkeypatch.setattr(trade_cli, "rolling_price_stats", lambda t, repo=None: None)
+    # The stub prices cost nothing: no pacing (the budget test puts it back).
+    monkeypatch.setattr(submit_plans, "POLYGON_WINDOW_S", 0.0)
     monkeypatch.setenv("KILL_SWITCH_PATH", str(world.kill_switch))
     return world
 
@@ -581,3 +584,121 @@ def test_a_decision_for_another_name_fails_the_council_loudly(world: World) -> N
         world.plan(["AAPL"])
     assert list(world.plan_dir.iterdir()) == []
     assert world.broker.writes == []
+
+
+# --- the price feed's five-a-minute budget -------------------------------------------
+
+
+_REAL_FETCH_CURRENT_PRICE = trade_cli._fetch_current_price
+_REAL_POLYGON_WINDOW_S = submit_plans.POLYGON_WINDOW_S
+
+
+class RateLimitedPolygon:
+    """Polygon's previous-close endpoint under the five-requests-a-minute budget,
+    on a clock that `time.sleep` advances. A 429 does not count against it."""
+
+    BUDGET = 5
+    WINDOW_S = 60.0
+    COUNCIL_S = 600.0
+
+    def __init__(self, prices: dict[str, float]) -> None:
+        self.prices = prices
+        self.now = 1_000_000.0
+        self.served: list[float] = []
+        self.throttled = 0
+        self._lock = threading.Lock()
+
+    def monotonic(self) -> float:
+        with self._lock:
+            return self.now
+
+    def sleep(self, seconds: float) -> None:
+        with self._lock:
+            self.now += max(0.0, seconds)
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        ticker = request.url.path.split("/")[4]  # /v2/aggs/ticker/<T>/prev
+        with self._lock:
+            if sum(t > self.now - self.WINDOW_S for t in self.served) >= self.BUDGET:
+                self.throttled += 1
+                return httpx.Response(429)
+            self.served.append(self.now)
+        return httpx.Response(200, json={"results": [{"c": self.prices.get(ticker, 100.0)}]})
+
+
+def _rate_limited_world(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> tuple[World, RateLimitedPolygon]:
+    """The test world with the real price read, against a rate-limited Polygon,
+    and a council that takes ten minutes of the same clock."""
+    import time
+
+    from tradingagents_us.dataflows import polygon
+
+    world = _make_world(tmp_path, monkeypatch, name)
+    world.decisions = {t: _decision(t, "Hold") for t in BUDGET_UNIVERSE}
+    for ticker in ("MSFT", "AMZN", "META", "V", "UNH"):
+        world.decisions[ticker] = _decision(ticker, "Buy")
+    # At the target, at the target, on the stop: the executor refuses all three.
+    world.prices.update({"MSFT": 126.0, "AMZN": 126.0, "V": 96.0})
+    feed = RateLimitedPolygon(world.prices)
+
+    real_init = polygon.PolygonClient.__init__
+
+    def init(
+        self: polygon.PolygonClient, api_key: str | None = None, timeout_s: float = 30.0
+    ) -> None:
+        real_init(self, api_key="test-key", timeout_s=timeout_s)
+        self._http.close()
+        self._http = httpx.Client(base_url=polygon.BASE, transport=httpx.MockTransport(feed.handle))
+
+    council = trade_cli.propagate
+
+    def slow_council(ticker: str, trade_date: str) -> AgentDecision:
+        feed.sleep(feed.COUNCIL_S)
+        return council(ticker, trade_date)
+
+    monkeypatch.setattr(polygon.PolygonClient, "__init__", init)
+    monkeypatch.setattr(trade_cli, "_fetch_current_price", _REAL_FETCH_CURRENT_PRICE)
+    monkeypatch.setattr(submit_plans, "POLYGON_WINDOW_S", _REAL_POLYGON_WINDOW_S)
+    monkeypatch.setattr(trade_cli, "propagate", slow_council)
+    monkeypatch.setattr(time, "monotonic", feed.monotonic)
+    monkeypatch.setattr(time, "sleep", feed.sleep)
+    return world, feed
+
+
+#: Holds, and five Buys: MSFT and AMZN at their target and V on its stop, which
+#: the executor refuses, and META and UNH, which go out.
+BUDGET_UNIVERSE = ["SPY", "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "JPM", "V", "XOM", "UNH"]
+
+
+@pytest.mark.parametrize(
+    "spent",
+    [
+        pytest.param(0, id="a-minute-after-the-councils"),
+        # The last councils of the first pass finish together and read their
+        # prices in the same minute the submit pass starts.
+        pytest.param(RateLimitedPolygon.BUDGET, id="right-after-the-councils"),
+    ],
+)
+def test_the_submit_pass_reads_prices_within_the_feeds_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, spent: int
+) -> None:
+    """The sequential run's price reads are a council apart; the submit pass
+    makes them back to back. Past the budget a read comes back None, and a BUY
+    with no price skips the executor's entry checks: MSFT went out at its target."""
+    today, today_feed = _rate_limited_world(tmp_path, monkeypatch, "sequential")
+    assert today.sequential(BUDGET_UNIVERSE) == [0] * len(BUDGET_UNIVERSE)
+    assert today_feed.throttled == 0
+    assert today.broker.submitted == [("META", "buy", 100), ("UNH", "buy", 100)]
+
+    split, feed = _rate_limited_world(tmp_path, monkeypatch, "parallel")
+    assert split.plan(BUDGET_UNIVERSE, parallelism=4) == [0] * len(BUDGET_UNIVERSE)
+    feed.sleep(feed.WINDOW_S)
+    feed.served += [feed.now] * spent
+    throttled = feed.throttled
+    assert split.submit(BUDGET_UNIVERSE) == 0
+
+    assert split.broker.writes == today.broker.writes
+    assert split.order_rows() == today.order_rows()
+    assert feed.throttled == throttled, "the submit pass ran past the price feed's budget"

@@ -19,6 +19,10 @@ output ends in `  -> TICKER done` or `  -> TICKER FAILED (rc=N)`, which is what
 daily_run.sh counts, and the exit code is 1 when any failed. A failure is what
 it is in the sequential run (a broker error, an unsizable decision), plus a
 record that is missing or refused.
+
+The price reads are the one thing paced. The sequential run's are a council
+apart; here they come back to back, and past the price feed's budget a read
+comes back None, which skips the entry checks for a BUY (see PacedPrices).
 """
 
 from __future__ import annotations
@@ -27,6 +31,8 @@ import argparse
 import logging
 import os
 import sys
+import time
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
@@ -46,6 +52,43 @@ from tradingagents_us.log_redaction import install as install_log_redaction  # n
 from tradingagents_us.storage import TradeLogRepository, make_engine  # noqa: E402
 
 log = logging.getLogger("submit_plans")
+
+#: The price feed's budget: Polygon answers five requests a minute and a 429
+#: past it (dataflows/polygon.py).
+POLYGON_REQUESTS_PER_WINDOW = 5
+POLYGON_WINDOW_S = 60.0
+
+
+class PacedPrices:
+    """`trade._fetch_current_price` for this pass: each name read once, and the
+    reads spaced to the price feed's budget.
+
+    Past the budget a read gives up and returns None. For a BUY that skips the
+    executor's TP-headroom and stop-proximity checks and the gate's one-share
+    cash check, and an open BUY nobody can price refuses every BUY after it, so
+    the batch would not be the sequential run's. The first read waits out a
+    whole window, which the last councils of the first pass may just have
+    spent, and each later one its share of it. A last close does not move
+    during the pass, so a name is read once; a None is not kept, so the next
+    caller tries again.
+    """
+
+    def __init__(self, read: Callable[[str], float | None]) -> None:
+        self._read = read
+        self._prices: dict[str, float] = {}
+        self._next_read = time.monotonic() + POLYGON_WINDOW_S
+
+    def __call__(self, ticker: str) -> float | None:
+        if ticker in self._prices:
+            return self._prices[ticker]
+        wait = self._next_read - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        price = self._read(ticker)
+        self._next_read = time.monotonic() + POLYGON_WINDOW_S / POLYGON_REQUESTS_PER_WINDOW
+        if price is not None:
+            self._prices[ticker] = price
+        return price
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -114,18 +157,23 @@ def main(argv: list[str] | None = None) -> int:
     repo = TradeLogRepository(engine=make_engine(opts.db_url))
 
     failed: list[str] = []
-    for ticker in opts.tickers:
-        print(f"\n--- {ticker} submit @ {opts.date.isoformat()} ---")
-        try:
-            rc = submit_one(opts, ticker, repo)
-        except Exception:  # noqa: BLE001 — one ticker's crash must not cost the rest
-            log.exception("submit of %s failed", ticker)
-            rc = 1
-        if rc == 0:
-            print(f"  -> {ticker} done")
-        else:
-            print(f"  -> {ticker} FAILED (rc={rc})")
-            failed.append(ticker)
+    read_price = trade._fetch_current_price
+    trade._fetch_current_price = PacedPrices(read_price)
+    try:
+        for ticker in opts.tickers:
+            print(f"\n--- {ticker} submit @ {opts.date.isoformat()} ---")
+            try:
+                rc = submit_one(opts, ticker, repo)
+            except Exception:  # noqa: BLE001 — one ticker's crash must not cost the rest
+                log.exception("submit of %s failed", ticker)
+                rc = 1
+            if rc == 0:
+                print(f"  -> {ticker} done")
+            else:
+                print(f"  -> {ticker} FAILED (rc={rc})")
+                failed.append(ticker)
+    finally:
+        trade._fetch_current_price = read_price
     return 1 if failed else 0
 
 

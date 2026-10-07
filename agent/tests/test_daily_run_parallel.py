@@ -44,6 +44,7 @@ ls "$HOOK_DIR/running" | wc -l | tr -d ' ' > "$HOOK_DIR/peaks/$ticker"
 echo "council output for $ticker"
 delay="SLEEP_${ticker}"
 sleep "${!delay:-0.2}"
+mkdir -p "$HOOK_DIR/woke" && : > "$HOOK_DIR/woke/$ticker"
 noplan="NOPLAN_${ticker}"
 if [[ -n "$plan_dir" && -z "${!noplan:-}" ]]; then
   echo '{}' > "$plan_dir/$ticker.plan.json"
@@ -64,6 +65,7 @@ if [[ -n "${SUBMIT_CRASH:-}" ]]; then exit "$SUBMIT_CRASH"; fi
 sleep "${SUBMIT_SLEEP:-0}"
 failed=0
 for t in "$@"; do
+  mkdir -p "$HOOK_DIR/sent" && : > "$HOOK_DIR/sent/$t"
   echo "--- $t submit @ x ---"
   fail="SUBMIT_FAIL_${t}"
   if [[ -n "${!fail:-}" ]]; then
@@ -412,6 +414,12 @@ def _wait_for(path: Path, count: int = 1) -> None:
     raise AssertionError(f"{path} never appeared")
 
 
+#: How long a stand-in caught by a stop sleeps. A stop that kills nothing still
+#: ends the run with rc 143, once the trap's `wait` has waited this out: every
+#: check below holds then too, except the clock and what woke up after it.
+STAND_IN_SLEEP_S = 60
+
+
 def test_sigterm_mid_council_stops_the_councils_sends_nothing_and_pages(tmp_path: Path) -> None:
     hook_dir = tmp_path / "hook"
 
@@ -420,12 +428,16 @@ def test_sigterm_mid_council_stops_the_councils_sends_nothing_and_pages(tmp_path
         time.sleep(0.3)  # let the stand-ins print their first line
         proc.send_signal(signal.SIGTERM)
 
+    started = time.monotonic()
     run, _ = _run(
         tmp_path, during=terminate_mid_council, COUNCIL_PARALLELISM="2",
-        SLEEP_AAPL="60", SLEEP_MSFT="60",
+        SLEEP_AAPL=str(STAND_IN_SLEEP_S), SLEEP_MSFT=str(STAND_IN_SLEEP_S),
     )
+    elapsed = time.monotonic() - started
     assert run.rc == 143, run.output
     time.sleep(0.5)
+    assert not (hook_dir / "woke").exists(), "a council ran on past the stop"
+    assert elapsed < STAND_IN_SLEEP_S / 2, f"the stop waited the councils out ({elapsed:.0f}s)"
     for pid_file in (hook_dir / "pids").iterdir():
         assert not _alive(int(pid_file.read_text())), f"{pid_file.name} still running"
     assert sorted(p.name for p in (hook_dir / "pids").iterdir()) == ["AAPL", "MSFT"]
@@ -446,12 +458,17 @@ def test_sigterm_mid_submit_pass_stops_it_and_pages(tmp_path: Path) -> None:
         time.sleep(0.3)
         proc.send_signal(signal.SIGTERM)
 
+    started = time.monotonic()
     run, _ = _run(
-        tmp_path, during=terminate_mid_submit, SUBMIT_SLEEP="60", UNIVERSE="AAPL MSFT",
-        SLEEP_AAPL="0", SLEEP_MSFT="0",
+        tmp_path, during=terminate_mid_submit, SUBMIT_SLEEP=str(STAND_IN_SLEEP_S),
+        UNIVERSE="AAPL MSFT", SLEEP_AAPL="0", SLEEP_MSFT="0",
     )
+    elapsed = time.monotonic() - started
     assert run.rc == 143, run.output
     time.sleep(0.5)
+    assert not (hook_dir / "sent").exists(), "the submit pass sent on past the stop"
+    assert " submit @" not in _run_log(tmp_path).split("SIGNAL received", 1)[1]
+    assert elapsed < STAND_IN_SLEEP_S / 2, f"the stop waited the submit pass out ({elapsed:.0f}s)"
     submit_pid = int((hook_dir / "submit.pid").read_text())
     assert not _alive(submit_pid), "the submit pass outlived the run"
     assert "scripts.snapshot" not in run.modules()

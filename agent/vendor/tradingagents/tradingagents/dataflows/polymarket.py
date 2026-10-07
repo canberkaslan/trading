@@ -107,9 +107,12 @@ def get_prediction_markets(topic: str, limit: int | None = None) -> str:
         data = _request("public-search", {"q": topic, "limit_per_type": 20})
     except requests.RequestException as e:
         logger.warning("Polymarket search failed for %r: %s", topic, e)
+        # fork patch (trading repo): say outright that this is a failed lookup,
+        # so the analyst cannot read it as "no markets" or as a neutral signal.
         return (
-            f"Polymarket data is currently unavailable (network error: {e}). "
-            f"Proceed without prediction-market signal for '{topic}'."
+            f"Polymarket data is currently unavailable ({e}). This is a failed "
+            f"lookup, not an absence of markets: proceed without "
+            f"prediction-market signal for '{topic}'."
         )
 
     now = datetime.now(timezone.utc)

@@ -81,6 +81,7 @@ def fake_get(monkeypatch: pytest.MonkeyPatch) -> Callable[..., _FakeGet]:
 
 def _assert_unavailable(out: str) -> None:
     assert "unavailable" in out.lower()
+    assert "not an absence of markets" in out
     assert "No open prediction markets" not in out
     assert TOPIC in out
 

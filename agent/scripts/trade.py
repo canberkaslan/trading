@@ -520,7 +520,8 @@ def _sector_of(symbol: str, known: dict[str, str | None]) -> str | None:
 
     A symbol nobody looked up (not held, not pending, not in the run's
     universe) goes in sector_for's own "Unknown" bucket, which the sector cap
-    counts rather than skips.
+    counts rather than skips. A BUY never gets that far: it refuses when the
+    book holds such a name (_act_on_decision).
     """
     return known.get(symbol) or UNKNOWN_SECTOR
 
@@ -658,6 +659,17 @@ def _act_on_decision(
         book.open_buys, lambda s: _known_price(s, market)
     ).items():
         exposure_by_ticker[sym] = exposure_by_ticker.get(sym, 0.0) + value
+    # A name the locked read found that nobody looked up joined the book during
+    # the council (a held BUY approved and filled). In "Unknown" it would drop
+    # out of its real sector, and no lookup is made under the lock, so a BUY
+    # refuses, as an approval does. An exit is checked against no cap.
+    unlooked = sorted(sym for sym in exposure_by_ticker if sym not in market.sectors)
+    if unlooked and _side_from_rating(decision.rating) == "BUY":
+        log.error("%s: no sector looked up for %s: it joined the book during the "
+                  "council; decision recorded, no BUY sized", args.ticker, ", ".join(unlooked))
+        print(f"\n=== BUY NOT SIZED ===\n  {args.ticker}: no sector looked up for "
+              f"{', '.join(unlooked)} (joined the book during the council)")
+        return 1
     existing_by_sector: dict[str, float] = {}
     for sym, value in exposure_by_ticker.items():
         sec = _sector_of(sym, market.sectors)

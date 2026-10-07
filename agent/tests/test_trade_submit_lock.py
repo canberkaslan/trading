@@ -455,3 +455,44 @@ def test_a_buy_that_fills_mid_read_is_counted_in_cash_and_exposure(
         book.open_buys, lambda s: 400.0
     ).get("MSFT", 0.0)
     assert msft >= 40_000.0
+
+
+@pytest.mark.parametrize(("rating", "rc", "sized"), [("Buy", 1, False), ("Sell", 0, True)])
+def test_a_name_that_joined_the_book_during_the_council_refuses_a_buy(
+    mock_dependencies,  # noqa: F811
+    repo: mock.MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    rating: str,
+    rc: int,
+    sized: bool,
+) -> None:
+    # MSFT is held before the council. During it a held NVDA BUY was approved
+    # and filled: nobody looked its sector up, and the lock allows no lookup.
+    # Put in "Unknown", its $9k drops out of Information Technology and more
+    # AAPL fits under the 30% sector cap than really does. An exit spends no
+    # cash and is checked against no cap, so it still goes out.
+    monkeypatch.setenv("UNIVERSE", "AAPL MSFT")
+    msft = mock.MagicMock(symbol="MSFT", qty=50, market_value=20_000.0)
+    nvda = mock.MagicMock(symbol="NVDA", qty=50, market_value=9_000.0)
+    reads = iter([[msft], [msft, nvda]])
+    mock_dependencies["alpaca"].list_positions.side_effect = lambda: next(reads)
+    seen = {}
+
+    def sizer(**kwargs):
+        seen["by_sector"] = kwargs["portfolio_ctx"].existing_position_values_by_sector
+        side = "BUY" if rating == "Buy" else "SELL"
+        return mock.MagicMock(quantity=0, stop_loss=140.0, risk_approved=False,
+                              rejection_reasons=["x"], side=side)
+
+    with mock.patch("scripts.trade._decision_from_cached", return_value=_decision(rating)), \
+         mock.patch("scripts.trade.size_from_decision", side_effect=sizer), \
+         mock.patch("scripts.trade.sector_for", return_value="Information Technology"):
+        from scripts.trade import main
+        assert main() == rc
+
+    repo.save_decision.assert_called_once()
+    assert ("by_sector" in seen) is sized
+    assert mock_dependencies["submit"].called is sized
+    if rating == "Buy":
+        assert "no sector looked up for NVDA" in capsys.readouterr().out

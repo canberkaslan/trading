@@ -213,13 +213,14 @@ class World:
 
     def submit(
         self, tickers: list[str], *, run_id: str = RUN_ID, submit: bool = True,
-        ticker_timeout: str | None = None,
+        ticker_timeout: str | None = None, supervisor_pid: int | None = None,
     ) -> int:
         """Pass 2: one `scripts.submit_plans` over the records."""
         argv = [
             "--plan-dir", str(self.plan_dir), "--run-id", run_id, "--date", RUN_DATE,
             "--db-url", self.db_url, *(["--submit"] if submit else []),
-            *(["--ticker-timeout", ticker_timeout] if ticker_timeout else []), *tickers,
+            *(["--ticker-timeout", ticker_timeout] if ticker_timeout else []),
+            *(["--supervisor-pid", str(supervisor_pid)] if supervisor_pid else []), *tickers,
         ]
         return submit_plans.main(argv)
 
@@ -528,6 +529,42 @@ def test_a_deadline_in_a_price_read_ends_the_ticker_and_sends_nothing_for_it(
     assert time.monotonic() - started < 30, "the stuck price read was waited out"
     assert world.broker.submitted == [("XOM", "sell", 20)]
     assert "  -> AAPL FAILED (rc=124)" in capsys.readouterr().out
+
+
+def test_the_pass_takes_no_record_once_its_run_is_gone(
+    world: World, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """daily_run.sh hands the pass its own PID. A kill aimed at the shell alone
+    (kill -9 on a manual run) runs no trap, and the orphaned pass went on to send
+    every record left, exits too. Once the run is gone it takes no other record:
+    the ticker in flight is all that goes, as in the sequential run."""
+    import subprocess
+
+    assert world.plan(["AAPL", "MSFT", "XOM"]) == [0, 0, 0]
+    supervisor = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    real_execute = trade_cli.execute
+
+    def execute_then_kill_the_run(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        rc = real_execute(*args, **kwargs)
+        supervisor.kill()
+        supervisor.wait()
+        return rc
+
+    monkeypatch.setattr(trade_cli, "execute", execute_then_kill_the_run)
+    try:
+        rc = world.submit(["AAPL", "MSFT", "XOM"], supervisor_pid=supervisor.pid)
+    finally:
+        supervisor.kill()
+        supervisor.wait()
+
+    assert rc == 1
+    assert world.broker.submitted == [("AAPL", "buy", 100)]
+    # Never taken: still on disk, and bound to a run id no other run has.
+    assert plan_path(world.plan_dir, "MSFT").is_file()
+    assert plan_path(world.plan_dir, "XOM").is_file()
+    out = capsys.readouterr().out
+    assert f"the daily run (pid {supervisor.pid}) is gone" in out
+    assert "not sent: MSFT XOM" in out
 
 
 def test_the_submit_pass_reports_each_ticker(world: World, capsys: pytest.CaptureFixture) -> None:

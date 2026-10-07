@@ -362,6 +362,11 @@ plan_ticker() {
 # alarm cannot reach. Under a single ticker's cap, a price feed slow enough to
 # take minutes per ticker (each well inside its own cap) cut off every ticker
 # after the first few, their exits with them.
+#
+# It is handed this shell's PID and takes no further record once that is gone.
+# A kill aimed at this shell alone (kill -9 <pid> on a manual run) runs no trap,
+# and an orphaned pass would send every record left, unreported; this way the
+# ticker in flight is the most that goes, as in the sequential run.
 submit_pass() {
   set +e
   local run_id="$1" budget="$TICKER_TIMEOUT_S"
@@ -374,7 +379,7 @@ submit_pass() {
   fi
   timeout -k 30 "$budget" env PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.submit_plans \
       --plan-dir "$PLAN_DIR" --run-id "$run_id" --date "$DATE" \
-      --ticker-timeout "$TICKER_TIMEOUT_S" $SUBMIT_FLAG "$@" 2>&1 \
+      --ticker-timeout "$TICKER_TIMEOUT_S" --supervisor-pid "$$" $SUBMIT_FLAG "$@" 2>&1 \
     | tee -a "$RUN_LOG" "$PLAN_DIR/submit.out"
   echo "${PIPESTATUS[0]}" >"$PLAN_DIR/submit.rc"
 }

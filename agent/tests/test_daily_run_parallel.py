@@ -19,12 +19,13 @@ import shutil
 import signal
 import stat
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 import pytest
 
-from tests.test_daily_run_alerting import HC, RUN_DATE, Run, run_daily
+from tests.test_daily_run_alerting import AGENT, HC, RUN_DATE, Run, run_daily
 
 pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
 
@@ -54,12 +55,13 @@ rc="FAIL_${ticker}"
 exit "${!rc:-0}"
 """
 
-# argv: --plan-dir DIR --run-id ID --date D --ticker-timeout T [--submit] TICKER...
+# argv: --plan-dir DIR --run-id ID --date D --ticker-timeout T --supervisor-pid P
+#       [--submit] TICKER...
 SUBMIT_HOOK = r"""#!/usr/bin/env bash
 echo $$ > "$HOOK_DIR/submit.pid"
 ls "$HOOK_DIR/running" 2>/dev/null | wc -l | tr -d ' ' > "$HOOK_DIR/submit.in_flight"
 ls "$2" > "$HOOK_DIR/submit.records"
-shift 8
+shift 10
 [[ "${1:-}" == "--submit" ]] && shift
 if [[ -n "${SUBMIT_CRASH:-}" ]]; then exit "$SUBMIT_CRASH"; fi
 sleep "${SUBMIT_SLEEP:-0}"
@@ -113,7 +115,7 @@ def _opt(argv: list[str], flag: str) -> str:
 
 def _submit_tickers(argv: list[str]) -> list[str]:
     rest = argv[1:]
-    for flag in ("--plan-dir", "--run-id", "--date", "--ticker-timeout"):
+    for flag in ("--plan-dir", "--run-id", "--date", "--ticker-timeout", "--supervisor-pid"):
         i = rest.index(flag)
         del rest[i : i + 2]
     return [a for a in rest if a != "--submit"]
@@ -522,6 +524,71 @@ def test_sigterm_mid_submit_pass_stops_it_and_pages(tmp_path: Path) -> None:
     assert _plan_dirs(tmp_path) == []
 
 
+# The real scripts.submit_plans, from argv to its loop over the tickers, with
+# only each ticker's work swapped for SUBMIT_TICKER_S of sleep and a mark in
+# $HOOK_DIR/sent: whatever decides whether the next ticker goes is the real one.
+REAL_SUBMIT_LOOP_HOOK = """#!{python}
+import os
+import sys
+import time
+from pathlib import Path
+
+sys.path[:0] = [{agent!r}, {vendor!r}]
+from scripts import submit_plans, trade
+
+hook = Path(os.environ["HOOK_DIR"])
+
+
+def submit_one(opts, ticker, repo):
+    time.sleep(float(os.environ["SUBMIT_TICKER_S"]))
+    (hook / "sent").mkdir(exist_ok=True)
+    (hook / "sent" / ticker).touch()
+    return 0
+
+
+trade._load_env = lambda: None
+submit_plans.submit_one = submit_one
+(hook / "submit.pid").write_text(str(os.getpid()))
+sys.exit(submit_plans.main(sys.argv[1:]))
+"""
+
+
+def test_a_submit_pass_whose_run_was_killed_sends_nothing_more(tmp_path: Path) -> None:
+    # A kill aimed at the shell alone (kill -9 <pid> on a manual run) runs no
+    # trap: the backgrounded submit pass was orphaned and went on to send every
+    # record left, exits and entries alike, with no one to record the outcome.
+    # The sequential run in that spot leaves only the ticker in flight. A unit
+    # stop signals the whole cgroup and is not this case.
+    hook_dir = tmp_path / "hook"
+    hook = _hook(tmp_path, "real_submit.py", REAL_SUBMIT_LOOP_HOOK.format(
+        python=sys.executable, agent=str(AGENT), vendor=str(AGENT / "vendor" / "tradingagents"),
+    ))
+    submit_pid: list[int] = []
+
+    def kill_the_shell_mid_submit(proc: subprocess.Popen[str]) -> None:
+        _wait_for(hook_dir / "submit.pid")
+        proc.send_signal(signal.SIGKILL)
+        proc.wait()  # its parent reaps it, as a login shell or systemd does
+        submit_pid.append(int((hook_dir / "submit.pid").read_text()))
+        deadline = time.monotonic() + 60
+        while _alive(submit_pid[0]) and time.monotonic() < deadline:
+            time.sleep(0.1)
+
+    run, _ = _run(
+        tmp_path, during=kill_the_shell_mid_submit, FAKE_HOOK_scripts_submit_plans=str(hook),
+        SUBMIT="1", SUBMIT_TICKER_S="2", LOCAL_DATABASE_URL=f"sqlite:///{tmp_path / 'local.db'}",
+        **{f"SLEEP_{t}": "0" for t in UNIVERSE.split()},
+    )
+    assert run.rc == -signal.SIGKILL, run.output
+    assert not _alive(submit_pid[0]), "the orphaned submit pass is still sending"
+    sent_dir = hook_dir / "sent"
+    sent = sorted(p.name for p in sent_dir.iterdir()) if sent_dir.exists() else []
+    # At most the ticker in flight when the shell died, as in the sequential run.
+    assert sent in ([], ["AAPL"]), f"the submit pass sent {sent} after its run was killed"
+    log = _run_log(tmp_path)
+    assert re.search(r"the daily run \(pid \d+\) is gone", log), log
+
+
 # --- the handoff to the Python halves ----------------------------------------------
 #
 # The stand-ins accept any argv. A flag renamed on one side only would make
@@ -543,6 +610,7 @@ def test_the_argv_the_script_builds_is_one_each_half_accepts(tmp_path: Path) -> 
     opts = submit_plans.build_parser().parse_args(argv[1:])
     assert opts.submit and opts.tickers == ["AAPL", "MSFT"]
     assert opts.ticker_timeout == 1800.0  # TICKER_TIMEOUT_S's default
+    assert opts.supervisor_pid is not None  # the shell's own $$
     assert opts.date.isoformat() == RUN_DATE
 
 

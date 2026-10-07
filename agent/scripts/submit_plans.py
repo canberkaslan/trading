@@ -28,6 +28,12 @@ the next, so one hung call does not hold up the exits behind it. The alarm can
 only cut in between Python steps, so a call stuck in C that never gives way is
 left to the whole pass's timeout in daily_run.sh.
 
+daily_run.sh passes its own PID (`--supervisor-pid`), and the pass takes no
+further record once that process is gone. A kill aimed at the shell alone
+(`kill -9` on a manual run) runs no trap to stop this pass, and an orphaned pass
+would go on to send every record left, with nobody to report the outcome. As in
+the sequential run, the ticker in flight is the most that still goes.
+
 The price reads are the one thing paced. The sequential run's are a council
 apart; here they come back to back, and past the price feed's budget a read
 comes back None, which skips the entry checks for a BUY (see PacedPrices).
@@ -146,6 +152,28 @@ def _within(seconds: float, call: Callable[..., int], *args: object) -> int:
         signal.signal(signal.SIGALRM, previous)
 
 
+def _pid(value: str) -> int:
+    """A process id: a positive integer (0 and below name process groups to kill)."""
+    try:
+        pid = int(value)
+    except ValueError:
+        pid = 0
+    if pid <= 0:
+        raise argparse.ArgumentTypeError(f"not a process id: {value!r}")
+    return pid
+
+
+def _alive(pid: int) -> bool:
+    """Whether process `pid` still exists (one we may not signal still does)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Send the decisions a parallel daily run recorded, one at a time."
@@ -158,6 +186,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--db-url", default=os.environ.get("LOCAL_DATABASE_URL", "sqlite:///./local.db"))
     parser.add_argument("--ticker-timeout", type=_duration, default=0.0,
                         help="Each ticker's deadline, as GNU timeout takes it (default: none)")
+    parser.add_argument("--supervisor-pid", type=_pid, default=None,
+                        help="The daily run's PID: once it is gone, no further record is taken")
     parser.add_argument("tickers", nargs="+", help="In the order to submit them")
     return parser
 
@@ -217,7 +247,13 @@ def main(argv: list[str] | None = None) -> int:
     read_price = trade._fetch_current_price
     trade._fetch_current_price = PacedPrices(read_price)
     try:
-        for ticker in opts.tickers:
+        for i, ticker in enumerate(opts.tickers):
+            if opts.supervisor_pid is not None and not _alive(opts.supervisor_pid):
+                rest = opts.tickers[i:]
+                print(f"\n  STOPPED: the daily run (pid {opts.supervisor_pid}) is gone"
+                      f" — not sent: {' '.join(rest)}")
+                failed.extend(rest)
+                break
             print(f"\n--- {ticker} submit @ {opts.date.isoformat()} ---")
             try:
                 rc = _within(opts.ticker_timeout, submit_one, opts, ticker, repo)

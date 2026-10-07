@@ -80,8 +80,7 @@ export function isConfigured(): boolean {
  * alphabet; Firebase's keys (`firebase:authUser:<apiKey>:[DEFAULT]`) are
  * outside it, so every key goes through `secureStoreKey`. A write that fails
  * does NOT degrade to an in-memory session: Firebase awaits it, and the
- * sign-in itself rejects. SecureStore also warns past 2 KB, which Firebase's
- * persisted auth state normally stays under.
+ * sign-in itself rejects (as `auth/internal-error`).
  */
 const persistenceAdapter = {
   getItem: (key: string) => storage.getItemAsync(secureStoreKey(key)),

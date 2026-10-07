@@ -124,6 +124,11 @@ ping_healthcheck() {
   fi
 }
 
+# The decision records of a parallel run, once decide_in_parallel has made
+# them; on_exit removes this and nothing else. Cleared here, before the trap,
+# so a PLAN_DIR from the caller's shell or agent/.env is never what it removes.
+PLAN_DIR=""
+
 # A run that dies between the explicit outcomes below (set -e on a failed write,
 # a crash between steps) is a failure none of them saw. Report it now rather
 # than leave the check to notice only when its grace period runs out.
@@ -331,7 +336,6 @@ elif [[ "${#COUNCIL_PARALLELISM}" -gt 1 || "$COUNCIL_PARALLELISM" -gt "$MAX_COUN
   COUNCIL_PARALLELISM=$MAX_COUNCIL_PARALLELISM
 fi
 
-PLAN_DIR=""
 COUNCILS_MERGED=0
 
 # Pass 1, one ticker: council and record. Runs in the background.

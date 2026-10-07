@@ -266,6 +266,27 @@ def test_the_records_go_when_the_run_ends(tmp_path: Path) -> None:
     assert _plan_dirs(tmp_path) == []
 
 
+@pytest.mark.parametrize(
+    ("kill_rc", "via_dotenv"),
+    [("76", False), ("1", False), ("76", True), ("0", False)],
+    ids=["flatten-all", "kill-check-failed", "flatten-all-from-dotenv", "full-run"],
+)
+def test_a_plan_dir_the_run_did_not_make_is_never_removed(
+    tmp_path: Path, kill_rc: str, via_dotenv: bool
+) -> None:
+    # A generic name an operator's shell or agent/.env may already export. The
+    # run only ever removes the directory it made itself, however it ends.
+    keep = tmp_path / "operator-plans"
+    keep.mkdir()
+    (keep / "keep.txt").write_text("not the run's to delete", encoding="utf-8")
+    env = {"UNIVERSE": "AAPL", "FAKE_RC_scripts_kill_check": kill_rc}
+    if via_dotenv:
+        run = run_daily(tmp_path, dotenv=f"PLAN_DIR={keep}\n", **env)
+    else:
+        run = run_daily(tmp_path, PLAN_DIR=str(keep), **env)
+    assert (keep / "keep.txt").is_file(), run.output
+
+
 # --- failures -------------------------------------------------------------------
 
 

@@ -3,10 +3,14 @@ atomic state writes, and the approve path honoring the armed switch."""
 
 from __future__ import annotations
 
+import os
+import threading
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi import Response
 from fastapi.testclient import TestClient
 
 from tradingagents_us.execution.flatten import FlattenResult
@@ -72,7 +76,67 @@ class TestSetKillSwitch:
 
     def test_no_tmp_file_left_behind(self, client: TestClient, tmp_path: Path) -> None:
         client.post("/v1/orders/kill-switch", json={"state": "PAUSE_NEW"})
-        assert not (tmp_path / "kill.state.tmp").exists()
+        assert not list(tmp_path.glob("kill.state*.tmp"))
+
+
+class TestTwoTapsAtOnce:
+    """The handler runs in the threadpool, so a panicked double tap runs side by side."""
+
+    def test_both_land_and_the_last_one_is_acted_on(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Both taps have written their state before either renames it over
+        # the flag: PAUSE_NEW first, then FLATTEN_ALL.
+        from api.routes import orders
+        from tradingagents_us.schemas import KillSwitchState
+
+        flag = str(tmp_path / "kill.state")
+        at_rename = {"tap-1": threading.Event(), "tap-2": threading.Event()}
+        tap1_renamed = threading.Event()
+        real_replace = os.replace
+
+        def replace(src: Any, dst: Any) -> None:
+            who = threading.current_thread().name
+            if str(dst) != flag or who not in at_rename:
+                return real_replace(src, dst)
+            at_rename[who].set()
+            if who == "tap-1":
+                at_rename["tap-2"].wait(2)
+                try:
+                    return real_replace(src, dst)
+                finally:
+                    tap1_renamed.set()
+            tap1_renamed.wait(2)
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(os, "replace", replace)
+        answers: dict[str, Any] = {}
+
+        def tap(state: KillSwitchState) -> None:
+            try:
+                answers[threading.current_thread().name] = orders.set_kill_switch(
+                    orders.KillSwitchUpdate(state=state), Response(), user="op",
+                    repo=MagicMock(),
+                )
+            except Exception as exc:  # noqa: BLE001 — the answer under test
+                answers[threading.current_thread().name] = exc
+
+        with patch("api.routes.orders.flatten_all") as fl:
+            fl.return_value = FlattenResult(ok=True, noop=True, summary="book already flat")
+            pause = threading.Thread(target=tap, args=("PAUSE_NEW",), name="tap-1")
+            pause.start()
+            assert at_rename["tap-1"].wait(5)
+            flat = threading.Thread(target=tap, args=("FLATTEN_ALL",), name="tap-2")
+            flat.start()
+            pause.join(10)
+            flat.join(10)
+
+        assert answers["tap-1"]["state"] == "PAUSE_NEW", answers["tap-1"]
+        assert answers["tap-2"]["state"] == "FLATTEN_ALL", answers["tap-2"]
+        assert (tmp_path / "kill.state").read_text() == "FLATTEN_ALL"
+        # The switch reads FLATTEN_ALL, so the book was flattened.
+        fl.assert_called_once()
+        assert not list(tmp_path.glob("kill.state*.tmp"))
 
 
 class TestGetKillSwitch:

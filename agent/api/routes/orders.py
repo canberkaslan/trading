@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import tempfile
 import threading
 import time
 from datetime import UTC, datetime
@@ -572,13 +573,24 @@ def set_kill_switch(
     """
     flag_path = default_kill_switch_path()
     # Atomic replace — a crash mid-write must never leave a truncated file
-    # (the reader treats empty as PAUSE_NEW, but never risk it).
-    tmp_path = f"{flag_path}.tmp"
-    with open(tmp_path, "w") as f:
-        f.write(body.state)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp_path, flag_path)
+    # (the reader treats empty as PAUSE_NEW, but never risk it). Each tap
+    # writes a temp file of its own: two taps run side by side here, and one
+    # truncating the other's write would rename an empty flag in.
+    fd, tmp_path = tempfile.mkstemp(
+        dir=os.path.dirname(flag_path) or ".",
+        prefix=f"{os.path.basename(flag_path)}.", suffix=".tmp",
+    )
+    try:
+        with os.fdopen(fd, "w") as f:
+            os.fchmod(f.fileno(), 0o644)  # open() under a 022 umask; mkstemp gives 0o600
+            f.write(body.state)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, flag_path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_path)
+        raise
 
     # Audit is best-effort; the state write above already took effect.
     with contextlib.suppress(Exception):

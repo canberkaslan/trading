@@ -19,8 +19,11 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -52,10 +55,19 @@ from .routes import (
 
 log = logging.getLogger(__name__)
 
+
+@asynccontextmanager
+async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
+    yield
+    # A stop (a deploy, a restart) must not drop a FLATTEN_ALL answered 202.
+    await asyncio.to_thread(orders.drain_flattens)
+
+
 app = FastAPI(
     title="Trading API",
     version="0.1.0",
     description="AI-powered multi-agent trading system — mobile backend",
+    lifespan=_lifespan,
 )
 
 # CORS for Expo dev / web preview. Native mobile (fetch) and server-side

@@ -6,6 +6,7 @@ import contextlib
 import logging
 import os
 import threading
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -165,6 +166,10 @@ KILL_SWITCH_ANSWER_S = 5.0
 FLATTEN_ANSWER_S = 20.0
 #: A reject waits this long for an approval in flight, then records anyway.
 REJECT_LOCK_TIMEOUT_S = 5.0
+#: An API stop waits this long for a flatten still in flight (`drain_flattens`):
+#: the lock wait (EXIT_TIMEOUT_S, 60 s) and a broker call, inside systemd's
+#: 90 s stop timeout with room left to page the ones it cannot wait for.
+FLATTEN_DRAIN_S = 75.0
 #: The caps a held BUY is re-checked against: the daily run's, which are the
 #: defaults (daily_run.sh passes trade.py no cap flags).
 APPROVE_LIMITS = PortfolioLimits()
@@ -616,7 +621,7 @@ def _behind_the_lock(
     wait gave up; `done` once the pass is over. The thread outlives a request
     that stopped waiting for it, so a flatten still runs after the order in
     flight, never beside it; `_flatten_now` records its outcome either way,
-    and a failed flatten is paged.
+    and a failed flatten is paged. An API stop waits for it (`drain_flattens`).
     """
     entered = threading.Event()
     done = threading.Event()
@@ -633,12 +638,55 @@ def _behind_the_lock(
         finally:
             entered.set()  # a pass that failed before the lock is over, not waiting on it
             done.set()
-        # After done: a request still waiting has its answer without this delay.
-        if flatten and "error" in outcome:
-            _page_failed_flatten(outcome["error"])
+        try:
+            # After done: a request still waiting has its answer without this delay.
+            if flatten and "error" in outcome:
+                _page_failed_flatten(outcome["error"])
+        finally:
+            with _flattens_lock:
+                _flattens.discard(thread)
 
-    threading.Thread(target=run, name="kill-switch", daemon=True).start()
+    thread = threading.Thread(target=run, name="kill-switch", daemon=True)
+    if flatten:
+        with _flattens_lock:
+            _flattens.add(thread)
+    thread.start()
     return entered, done, outcome
+
+
+#: Flattens still in flight, for the API's shutdown to wait on.
+_flattens: set[threading.Thread] = set()
+_flattens_lock = threading.Lock()
+
+
+def drain_flattens(timeout_s: float | None = None) -> None:
+    """Wait for the flattens still in flight; page the ones that outlast the wait.
+
+    The API's shutdown calls this (api/main.py). A flatten answered 202 runs
+    on a thread of its own, and uvicorn's graceful stop waits only for requests
+    still in flight, then re-raises SIGTERM, which ends the process without
+    joining any thread, daemon or not. Without this wait a deploy or a restart
+    would drop the flatten, its audit row and its page, with the operator told
+    all three were coming.
+    """
+    deadline = time.monotonic() + (FLATTEN_DRAIN_S if timeout_s is None else timeout_s)
+    with _flattens_lock:
+        pending = list(_flattens)
+    for thread in pending:
+        thread.join(max(0.0, deadline - time.monotonic()))
+    left = sum(thread.is_alive() for thread in pending)
+    if not left:
+        return
+    delivery = send_ops_alert(
+        "Kill switch FLATTEN_ALL cut off by an API stop",
+        f"The API stopped with {left} flatten(s) still waiting on the submit lock or the "
+        f"broker; they may never have been sent. The switch stays FLATTEN_ALL, and the "
+        f"22:30 UTC kill_check is the next retry. Check the book now.",
+        kind="kill_switch",
+    )
+    if not delivery.delivered:
+        log.error("flatten cut off by an API stop reached no ops channel: %s",
+                  delivery.describe())
 
 
 def _flatten_if_still_armed(repo: TradeLogRepository, user: str) -> str:

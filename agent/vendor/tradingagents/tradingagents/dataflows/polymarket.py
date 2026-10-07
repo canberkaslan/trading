@@ -11,6 +11,7 @@ outcomes (a "Yes" at 0.76 means the market prices a 76% chance).
 """
 import json
 import logging
+import time
 from datetime import datetime, timezone
 
 import requests
@@ -19,19 +20,39 @@ logger = logging.getLogger(__name__)
 
 GAMMA_BASE = "https://gamma-api.polymarket.com"
 
-# Network timeout (seconds), consistent with the other vendors.
-REQUEST_TIMEOUT = 30
+# --- fork patch (trading repo): fail fast on an optional signal ---
+# Upstream waited 30 s per call, and the news analyst may call this several
+# times per ticker; on 2026-10-05 a slow Gamma held councils on that timeout.
+# Prediction markets are optional enrichment, so give up quickly instead:
+# (connect, read) seconds, and one retry for a failure that is likely to clear
+# (connection refused/reset, connect timeout, 429/5xx). A read timeout is not
+# retried: the server is up but slow, and waiting again only doubles the stall.
+REQUEST_TIMEOUT = (3, 5)
+RETRY_PAUSE_S = 1.0
+_RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
 
 # Default number of markets to return, ranked by traded volume.
 DEFAULT_LIMIT = 6
 
 
+def _get(path: str, params: dict) -> requests.Response:
+    return requests.get(f"{GAMMA_BASE}/{path}", params=params, timeout=REQUEST_TIMEOUT)
+
+
 def _request(path: str, params: dict) -> dict:
-    response = requests.get(
-        f"{GAMMA_BASE}/{path}", params=params, timeout=REQUEST_TIMEOUT
-    )
+    try:
+        response = _get(path, params)
+        retry = response.status_code in _RETRY_STATUS
+        reason = f"HTTP {response.status_code}"
+    except requests.ConnectionError as e:  # includes ConnectTimeout, not ReadTimeout
+        retry, reason = True, e
+    if retry:
+        logger.info("Polymarket %s failed (%s); retrying once", path, reason)
+        time.sleep(RETRY_PAUSE_S)
+        response = _get(path, params)
     response.raise_for_status()
     return response.json()
+# --- end fork patch ---
 
 
 def _parse_json_list(value) -> list:

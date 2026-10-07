@@ -120,7 +120,8 @@ class Position(BaseModel):
     unrealized_pnl_pct: float
     stop_loss: float
     sector: str | None = None
-    opened_at_utc: datetime
+    # None when the fill ledger cannot account for the position — never "now".
+    opened_at_utc: datetime | None = None
 
 
 class PortfolioSnapshot(BaseModel):

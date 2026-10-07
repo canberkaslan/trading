@@ -125,7 +125,7 @@ export interface Position {
   unrealized_pnl_pct: number;
   stop_loss: number;
   sector: string | null;
-  opened_at_utc: string;
+  opened_at_utc: string | null;
 }
 
 export interface EquityPoint {

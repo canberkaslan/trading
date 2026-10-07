@@ -144,6 +144,33 @@ def reconcile_fills(fills: list[Fill]) -> ReconcileResult:
     return result
 
 
+def holding_since(
+    open_lots: list[OpenLot], held: dict[str, float]
+) -> dict[str, datetime]:
+    """symbol → when the current LONG holding began (its oldest surviving lot).
+
+    `held` is the broker's own quantity per symbol, and a symbol is only
+    answered when the lots left over by the matcher add up to exactly that
+    quantity. A truncated ledger (pagination cap, a fill the feed has not
+    published yet) leaves lots that do not sum to the position, and the oldest
+    of them is then a date for some other holding — so the symbol is left out
+    rather than given a confident wrong date.
+    """
+    qty: dict[str, float] = {}
+    oldest: dict[str, datetime] = {}
+    for lot in open_lots:
+        if lot.direction.upper() != "LONG":
+            continue
+        qty[lot.symbol] = qty.get(lot.symbol, 0.0) + lot.quantity
+        if lot.symbol not in oldest or lot.opened_at_utc < oldest[lot.symbol]:
+            oldest[lot.symbol] = lot.opened_at_utc
+    return {
+        s: oldest[s]
+        for s, q in held.items()
+        if s in oldest and abs(qty[s] - q) < 1e-6
+    }
+
+
 def _reconcile_symbol(
     symbol: str, fills: list[Fill]
 ) -> tuple[list[ClosedTrade], list[OpenLot]]:

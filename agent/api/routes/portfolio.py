@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from pydantic import BaseModel
 from scripts.eval_report import _equity_series
 from tradingagents_us.dataflows.alpaca_broker import AlpacaClient
 from tradingagents_us.dataflows.sector_map import sector_for
+from tradingagents_us.execution.reconcile import holding_since, reconcile_fills
 from tradingagents_us.risk.concentration import (
     PositionWeight,
     compute_concentration,
@@ -101,6 +103,44 @@ def _intraday_max_dd(history: dict) -> float:
     return round(max_dd, 6)
 
 
+# The app polls the snapshot every 10 s and the fill ledger only changes when
+# the book does, so entry dates are cached against the book's shape. The TTL
+# bounds the one case the key cannot see (a sell and rebuy back to the same
+# size); a failed read is retried sooner so one broker hiccup does not blank
+# the dates for an hour.
+_OPENED_TTL_S = 3600.0
+_OPENED_FAIL_TTL_S = 60.0
+_opened_cache: dict[str, object] = {"key": None, "at": 0.0, "ttl": 0.0, "value": {}}
+
+
+def _position_opened_at(
+    alpaca: AlpacaClient, positions_raw: list
+) -> dict[str, datetime]:
+    """When each position's current holding began, recovered from the fills.
+
+    Alpaca's position payload carries no entry timestamp; this used to answer
+    `datetime.now(UTC)` for every position, so the whole book read as opened
+    this instant. The fill stream through the realized-ledger FIFO matcher
+    gives the real answer — the same reconstruction the time exit ages lots by.
+    A symbol the ledger cannot account for is left out (→ null), never guessed.
+    """
+    if not positions_raw:
+        return {}
+    held = {p.symbol: float(p.qty) for p in positions_raw}
+    key = tuple(sorted(held.items()))
+    now = time.monotonic()
+    c = _opened_cache
+    if c["key"] == key and now - float(c["at"]) < float(c["ttl"]):  # type: ignore[arg-type]
+        return dict(c["value"])  # type: ignore[call-overload]
+    try:
+        value = holding_since(reconcile_fills(alpaca.list_fill_activities()).open_lots, held)
+        ttl = _OPENED_TTL_S
+    except Exception:
+        value, ttl = {}, _OPENED_FAIL_TTL_S
+    c.update(key=key, at=now, ttl=ttl, value=value)
+    return dict(value)
+
+
 def _position_stops(alpaca: AlpacaClient, positions_raw: list) -> dict[str, float]:
     """The stop price standing behind each FULLY protected position.
 
@@ -149,6 +189,7 @@ async def get_snapshot(
         except Exception:
             intraday = {}
         stops = _position_stops(alpaca, positions_raw)
+        opened = _position_opened_at(alpaca, positions_raw)
     except Exception as e:
         raise broker_http_exception(e) from e
     finally:
@@ -166,7 +207,7 @@ async def get_snapshot(
             stop_loss=stops.get(p.symbol, 0.0),
             # GICS sector: static map + Polygon fallback (display-only)
             sector=sector_for(p.symbol),
-            opened_at_utc=datetime.now(UTC),  # Alpaca doesn't expose open ts on position
+            opened_at_utc=opened.get(p.symbol),
         )
         for p in positions_raw
     ]

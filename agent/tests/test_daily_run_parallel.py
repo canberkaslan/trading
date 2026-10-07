@@ -307,6 +307,49 @@ def test_a_failed_or_timed_out_council_is_never_submitted(tmp_path: Path) -> Non
     assert run.ping_urls == [f"{HC}/fail"]
 
 
+# Every council records its decision, except for $TWICE: its first council
+# records and is then killed by its timeout, and any later one finishes after it
+# with no record (the gate skipped it).
+TWICE_HOOK = r"""#!/usr/bin/env bash
+ticker="$2" plan_dir=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in --plan-dir) plan_dir="$2"; shift ;; esac
+  shift
+done
+echo "council output for $ticker"
+if [[ "$ticker" != "$TWICE" ]]; then
+  echo '{}' > "$plan_dir/$ticker.plan.json"
+  exit 0
+fi
+if mkdir "$HOOK_DIR/first-$ticker" 2>/dev/null; then
+  echo '{}' > "$plan_dir/$ticker.plan.json"
+  exit 124
+fi
+sleep 1
+exit 0
+"""
+
+
+def test_a_ticker_listed_twice_is_councilled_once(tmp_path: Path) -> None:
+    # Each council's log, rc and record are named by its ticker. Two councils for
+    # one name overwrote each other's: the merge paired the timed-out council's
+    # record with the other's rc 0, hid the timeout and sent the record.
+    run, _ = _run(
+        tmp_path, UNIVERSE="AAPL MSFT AAPL", TWICE="AAPL",
+        FAKE_HOOK_scripts_trade=str(_hook(tmp_path, "twice.sh", TWICE_HOOK)),
+    )
+    assert run.rc == 1, run.output
+    councils = [_opt(c, "--ticker") for c in _calls(run, "scripts.trade")]
+    assert sorted(councils) == ["AAPL", "MSFT"]
+    assert "WARNING: universe lists AAPL more than once" in run.output
+    assert "-> AAPL TIMED OUT" in run.output
+    assert "-> AAPL decided" not in run.output
+    assert re.findall(r"^--- (\w+) @ ", run.output, flags=re.M) == ["AAPL", "MSFT"]
+    [submit_call] = _calls(run, "scripts.submit_plans")
+    assert _submit_tickers(submit_call) == ["MSFT"], "a timed-out council's record was sent"
+    assert run.ping_urls == [f"{HC}/fail"]
+
+
 def test_a_council_the_gate_skipped_is_done_and_not_submitted(tmp_path: Path) -> None:
     run, _ = _run(tmp_path, NOPLAN_AMZN="1")
     assert run.rc == 0, run.output

@@ -402,7 +402,22 @@ stop_parallel_run() {
 }
 
 decide_in_parallel() {
-  local run_id ticker rc running planned="" failed_submits
+  local run_id ticker rc running planned="" failed_submits unique="" twice=""
+  # A council's log, rc and record are named by its ticker, so two councils for
+  # one name would overwrite each other's, and a timed-out council's record
+  # could be sent under the other's rc. Each name is councilled once, in the
+  # order it first appears.
+  for ticker in $DECIDE; do
+    case " $unique " in
+      *" $ticker "*) twice="$twice $ticker" ;;
+      *) unique="$unique $ticker" ;;
+    esac
+  done
+  if [[ -n "$twice" ]]; then
+    echo "WARNING: universe lists$twice more than once — each is councilled and sent once" \
+      | tee -a "$RUN_LOG"
+    DECIDE="${unique# }"
+  fi
   PLAN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/daily-plans.XXXXXX")"
   run_id="$(basename "$PLAN_DIR")"
   trap stop_parallel_run TERM INT

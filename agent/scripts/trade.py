@@ -48,6 +48,7 @@ from tradingagents_us.graph.pipeline import (  # noqa: E402
 from tradingagents_us.log_redaction import install as install_log_redaction  # noqa: E402
 from tradingagents_us.risk.cash_budget import (  # noqa: E402
     PendingBuy,
+    open_buy_values,
     reserved_cash_for_open_buys,
     spendable_cash,
 )
@@ -226,6 +227,8 @@ class Book:
     held_qty: int
     #: Settled cash net of open BUYs; None when an open BUY cannot be priced.
     spendable: float | None
+    #: What the open BUYs will hold once they fill, by name.
+    open_buy_value: dict[str, float]
 
 
 def portfolio_limits(args: argparse.Namespace) -> PortfolioLimits:
@@ -306,14 +309,23 @@ def read_book(ticker: str, limits: PortfolioLimits) -> Book:
               f"sector {limits.max_sector_pct * 100:g}% / "
               f"cash {limits.max_cash_utilization * 100:g}% of spendable")
 
-    reserved = reserved_cash_for_open_buys(open_buys, _fetch_current_price)
+    # The prices the reservation read, so the open BUYs' values for the sector
+    # cap cost no second read.
+    prices: dict[str, float | None] = {}
+
+    def price_of(symbol: str) -> float | None:
+        prices[symbol] = _fetch_current_price(symbol)
+        return prices[symbol]
+
+    reserved = reserved_cash_for_open_buys(open_buys, price_of)
     spendable = spendable_cash(acct.cash, reserved)
+    open_buy_value = {} if reserved is None else open_buy_values(open_buys, prices.get)
     if reserved is None:
         print(f"  Open BUYs: {len(open_buys)} — UNPRICEABLE, refusing new exposure")
     else:
         print(f"  Open BUYs: {len(open_buys)} reserving ${reserved:,.2f} "
               f"-> spendable ${spendable:,.2f}")
-    return Book(acct, existing_by_ticker, held_qty, spendable)
+    return Book(acct, existing_by_ticker, held_qty, spendable, open_buy_value)
 
 
 def council_gate(ticker: str, book: Book, limits: PortfolioLimits) -> CouncilGate:
@@ -433,8 +445,13 @@ def size_order(
     # skipped for them entirely, which is unlimited concentration in the names
     # we know least about. The cost is a false positive when that bucket fills
     # with unrelated names.
+    #
+    # The open BUYs count too. They hold nothing until they fill at the open,
+    # and in a daily run they are the orders the earlier tickers just placed:
+    # left out, every ticker of the batch saw its sector as the first one did,
+    # and together they went through the cap.
     existing_by_sector: dict[str, float] = {}
-    for sym, value in existing_by_ticker.items():
+    for sym, value in [*existing_by_ticker.items(), *book.open_buy_value.items()]:
         sec = sector_for(sym)
         if sec:
             existing_by_sector[sec] = existing_by_sector.get(sec, 0.0) + value

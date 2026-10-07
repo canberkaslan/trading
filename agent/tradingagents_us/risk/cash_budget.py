@@ -60,6 +60,28 @@ def reserved_cash_for_open_buys(
     return total
 
 
+def open_buy_values(
+    pending: list[PendingBuy],
+    price_of: Callable[[str], float | None],
+) -> dict[str, float]:
+    """What each name's open BUYs will hold once they fill, priced as
+    `reserved_cash_for_open_buys` prices them, for the sector cap.
+
+    A BUY with no price is left out: one is already reason enough for the
+    caller to refuse new exposure (see `reserved_cash_for_open_buys`).
+    """
+    values: dict[str, float] = {}
+    for order in pending:
+        qty = max(0.0, order.unfilled_qty)
+        price = order.limit_price
+        if price is None or price <= 0:
+            price = price_of(order.symbol)
+        if qty == 0 or price is None or price <= 0:
+            continue
+        values[order.symbol] = values.get(order.symbol, 0.0) + qty * price
+    return values
+
+
 def spendable_cash(settled_cash: float, reserved: float | None) -> float | None:
     """Settled cash minus pending-BUY claims; None propagates the unknown.
 

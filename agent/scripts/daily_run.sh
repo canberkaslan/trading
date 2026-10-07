@@ -308,8 +308,9 @@ fi
 #      universe order and does for each what scripts.trade does after its
 #      council: reads the kill switch, account, positions and open orders
 #      again, sizes under every cap and runs the executor with all its guards.
-#      Each order is sized against the ones placed before it, as in the
-#      sequential run, so nothing needs a lock between processes.
+#      Each order is sized against the ones placed before it, their cash and
+#      their sector, as in the sequential run, so nothing needs a lock between
+#      processes.
 #
 # The one difference: the pre-council gate in pass 1 sees the book before any
 # of this run's orders, so a name the sequential run would skip for want of

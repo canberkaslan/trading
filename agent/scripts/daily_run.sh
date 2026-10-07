@@ -353,11 +353,22 @@ plan_ticker() {
 
 # Pass 2: every recorded decision, in the order given. Runs in the background
 # so that a stop reaches the trap below at once.
+#
+# Its cap is TICKER_TIMEOUT_S for each ticker it is handed, the sum of what the
+# sequential run gives them one by one. Under a single ticker's cap, a price feed
+# slow enough to take minutes per ticker (each one well inside its own cap) cut
+# off every ticker after the first few, their exits with them.
 submit_pass() {
   set +e
-  local run_id="$1"
+  local run_id="$1" budget="$TICKER_TIMEOUT_S"
   shift
-  timeout -k 30 "$TICKER_TIMEOUT_S" env PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.submit_plans \
+  if [[ "$budget" =~ ^[0-9]+$ ]]; then
+    budget=$(( 10#$budget * $# ))
+  else
+    echo "WARNING: TICKER_TIMEOUT_S='$budget' is not a whole number of seconds — the submit pass gets one ticker's timeout" \
+      | tee -a "$RUN_LOG"
+  fi
+  timeout -k 30 "$budget" env PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.submit_plans \
       --plan-dir "$PLAN_DIR" --run-id "$run_id" --date "$DATE" $SUBMIT_FLAG "$@" 2>&1 \
     | tee -a "$RUN_LOG" "$PLAN_DIR/submit.out"
   echo "${PIPESTATUS[0]}" >"$PLAN_DIR/submit.rc"

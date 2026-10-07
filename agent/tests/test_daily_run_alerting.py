@@ -58,11 +58,13 @@ printf '%s\n' "$@" > "$CURL_DIR/$(printf '%04d' "$n")"
 exit "${FAKE_CURL_RC:-0}"
 """
 
-# `timeout -k 30 1800 cmd...` -> `cmd...`
+# `timeout -k 30 1800 cmd...` -> `cmd...`; with $TIMEOUT_LOG set, each call's
+# `1800 cmd...` is appended to it first.
 FAKE_TIMEOUT = r"""#!/usr/bin/env bash
 while [[ "$1" == -* ]]; do
   case "$1" in -k|-s) shift 2 ;; *) shift ;; esac
 done
+if [[ -n "${TIMEOUT_LOG:-}" ]]; then printf '%s\n' "$*" >> "$TIMEOUT_LOG"; fi
 shift
 exec "$@"
 """

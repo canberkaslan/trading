@@ -340,6 +340,39 @@ def test_a_submit_pass_that_dies_fails_the_run(tmp_path: Path, crash_rc: str) ->
     assert run.ping_urls == [f"{HC}/fail"]
 
 
+def _timeouts(path: Path) -> dict[str, list[str]]:
+    """Module -> the durations `timeout` was given for it, in call order."""
+    found: dict[str, list[str]] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        duration, *cmd = line.split()
+        found.setdefault(cmd[cmd.index("-m") + 1], []).append(duration)
+    return found
+
+
+@pytest.mark.parametrize(
+    ("ticker_timeout", "pass_timeout"),
+    [("600", "2400"), ("0600", "2400"), ("30m", "30m")],
+)
+def test_the_submit_pass_has_a_ticker_timeout_for_each_ticker_it_sends(
+    tmp_path: Path, ticker_timeout: str, pass_timeout: str
+) -> None:
+    # The sequential run gives every ticker its own TICKER_TIMEOUT_S. The submit
+    # pass sends them all from one process: under a single one, a price feed slow
+    # enough to take a few minutes per ticker (each well inside its own cap) cut
+    # off every ticker after the first few, exits included.
+    log = tmp_path / "timeouts"
+    run, _ = _run(
+        tmp_path, TICKER_TIMEOUT_S=ticker_timeout, TIMEOUT_LOG=str(log), NOPLAN_AMZN="1"
+    )
+    assert run.rc == 0, run.output
+    [submit_call] = _calls(run, "scripts.submit_plans")
+    assert len(_submit_tickers(submit_call)) == 4
+    timeouts = _timeouts(log)
+    assert timeouts["scripts.trade"] == [ticker_timeout] * 5
+    assert timeouts["scripts.submit_plans"] == [pass_timeout]
+    assert ("WARNING: TICKER_TIMEOUT_S" in run.output) is (ticker_timeout == "30m")
+
+
 # --- PAUSE_NEW --------------------------------------------------------------------
 
 

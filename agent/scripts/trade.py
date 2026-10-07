@@ -24,6 +24,7 @@ import math
 import os
 import sys
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -34,7 +35,7 @@ if str(_AGENT_ROOT) not in sys.path:
 if str(_AGENT_ROOT / "vendor" / "tradingagents") not in sys.path:
     sys.path.insert(0, str(_AGENT_ROOT / "vendor" / "tradingagents"))
 
-from tradingagents_us.dataflows.alpaca_broker import AlpacaClient  # noqa: E402
+from tradingagents_us.dataflows.alpaca_broker import Account, AlpacaClient  # noqa: E402
 from tradingagents_us.dataflows.polygon import PolygonClient  # noqa: E402
 from tradingagents_us.dataflows.sector_map import sector_for  # noqa: E402
 from tradingagents_us.execution import ExecutionConfig, submit_order  # noqa: E402
@@ -63,7 +64,7 @@ from tradingagents_us.risk.market_inputs import (  # noqa: E402
 from tradingagents_us.risk.portfolio_limits import PortfolioContext, PortfolioLimits  # noqa: E402
 from tradingagents_us.risk.precouncil import should_council  # noqa: E402
 from tradingagents_us.risk.sizer import MarketContext, size_from_decision  # noqa: E402
-from tradingagents_us.schemas import AgentDecision, AgentReasoning  # noqa: E402
+from tradingagents_us.schemas import AgentDecision, AgentReasoning, TradeOrder  # noqa: E402
 from tradingagents_us.storage import TradeLogRepository  # noqa: E402
 
 log = logging.getLogger("trade")
@@ -207,42 +208,27 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> int:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s | %(message)s",
-    )
-    # httpx logs every request URL at INFO, and Polygon carries its key in the
-    # query string — so a correctly-configured run writes a live credential
-    # into its own log, once per call. Installed immediately after
-    # basicConfig so it covers the handler basicConfig just created.
-    install_log_redaction()
-    _load_env()
+@dataclass(frozen=True)
+class Book:
+    """The live account one ticker is gated and sized against."""
 
-    args = build_parser().parse_args()
-    # One set of caps for the whole run. The pre-council gate and the sizer must
-    # budget with the same cash utilization, or the gate councils names the
-    # sizer then cannot afford (or skips names it could).
-    limits = PortfolioLimits(
+    acct: Account
+    existing_by_ticker: dict[str, float]
+    held_qty: int
+    #: Settled cash net of open BUYs; None when an open BUY cannot be priced.
+    spendable: float | None
+
+
+def portfolio_limits(args: argparse.Namespace) -> PortfolioLimits:
+    return PortfolioLimits(
         max_position_pct=args.max_position_pct,
         max_sector_pct=args.max_sector_pct,
         max_cash_utilization=args.max_cash_utilization,
     )
 
-    from tradingagents_us.storage import make_engine
-    repo = (
-        None if args.no_persist
-        else TradeLogRepository(engine=make_engine(args.db_url))
-    )
 
-    # The RUN's trading date anchors the idempotency key. Decisions finishing
-    # after midnight UTC must not shift the key to the next day (silent
-    # duplicate-block tomorrow / missed dedupe on retry).
-    try:
-        run_date = date.fromisoformat(args.date)
-    except ValueError:
-        run_date = datetime.now(UTC).date()
-
+def read_book(ticker: str, limits: PortfolioLimits) -> Book:
+    """Account, positions and open BUYs, read from the broker now. Reads only."""
     # 1. Live Alpaca context (equity + CURRENT positions so we don't re-buy
     #    a name we already hold up to its cap — the daily run would otherwise
     #    accumulate the same Overweight ticker every day).
@@ -252,7 +238,7 @@ def main() -> int:
         acct = ac.account()
         for p in ac.list_positions():
             existing_by_ticker[p.symbol] = abs(p.market_value)
-            if p.symbol == args.ticker:
+            if p.symbol == ticker:
                 held_qty = int(p.qty)
         # daily_run.sh runs this script once per ticker as a separate process, all
         # before any of the post-close orders fill. Without reserving what earlier
@@ -304,8 +290,8 @@ def main() -> int:
         print(f"  Cash:      ${acct.cash:,.2f}")
         print(f"  Buying pw: ${acct.buying_power:,.2f}")
         print(f"  PDT:       {acct.pattern_day_trader}")
-        print(f"  Already holding {args.ticker}: {held_qty} shares "
-              f"(${existing_by_ticker.get(args.ticker, 0.0):,.0f})")
+        print(f"  Already holding {ticker}: {held_qty} shares "
+              f"(${existing_by_ticker.get(ticker, 0.0):,.0f})")
         print(f"  Caps:      name {limits.max_position_pct * 100:g}% / "
               f"sector {limits.max_sector_pct * 100:g}% / "
               f"cash {limits.max_cash_utilization * 100:g}% of spendable")
@@ -317,50 +303,20 @@ def main() -> int:
     else:
         print(f"  Open BUYs: {len(open_buys)} reserving ${reserved:,.2f} "
               f"-> spendable ${spendable:,.2f}")
+    return Book(acct, existing_by_ticker, held_qty, spendable)
 
-    # 2. Can this name possibly be acted on today? Asked BEFORE the council.
-    #
-    # The council costs five to ten minutes and roughly a dollar of model
-    # spend, and the cash budget above already determines, with certainty, that
-    # some names cannot be bought at all. Paying for reasoning whose conclusion
-    # the arithmetic has already overruled is pure waste — at eleven tickers a
-    # rounding error, at a hundred about $68 a day.
-    #
-    # The gate only ever rejects the provably impossible. "Unpromising" is not
-    # its business: that judgement belongs to the sizer, with the council's
-    # output in hand. And a held name is never skipped, because the council is
-    # this system's only discretionary exit.
-    _gate = should_council(
-        args.ticker,
-        held_qty=held_qty,
-        spendable=spendable,
-        price=_fetch_current_price(args.ticker),
-        max_cash_utilization=limits.max_cash_utilization,
-    )
-    if not _gate.run:
-        # No decision row is written, so this line is the only record that the
-        # ticker was considered at all.
-        log.info("skipping council for %s: %s", args.ticker, _gate.reason)
-        print(f"\n=== COUNCIL SKIPPED ===\n  {args.ticker}: {_gate.reason}")
-        return 0
-    log.info("councilling %s: %s", args.ticker, _gate.reason)
 
-    # 3. Get decision
-    if args.use_cached:
-        log.info("loading cached decision for %s", args.ticker)
-        decision = _decision_from_cached(args.ticker)
-    else:
-        log.info(
-            "running fresh LLM pipeline for %s @ %s (~5-10 min, ~$0.50-1.50)",
-            args.ticker, args.date,
-        )
-        decision = propagate(args.ticker, args.date)
-    _print_decision(decision)
-
-    if repo is not None:
-        repo.save_decision(decision)
-        log.info("persisted decision %s", decision.decision_id)
-
+def size_order(
+    args: argparse.Namespace,
+    limits: PortfolioLimits,
+    repo: TradeLogRepository | None,
+    decision: AgentDecision,
+    book: Book,
+) -> tuple[TradeOrder, float | None] | None:
+    """Risk-size a decision against `book`: the order and the live price, or None
+    when an actionable decision cannot be sized. No broker call."""
+    acct, existing_by_ticker = book.acct, book.existing_by_ticker
+    held_qty, spendable = book.held_qty, book.spendable
     # An entry and a stop are what size a BUY. A Sell closes a position and is
     # sized off the holding, so requiring them there discarded exit signals: the
     # trader agent has no reason to quote an entry price for a name it wants out
@@ -375,8 +331,7 @@ def main() -> int:
     actionable = decision.rating in ("Buy", "Overweight")
     if actionable and not (decision.entry_price and decision.stop_loss):
         log.warning("decision missing entry/stop — cannot size; aborting before risk layer")
-        return 1
-
+        return None
 
     # Real liquidity, from the bars the price cache already holds. The old
     # hardcoded $1B meant the $100k floor could never reject anything, so a
@@ -520,6 +475,18 @@ def main() -> int:
     if order.rejection_reasons:
         print(f"  Reasons:     {order.rejection_reasons}")
 
+    return order, current_price
+
+
+def execute(
+    args: argparse.Namespace,
+    repo: TradeLogRepository | None,
+    order: TradeOrder,
+    decision: AgentDecision,
+    current_price: float | None,
+    run_date: date,
+) -> int:
+    """Hold, dry-run or submit a sized order and persist the outcome."""
     # 5. Submit / hold / dry-run
     if current_price:
         print(f"\n  Current price (Polygon, delayed): ${current_price:.2f}")
@@ -581,6 +548,91 @@ def main() -> int:
     # refusal — non-actionable Hold, risk guard, PDT, market closed — is the
     # intended "no trade today" outcome and must not mark the daily run failed.
     return 1 if result.error else 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s | %(message)s",
+    )
+    # httpx logs every request URL at INFO, and Polygon carries its key in the
+    # query string — so a correctly-configured run writes a live credential
+    # into its own log, once per call. Installed immediately after
+    # basicConfig so it covers the handler basicConfig just created.
+    install_log_redaction()
+    _load_env()
+
+    args = build_parser().parse_args(argv)
+    # One set of caps for the whole run. The pre-council gate and the sizer must
+    # budget with the same cash utilization, or the gate councils names the
+    # sizer then cannot afford (or skips names it could).
+    limits = portfolio_limits(args)
+
+    from tradingagents_us.storage import make_engine
+    repo = (
+        None if args.no_persist
+        else TradeLogRepository(engine=make_engine(args.db_url))
+    )
+
+    # The RUN's trading date anchors the idempotency key. Decisions finishing
+    # after midnight UTC must not shift the key to the next day (silent
+    # duplicate-block tomorrow / missed dedupe on retry).
+    try:
+        run_date = date.fromisoformat(args.date)
+    except ValueError:
+        run_date = datetime.now(UTC).date()
+
+    book = read_book(args.ticker, limits)
+
+    # 2. Can this name possibly be acted on today? Asked BEFORE the council.
+    #
+    # The council costs five to ten minutes and roughly a dollar of model
+    # spend, and the cash budget above already determines, with certainty, that
+    # some names cannot be bought at all. Paying for reasoning whose conclusion
+    # the arithmetic has already overruled is pure waste — at eleven tickers a
+    # rounding error, at a hundred about $68 a day.
+    #
+    # The gate only ever rejects the provably impossible. "Unpromising" is not
+    # its business: that judgement belongs to the sizer, with the council's
+    # output in hand. And a held name is never skipped, because the council is
+    # this system's only discretionary exit.
+    _gate = should_council(
+        args.ticker,
+        held_qty=book.held_qty,
+        spendable=book.spendable,
+        price=_fetch_current_price(args.ticker),
+        max_cash_utilization=limits.max_cash_utilization,
+    )
+    if not _gate.run:
+        # No decision row is written, so this line is the only record that the
+        # ticker was considered at all.
+        log.info("skipping council for %s: %s", args.ticker, _gate.reason)
+        print(f"\n=== COUNCIL SKIPPED ===\n  {args.ticker}: {_gate.reason}")
+        return 0
+    log.info("councilling %s: %s", args.ticker, _gate.reason)
+
+    # 3. Get decision
+    if args.use_cached:
+        log.info("loading cached decision for %s", args.ticker)
+        decision = _decision_from_cached(args.ticker)
+    else:
+        log.info(
+            "running fresh LLM pipeline for %s @ %s (~5-10 min, ~$0.50-1.50)",
+            args.ticker, args.date,
+        )
+        decision = propagate(args.ticker, args.date)
+    _print_decision(decision)
+
+    if repo is not None:
+        repo.save_decision(decision)
+        log.info("persisted decision %s", decision.decision_id)
+
+    sized = size_order(args, limits, repo, decision, book)
+    if sized is None:
+        return 1
+    order, current_price = sized
+
+    return execute(args, repo, order, decision, current_price, run_date)
 
 
 if __name__ == "__main__":

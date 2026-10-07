@@ -1335,6 +1335,25 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
   çoklu stop'ta en yüksek; order book hatası snapshot'ı düşürmez. 6 yeni test, suite 1833 pass /
   2 fail = laptop ölü Alpaca key (401). Box'a DEPLOY EDİLMEDİ (prod pull #52 kararına bağlı).
 
+## Daily loop 2026-10-07 (prod-fusapp01 @cbaccce → b4b1677; eval 1M GO, 20 gün)
+- **Canlı durum** (box localhost): eval 1M **GO** — Sharpe 3.30, Sortino 6.52, MaxDD −1.52%,
+  +3.14% vs SPY +2.44%, 20/10 gün. Equity $112,814.71, cash $35,292.73, 7 pozisyon (GOOGL time
+  exit ile çıktı), günlük +$409.21 (+0.36%). 10-06 22:30 koşusu exit=0, 0 errored, stop coverage
+  0/246 naked (tek seferlik "restored" gitti), inert 24 gün (4/214 submit, Hold×140).
+- [x] **`/v1/portfolio/snapshot` `opened_at_utc` artık gerçek** (b4b1677, prod'a deploy + canlı
+  doğrulandı: 5 pozisyon 2026-06-25, UNH 07-21, XOM 07-27). Önce her pozisyon için
+  `datetime.now(UTC)` dönüyordu → tüm defter "şu an açıldı". Fill ledger → FIFO matcher open lot'ları
+  (`reconcile.holding_since`, time exit'in kullandığı rekonstrüksiyonun aynısı); lot toplamı broker
+  qty'sine eşit değilse `null` (tahmin yok). App 10 sn'de poll ettiği için defterin şekline (symbol,qty)
+  göre 1 sa cache, hata 60 sn. Şema `datetime | None` (TS `string | null`, tüketici yok). 7 yeni test,
+  2185 pass / 2 fail = laptop Alpaca key 401 (değişiklik olmadan da düşüyor, doğrulandı).
+  Karar yoluna dokunmuyor (`manage_positions._entry_dates` bilerek değiştirilmedi).
+- Not: UNH 07-21'den beri −8.6% ama time exit tetiklemiyor — doğru: `time_exit` sadece flat
+  (`abs(pnl) < flat_pnl_pct`) pozisyonları kapatır; UNH stop'u 350.60'a ratchet edildi.
+- **Sıradaki:** (a) mobil Positions/Risk'te "N gündür tutuluyor / time-exit penceresi" göstergesi
+  (artık veri var; OTA); (b) PR #69 kararı + StockTwits kararı = Canberk; (c) alarm hedefi
+  (push cihazı / OPS_ALERT_GITHUB_TOKEN) hâlâ boş.
+
 ## Daily loop 2026-10-06 (prod-fusapp01 @ee5d55c; eval 1M GO, 19 gün; StockTwits 23 gündür ölüymüş)
 - **Canlı durum** (box localhost): eval 1M **GO** — Sharpe 2.51, Sortino 4.85, MaxDD −1.52%,
   +2.32% vs SPY +1.20%, 19/10 gün. Equity $112,619.49, cash $24,238.03, 8 pozisyon, günlük

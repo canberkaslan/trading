@@ -252,16 +252,21 @@ def _read_book(
     existing_by_ticker: dict[str, float] = {}
     held_qty = 0
     with AlpacaClient() as ac:
+        # daily_run.sh runs this script once per ticker as a separate process, all
+        # before any of the post-close orders fill. Without reserving what earlier
+        # tickers already committed, all eleven size against the same cash balance
+        # and the sum blows straight through it.
+        #
+        # Open orders first, as spendable_now reads them. The submit lock does
+        # not cover the broker's fills, and in a market-hours run a pending BUY
+        # can fill mid-read: read after the cash and the positions it would be
+        # in neither, read before them it is counted twice, which errs safe.
+        open_buys = read_open_buys(ac)
         acct = ac.account()
         for p in ac.list_positions():
             existing_by_ticker[p.symbol] = abs(p.market_value)
             if p.symbol == ticker:
                 held_qty = int(p.qty)
-        # daily_run.sh runs this script once per ticker as a separate process, all
-        # before any of the post-close orders fill. Without reserving what earlier
-        # tickers already committed, all eleven size against the same cash balance
-        # and the sum blows straight through it.
-        open_buys = read_open_buys(ac)
     if verbose:
         print("\n=== ALPACA ACCOUNT ===")
         print(f"  Number:    {acct.account_number} ({acct.status})")

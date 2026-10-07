@@ -15,13 +15,16 @@ import sys
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
 
 from tests.test_trade_cli import mock_dependencies  # noqa: F401 — the fixture
 from tradingagents_us.execution import submit_lock
+from tradingagents_us.execution.book import pending_buy_exposure
 from tradingagents_us.file_lock import exclusive
+from tradingagents_us.risk.portfolio_limits import PortfolioLimits
 from tradingagents_us.schemas import AgentDecision
 
 
@@ -381,3 +384,74 @@ def test_an_exit_with_no_readable_position_is_skipped_and_fails_loudly(
     repo.save_decision.assert_called_once()
     assert not mock_dependencies["submit"].called
     assert "EXIT NOT SENT" in capsys.readouterr().out
+
+
+class _FillingBook:
+    """$50k settled, nothing held, and a 100-share MSFT market BUY open ($40k
+    at $400) that fills after the `fill_after`-th broker read. The submit lock
+    covers our own order paths, not the broker's fills: a market-hours run
+    (a manual one, or the timer's catch-up) can meet a fill mid-read."""
+
+    base_url = "https://paper.invalid/v2"
+
+    def __init__(self, fill_after: int | None) -> None:
+        self.cash = 50_000.0
+        self.positions: list[SimpleNamespace] = []
+        self.open_orders = [
+            {"symbol": "MSFT", "side": "buy", "qty": "100", "filled_qty": "0",
+             "limit_price": None, "submitted_at": "2026-10-07T13:30:00Z"},
+        ]
+        self.fill_after = fill_after
+        self.reads = 0
+        self._http = SimpleNamespace(get=lambda url: SimpleNamespace(json=self._orders))
+
+    def __enter__(self) -> _FillingBook:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def _read(self) -> None:
+        self.reads += 1
+        if self.reads == self.fill_after:
+            self.cash -= 40_000.0
+            self.positions = [SimpleNamespace(symbol="MSFT", qty=100, market_value=40_000.0)]
+            self.open_orders = []
+
+    def account(self) -> SimpleNamespace:
+        acct = SimpleNamespace(cash=self.cash, portfolio_value=100_000.0)
+        self._read()
+        return acct
+
+    def list_positions(self) -> list[SimpleNamespace]:
+        positions = list(self.positions)
+        self._read()
+        return positions
+
+    def _orders(self) -> list[dict]:
+        page = list(self.open_orders)
+        self._read()
+        return page
+
+
+@pytest.mark.parametrize("fill_after", [None, 1, 2])
+def test_a_buy_that_fills_mid_read_is_counted_in_cash_and_exposure(
+    fill_after: int | None,
+) -> None:
+    # Whichever of the three reads the MSFT fill lands after, its $40k is
+    # counted at least once in the cash and at least once in the exposure.
+    # Counted in neither, a $30k BUY passes against $10k really there.
+    from scripts import trade
+
+    broker = _FillingBook(fill_after)
+    with mock.patch("scripts.trade.AlpacaClient", return_value=broker):
+        book = trade._read_book(
+            "AAPL", PortfolioLimits(), verbose=False, price_of=lambda s: 400.0
+        )
+    assert broker.reads == 3
+    assert book.spendable is not None
+    assert book.spendable <= 10_000.0
+    msft = book.existing_by_ticker.get("MSFT", 0.0) + pending_buy_exposure(
+        book.open_buys, lambda s: 400.0
+    ).get("MSFT", 0.0)
+    assert msft >= 40_000.0

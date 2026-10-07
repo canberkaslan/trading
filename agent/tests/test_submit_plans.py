@@ -576,12 +576,14 @@ def test_an_entry_below_the_price_does_not_buy_what_the_gate_would_skip(
     assert split.order_rows() == today.order_rows()
 
 
-def test_the_batchs_open_buys_count_toward_their_sector(
+def test_the_sector_cap_sizes_as_todays_run_does(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The BUYs the earlier tickers just placed hold nothing until the open,
-    but they will. With 20% of the book in tech, AAPL takes it to the 30% cap;
-    MSFT and NVDA after it would take it to 50%, in either run."""
+    """Today's sizing builds sector exposure from positions only: the BUYs the
+    earlier tickers just placed come off the cash, not off the sector. With 20%
+    of the book in tech, AAPL, MSFT and NVDA all go out. Counting those BUYs
+    toward the sector changes the default run's orders and ships on its own;
+    this change keeps today's, in either run."""
     tickers = ["AAPL", "MSFT", "NVDA"]
 
     def make(name: str) -> World:
@@ -592,16 +594,16 @@ def test_the_batchs_open_buys_count_toward_their_sector(
 
     today = make("sequential")
     assert today.sequential(tickers) == [0, 0, 0]
-    assert today.broker.submitted == [("AAPL", "buy", 100)]
+    assert today.broker.submitted == [
+        ("AAPL", "buy", 100), ("MSFT", "buy", 100), ("NVDA", "buy", 100),
+    ]
+    assert all(r.approved for r in today.order_rows())
 
     split = make("parallel")
     assert split.plan(tickers, parallelism=3) == [0, 0, 0]
     assert split.submit(tickers) == 0
     assert split.broker.writes == today.broker.writes
     assert split.order_rows() == today.order_rows()
-    refused = {r.ticker: r.reasons for r in split.order_rows() if not r.approved}
-    assert sorted(refused) == ["MSFT", "NVDA"]
-    assert all("sector_pct=40.00% exceeds 30%" in reasons for reasons in refused.values()), refused
 
 
 def test_a_decision_for_another_name_fails_the_council_loudly(world: World) -> None:

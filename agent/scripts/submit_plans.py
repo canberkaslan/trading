@@ -7,9 +7,9 @@ universe order) and, for each, does what `scripts.trade` does after its council:
 reads the account, positions and open orders from the broker, sizes the decision
 under the kill switch and every cap, and runs the executor with all its guards.
 Each ticker sees the orders the tickers before it just placed, exactly as in the
-sequential run: their cost comes off the spendable cash and counts toward their
-sector, so the cash and sector caps hold across the batch without any lock
-between processes.
+sequential run: their cost comes off the spendable cash, so the cash cap holds
+across the batch without any lock between processes. The name and sector caps
+count positions only, as the sequential run's do.
 
     python -m scripts.submit_plans --plan-dir DIR --run-id ID --date 2026-10-07 \\
         [--submit] AAPL MSFT ...

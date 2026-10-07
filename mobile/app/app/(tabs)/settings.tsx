@@ -78,7 +78,12 @@ import { useInboxStore } from '@/stores/notifications';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { useAuthStore } from '@/stores/auth';
-import { signOut as firebaseSignOut, deleteAccount as firebaseDeleteAccount } from '@/auth/firebase';
+import {
+  signOut as firebaseSignOut,
+  deleteAccount as firebaseDeleteAccount,
+  reauthenticate as firebaseReauthenticate,
+} from '@/auth/firebase';
+import { deleteAccountInOrder } from '@/auth/deleteAccount';
 import { useApiTokenStore } from '@/stores/apiToken';
 import { toast } from '@/stores/toast';
 import { useTheme, useThemeName, useSetTheme } from '@/theme/useTheme';
@@ -397,6 +402,9 @@ export default function SettingsScreen() {
   const [permission, setPermission] = useState<PushPermission | null>(null);
   const [signOutOpen, setSignOutOpen] = useState(false);
   const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const inbox = useInboxStore((s) => s.items);
   const signOut = useAuthStore((s) => s.signOut);
@@ -490,22 +498,44 @@ export default function SettingsScreen() {
     router.replace('/(auth)/login' as never);
   };
 
-  const handleDeleteAccount = async () => {
+  const closeDeleteAccount = () => {
+    // Android's back button reaches onDismiss even while the sheet is busy.
+    if (deleteBusy) return;
     setDeleteAccountOpen(false);
-    try {
-      // Delete from backend first — if this fails, the Firebase account remains
-      await api.deleteAccount();
-      // Delete from Firebase Authentication
-      await firebaseDeleteAccount();
-      // Clear local state
-      void clearToken();
-      signOut();
-      qc.clear();
-      toast('Hesap silindi');
-      router.replace('/(auth)/login' as never);
-    } catch (e) {
-      toast(`Hesap silinemedi: ${String(e)}`);
+    setDeletePassword('');
+    setDeleteError(null);
+  };
+
+  /*
+   * The password is asked for every time. Sessions persist on the device, so
+   * the last sign-in is usually days old and Firebase refuses to delete a user
+   * on a stale one — and it used to refuse only after the backend had already
+   * deleted everything. `deleteAccountInOrder` proves the password first and
+   * owns the order; a failure keeps the sheet open with what state the
+   * account is in now, since retrying the whole flow is always safe.
+   */
+  const handleDeleteAccount = async () => {
+    if (deleteBusy || !deletePassword) return;
+    setDeleteError(null);
+    setDeleteBusy(true);
+    const outcome = await deleteAccountInOrder(deletePassword, {
+      reauthenticate: firebaseReauthenticate,
+      deleteServerData: api.deleteAccount,
+      deleteIdentity: firebaseDeleteAccount,
+    });
+    setDeleteBusy(false);
+    if (!outcome.ok) {
+      setDeleteError(outcome.message);
+      return;
     }
+    setDeleteAccountOpen(false);
+    setDeletePassword('');
+    // Clear local state
+    void clearToken();
+    signOut();
+    qc.clear();
+    toast('Hesap silindi');
+    router.replace('/(auth)/login' as never);
   };
 
   // ExecutionConfig, as deployed. The app can neither write these nor read
@@ -1037,13 +1067,42 @@ export default function SettingsScreen() {
       <Sheet
         visible={deleteAccountOpen}
         title="Hesabı kalıcı olarak sil?"
-        message="Bu işlem geri alınamaz. Firebase kimliğiniz ve sunucudaki tüm verileriniz silinecek."
+        message="Bu işlem geri alınamaz. Firebase kimliğiniz ve sunucudaki tüm verileriniz silinecek. Onaylamak için şifrenizi girin."
+        busy={deleteBusy}
+        busyLabel="Hesap siliniyor…"
         actions={[
-          { label: 'Vazgeç', onPress: () => setDeleteAccountOpen(false) },
-          { label: 'Hesabı sil', onPress: () => void handleDeleteAccount(), primary: true },
+          { label: 'Vazgeç', onPress: closeDeleteAccount },
+          {
+            label: 'Hesabı sil',
+            onPress: () => void handleDeleteAccount(),
+            primary: true,
+            disabled: !deletePassword,
+          },
         ]}
-        onDismiss={() => setDeleteAccountOpen(false)}
-      />
+        onDismiss={closeDeleteAccount}
+      >
+        <TextInput
+          style={styles.deleteInput}
+          value={deletePassword}
+          onChangeText={setDeletePassword}
+          secureTextEntry
+          autoCapitalize="none"
+          autoCorrect={false}
+          autoComplete="current-password"
+          textContentType="password"
+          placeholder="Şifre"
+          placeholderTextColor={theme.ink3 ?? theme.textMuted}
+          editable={!deleteBusy}
+          returnKeyType="done"
+          onSubmitEditing={() => void handleDeleteAccount()}
+          accessibilityLabel="Şifre"
+        />
+        {deleteError ? (
+          <Text style={styles.deleteError} accessibilityRole="alert" accessibilityLiveRegion="polite">
+            {deleteError}
+          </Text>
+        ) : null}
+      </Sheet>
     </SafeAreaView>
   );
 }
@@ -1108,6 +1167,20 @@ const makeStyles = (t: Palette, sh: Shape) =>
       minHeight: MIN_TOUCH_TARGET,
     },
     tokenSaveOff: { opacity: 0.45 },
+
+    // Hesabı sil — the token field's shape, standing alone in the sheet.
+    deleteInput: {
+      minHeight: MIN_TOUCH_TARGET,
+      backgroundColor: t.paper ?? t.background,
+      color: t.textPrimary,
+      borderWidth: sh.hairline,
+      borderColor: t.line2 ?? t.divider,
+      borderRadius: sh.radiusSmall,
+      paddingHorizontal: sh.space[2],
+      paddingVertical: sh.space[1] + 2,
+      ...TYPE.body,
+    },
+    deleteError: { color: t.downText ?? t.danger, ...TYPE.body, lineHeight: 20 },
     tokenSaveLabel: { color: t.background, ...TYPE.body, ...font(800) },
 
     // Eval

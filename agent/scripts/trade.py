@@ -653,8 +653,8 @@ def main(argv: list[str] | None = None) -> int:
         # The parallel daily run's first pass ends here, before anything that
         # can reach the broker. scripts/submit_plans.py takes the decision from
         # the record and sizes it again against the book as it stands then.
-        path = write_plan(args.plan_dir, run_id=args.run_id, run_date=run_date,
-                          decision=decision, order=order)
+        path = write_plan(args.plan_dir, ticker=args.ticker, run_id=args.run_id,
+                          run_date=run_date, decision=decision, order=order)
         print("\n=== PLANNED, NOT SENT ===")
         print(f"  Recorded:    {path}")
         print("  The submit pass sizes it again against the book as it stands then.")

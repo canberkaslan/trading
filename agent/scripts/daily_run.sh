@@ -306,6 +306,11 @@ fi
 #      Each order is sized against the ones placed before it, as in the
 #      sequential run, so nothing needs a lock between processes.
 #
+# The one difference: the pre-council gate in pass 1 sees the book before any
+# of this run's orders, so a name the sequential run would skip for want of
+# cash is councilled (one council's cost) and then refused by the cash cap in
+# pass 2. What reaches the broker is the same.
+#
 # A record is used at most once and only by this run (scripts/submit_plans.py),
 # and the directory holding them is removed when the run ends, however it ends.
 # A stop (systemctl stop, Ctrl-C) stops both passes: the councils in flight are

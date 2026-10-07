@@ -542,3 +542,13 @@ def test_a_name_the_sequential_gate_skips_is_councilled_but_never_sent(
     [nvda] = split.order_rows()[2:]
     assert nvda.ticker == "NVDA" and not nvda.approved
     assert any(r.startswith("trimmed_to_zero_by_cash_cap") for r in nvda.reasons)
+
+
+def test_a_decision_for_another_name_fails_the_council_loudly(world: World) -> None:
+    """daily_run.sh looks for the record under the ticker it asked about; one
+    filed under any other name would read as a skipped council and never be sent."""
+    world.decisions["AAPL"] = _decision("MSFT", "Buy")
+    with pytest.raises(ValueError, match="the council for 'AAPL'"):
+        world.plan(["AAPL"])
+    assert list(world.plan_dir.iterdir()) == []
+    assert world.broker.writes == []

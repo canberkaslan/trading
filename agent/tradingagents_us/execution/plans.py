@@ -52,18 +52,26 @@ def plan_path(plan_dir: str | Path, ticker: str) -> Path:
 def write_plan(
     plan_dir: str | Path,
     *,
+    ticker: str,
     run_id: str,
     run_date: date,
     decision: AgentDecision,
     order: TradeOrder,
 ) -> Path:
-    """Record `decision` for the submit pass. Written whole or not at all."""
-    path = plan_path(plan_dir, decision.ticker)
+    """Record `decision` for the submit pass. Written whole or not at all.
+
+    Filed under the ticker the run asked about, the name daily_run.sh looks
+    for: a decision for any other name would be a record nobody sends, so it
+    is refused here, loudly, rather than left to look like a skipped council.
+    """
+    if decision.ticker != ticker:
+        raise PlanRefusedError(f"decision is for {decision.ticker!r}, the council for {ticker!r}")
+    path = plan_path(plan_dir, ticker)
     record = {
         "version": PLAN_VERSION,
         "run_id": run_id,
         "date": run_date.isoformat(),
-        "ticker": decision.ticker,
+        "ticker": ticker,
         "created_utc": datetime.now(UTC).isoformat(),
         "decision": decision.model_dump(mode="json"),
         "planned_order": {

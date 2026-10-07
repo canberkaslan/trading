@@ -231,6 +231,21 @@ export function currentUser(): User | null {
   return auth()?.currentUser ?? null;
 }
 
+/**
+ * Resolves once Firebase has finished restoring any persisted session.
+ *
+ * Until then `currentUser()` is null even for a signed-in user: the restore
+ * reads the keystore and then reloads the user over the network before it sets
+ * one. Never rejects — a restore that fails has finished with nobody signed
+ * in, which is what `currentUser()` then reports. Resolves at once when
+ * Firebase is not configured.
+ */
+export function sessionRestored(): Promise<void> {
+  const a = auth();
+  if (!a) return Promise.resolve();
+  return a.authStateReady().catch(() => undefined);
+}
+
 /** Subscribe to sign-in state. Returns an unsubscribe, a no-op when unconfigured. */
 export function onAuthChange(fn: (user: User | null) => void): () => void {
   const a = auth();

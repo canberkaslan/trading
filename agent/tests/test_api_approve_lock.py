@@ -233,3 +233,55 @@ def test_other_requests_are_served_while_an_approval_waits(
         assert elapsed < 1.5, f"kill switch took {elapsed:.1f}s behind a waiting approval"
         assert not done.is_set(), "the approval should still be waiting"
     t.join(10)
+
+
+class _FillingBroker:
+    """$50k settled and a 100-share MSFT market BUY open, which may fill at the
+    open between the cash re-check's two broker reads: the lock covers our
+    order paths, not the broker's fills."""
+
+    base_url = "https://paper.invalid/v2"
+
+    def __init__(self, *, fills_mid_read: bool) -> None:
+        self.cash = 50_000.0
+        self.open_orders = [
+            {"symbol": "MSFT", "side": "buy", "qty": "100", "filled_qty": "0",
+             "limit_price": None, "submitted_at": "2026-10-07T13:30:00Z"},
+        ]
+        self.fills_mid_read = fills_mid_read
+        self.reads = 0
+        self._http = SimpleNamespace(get=lambda url: SimpleNamespace(json=self._orders))
+
+    def _read(self) -> None:
+        self.reads += 1
+        if self.reads == 1 and self.fills_mid_read:
+            self.cash -= 100 * 400.0
+            self.open_orders = []
+
+    def account(self) -> SimpleNamespace:
+        acct = SimpleNamespace(cash=self.cash, portfolio_value=100_000.0)
+        self._read()
+        return acct
+
+    def _orders(self) -> list[dict]:
+        page = list(self.open_orders)
+        self._read()
+        return page
+
+
+@pytest.mark.parametrize("fills_mid_read", [False, True])
+def test_a_pending_buy_that_fills_mid_re_check_still_counts(fills_mid_read: bool) -> None:
+    # The MSFT BUY holds $40k of the $50k, so a $30k AAPL BUY is refused,
+    # whether or not the MSFT order fills while the cash is re-checked.
+    from fastapi import HTTPException
+
+    from api.routes import orders
+
+    broker = _FillingBroker(fills_mid_read=fills_mid_read)
+    held = SimpleNamespace(ticker="AAPL", side="BUY", quantity=100)
+    with pytest.raises(HTTPException) as refused:
+        orders._refuse_if_unaffordable(
+            broker, held, 300.0, {"AAPL": 300.0, "MSFT": 400.0},  # type: ignore[arg-type]
+        )
+    assert refused.value.status_code == 409
+    assert "spendable now" in refused.value.detail

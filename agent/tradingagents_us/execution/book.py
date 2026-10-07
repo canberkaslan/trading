@@ -84,8 +84,13 @@ def pending_buy_exposure(
 def spendable_now(
     client: Any, price_of: Callable[[str], float | None]
 ) -> tuple[float | None, list[PendingBuy]]:
-    """Settled cash net of open BUYs; None when a pending BUY cannot be priced."""
-    acct = client.account()
+    """Settled cash net of open BUYs; None when a pending BUY cannot be priced.
+
+    Open orders first, cash second. A BUY that fills between the two reads is
+    then counted twice, in the orders and out of the cash, which errs safe;
+    read the other way round it would be counted in neither.
+    """
     open_buys = read_open_buys(client)
+    acct = client.account()
     reserved = reserved_cash_for_open_buys(open_buys, price_of)
     return spendable_cash(acct.cash, reserved), open_buys

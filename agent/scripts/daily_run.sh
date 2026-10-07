@@ -124,11 +124,21 @@ ping_healthcheck() {
   fi
 }
 
+# The decision records of a parallel run, once decide_in_parallel has made
+# them; on_exit removes this and nothing else. Cleared here, before the trap,
+# so a PLAN_DIR from the caller's shell or agent/.env is never what it removes.
+PLAN_DIR=""
+
 # A run that dies between the explicit outcomes below (set -e on a failed write,
 # a crash between steps) is a failure none of them saw. Report it now rather
 # than leave the check to notice only when its grace period runs out.
 on_exit() {
   local rc=$?
+  # A parallel run's decision records die with it, whatever ended it: nothing
+  # written by this run may be sent by another (see decide_in_parallel).
+  if [[ -n "${PLAN_DIR:-}" ]]; then
+    rm -rf "$PLAN_DIR" || true
+  fi
   if [[ "$rc" -ne 0 && "$HC_PINGED" -eq 0 ]]; then
     ping_healthcheck fail "daily_run.sh exited rc=$rc before reporting an outcome @ ${DATE}"
   fi
@@ -283,9 +293,212 @@ if [[ "${COMMENTATOR_FEED:-0}" == "1" && -n "$DECIDE" ]]; then
   fi
 fi
 
+# Councils side by side, orders one at a time: COUNCIL_PARALLELISM.
+#
+# At 1 (the default, and what any invalid value falls back to) each ticker is
+# one scripts.trade process that councils and then sends its order, one ticker
+# after another, as it always has. Above 1 the run has two passes:
+#
+#   1. Up to COUNCIL_PARALLELISM councils at once, each its own scripts.trade
+#      process with its own timeout and log. `--plan-dir` makes each stop after
+#      sizing: it records the decision for the second pass and touches nothing
+#      at the broker, no submit and no cancel. Their logs go into the run log
+#      in universe order once all are done.
+#   2. One process, scripts.submit_plans, takes the recorded decisions in
+#      universe order and does for each what scripts.trade does after its
+#      council: reads the kill switch, account, positions and open orders
+#      again, sizes under every cap and runs the executor with all its guards.
+#      Each order is sized against the ones placed before it, as in the
+#      sequential run, so nothing needs a lock between processes.
+#
+# The one difference: the pre-council gate in pass 1 sees the book before any
+# of this run's orders, so a name the sequential run would skip for want of
+# cash is councilled (one council's cost). Pass 2 asks the same gate again
+# against the book as it stands then and sends nothing for it, so what reaches
+# the broker is the same.
+#
+# A record is used at most once and only by this run (scripts/submit_plans.py),
+# and the directory holding them is removed when the run ends, however it ends.
+# A stop (systemctl stop, Ctrl-C) stops both passes: the councils in flight are
+# killed, their partial logs kept, nothing more is sent, and the run exits 143
+# so the dead-man's switch hears a failure.
+#
+# Each council in flight is a stream of model calls against one API key's rate
+# limit, so raise this only after checking a run's 429s and retries.
+COUNCIL_PARALLELISM="${COUNCIL_PARALLELISM:-1}"
+MAX_COUNCIL_PARALLELISM=4
+if ! [[ "$COUNCIL_PARALLELISM" =~ ^[1-9][0-9]*$ ]]; then
+  echo "WARNING: COUNCIL_PARALLELISM='$COUNCIL_PARALLELISM' is not a positive integer — councils run one at a time" \
+    | tee -a "$RUN_LOG"
+  COUNCIL_PARALLELISM=1
+elif [[ "${#COUNCIL_PARALLELISM}" -gt 1 || "$COUNCIL_PARALLELISM" -gt "$MAX_COUNCIL_PARALLELISM" ]]; then
+  echo "WARNING: COUNCIL_PARALLELISM=$COUNCIL_PARALLELISM is above the cap of $MAX_COUNCIL_PARALLELISM — using $MAX_COUNCIL_PARALLELISM" \
+    | tee -a "$RUN_LOG"
+  COUNCIL_PARALLELISM=$MAX_COUNCIL_PARALLELISM
+fi
+
+COUNCILS_MERGED=0
+
+# Pass 1, one ticker: council and record. Runs in the background.
+plan_ticker() {
+  set +e
+  local ticker="$1" run_id="$2" rc
+  timeout -k 30 "$TICKER_TIMEOUT_S" env PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.trade \
+      --ticker "$ticker" --date "$DATE" --plan-dir "$PLAN_DIR" --run-id "$run_id" \
+      >"$PLAN_DIR/$ticker.log" 2>&1
+  rc=$?
+  echo "$rc" >"$PLAN_DIR/$ticker.rc"
+  echo "  [council] $ticker finished rc=$rc" | tee -a "$RUN_LOG"
+}
+
+# Pass 2: every recorded decision, in the order given. Runs in the background
+# so that a stop reaches the trap below at once.
+#
+# Each ticker in it has TICKER_TIMEOUT_S of its own (--ticker-timeout), as each
+# has its own process in the sequential run: one stuck ticker is reported and
+# the pass goes on to the next, exits included. The pass as a whole is capped
+# at TICKER_TIMEOUT_S for each ticker it is handed, the sum of what the
+# sequential run gives them one by one, for a call stuck where the per-ticker
+# alarm cannot reach. Under a single ticker's cap, a price feed slow enough to
+# take minutes per ticker (each well inside its own cap) cut off every ticker
+# after the first few, their exits with them.
+#
+# It is handed this shell's PID and takes no further record once that is gone.
+# A kill aimed at this shell alone (kill -9 <pid> on a manual run) runs no trap,
+# and an orphaned pass would send every record left, unreported; this way the
+# ticker in flight is the most that goes, as in the sequential run.
+submit_pass() {
+  set +e
+  local run_id="$1" budget="$TICKER_TIMEOUT_S"
+  shift
+  if [[ "$budget" =~ ^[0-9]+$ ]]; then
+    budget=$(( 10#$budget * $# ))
+  else
+    echo "WARNING: TICKER_TIMEOUT_S='$budget' is not a whole number of seconds — the submit pass gets one ticker's timeout" \
+      | tee -a "$RUN_LOG"
+  fi
+  timeout -k 30 "$budget" env PYTHONPATH=.:vendor/tradingagents "$PYTHON" -m scripts.submit_plans \
+      --plan-dir "$PLAN_DIR" --run-id "$run_id" --date "$DATE" \
+      --ticker-timeout "$TICKER_TIMEOUT_S" --supervisor-pid "$$" $SUBMIT_FLAG "$@" 2>&1 \
+    | tee -a "$RUN_LOG" "$PLAN_DIR/submit.out"
+  echo "${PIPESTATUS[0]}" >"$PLAN_DIR/submit.rc"
+}
+
+stop_parallel_run() {
+  trap '' TERM INT
+  echo "" | tee -a "$RUN_LOG"
+  echo "SIGNAL received — stopping the councils and the submit pass, nothing more is sent" \
+    | tee -a "$RUN_LOG"
+  local pid ticker
+  for pid in $(jobs -p); do
+    pkill -TERM -P "$pid" 2>/dev/null || true
+    kill -TERM "$pid" 2>/dev/null || true
+  done
+  wait 2>/dev/null || true
+  if [[ "$COUNCILS_MERGED" -eq 0 ]]; then
+    for ticker in $DECIDE; do
+      if [[ -s "$PLAN_DIR/$ticker.log" ]]; then
+        echo "--- $ticker @ $DATE (stopped) ---" | tee -a "$RUN_LOG"
+        tee -a "$RUN_LOG" <"$PLAN_DIR/$ticker.log"
+      fi
+    done
+  fi
+  exit 143
+}
+
+decide_in_parallel() {
+  local run_id ticker rc running planned="" failed_submits unique="" twice=""
+  # A council's log, rc and record are named by its ticker, so two councils for
+  # one name would overwrite each other's, and a timed-out council's record
+  # could be sent under the other's rc. Each name is councilled once, in the
+  # order it first appears.
+  for ticker in $DECIDE; do
+    case " $unique " in
+      *" $ticker "*) twice="$twice $ticker" ;;
+      *) unique="$unique $ticker" ;;
+    esac
+  done
+  if [[ -n "$twice" ]]; then
+    echo "WARNING: universe lists$twice more than once — each is councilled and sent once" \
+      | tee -a "$RUN_LOG"
+    DECIDE="${unique# }"
+  fi
+  PLAN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/daily-plans.XXXXXX")"
+  run_id="$(basename "$PLAN_DIR")"
+  trap stop_parallel_run TERM INT
+
+  echo "" | tee -a "$RUN_LOG"
+  echo "--- councils: parallelism=$COUNCIL_PARALLELISM, nothing is sent until the submit pass ---" \
+    | tee -a "$RUN_LOG"
+  for ticker in $DECIDE; do
+    while running="$(jobs -rp | wc -l | tr -d ' ')" && [[ "$running" -ge "$COUNCIL_PARALLELISM" ]]; do
+      sleep 1
+    done
+    echo "  [council] $ticker started" | tee -a "$RUN_LOG"
+    plan_ticker "$ticker" "$run_id" &
+  done
+  wait
+
+  for ticker in $DECIDE; do
+    echo "" | tee -a "$RUN_LOG"
+    echo "--- $ticker @ $DATE ---" | tee -a "$RUN_LOG"
+    if [[ -f "$PLAN_DIR/$ticker.log" ]]; then
+      tee -a "$RUN_LOG" <"$PLAN_DIR/$ticker.log"
+    fi
+    # No rc file: the council's job died before it could write one.
+    rc="$(cat "$PLAN_DIR/$ticker.rc" 2>/dev/null || echo 1)"
+    if [[ "$rc" == "0" && -f "$PLAN_DIR/$ticker.plan.json" ]]; then
+      echo "  -> $ticker decided — sized and sent in the submit pass" | tee -a "$RUN_LOG"
+      planned="$planned $ticker"
+    elif [[ "$rc" == "0" ]]; then
+      echo "  -> $ticker done" | tee -a "$RUN_LOG"
+    else
+      # A record a failed or timed-out council left behind is never sent.
+      if [[ "$rc" == "124" ]]; then
+        echo "  -> $ticker TIMED OUT after ${TICKER_TIMEOUT_S}s — continuing" | tee -a "$RUN_LOG"
+      else
+        echo "  -> $ticker FAILED (rc=$rc) — continuing" | tee -a "$RUN_LOG"
+      fi
+      rc_total=$((rc_total + 1))
+      failed_tickers="${failed_tickers} ${ticker}"
+    fi
+  done
+  COUNCILS_MERGED=1
+
+  if [[ -n "$planned" ]]; then
+    echo "" | tee -a "$RUN_LOG"
+    echo "--- submit pass:${planned} ---" | tee -a "$RUN_LOG"
+    # shellcheck disable=SC2086 # one argument per ticker
+    submit_pass "$run_id" $planned &
+    wait "$!" || true
+    rc="$(cat "$PLAN_DIR/submit.rc" 2>/dev/null || echo 1)"
+    failed_submits="$(sed -n 's/^  -> \([^ ]*\) FAILED .*/\1/p' "$PLAN_DIR/submit.out" 2>/dev/null || true)"
+    for ticker in $failed_submits; do
+      rc_total=$((rc_total + 1))
+      failed_tickers="${failed_tickers} ${ticker}"
+    done
+    # Ended some other way than reporting its tickers (a crash, its timeout):
+    # whatever it had not reached yet was not sent.
+    if [[ "$rc" != "0" && ( -z "$failed_submits" || "$rc" != "1" ) ]]; then
+      echo "  -> submit pass FAILED (rc=$rc) — tickers after the last one reported were not sent" \
+        | tee -a "$RUN_LOG"
+      rc_total=$((rc_total + 1))
+      failed_tickers="${failed_tickers} submit-pass"
+    fi
+  fi
+  trap - TERM INT
+}
+
 rc_total=0
 failed_tickers=""
-for TICKER in $DECIDE; do
+# The sequential run, as it always was: every ticker at COUNCIL_PARALLELISM=1,
+# none once the two passes have run.
+SEQUENTIAL="$DECIDE"
+if [[ "$COUNCIL_PARALLELISM" -gt 1 && -n "$DECIDE" ]]; then
+  decide_in_parallel
+  SEQUENTIAL=""
+fi
+for TICKER in $SEQUENTIAL; do
   echo "" | tee -a "$RUN_LOG"
   echo "--- $TICKER @ $DATE ---" | tee -a "$RUN_LOG"
   # Fresh decision (no --use-cached). Guards + bracket are on by default.

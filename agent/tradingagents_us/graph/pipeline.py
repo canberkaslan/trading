@@ -41,6 +41,7 @@ from tradingagents_us.dataflows import (  # noqa: E402
     sentiment_supplement,
 )
 from tradingagents_us.dataflows.commentator import config as commentator_config  # noqa: E402
+from tradingagents_us.graph import memory_lock  # noqa: E402
 from tradingagents_us.llm import translate as _translate  # noqa: E402
 from tradingagents_us.llm.agent_routing import install as install_agent_routing  # noqa: E402
 from tradingagents_us.llm.prompt_cache import install as install_prompt_cache  # noqa: E402
@@ -68,6 +69,14 @@ def _load_env() -> None:
         v = v.strip().strip('"')
         if v:
             os.environ.setdefault(k, v)
+
+
+def _install_memory_lock() -> None:
+    # The daily run can council tickers side by side (COUNCIL_PARALLELISM), and
+    # they share one memory log whose rewrite-by-rename drops a concurrent append.
+    if not memory_lock.install():
+        log.warning("memory log lock not installed — vendor moved; "
+                    "parallel councils may lose entries")
 
 
 def propagate(
@@ -111,6 +120,7 @@ def propagate(
     # still decides — but they cannot be chosen if nothing registered them.
     alpaca_news_vendor.register()
     alpha_vantage_limited.register()
+    _install_memory_lock()
 
     # Measured: the sentiment analyst received 394 input tokens and produced
     # 2,616 — every source had failed and it formed an opinion out of nothing.

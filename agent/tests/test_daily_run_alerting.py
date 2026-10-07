@@ -15,6 +15,7 @@ from __future__ import annotations
 import shutil
 import stat
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,18 +32,23 @@ pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash
 
 # Stand-in interpreter. Records `-m <module> <args...>` one arg per line, and
 # the alert-channel env it was started with; prints $FAKE_OUT_<module> and
-# exits $FAKE_RC_<module> (dots in the module become _).
+# exits $FAKE_RC_<module> (dots in the module become _), or hands its arguments
+# to $FAKE_HOOK_<module> when a test supplies one. The PID keeps the record
+# names unique when the run starts councils side by side.
 FAKE_PYTHON = r"""#!/usr/bin/env bash
 mod="$2"
 n=$(ls "$CALLS_DIR" | wc -l | tr -d ' ')
-printf '%s\n' "${@:2}" > "$CALLS_DIR/$(printf '%04d' "$n")"
+name="$(printf '%04d' "$n")-$$"
+printf '%s\n' "${@:2}" > "$CALLS_DIR/$name"
 printf '%s\n' "OPS_ALERT_GITHUB_TOKEN=${OPS_ALERT_GITHUB_TOKEN:-}" \
   "OPS_ALERT_GITHUB_REPO=${OPS_ALERT_GITHUB_REPO:-}" \
-  "COMMENTATOR_LIVE_AS_OF=${COMMENTATOR_LIVE_AS_OF:-}" > "$ENV_DIR/$(printf '%04d' "$n")"
+  "COMMENTATOR_LIVE_AS_OF=${COMMENTATOR_LIVE_AS_OF:-}" > "$ENV_DIR/$name"
 key="${mod//./_}"
 out="FAKE_OUT_${key}"
 rc="FAKE_RC_${key}"
+hook="FAKE_HOOK_${key}"
 if [[ -n "${!out:-}" ]]; then printf '%s\n' "${!out}"; fi
+if [[ -n "${!hook:-}" ]]; then exec "${!hook}" "${@:3}"; fi
 exit "${!rc:-0}"
 """
 
@@ -108,6 +114,7 @@ def run_daily(
     healthcheck: str | None = HC,
     precreate_log_dir_as_file: bool = False,
     dotenv: str | None = None,
+    during: Callable[[subprocess.Popen[str]], None] | None = None,
     **env_extra: str,
 ) -> Run:
     real_date = shutil.which("date")
@@ -152,20 +159,30 @@ def run_daily(
         "CALLS_DIR": str(calls_dir),
         "CURL_DIR": str(curl_dir),
         "ENV_DIR": str(env_dir),
+        # Where a parallel run keeps its decision records, so a test can see
+        # them go.
+        "TMPDIR": str(tmp_path),
         **env_extra,
     }
     if healthcheck is not None:
         env["HEALTHCHECK_URL"] = healthcheck
 
-    proc = subprocess.run(
+    with subprocess.Popen(
         ["bash", str(script)],
         env=env,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
-        timeout=120,
-        check=False,
-    )
+    ) as popen:
+        try:
+            if during is not None:
+                during(popen)
+            out, err = popen.communicate(timeout=120)
+        except BaseException:
+            popen.kill()
+            raise
+    proc = subprocess.CompletedProcess(popen.args, popen.returncode, out, err)
 
     def read(d: Path) -> list[list[str]]:
         return [f.read_text(encoding="utf-8").splitlines() for f in sorted(d.iterdir())]

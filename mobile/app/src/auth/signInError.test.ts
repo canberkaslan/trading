@@ -1,4 +1,4 @@
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, jest, afterEach } from '@jest/globals';
 
 import { signInErrorTr } from './signInError';
 
@@ -20,6 +20,8 @@ describe('sign-in errors do not leak whether an account exists', () => {
   });
 
   it('never echoes the raw Firebase code to the user', () => {
+    // auth/internal-error logs its cause in dev; that is console, not UI.
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     for (const code of [
       'auth/user-not-found',
       'auth/wrong-password',
@@ -28,10 +30,13 @@ describe('sign-in errors do not leak whether an account exists', () => {
       'auth/user-disabled',
       'auth/too-many-requests',
       'auth/network-request-failed',
+      'auth/email-already-in-use',
+      'auth/internal-error',
       'auth/some-future-code',
     ]) {
       expect(signInErrorTr({ code })).not.toContain('auth/');
     }
+    warn.mockRestore();
   });
 });
 
@@ -55,6 +60,40 @@ describe('the actionable cases are distinguished', () => {
     const net = signInErrorTr({ code: 'auth/network-request-failed' });
     expect(net).toContain('ulaşılamadı');
     expect(net).not.toBe(signInErrorTr({ code: 'auth/wrong-password' }));
+  });
+});
+
+describe('the codes that used to fall to the generic message', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('an existing address on sign-up points at the sign-in tab', () => {
+    const msg = signInErrorTr({ code: 'auth/email-already-in-use' });
+    expect(msg).toContain('zaten bir hesap var');
+    expect(msg).not.toBe(signInErrorTr({ code: 'auth/some-future-code' }));
+  });
+
+  it('an internal error is not reported as bad credentials', () => {
+    // What every native sign-in returned while the keystore write was failing.
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const msg = signInErrorTr({ code: 'auth/internal-error' });
+    expect(msg).not.toBe(signInErrorTr({ code: 'auth/wrong-password' }));
+    expect(msg).not.toBe(signInErrorTr({ code: 'auth/some-future-code' }));
+  });
+
+  it('logs the underlying cause of an internal error in dev', () => {
+    // Firebase's message for it says nothing; the cause is in customData.
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const cause = new Error('Invalid key provided to SecureStore');
+    signInErrorTr({ code: 'auth/internal-error', customData: { originalError: cause } });
+    expect(warn).toHaveBeenCalledWith(expect.any(String), cause);
+  });
+
+  it('does not log for the ordinary codes', () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    signInErrorTr({ code: 'auth/wrong-password' });
+    expect(warn).not.toHaveBeenCalled();
   });
 });
 

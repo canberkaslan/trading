@@ -39,6 +39,14 @@ can sell the same shares, and only one of them ever will. The nested listing
 returns the pair as the take-profit with the stop as its leg, the shape of an
 Alpaca OCO order, so a caller can tell which stop goes with which take-profit.
 `nests_oco=False` lists them flat, as a caller that cannot see the pairing does.
+
+`lists_behind` is Alpaca's order listing right after a write: eventually
+consistent. After a write, the next `lists_behind` listings serve the book as
+it stood before the writes the listing has not caught up with (`behind`),
+while get_order, the client-id lookup and the holding are current; the listing
+after them is current, and stays so until the next write. On 2026-10-05
+GOOGL's listing still had three sells working seconds after get_order had read
+each one cancelled, and showed the one seller seconds later.
 """
 
 from __future__ import annotations
@@ -110,6 +118,7 @@ class FakeBroker:
         minutes_to_open: float = 15 * 60,
         throttle_cancels: Mapping[str, int] | None = None,
         now: datetime | None = None,
+        lists_behind: int = 0,
     ) -> None:
         self.positions: dict[str, Position] = {p.symbol: p for p in positions}
         self.orders: dict[str, Order] = {o.id: o for o in orders}
@@ -143,6 +152,10 @@ class FakeBroker:
         self.now = now or datetime.now(UTC)
         #: order id -> 429s still to answer its DELETEs with.
         self.throttle_cancels = dict(throttle_cancels or {})
+        self.lists_behind = lists_behind
+        #: What a listing behind the book serves, and how many more will.
+        self.behind: dict[str, Order] = {}
+        self._behind_left = 0
         self._throttled: set[str] = set()
         self._in_flight: list[list] = []
         self._settling: dict[str, int] = {}
@@ -219,6 +232,10 @@ class FakeBroker:
     def _record(self, *call: object) -> None:
         """Log the call, then let time pass: an in-flight exit may land first."""
         self.calls.append(call)
+        if call[0] in WRITES and self.lists_behind:
+            if not self._behind_left:
+                self.behind = dict(self.orders)
+            self._behind_left = self.lists_behind
         for pending in list(self._in_flight):
             pending[-1] -= 1
             if pending[-1] <= 0:
@@ -300,12 +317,16 @@ class FakeBroker:
 
     def list_orders(self, status: str = "open", limit: int = 50, nested: bool = False):
         self._record("list_orders", status)
+        orders = self.orders
+        if self._behind_left:
+            self._behind_left -= 1
+            orders = self.behind
         if not (nested and self.nests_oco):
-            return list(self.orders.values())
+            return list(orders.values())
         legs = set(self.oco.values())
         return [
-            dataclasses.replace(o, legs=(self.orders[self.oco[o.id]],)) if o.id in self.oco else o
-            for o in self.orders.values()
+            dataclasses.replace(o, legs=(orders[self.oco[o.id]],)) if o.id in self.oco else o
+            for o in orders.values()
             if o.id not in legs
         ]
 

@@ -34,7 +34,11 @@ from tradingagents_us.dataflows.alpaca_broker import (
     Position,
 )
 from tradingagents_us.execution.executor import derive_exit_client_order_id
-from tradingagents_us.execution.protected_close import _rearm_id
+from tradingagents_us.execution.protected_close import (
+    LISTING_CATCH_UP_DELAYS_S,
+    CloseOutcome,
+    _rearm_id,
+)
 from tradingagents_us.risk.position_manager import PlaceStop, RatchetStop, TimeExit
 from tradingagents_us.storage import TradeLogRepository
 from tradingagents_us.storage.price_cache import write_bars
@@ -840,6 +844,347 @@ class TestThePassReadsOrdersBeforeTheHolding:
         assert "MSFT" not in fake.positions
         assert fake.live_sells("MSFT") == [], "a sell stop on a flat book is a short"
         assert rc == 0
+
+
+class TestAListingAfterATimeExitHasCaughtUpWithIt:
+    """The re-cover's listings wait for one that shows what the pass's closes read by id.
+
+    Right after a close, Alpaca's listing may still show the stop it released
+    and read cancelled, or not yet the one it put back: read as it comes, the
+    re-cover finds the lot covered by a stop that is gone, or naked under one
+    that stands, and back-fills off that.
+    """
+
+    #: XOM's time exit released its stop and read it cancelled.
+    CLOSE = CloseOutcome("XOM", "unchanged", "exit refused", released=("stop-xom",))
+
+    def _released(self, monkeypatch: pytest.MonkeyPatch, behind: int) -> list[float]:
+        sleeps: list[float] = []
+        monkeypatch.setattr(mp.time, "sleep", sleeps.append)
+        self.fake = FakeBroker(
+            positions=[_position("XOM", 100.5)], orders=[_stop("stop-xom", "XOM", 90.0)],
+            lists_behind=behind,
+        )
+        self.fake.cancel_order("stop-xom")
+        return sleeps
+
+    def test_a_listing_still_showing_the_released_stop_is_read_again(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sleeps = self._released(monkeypatch, behind=2)
+
+        *_, sells = mp._read_book(self.fake, [self.CLOSE])
+
+        assert [o.status for o in sells] == ["canceled"]
+        assert sleeps == list(LISTING_CATCH_UP_DELAYS_S[:2])
+
+    def test_one_that_never_catches_up_is_an_unreadable_book(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sleeps = self._released(monkeypatch, behind=10**6)
+
+        with pytest.raises(RuntimeError, match="stop-xom listed new"):
+            mp._read_book(self.fake, [self.CLOSE])
+        assert sleeps == list(LISTING_CATCH_UP_DELAYS_S)
+
+    def test_a_stop_the_close_put_back_is_waited_for_too(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The listing has caught up with the cancel, not with the re-arm: all
+        # it is behind on is the stop the close put back, and off it the lot
+        # reads naked under that stop.
+        sleeps = self._released(monkeypatch, behind=1)
+        self.fake.list_orders()
+        rearm = self.fake.submit_order(
+            symbol="XOM", qty=10.0, side="sell", order_type="stop", time_in_force="gtc",
+            stop_price=90.0, client_order_id="re-arm",
+        )
+        close = dataclasses.replace(self.CLOSE, rearmed=(rearm.id,))
+
+        assert mp._naked_now(self.fake, "XOM", [close]) == 0.0
+        assert sleeps == [LISTING_CATCH_UP_DELAYS_S[0]]
+
+    def test_an_exit_its_close_read_dead_is_waited_for_too(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The listing has caught up with the released stop, not with the
+        # exit the close read cancelled by its id: listed accepted, the lot
+        # reads as on its way out, and the re-cover skips it.
+        sleeps = self._released(monkeypatch, behind=1)
+        self.fake.exit_status = "accepted"
+        exit_ = self.fake.submit_order(
+            symbol="XOM", qty=10.0, side="sell", order_type="market", time_in_force="day",
+            client_order_id=XOM_EXIT_ID,
+        )
+        self.fake.list_orders()
+        self.fake.cancel_order(exit_.id)
+        close = dataclasses.replace(self.CLOSE, exit_order_id=exit_.id, dead=(exit_.id,))
+
+        *_, sells = mp._read_book(self.fake, [close])
+
+        assert {o.id: o.status for o in sells}[exit_.id] == "canceled"
+        assert sleeps == [LISTING_CATCH_UP_DELAYS_S[0]]
+
+    def test_a_back_fill_beside_an_exit_waits_on_its_own_lot_only(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # XOM's exit was never found, and its back-fill is placed beside it.
+        # AAPL's close placed an exit too, which XOM's listing never shows.
+        sleeps = self._released(monkeypatch, behind=2)
+        aapl = CloseOutcome("AAPL", "exit_submitted", "", exit_order_id="market-AAPL-9")
+        uncovered = ["XOM unknown"]
+
+        failed = mp._cover_beside_exit(
+            self.fake, PlaceStop("XOM", 10.0, 90.0, 2.0), XOM_EXIT_ID, uncovered, 0.0,
+            [aapl, self.CLOSE],
+        )
+
+        assert (failed, uncovered) == (0, []), "the back-fill stands: the doubt is settled"
+        assert sleeps == list(LISTING_CATCH_UP_DELAYS_S[:2])
+
+    def test_a_refused_back_fill_beside_an_exit_is_no_cover_from_the_released_stop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # XOM's exit was never found and its back-fill is refused: only the
+        # close's read of stop-xom, handed on, says a listing still showing
+        # that stop is old. Taken as it comes, the lot reads covered.
+        sleeps = self._released(monkeypatch, behind=2)
+        self.fake.refuse_stop = {"XOM"}
+        uncovered = ["XOM unknown"]
+
+        failed = mp._cover_beside_exit(
+            self.fake, PlaceStop("XOM", 10.0, 90.0, 2.0), XOM_EXIT_ID, uncovered, 0.0,
+            [self.CLOSE],
+        )
+
+        assert failed == 1
+        assert uncovered == ["XOM unknown", f"XOM naked beside exit {XOM_EXIT_ID}"]
+        assert sleeps == list(LISTING_CATCH_UP_DELAYS_S[:2])
+
+    def test_a_back_fill_beside_an_exit_is_handed_the_exit_its_close_holds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The lot's closes went on as a generator, spent on the released
+        # stops before the orders placed were read off it: cover_beside_exit
+        # never waited for a listing that shows the exit or a re-arm.
+        handed: dict = {}
+        monkeypatch.setattr(
+            mp, "cover_beside_exit",
+            lambda *a, **kw: handed.update(kw) or CloseOutcome("XOM", "unchanged", ""),
+        )
+        close = dataclasses.replace(self.CLOSE, exit_order_id="market-XOM-1", rearmed=("re",))
+
+        mp._cover_beside_exit(
+            FakeBroker([]), PlaceStop("XOM", 10.0, 90.0, 2.0), XOM_EXIT_ID, [], 0.0, [close]
+        )
+
+        assert (handed["released"], handed["rearmed"]) == ({"stop-xom"}, {"market-XOM-1", "re"})
+
+    def test_a_lot_s_lagging_listing_holds_up_no_other_lot(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # XOM's listing never catches up. MSFT, naked, had no close in the
+        # pass, and AAPL's re-cover finds it sold: neither waits on XOM.
+        sleeps = self._released(monkeypatch, behind=10**6)
+        self.fake.positions["MSFT"] = _position("MSFT", 200.0, avg=150.0)
+        uncovered: list[str] = []
+
+        failed = mp._execute(
+            self.fake, [PlaceStop("MSFT", 10.0, 180.0, 2.0)], TODAY, closes=[self.CLOSE]
+        )
+        failed += mp._recover_unclosed(
+            self.fake, None, {"AAPL"}, {}, TODAY, None, uncovered, closes=[self.CLOSE]
+        )
+
+        assert (failed, uncovered, sleeps) == (0, [], [])
+        assert [o.qty for o in self.fake.live_sells("MSFT")] == [10.0]
+
+    def test_a_re_cover_the_listing_holds_up_names_its_lots(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._released(monkeypatch, behind=10**6)
+        uncovered: list[str] = []
+
+        mp._recover_unclosed(
+            self.fake, None, {"XOM"}, {}, TODAY, None, uncovered, closes=[self.CLOSE]
+        )
+
+        assert uncovered[0].startswith("re-cover could not read the book for XOM: ")
+
+    def test_with_no_close_before_it_a_listing_is_taken_as_it_comes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sleeps = self._released(monkeypatch, behind=2)
+
+        *_, sells = mp._read_book(self.fake)
+
+        assert [o.status for o in sells] == ["new"] and sleeps == []
+
+
+class _RefusesReArms(FakeBroker):
+    """Every stop a close puts back is turned down with a 4xx; a back-fill is placed."""
+
+    def submit_order(self, **kw) -> Order:
+        if "-arm-" in (kw.get("client_order_id") or ""):
+            self._record("submit_order", kw)
+            raise AlpacaRequestError("POST", "/orders", 422, "stop price must be below market")
+        return super().submit_order(**kw)
+
+
+class TestTheReCoverWaitsForAListingThatCaughtUpWithTheClose:
+    """Through main(): the re-cover after a failed close reads a listing no older than it."""
+
+    def test_a_lot_whose_exit_and_re_arm_were_refused_is_back_filled(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The listing is five listings behind each write: through all of the
+        # close's own reads, which give up, it still shows the stop the close
+        # released and read cancelled. Taken as it comes, the re-cover's first
+        # listing covers the lot with that stop, and the lot spends the night
+        # with none.
+        monkeypatch.setattr(mp.time, "sleep", lambda _: None)
+        fake = _RefusesReArms(
+            positions=[_position("XOM", 100.5)], orders=[_stop("stop-xom", "XOM", 90.0)],
+            fills=[_buy("XOM")], refuse_sell={"XOM"}, lists_behind=5,
+        )
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        assert rc == mp.EXIT_UNCOVERED, "the close could not read its end state"
+        assert [(o.qty, o.stop_price) for o in fake.live_sells("XOM")] == [(10.0, 94.0)]
+
+
+class _ListsAStopWorkingForGood(_RefusesReArms):
+    """A listing that never shows `stop-T0` gone, whatever get_order reads."""
+
+    def list_orders(self, status: str = "open", limit: int = 50, nested: bool = False):
+        listed = super().list_orders(status, limit, nested)
+        return [dataclasses.replace(o, status="new") if o.id == "stop-T0" else o for o in listed]
+
+
+class TestALotsListingThatNeverCatchesUpThroughThePass:
+    """Two time exits fail; the listing never catches up with one of them."""
+
+    def test_the_other_lot_is_still_back_filled(
+        self, aged_book_db: str, monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # T0's and T1's exits and re-arms are refused, and both lots are left
+        # with no stop. The listing has caught up with T1's close, never with
+        # T0's: T1 is back-filled off it, as main does, and T0 alone is a book
+        # the re-cover could not read.
+        monkeypatch.setattr(mp.time, "sleep", lambda _: None)
+        fake = _ListsAStopWorkingForGood(
+            positions=[_position(s, 100.5) for s in AGED],
+            orders=[_stop(f"stop-{s}", s, 90.0) for s in AGED],
+            fills=[_buy(s) for s in AGED],
+            refuse_sell={"T0", "T1"},
+        )
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", aged_book_db)
+
+        assert rc == mp.EXIT_UNCOVERED, "T0 is still in doubt"
+        assert [(o.qty, o.stop_price) for o in fake.live_sells("T1")] == [(10.0, 94.0)]
+        assert fake.live_sells("T0") == []
+        assert "re-cover could not read the book for T0: listing behind: stop-T0 listed new" in (
+            caplog.text
+        )
+
+
+class _ListsStopT1AfterT0sBackFill(_RefusesReArms):
+    """The first listing after T0's back-fill is the book from before stop-T1's cancel.
+
+    Once, as Alpaca's listing lags; get_order, the client-id lookup and the
+    holding are current.
+    """
+
+    before_t1: dict[str, Order] | None = None
+
+    def cancel_order(self, order_id: str) -> dict:
+        if order_id == "stop-T1" and self.before_t1 is None:
+            self.before_t1 = dict(self.orders)
+        return super().cancel_order(order_id)
+
+    def submit_order(self, **kw) -> Order:
+        order = super().submit_order(**kw)
+        if (kw["symbol"], kw["order_type"]) == ("T0", "stop") and self.before_t1 is not None:
+            self.behind, self._behind_left = self.before_t1, 1
+        return order
+
+
+class TestEachLotsBackFillWaitsOnItsOwnClose:
+    def test_a_listing_behind_another_lot_s_close_is_read_again(
+        self, aged_book_db: str, monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # T0's and T1's exits and re-arms are refused. T1's back-fill is sized
+        # off the listing right after T0's, two changes behind (stop-T1's
+        # cancel, T0's back-fill; every stop is at its trail, so nothing is
+        # ratcheted between): it still shows stop-T1 working. Taken as it
+        # comes, T1 reads covered, its back-fill is skipped, and the lot
+        # spends the night with no stop.
+        caplog.set_level(logging.INFO, logger="manage_positions")
+        sleeps: list[float] = []
+        monkeypatch.setattr(mp.time, "sleep", sleeps.append)
+        fake = _ListsStopT1AfterT0sBackFill(
+            positions=[_position(s, 100.5) for s in AGED],
+            orders=[_stop(f"stop-{s}", s, 94.0) for s in AGED],
+            fills=[_buy(s) for s in AGED],
+            refuse_sell={"T0", "T1"},
+        )
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", aged_book_db)
+
+        assert rc == mp.EXIT_UNCOVERED, "the closes paged"
+        assert "replace_order" not in {w[0] for w in fake.writes}
+        for lot in ("T0", "T1"):
+            assert [(o.qty, o.stop_price) for o in fake.live_sells(lot)] == [(10.0, 94.0)], lot
+        assert "SKIP  back-fill" not in caplog.text
+        assert sleeps[-1] == LISTING_CATCH_UP_DELAYS_S[0], "one catch-up wait, for T1"
+
+
+class _ListsTheExitLate(FakeBroker):
+    """After the exit's POST: four listings still show the stop working and no exit, six
+    more the stop cancelled and still no exit. get_order and the holding are current."""
+
+    late = 0
+
+    def list_orders(self, status: str = "open", limit: int = 50, nested: bool = False):
+        listed = super().list_orders(status, limit, nested)
+        if not self._sold or self.late >= 10:
+            return listed
+        self.late += 1
+        listed = [o for o in listed if o.client_order_id != XOM_EXIT_ID]
+        if self.late <= 4:
+            listed = [dataclasses.replace(o, status="new") if o.id == "stop-xom" else o
+                      for o in listed]
+        return listed
+
+
+class TestAnExitTheListingNeverShowedThroughThePass:
+    def test_the_re_cover_waits_for_it_and_places_nothing_beside_it(
+        self, db_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The exit is accepted and holds every share. The close's listings
+        # never catch up, and it pages `unknown`. The re-cover's first listing
+        # shows the stop gone and no exit yet: it is older than the exit's
+        # POST reply, and off it the lot read naked, got a back-fill beside
+        # its exit (refused, held_for_orders 10), and was paged as naked
+        # beside an exit "never found".
+        caplog.set_level(logging.INFO, logger="manage_positions")
+        monkeypatch.setattr(mp.time, "sleep", lambda _: None)
+        fake = _ListsTheExitLate(
+            positions=[_position("XOM", 100.5)], orders=[_stop("stop-xom", "XOM", 90.0)],
+            fills=[_buy("XOM")], exit_status="accepted",
+        )
+
+        rc = _run(monkeypatch, fake, "--submit", "--backfill-stops", "--db-url", db_url)
+
+        (exit_order,) = fake.created
+        assert rc == mp.EXIT_UNCOVERED
+        assert fake.writes == [("cancel_order", "stop-xom"), XOM_EXIT], "nothing beside the exit"
+        assert f"order {exit_order.id} ({XOM_EXIT_ID})" in caplog.text
+        assert "never found" not in caplog.text
 
 
 class _SoldWhileXomIsReleased(FakeBroker):

@@ -22,6 +22,7 @@ that precondition were ever broken.
 
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import json
 from datetime import UTC, date, datetime, timedelta
@@ -42,6 +43,7 @@ from tradingagents_us.execution.protected_close import (
     CANCEL_CONFIRM_INTERVAL_S,
     CANCEL_CONFIRM_POLLS,
     CANCEL_SETTLE_DELAYS_S,
+    LISTING_CATCH_UP_DELAYS_S,
     MAX_CLIENT_ID_LEN,
     MIN_TIME_TO_OPEN,
     _fit,
@@ -1031,6 +1033,178 @@ class TestTheVerdict:
         outcome = _close(fake)
 
         assert outcome.status == "naked" and "sells 10 of 15" in outcome.detail
+
+
+class TestAListingBehindTheCloseOwnReads:
+    """A listing older than what the close read by id is read again until it catches up.
+
+    Alpaca's listing lags its per-order reads right after a write, and
+    catches up within seconds (`lists_behind`). On 2026-10-05 GOOGL's verdict
+    listed three sells working that the release had read cancelled one by
+    one, and paged "two sellers" over a lot whose one seller was its exit.
+    """
+
+    def test_the_googl_shape_is_one_seller_once_the_listing_catches_up(self) -> None:
+        # A stop over most of the lot and two one-share brackets: all five
+        # sells released and read cancelled, the exit accepted, and the
+        # verdict's first two listings still the book from before any of it.
+        fake = _shut(
+            [_stop("stop-s", qty=8.0), _stop("sl-a", qty=1.0, status="held"),
+             _stop("sl-b", qty=1.0, status="held"),
+             _order("tp-a", "limit", qty=1.0), _order("tp-b", "limit", qty=1.0)],
+            oco={"tp-a": "sl-a", "tp-b": "sl-b"}, lists_behind=2,
+        )
+        sleeps: list[float] = []
+
+        outcome = _close(fake, sleeps)
+
+        assert outcome.status == "exit_submitted" and outcome.ok, outcome.detail
+        assert sleeps == list(LISTING_CATCH_UP_DELAYS_S[:2])
+        _assert_exiting_once(fake)
+
+    def test_a_listing_that_never_catches_up_is_no_read_of_the_book(self) -> None:
+        fake = _shut([_stop()], lists_behind=10**6)
+        sleeps: list[float] = []
+
+        outcome = _close(fake, sleeps)
+
+        assert outcome.status == "unknown" and not outcome.ok
+        assert "still behind this close's own reads" in outcome.detail
+        assert "stop-xom listed new" in outcome.detail and "not listed" in outcome.detail
+        assert sleeps == list(LISTING_CATCH_UP_DELAYS_S), "bounded, then it pages"
+        _assert_exiting_once(fake)
+
+    def test_one_that_never_catches_up_still_names_the_exit_the_close_holds(self) -> None:
+        # The exit's POST was answered. What follows the close (the re-cover,
+        # a back-fill beside the exit) waits for a listing that shows it, and
+        # only by its id: dropped here, a listing from before the exit was
+        # taken read as current, and the lot as naked beside an exit "never found".
+        fake = _shut([_stop()], lists_behind=10**6)
+
+        outcome = _close(fake)
+
+        (exit_order,) = fake.created
+        assert (outcome.exit_order_id, outcome.client_order_id) == (exit_order.id, STAMP)
+
+    def test_a_refused_exit_puts_back_a_stop_the_listing_still_shows(self) -> None:
+        # Taken at its word, that listing has the released stop standing:
+        # nothing goes back, and the lot is left with no stop at all.
+        fake = _shut([_stop()], refuse_sell={"XOM"}, lists_behind=2)
+
+        outcome = _close(fake)
+
+        assert outcome.status == "unchanged", outcome.detail
+        assert _rearms(fake) == [(10.0, 90.0)]
+        _assert_protected_once(fake)
+
+    def test_a_back_fill_refused_beside_a_stop_its_close_released_is_naked(self) -> None:
+        # The close released the stop, read it cancelled, and never found its
+        # exit; the back-fill is refused. A listing still showing that stop is
+        # no cover, and the pass must not take the lot off its uncovered list.
+        fake = _shut([_stop()], refuse_stop={"XOM"}, lists_behind=2)
+        fake.cancel_order("stop-xom")
+
+        outcome = cover_beside_exit(
+            fake, "XOM", stamp=STAMP, qty=10.0, stop_price=90.0, sleep=lambda _: None,
+            released=["stop-xom"],
+        )
+
+        assert outcome.status == "naked", outcome.detail
+
+    def test_an_exit_read_dead_by_its_stamp_is_no_exit_while_the_listing_shows_it(
+        self,
+    ) -> None:
+        # Rejected as soon as it was taken, its reply lost, and found
+        # rejected by its stamp: two listings that still show it accepted
+        # are the book before the rejection, not an exit on its way out.
+        fake = _KillsTheNext("market", [_position()], [_stop()], exit_status="accepted")
+        sleeps: list[float] = []
+
+        outcome = _close(fake, sleeps)
+
+        assert outcome.status == "unchanged" and not outcome.ok, outcome.detail
+        assert _rearms(fake) == [(10.0, 90.0)]
+        _assert_protected_once(fake)
+        assert sleeps[-2:] == list(LISTING_CATCH_UP_DELAYS_S[:2])
+        assert outcome.dead == (fake.created[0].id,), "manage_positions waits on it too"
+
+    def test_a_re_arm_read_dead_by_its_id_covers_nothing_while_the_listing_shows_it(
+        self,
+    ) -> None:
+        # The exit refused, the re-arm's reply lost, and the stop found
+        # rejected by its client id: listed `new` twice more, it is no cover.
+        fake = _KillsTheNext("stop", [_position()], [_stop()], refuse_sell={"XOM"})
+
+        outcome = _close(fake)
+
+        assert outcome.status == "naked", outcome.detail
+        assert fake.live_sells("XOM") == []
+
+    def test_a_back_fill_beside_an_exit_waits_for_the_stop_its_close_put_back(self) -> None:
+        # The close put 6 of 10 shares back under rearm-6 and never found its
+        # exit; the other 4 are back-filled. The listing right after the
+        # back-fill shows it and not yet rearm-6, as GOOGL's showed the exit
+        # and not the cancels sent before it. Taken as it comes, 4 of 10
+        # covered, a lot under two standing stops was paged naked.
+        fake = _ListsTheBackFillFirst(
+            [_position()], [_stop("rearm-6", qty=6.0, coid=_rearm_id(STAMP, "stop-a"))]
+        )
+        sleeps: list[float] = []
+
+        outcome = cover_beside_exit(
+            fake, "XOM", stamp=STAMP, qty=4.0, stop_price=88.0, covered=6.0,
+            sleep=sleeps.append, rearmed=["rearm-6"],
+        )
+
+        assert outcome.status == "unchanged", outcome.detail
+        assert sleeps == [LISTING_CATCH_UP_DELAYS_S[0]]
+
+
+class _ListsTheBackFillFirst(FakeBroker):
+    """The first listing after a stop's POST shows that stop, and not yet `rearm-6`."""
+
+    hide = 0
+
+    def submit_order(self, **kw) -> Order:
+        order = super().submit_order(**kw)
+        self.hide = 1
+        return order
+
+    def list_orders(self, status: str = "open", limit: int = 50, nested: bool = False):
+        listed = super().list_orders(status, limit, nested)
+        if self.hide:
+            self.hide -= 1
+            listed = [o for o in listed if o.id != "rearm-6"]
+        return listed
+
+
+class _KillsTheNext(FakeBroker):
+    """Takes the next order of `kind`, rejects it at once, and loses the reply.
+
+    get_order and the client-id lookup read it rejected; the two listings
+    after it still show it as it was taken (`lists_behind`, for one order).
+    """
+
+    def __init__(self, kind: str, *args, **kw) -> None:
+        super().__init__(*args, **kw)
+        self.kind = kind
+        self.stale: dict[str, Order] = {}
+        self.stale_left = 0
+
+    def submit_order(self, **kw) -> Order:
+        order = super().submit_order(**kw)
+        if kw["order_type"] != self.kind or self.stale:
+            return order
+        self.stale, self.stale_left = {order.id: order}, 2
+        self.orders[order.id] = dataclasses.replace(order, status="rejected")
+        raise httpx.ReadTimeout("reply lost; the order was rejected")
+
+    def list_orders(self, status: str = "open", limit: int = 50, nested: bool = False):
+        listed = super().list_orders(status, limit, nested)
+        if self.stale_left:
+            self.stale_left -= 1
+            listed = [self.stale.get(o.id, o) for o in listed]
+        return listed
 
 
 class TestAnExitThatDidNotSellAtTheOpen:

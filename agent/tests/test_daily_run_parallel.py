@@ -403,3 +403,54 @@ def test_sigterm_mid_submit_pass_stops_it_and_pages(tmp_path: Path) -> None:
     assert "scripts.snapshot" not in run.modules()
     assert run.ping_urls and run.ping_urls[-1].endswith("/fail")
     assert _plan_dirs(tmp_path) == []
+
+
+# --- the handoff to the Python halves ----------------------------------------------
+#
+# The stand-ins accept any argv. A flag renamed on one side only would make
+# every council exit 2 in argparse, or the submit pass refuse every ticker,
+# while every test above stayed green. So the argv the script really built goes
+# through each entry point's own parser, and the names and lines the script
+# reads back are the ones the Python writes.
+
+
+def test_the_argv_the_script_builds_is_one_each_half_accepts(tmp_path: Path) -> None:
+    from scripts import submit_plans, trade
+
+    run, _ = _run(tmp_path, SUBMIT="1", UNIVERSE="AAPL MSFT")
+    assert run.rc == 0, run.output
+    for argv in _calls(run, "scripts.trade"):
+        args = trade.build_parser().parse_args(argv[1:])
+        assert args.plan_dir and args.run_id and not args.submit and not args.hold
+    [argv] = _calls(run, "scripts.submit_plans")
+    opts = submit_plans.build_parser().parse_args(argv[1:])
+    assert opts.submit and opts.tickers == ["AAPL", "MSFT"]
+    assert opts.date.isoformat() == RUN_DATE
+
+
+def test_the_record_the_script_looks_for_is_the_one_a_council_writes() -> None:
+    from tradingagents_us.execution.plans import plan_path
+
+    # daily_run.sh: [[ -f "$PLAN_DIR/$ticker.plan.json" ]]
+    assert plan_path("/plans", "BRK.B") == Path("/plans/BRK.B.plan.json")
+
+
+def test_the_failures_the_script_counts_are_the_lines_the_submit_pass_prints(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from scripts import submit_plans, trade
+
+    monkeypatch.setattr(trade, "_load_env", lambda: None)
+    argv = [
+        "--plan-dir", str(tmp_path), "--run-id", "x", "--date", RUN_DATE,
+        "--db-url", f"sqlite:///{tmp_path / 'local.db'}", "AAPL", "BRK.B",
+    ]
+    assert submit_plans.main(argv) == 1  # no records: both fail before any broker call
+    out = tmp_path / "submit.out"
+    out.write_text(capsys.readouterr().out, encoding="utf-8")
+    # The extraction daily_run.sh runs on the submit pass's output.
+    sed = subprocess.run(
+        ["sed", "-n", r"s/^  -> \([^ ]*\) FAILED .*/\1/p", str(out)],
+        capture_output=True, text=True, check=True,
+    )
+    assert sed.stdout.split() == ["AAPL", "BRK.B"]

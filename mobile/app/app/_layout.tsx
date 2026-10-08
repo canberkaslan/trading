@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { I18nextProvider } from 'react-i18next';
 import { useFonts } from 'expo-font';
+import * as Updates from 'expo-updates';
 
 import { FONT_ASSETS } from '@/theme/fonts';
 
@@ -14,6 +15,7 @@ import { themeScheme } from '@/theme/colors';
 import { hydrateWatchlist } from '@/stores/watchlist';
 import { registerReceivedHandler, registerTapHandler, syncPushTokenIfGranted } from '@/notifications';
 import { useInboxStore } from '@/stores/notifications';
+import { applyUpdateOnLaunch } from '@/updates/applyOnLaunch';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -42,6 +44,8 @@ export default function RootLayout() {
     // Startup never prompts — permission is asked contextually (Settings row,
     // or the first pending order). This only refreshes an existing grant.
     void syncPushTokenIfGranted();
+    // A published fix runs on THIS launch rather than the next one.
+    if (!__DEV__) void applyUpdateOnLaunch(Updates);
     const unsubTap = registerTapHandler((path) => router.push(path as never), push);
     const unsubReceived = registerReceivedHandler(push);
     return () => {

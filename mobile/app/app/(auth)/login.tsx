@@ -31,6 +31,7 @@ import { isInviteCodeValid, signUpEnabled } from '@/auth/inviteCode';
 import { useAuthStore } from '@/stores/auth';
 import { settlesWithin } from '@/auth/settlesWithin';
 import { signInErrorTr } from '@/auth/signInError';
+import { bundleLabel } from '@/updates/bundleLabel';
 import {
   View,
   Text,
@@ -39,12 +40,14 @@ import {
   Pressable,
   ScrollView,
   KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationBar } from 'expo-navigation-bar';
 import { useMemo, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
+import * as Updates from 'expo-updates';
 import { useTranslation } from 'react-i18next';
 import Svg, { Path, Defs, RadialGradient, Stop, Circle } from 'react-native-svg';
 
@@ -100,6 +103,9 @@ const MIN_PASSWORD = 4;
  * accepted; this only bounds a bad connection.
  */
 const SESSION_RESTORE_TIMEOUT_MS = 3_000;
+
+/** Fixed for the life of a launch: a new bundle only arrives with a reload. */
+const BUNDLE_LABEL = bundleLabel(Updates);
 
 /** The banner's own top padding, on top of whatever the notch costs. */
 const BANNER_TOP = 28;
@@ -551,6 +557,14 @@ export default function LoginScreen() {
             ) : null}
 
             <Text style={styles.account}>{accountLine}</Text>
+            {/* Which bundle is running, so a screenshot of a failure says
+                whether a published fix had reached the phone yet. The web
+                build is served fresh and has no OTA to report on. */}
+            {Platform.OS !== 'web' ? (
+              <Text style={styles.account} selectable>
+                {BUNDLE_LABEL}
+              </Text>
+            ) : null}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

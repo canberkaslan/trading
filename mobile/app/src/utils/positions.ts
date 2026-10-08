@@ -23,3 +23,29 @@ import type { Position } from '@/api/types';
 export function positionStop(p: Pick<Position, 'stop_loss'>): number | null {
   return p.stop_loss > 0 ? p.stop_loss : null;
 }
+
+const DAY_MS = 86_400_000;
+
+/**
+ * Whole days a position has been held, or null when the backend cannot say.
+ *
+ * `opened_at_utc` comes from the fill ledger and is null whenever the ledger's
+ * lots do not add up to the broker quantity — an age we would have to guess
+ * at. A timestamp in the future (clock skew between the box and the phone) is
+ * clamped to 0 rather than rendered as a negative age.
+ */
+export function holdingDays(
+  p: Pick<Position, 'opened_at_utc'>,
+  nowMs: number,
+): number | null {
+  if (!p.opened_at_utc) return null;
+  const opened = Date.parse(p.opened_at_utc);
+  if (Number.isNaN(opened)) return null;
+  return Math.max(0, Math.floor((nowMs - opened) / DAY_MS));
+}
+
+/** "bugün" for a position opened today, "12 gün" otherwise; null passes through. */
+export function holdingLabel(days: number | null): string | null {
+  if (days == null) return null;
+  return days === 0 ? 'bugün açıldı' : `${days} gün`;
+}

@@ -45,7 +45,8 @@ import { SectionHeader } from '@/components/SectionHeader';
 import { StatCell } from '@/components/StatCell';
 import { Seg, type SegOption } from '@/components/Seg';
 import { Tag } from '@/components/Tag';
-import { positionStop } from '@/utils/positions';
+import { holdingDays, holdingLabel, positionStop } from '@/utils/positions';
+import { useNow } from '@/utils/useNow';
 import { formatUsd, formatPct } from '@/utils/format';
 import { verdictTheme, PERIODS, PERIOD_DAYS, type Period } from '@/utils/equity';
 import { font, TABULAR, TYPE } from '@/theme/type';
@@ -886,6 +887,9 @@ function EvalCard({
 /** The prototype's ghost-button height; `hitSlopFor` takes it to 44. */
 const GHOST_H = 36;
 
+/** Holding age is day-granular; an hourly tick keeps it current. */
+const HOLDING_TICK_MS = 3_600_000;
+
 /**
  * One position, as the prototype's 60px row reads — with nothing dropped.
  *
@@ -919,6 +923,8 @@ function PositionRow({
   // header and the Gerçekleşen card make, so one flat position cannot render
   // green here and neutral there.
   const pnlColor = pnlToneColors(t)[pnlTone(p.unrealized_pnl)];
+  const now = useNow(HOLDING_TICK_MS);
+  const held = holdingLabel(holdingDays(p, now));
 
   return (
     // `accessible={false}`: the block stays one tap target for Sor, but the two
@@ -946,6 +952,7 @@ function PositionRow({
               never as a $0.00 one. */}
           <Text style={styles.posMeta} numberOfLines={1}>
             Son {formatUsd(p.current_price)} · stop {formatUsd(positionStop(p))}
+            {held ? ` · ${held}` : ''}
           </Text>
         </View>
 

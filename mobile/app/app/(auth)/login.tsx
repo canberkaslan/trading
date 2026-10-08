@@ -23,11 +23,13 @@
 import {
   currentUser,
   isConfigured as isFirebaseConfigured,
+  sessionRestored,
   signIn as firebaseSignIn,
   signUp as firebaseSignUp,
 } from '@/auth/firebase';
 import { isInviteCodeValid, signUpEnabled } from '@/auth/inviteCode';
 import { useAuthStore } from '@/stores/auth';
+import { settlesWithin } from '@/auth/settlesWithin';
 import { signInErrorTr } from '@/auth/signInError';
 import {
   View,
@@ -90,6 +92,14 @@ const ACK_SUFFIX = { tr: ' — okudum.', en: ' — I have read this.' } as const
 
 /** The prototype's own minimum (`trader-core.js`: `s.password.length >= 4`). */
 const MIN_PASSWORD = 4;
+
+/**
+ * How long device unlock waits, AFTER the OS prompt, for Firebase to finish
+ * restoring a persisted session. The restore starts at launch and reloads the
+ * user over the network, so it is normally done by the time a face is
+ * accepted; this only bounds a bad connection.
+ */
+const SESSION_RESTORE_TIMEOUT_MS = 3_000;
 
 /** The banner's own top padding, on top of whatever the notch costs. */
 const BANNER_TOP = 28;
@@ -246,6 +256,8 @@ export default function LoginScreen() {
     setAuthError(null);
     setDeviceBusy(true);
     try {
+      // Started before the OS prompt so the restore runs while it is up.
+      const restored = sessionRestored();
       const { success, mode: factor } = await authenticate('Trader hesabını aç');
       if (success) {
         // Device unlock is a RE-ENTRY, not an authentication. It proves the
@@ -263,11 +275,22 @@ export default function LoginScreen() {
         // Firebase persists the session, so a returning user still gets the
         // one tap. Someone who has never signed in on this device is asked to,
         // once.
-        if (isFirebaseConfigured() && currentUser() === null) {
-          setAuthError(
-            'Bu cihazda önce e-posta ve şifre ile giriş yapmalısın. Sonraki açılışlarda cihaz kilidi yeterli.',
-          );
-          return;
+        //
+        // "No session" is only known once the restore has finished: until
+        // then currentUser() is null for a signed-in user too, and reading it
+        // straight after the prompt told returning users to sign in again. A
+        // restore that outruns the wait gets its own message — "sign in
+        // first" would be the wrong instruction for someone who already has.
+        if (isFirebaseConfigured()) {
+          const restoreDone = await settlesWithin(restored, SESSION_RESTORE_TIMEOUT_MS);
+          if (currentUser() === null) {
+            setAuthError(
+              restoreDone
+                ? 'Bu cihazda önce e-posta ve şifre ile giriş yapmalısın. Sonraki açılışlarda cihaz kilidi yeterli.'
+                : 'Oturumun henüz yüklenemedi. Bağlantını kontrol edip tekrar dene ya da e-posta ve şifre ile giriş yap.',
+            );
+            return;
+          }
         }
         enter();
         return;

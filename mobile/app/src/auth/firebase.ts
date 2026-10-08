@@ -38,9 +38,11 @@ import {
   browserLocalPersistence,
   createUserWithEmailAndPassword,
   deleteUser as fbDeleteUser,
+  EmailAuthProvider,
   getAuth,
   initializeAuth,
   onAuthStateChanged,
+  reauthenticateWithCredential,
   signInWithEmailAndPassword,
   signOut as fbSignOut,
   type Auth,
@@ -159,14 +161,48 @@ export async function signOut(): Promise<void> {
 }
 
 /**
+ * An account operation that needs a signed-in user found none.
+ *
+ * Carries Firebase's own code for that state, so the Turkish error mappers
+ * handle it like any other `auth/*` error instead of falling to their default.
+ */
+export class SignedOutError extends Error {
+  readonly code = 'auth/user-signed-out';
+  constructor() {
+    super('No user is currently signed in');
+    this.name = 'SignedOutError';
+  }
+}
+
+/**
+ * Prove the signed-in user still knows their password.
+ *
+ * Firebase refuses `deleteUser` (and other sensitive calls) with
+ * `auth/requires-recent-login` once the last sign-in is more than a few
+ * minutes old. Sessions persist on the device, so for a returning user that is
+ * the normal case, not the edge case — this makes it recent again.
+ */
+export async function reauthenticate(password: string): Promise<void> {
+  const user = currentUser();
+  // Email/password is the only provider this app signs in with, so a user
+  // without an address is not one this can re-prove.
+  if (!user?.email) throw new SignedOutError();
+  await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, password));
+}
+
+/**
  * Delete the currently signed-in user's account from Firebase.
  *
  * This removes the user from Firebase Authentication. The caller is responsible
- * for removing any server-side data associated with this user.
+ * for removing any server-side data associated with this user — FIRST: the
+ * server identifies the caller by this user's ID token, and once the user is
+ * gone the API client falls back to the shared bearer. It is also refused
+ * unless the last sign-in is recent; call `reauthenticate` before anything is
+ * deleted (see `deleteAccountInOrder`).
  */
 export async function deleteAccount(): Promise<void> {
   const user = currentUser();
-  if (!user) throw new Error('No user is currently signed in');
+  if (!user) throw new SignedOutError();
   await fbDeleteUser(user);
 }
 
@@ -193,6 +229,21 @@ export async function getIdToken(): Promise<string | null> {
 
 export function currentUser(): User | null {
   return auth()?.currentUser ?? null;
+}
+
+/**
+ * Resolves once Firebase has finished restoring any persisted session.
+ *
+ * Until then `currentUser()` is null even for a signed-in user: the restore
+ * reads the keystore and then reloads the user over the network before it sets
+ * one. Never rejects — a restore that fails has finished with nobody signed
+ * in, which is what `currentUser()` then reports. Resolves at once when
+ * Firebase is not configured.
+ */
+export function sessionRestored(): Promise<void> {
+  const a = auth();
+  if (!a) return Promise.resolve();
+  return a.authStateReady().catch(() => undefined);
 }
 
 /** Subscribe to sign-in state. Returns an unsubscribe, a no-op when unconfigured. */

@@ -11,7 +11,15 @@
  * ships over-the-air with no native module to link.
  */
 
-import { View, Text, Modal, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import {
+  View,
+  Text,
+  Modal,
+  Pressable,
+  StyleSheet,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+} from 'react-native';
 import { useMemo, type ReactNode } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -90,7 +98,11 @@ export function Sheet({
         accessibilityLabel="Kapat"
         accessibilityElementsHidden={busy}
       />
-      <View style={styles.dock} pointerEvents="box-none">
+      {/* A sheet can carry a field (Hesabı sil asks for the password). The
+          Modal is its own window, so the screen's keyboard avoidance does not
+          reach in here, and a bottom-docked sheet is exactly what the keyboard
+          covers. With no keyboard up this adds nothing. */}
+      <KeyboardAvoidingView style={styles.dock} behavior="padding" pointerEvents="box-none">
         <View style={[styles.sheet, { paddingBottom: bottomPad }]} accessibilityViewIsModal accessibilityRole="alert">
           {/* The grab handle only exists on a rounded system. Modernist's sheet
               is a square slab with a 2px rule, and a pill on it would be the
@@ -168,7 +180,7 @@ export function Sheet({
             </View>
           )}
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

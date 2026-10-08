@@ -22,6 +22,22 @@ export function signInErrorTr(e: unknown): string {
       return 'Çok fazla deneme yapıldı. Biraz bekleyip tekrar dene.';
     case 'auth/network-request-failed':
       return 'Sunucuya ulaşılamadı. Bağlantını kontrol et.';
+    case 'auth/email-already-in-use':
+      // Sign-up only. It does say the address has an account, but sign-up is
+      // behind an invite code and Firebase answers the same to anyone who asks
+      // it directly — what the reader needs is to switch to the sign-in tab.
+      return 'Bu e-posta ile zaten bir hesap var. Giriş yap sekmesinden devam et.';
+    case 'auth/internal-error':
+      // Firebase's catch-all. It is what a failed keystore write looked like
+      // (PR #97): the real cause rides in `customData.originalError` and the
+      // message says nothing useful, so the cause is logged in dev builds.
+      if (__DEV__) {
+        console.warn(
+          '[auth] auth/internal-error',
+          (e as { customData?: { originalError?: unknown } }).customData?.originalError,
+        );
+      }
+      return 'Beklenmeyen bir hata oluştu. Uygulamayı kapatıp açarak tekrar dene.';
     default:
       return 'Giriş yapılamadı. Tekrar dene.';
   }

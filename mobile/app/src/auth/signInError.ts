@@ -27,6 +27,10 @@ export function signInErrorTr(e: unknown): string {
       // behind an invite code and Firebase answers the same to anyone who asks
       // it directly — what the reader needs is to switch to the sign-in tab.
       return 'Bu e-posta ile zaten bir hesap var. Giriş yap sekmesinden devam et.';
+    case 'auth/weak-password':
+    case 'auth/password-does-not-meet-requirements':
+      // Sign-up only: the project's policy is 6 characters minimum.
+      return 'Şifre en az 6 karakter olmalı.';
     case 'auth/internal-error':
       // Firebase's catch-all. It is what a failed keystore write looked like
       // (PR #97): the real cause rides in `customData.originalError` and the
@@ -39,7 +43,19 @@ export function signInErrorTr(e: unknown): string {
       }
       return 'Beklenmeyen bir hata oluştu. Uygulamayı kapatıp açarak tekrar dene.';
     default:
-      return 'Giriş yapılamadı. Tekrar dene.';
+      // An unmapped outcome carries its code, short, so a screenshot names
+      // the cause. EAS Insights records nothing for this app and every
+      // failure report so far arrived as a screenshot of this exact line,
+      // which on its own could not tell a stale bundle from a new bug. The
+      // credential cases above stay code-free, so this is no account oracle.
+      return `Giriş yapılamadı (${errorTag(e, code)}). Tekrar dene.`;
   }
+}
+
+/** `auth/operation-not-allowed` -> `operation-not-allowed`; no code -> the error's name. */
+function errorTag(e: unknown, code: unknown): string {
+  if (typeof code === 'string' && code) return code.replace(/^auth\//, '').slice(0, 40);
+  const name = e instanceof Error ? e.name : '';
+  return name && name !== 'Error' ? name.slice(0, 40) : 'kod yok';
 }
 

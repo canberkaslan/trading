@@ -155,9 +155,22 @@ jobs:
           npm test
         working-directory: mobile/app
 
+      # `eas update` does not read eas.json build-profile env. Without the
+      # preview profile's, the bundle ships without extra.firebase/apiUrl —
+      # sign-in reports "not configured" — and its fingerprint no longer
+      # matches the preview APK, so at best the publish reaches no one. The
+      # local .env is never read (it holds a dev token).
       - name: EAS Update
         if: steps.changed.outputs.app == 'true' && env.EXPO_TOKEN != ''
-        run: eas update --branch preview --auto --non-interactive
+        env:
+          EXPO_NO_DOTENV: '1'
+        run: |
+          eval "$(node -e '
+            const env = require("./eas.json").build.preview.env || {};
+            for (const [k, v] of Object.entries(env)) console.log(`export ${k}=${JSON.stringify(String(v))}`);
+          ')"
+          test -n "${EXPO_PUBLIC_FIREBASE_API_KEY:-}" || { echo "::error::preview profile has no Firebase config"; exit 1; }
+          eas update --branch preview --auto --non-interactive --environment preview
         working-directory: mobile/app
 
       - name: No Expo token

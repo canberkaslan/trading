@@ -19,7 +19,7 @@ describe('sign-in errors do not leak whether an account exists', () => {
     );
   });
 
-  it('never echoes the raw Firebase code to the user', () => {
+  it('never echoes a code for the cases it explains', () => {
     // auth/internal-error logs its cause in dev; that is console, not UI.
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     for (const code of [
@@ -31,10 +31,12 @@ describe('sign-in errors do not leak whether an account exists', () => {
       'auth/too-many-requests',
       'auth/network-request-failed',
       'auth/email-already-in-use',
+      'auth/weak-password',
       'auth/internal-error',
-      'auth/some-future-code',
     ]) {
-      expect(signInErrorTr({ code })).not.toContain('auth/');
+      const msg = signInErrorTr({ code });
+      expect(msg).not.toContain('auth/');
+      expect(msg).not.toContain(code.replace('auth/', ''));
     }
     warn.mockRestore();
   });
@@ -97,8 +99,41 @@ describe('the codes that used to fall to the generic message', () => {
   });
 });
 
+describe('an unmapped failure names itself', () => {
+  it('shows the code without the auth/ prefix', () => {
+    expect(signInErrorTr({ code: 'auth/operation-not-allowed' })).toBe(
+      'Giriş yapılamadı (operation-not-allowed). Tekrar dene.',
+    );
+  });
+
+  it('a plain error with no code shows its name, never its message', () => {
+    // A message can carry anything; the name is a type, safe on screen.
+    const msg = signInErrorTr(new TypeError('secret-ish detail'));
+    expect(msg).toContain('(TypeError)');
+    expect(msg).not.toContain('secret-ish');
+  });
+
+  it('says there was no code rather than inventing one', () => {
+    expect(signInErrorTr(new Error('boom'))).toContain('(kod yok)');
+    expect(signInErrorTr({})).toContain('(kod yok)');
+  });
+
+  it('keeps a hostile code short', () => {
+    const msg = signInErrorTr({ code: 'auth/' + 'x'.repeat(500) });
+    expect(msg.length).toBeLessThan(90);
+  });
+});
+
+describe('sign-up password rules', () => {
+  it('a short password is explained, not reported as a generic failure', () => {
+    for (const code of ['auth/weak-password', 'auth/password-does-not-meet-requirements']) {
+      expect(signInErrorTr({ code })).toContain('en az 6');
+    }
+  });
+});
+
 describe('malformed errors still produce something sayable', () => {
-  it.each([null, undefined, 'a string', 42, {}, { code: null }, new Error('boom')])(
+  it.each([null, undefined, 'a string', 42, {}, { code: null }, { code: 42 }, new Error('boom')])(
     'handles %p without throwing',
     (value) => {
       expect(typeof signInErrorTr(value)).toBe('string');

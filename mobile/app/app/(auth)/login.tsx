@@ -93,8 +93,13 @@ const WORDMARK = 'Trader';
  */
 const ACK_SUFFIX = { tr: ' — okudum.', en: ' — I have read this.' } as const;
 
-/** The prototype's own minimum (`trader-core.js`: `s.password.length >= 4`). */
-const MIN_PASSWORD = 4;
+/**
+ * Firebase's own minimum. The prototype allowed 4 (`trader-core.js`), but the
+ * project's password policy enforces 6, so a 4–5 character sign-up passed this
+ * gate and then failed at the server with a code the form did not explain.
+ * Every existing account already has 6 or more, so sign-in loses nothing.
+ */
+const MIN_PASSWORD = 6;
 
 /**
  * How long device unlock waits, AFTER the OS prompt, for Firebase to finish

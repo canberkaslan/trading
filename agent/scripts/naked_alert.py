@@ -27,7 +27,9 @@ exit 3.
 The caller owns the page about a naked book, so this script never sends one
 itself; sending it here too would page twice on the same run. It announces
 only the all-clear, once, on the first covered run after a naked one, since
-nothing else would ever say so.
+nothing else would ever say so. An all-clear no channel took is retried on
+later runs, for `RECOVERY_RETRY_DAYS` after the exposure it clears, then
+dropped: past that it is old news, and it names the exposure's date either way.
 
 Read-only against the broker: it submits nothing and touches no decision path.
 
@@ -54,7 +56,9 @@ from tradingagents_us.execution.protected_close import opened_after  # noqa: E40
 from tradingagents_us.notifications.naked_alert import (  # noqa: E402
     CoverageFacts,
     NakedAlertState,
+    days_between,
     decide,
+    recovery_expired,
 )
 from tradingagents_us.notifications.ops_channel import send_ops_alert  # noqa: E402
 from tradingagents_us.risk.kill_switch import (  # noqa: E402
@@ -198,7 +202,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"NAKED: {naked_summary(facts)}")
         return EXIT_NAKED
 
-    alert = decide(facts, load_state(path), kill_switch=ks)
+    state = load_state(path)
+    alert = decide(facts, state, kill_switch=ks)
     if alert is None or alert.kind != "recovered":
         print("no alert warranted")
         return EXIT_COVERED
@@ -211,6 +216,13 @@ def main(argv: list[str] | None = None) -> int:
     # Recorded only once it reached someone. Recording it first would mean a
     # failed send permanently suppresses the all-clear it never delivered.
     if delivery.delivered:
+        _write_state(path, alert.next_state)
+    elif recovery_expired(state, facts.run_date):
+        age = days_between(state.last_run_date, facts.run_date)
+        print(
+            f"naked_alert: all-clear for the {state.last_run_date} exposure reached no "
+            f"channel in {age} days; no longer retried"
+        )
         _write_state(path, alert.next_state)
     return EXIT_COVERED
 

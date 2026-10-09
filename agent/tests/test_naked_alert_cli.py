@@ -42,7 +42,7 @@ def _book(monkeypatch: pytest.MonkeyPatch, naked: float, total: float = 100.0, *
         naked_qty=naked,
         indeterminate_qty=kw.pop("indet", 0.0),
         naked_symbols=kw.pop("symbols", ()),
-        run_date="2026-09-23",
+        run_date=kw.pop("run_date", "2026-09-23"),
     )
     monkeypatch.setattr(cli, "collect_facts", lambda: facts)
 
@@ -121,6 +121,51 @@ def test_an_undelivered_all_clear_is_retried(box: Sent, monkeypatch: pytest.Monk
     box.delivered = True
     cli.main([])
     assert len(box.calls) == 2
+
+
+def test_an_undelivered_all_clear_is_dropped_after_a_week(
+    box: Sent, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The live box has no channel configured: the all-clear for one naked
+    # night went to nobody on every run after it, and would have opened the
+    # first channel ever configured with a recovery from weeks before.
+    _book(monkeypatch, naked=32.0, total=278.0, run_date="2026-10-06")
+    assert cli.main([]) == cli.EXIT_NAKED
+    box.delivered = False
+
+    _book(monkeypatch, naked=0.0, total=246.0, run_date="2026-10-09")
+    assert cli.main([]) == cli.EXIT_COVERED
+    assert "Last seen naked on 2026-10-06 (12% of the book, 3 days ago)." in box.calls[-1][1]
+    assert "no longer retried" not in capsys.readouterr().out
+
+    _book(monkeypatch, naked=0.0, total=246.0, run_date="2026-10-13")
+    assert cli.main([]) == cli.EXIT_COVERED
+    assert len(box.calls) == 2
+    assert (
+        "all-clear for the 2026-10-06 exposure reached no channel in 7 days; no longer retried"
+        in capsys.readouterr().out
+    )
+
+    _book(monkeypatch, naked=0.0, total=246.0, run_date="2026-10-14")
+    assert cli.main([]) == cli.EXIT_COVERED
+    assert len(box.calls) == 2
+
+
+def test_an_expired_all_clear_does_not_mute_the_next_exposure(
+    box: Sent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _book(monkeypatch, naked=32.0, run_date="2026-10-06")
+    cli.main([])
+    box.delivered = False
+    _book(monkeypatch, naked=0.0, run_date="2026-10-20")
+    cli.main([])
+
+    _book(monkeypatch, naked=10.0, run_date="2026-10-21")
+    assert cli.main([]) == cli.EXIT_NAKED
+    box.delivered = True
+    _book(monkeypatch, naked=0.0, run_date="2026-10-22")
+    assert cli.main([]) == cli.EXIT_COVERED
+    assert "Last seen naked on 2026-10-21" in box.calls[-1][1]
 
 
 def test_dry_run_records_nothing(

@@ -9,7 +9,9 @@ from __future__ import annotations
 from tradingagents_us.notifications.naked_alert import (
     CoverageFacts,
     NakedAlertState,
+    days_between,
     decide,
+    recovery_expired,
 )
 
 
@@ -131,12 +133,67 @@ class TestRecovery:
         assert "covered again" in rec.body
         assert "32 shares are exiting at the next open under our time exit: GOOGL" in rec.body
 
+    def test_the_all_clear_names_the_exposure_it_clears(self) -> None:
+        # It is retried until a channel takes it, so it can go out runs after
+        # the exposure. Undated, a late one reads as news about tonight's book:
+        # the live journal said "Stop coverage restored" for three nights about
+        # one naked night.
+        first = decide(facts(11.5, run_date="2026-10-06"), NakedAlertState())
+        assert first is not None
+        rec = decide(facts(0.0, run_date="2026-10-09"), first.next_state)
+        assert rec is not None
+        assert "Last seen naked on 2026-10-06 (12% of the book, 3 days ago)." in rec.body
+
+    def test_a_same_day_all_clear_carries_no_age(self) -> None:
+        state = NakedAlertState(last_kind="naked", last_naked_pct=40.0, last_run_date="2026-10-06")
+        rec = decide(facts(0.0, run_date="2026-10-06"), state)
+        assert rec is not None
+        assert "Last seen naked on 2026-10-06 (40% of the book)." in rec.body
+
+    def test_an_undated_exposure_still_gets_its_all_clear(self) -> None:
+        # State written before run dates were recorded: no date to name, and
+        # that is no reason to withhold the all-clear.
+        rec = decide(facts(0.0, run_date="2026-10-09"), NakedAlertState(last_kind="naked"))
+        assert rec is not None
+        assert "Last seen" not in rec.body
+
     def test_a_relapse_after_recovery_pages_again(self) -> None:
         first = decide(facts(76.0), NakedAlertState())
         rec = decide(facts(1.0), first.next_state)  # type: ignore[union-attr]
         again = decide(facts(76.0), rec.next_state)  # type: ignore[union-attr]
         assert again is not None
         assert again.kind == "naked"
+
+
+class TestRecoveryExpiry:
+    naked = NakedAlertState(last_kind="naked", last_naked_pct=11.5, last_run_date="2026-10-06")
+
+    def test_retried_inside_the_window(self) -> None:
+        assert not recovery_expired(self.naked, "2026-10-09")
+        assert not recovery_expired(self.naked, "2026-10-12")
+
+    def test_dropped_once_the_window_has_passed(self) -> None:
+        assert recovery_expired(self.naked, "2026-10-13")
+        assert recovery_expired(self.naked, "2026-11-30")
+
+    def test_an_exposure_without_a_readable_date_never_expires(self) -> None:
+        # No age to measure; dropping an all-clear on a guess is the failure
+        # the retry exists to prevent.
+        assert not recovery_expired(NakedAlertState(last_kind="naked"), "2026-11-30")
+        assert not recovery_expired(self.naked, None)
+        assert not recovery_expired(
+            NakedAlertState(last_kind="naked", last_run_date="garbage"), "2026-11-30"
+        )
+
+    def test_only_a_naked_state_has_an_all_clear_to_expire(self) -> None:
+        recovered = NakedAlertState(last_kind="recovered", last_run_date="2026-10-06")
+        assert not recovery_expired(recovered, "2026-11-30")
+
+    def test_days_between_counts_calendar_days(self) -> None:
+        assert days_between("2026-10-06", "2026-10-09") == 3
+        assert days_between("2026-10-06", "2026-10-06") == 0
+        assert days_between(None, "2026-10-09") is None
+        assert days_between("2026-10-06", "not-a-date") is None
 
 
 class TestStateRoundTrip:

@@ -37,6 +37,15 @@ Three things deliberately do NOT page:
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import date
+
+#: Days an undelivered all-clear keeps being retried, counted from the run that
+#: last saw the book naked. The retry is for a send that failed in transit. On
+#: the live box no channel was configured at all, so the all-clear for the
+#: 2026-10-06 exposure went to nobody on every run after it, read in the journal
+#: as fresh news each morning, and would have opened the first channel ever
+#: configured with a recovery from weeks before.
+RECOVERY_RETRY_DAYS = 7
 
 #: Naked share of the book, in percent, at which this starts paging. Not zero:
 #: a single partial fill leaves a few shares briefly uncovered between the fill
@@ -142,7 +151,7 @@ def decide(
             body=(
                 f"{100.0 - pct:.0f}% of the book is covered again "
                 f"({facts.naked_qty:.0f} of {facts.total_qty:.0f} shares still naked)."
-                f"{facts.exiting_note()}"
+                f"{_last_seen_naked(state, facts.run_date)}{facts.exiting_note()}"
             ),
             next_state=replace(
                 state, last_kind="recovered", last_naked_pct=pct, last_run_date=facts.run_date
@@ -171,4 +180,43 @@ def decide(
         next_state=replace(
             state, last_kind="naked", last_naked_pct=pct, last_run_date=facts.run_date
         ),
+    )
+
+
+def days_between(earlier: str | None, later: str | None) -> int | None:
+    """Whole days from one ISO date to a later one; None if either is missing or unreadable."""
+    if not earlier or not later:
+        return None
+    try:
+        return (date.fromisoformat(later) - date.fromisoformat(earlier)).days
+    except ValueError:
+        return None
+
+
+def recovery_expired(
+    state: NakedAlertState, run_date: str | None, retry_days: int = RECOVERY_RETRY_DAYS
+) -> bool:
+    """True once an all-clear for `state`'s exposure has been retried long enough.
+
+    Only an exposure with a readable date can expire: without one there is no
+    age to measure, and dropping an all-clear on a guess is the failure the
+    retry exists to prevent.
+    """
+    age = days_between(state.last_run_date, run_date)
+    return state.last_kind == "naked" and age is not None and age >= retry_days
+
+
+def _last_seen_naked(state: NakedAlertState, run_date: str | None) -> str:
+    """' Last seen naked on 2026-10-06 (12% of the book, 3 days ago).', or ''.
+
+    An all-clear can go out runs after the exposure it clears (it is retried
+    until a channel takes it), so it carries the date of the exposure itself.
+    Without it a late delivery reads as news about tonight's book.
+    """
+    if not state.last_run_date:
+        return ""
+    age = days_between(state.last_run_date, run_date)
+    ago = f", {age} day{'' if age == 1 else 's'} ago" if age is not None and age > 0 else ""
+    return (
+        f" Last seen naked on {state.last_run_date} ({state.last_naked_pct:.0f}% of the book{ago})."
     )

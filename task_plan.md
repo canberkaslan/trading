@@ -1335,6 +1335,25 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
   çoklu stop'ta en yüksek; order book hatası snapshot'ı düşürmez. 6 yeni test, suite 1833 pass /
   2 fail = laptop ölü Alpaca key (401). Box'a DEPLOY EDİLMEDİ (prod pull #52 kararına bağlı).
 
+## Daily loop 2026-10-09 (prod-fusapp01 @a0b8c16 → 11dd987; eval 1M GO, 22 gün)
+- **Canlı durum** (box localhost): eval 1M **GO** — Sharpe 3.18, Sortino 6.26, MaxDD −1.52%,
+  +3.22% vs SPY +1.76%, 22/10 gün. Equity $112,117.28, cash $35,292.49, 7 pozisyon (hepsi stop'lu,
+  0/246 naked), günlük −$376.41 (−0.33%). 10-08 22:30 koşusu exit=0, 0 errored, 11 council ~$23.2
+  (9 Hold, 1 Overweight, 1 Underweight, 0 emir). Inert 26 run-day (2/226 submit, Hold×157).
+- [x] **Stop-coverage all-clear'ı tarihli + 7 günde düşer** (11dd987, prod'a pull + `--dry-run`
+  ile canlı doğrulandı). 10-06 koşusu %11.5 naked gördü (GOOGL time-exit gecesi); sonraki her temiz
+  koşu journal'a "ALERT [recovered] Stop coverage restored" yazdı — all-clear sadece bir kanal
+  aldığında kaydediliyor ve box'ta kanal yok (push cihazı yok, OPS_ALERT_GITHUB_TOKEN boş) → 3 gece
+  kimseye gitmedi, her sabah yeni haber gibi okundu; ilk kurulan kanal haftalar önceki bir recovery
+  ile açılacaktı. Artık gövde "Last seen naked on 2026-10-06 (12% of the book, 3 days ago)" der;
+  teslim edilemeyen all-clear `RECOVERY_RETRY_DAYS`=7 gün denenir sonra log satırıyla düşer
+  (tarihi okunamayan exposure asla düşmez). Prod'da 10-13 koşusunda düşecek. 12 yeni test (CLI
+  ikisi eski kodda kırmızı), 2304 pass / 2 fail = laptop Alpaca key 401 (doğrulandı). API import
+  etmiyor → restart yok. Karar yoluna dokunmuyor.
+- **Sıradaki:** (a) alarm hedefi (push cihazı / OPS_ALERT_GITHUB_TOKEN) hâlâ boş = Canberk — inert
+  ve naked alarmları da her gece kimseye gitmiyor; (b) StockTwits kararı = Canberk; (c) inert
+  26 gün: GO tutulan pozisyonların MTM'i, agent'ın kendi kararı değil.
+
 ## Daily loop 2026-10-07 (prod-fusapp01 @cbaccce → b4b1677; eval 1M GO, 20 gün)
 - **Canlı durum** (box localhost): eval 1M **GO** — Sharpe 3.30, Sortino 6.52, MaxDD −1.52%,
   +3.14% vs SPY +2.44%, 20/10 gün. Equity $112,814.71, cash $35,292.73, 7 pozisyon (GOOGL time

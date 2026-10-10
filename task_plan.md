@@ -1335,6 +1335,26 @@ Eval is CLOSED: decision-path changes now allowed on main, but each HIGH-blast i
   çoklu stop'ta en yüksek; order book hatası snapshot'ı düşürmez. 6 yeni test, suite 1833 pass /
   2 fail = laptop ölü Alpaca key (401). Box'a DEPLOY EDİLMEDİ (prod pull #52 kararına bağlı).
 
+## Daily loop 2026-10-10 (prod-fusapp01 @d658c45 → 7c9e176; eval 1M API "GO" ama SPY'ı geçemiyor)
+- **Canlı durum** (box localhost): eval 1M API verdict **GO** — Sharpe 2.40, Sortino 4.60, MaxDD
+  −1.52%, +2.54% vs SPY +2.99% (beats_spy gate **false**; kodda SPY hard gate değil, flag), 22/10 gün.
+  Görev tanımıyla (Sharpe>1 VE MaxDD<15 VE SPY'ı yen) **NO-GO**. Equity $112,628.90, cash
+  $44,814.87, 6 pozisyon (hepsi stop'lu), günlük +$668.89 (+0.60%). **XOM 56 hisse take-profit ile
+  çıktı** (10-09 15:08 UTC @ $170.02, realized +$800.38). 10-09 22:30 koşusu exit=0, 0 errored,
+  stop coverage 0/190 naked; inert 27 run-day (1/227 submit, Hold×166).
+- [x] **Watchdog "sadece telefona gidiyor" diyordu, telefon yoktu** (7c9e176, prod'a deploy + canlı
+  doğrulandı). #91 10-05'ten beri "its own alerts reach only the phone" diyor, box'taki her alarm
+  `push: no registered devices` ile bitiyordu → alarmlar KİMSEYE gitmiyor. `/readyz` artık
+  `alerting.push` yayınlıyor (kayıtlı cihaz var VE PUSH_DISABLED≠1 — push sender'ın gördüğü cevabın
+  aynısı; okunamazsa null, token/sayı yok). Watchdog: üç yol da yoksa yeni state **`unheard`**
+  (sev 17, unalerted 15'in üstü) → açık #91 bir kez escalate olur (retitle + tek yorum); push
+  bilinmiyorsa (eski API) eski okuma korunur, telefon yokken off-phone yollar varsa UP kalır.
+  Canlı dry-run: `state: unheard`. 13 yeni test (eski kodda collection error), 2317 pass / 2 fail =
+  laptop Alpaca key 401 (değişiklik olmadan da düşüyor, doğrulandı). Karar yoluna dokunmuyor.
+- **Sıradaki:** (a) alarm hedefi = Canberk: telefonda app'e giriş + bildirim izni (en hızlı, push
+  tek başına `unheard`→`unalerted`), sonra HEALTHCHECK_URL + OPS_ALERT_GITHUB_TOKEN; (b) SPY'ı
+  hard gate yapmak (eval verdict semantiği) = Canberk kararı; (c) StockTwits kararı = Canberk.
+
 ## Daily loop 2026-10-09 (prod-fusapp01 @a0b8c16 → 11dd987; eval 1M GO, 22 gün)
 - **Canlı durum** (box localhost): eval 1M **GO** — Sharpe 3.18, Sortino 6.26, MaxDD −1.52%,
   +3.22% vs SPY +1.76%, 22/10 gün. Equity $112,117.28, cash $35,292.49, 7 pozisyon (hepsi stop'lu,

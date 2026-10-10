@@ -24,6 +24,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from tradingagents_us.notifications.ops_channel import GITHUB_TOKEN_ENV
 
@@ -57,6 +58,29 @@ def alerting_config(env: Mapping[str, str] | None = None) -> dict[str, bool]:
         "healthcheck": healthcheck_configured(env),
         "github": bool(env.get(GITHUB_TOKEN_ENV, "").strip()),
     }
+
+
+def push_reachable(repo: Any, env: Mapping[str, str] | None = None) -> bool | None:
+    """Whether the push half of `send_ops_alert` has a phone to reach.
+
+    The same answer `ops_channel._send_push` would get: the device-token table
+    it reads, and the PUSH_DISABLED switch the sender honours. Until this was
+    published, the watchdog read "the box has no off-phone channel" as "its
+    alerts reach only the phone" while every alert on the box was ending in
+    `push: no registered devices`. A boolean only — no token, no count.
+
+    None when the table cannot be read: unknown, never "no phone".
+    """
+    env = os.environ if env is None else env
+    if env.get("PUSH_DISABLED") == "1":
+        return False
+    try:
+        from tradingagents_us.storage.device_tokens import list_all_tokens
+
+        with repo.session() as s:
+            return bool(list_all_tokens(s))
+    except Exception:  # noqa: BLE001 — a readiness field must not fail /readyz
+        return None
 
 
 #: Stands in for an entry that is not a clean check name, so a failure recorded

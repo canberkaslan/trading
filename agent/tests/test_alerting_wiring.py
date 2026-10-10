@@ -29,6 +29,7 @@ from tradingagents_us.monitoring.alerting_state import read_preflight
 from tradingagents_us.monitoring.liveness import (
     STATE_PREFLIGHT_FAILED,
     STATE_UNALERTED,
+    STATE_UNHEARD,
     STATE_UP,
     BackupSignal,
     HealthProbe,
@@ -67,14 +68,28 @@ def _refuse(monkeypatch: pytest.MonkeyPatch, check: str, message: str) -> None:
     )
 
 
-def _readyz(monkeypatch: pytest.MonkeyPatch) -> bytes:
-    """GET /readyz from the real app, with a broker and DB that answer."""
+def _readyz(monkeypatch: pytest.MonkeyPatch, *, real_db: bool = False) -> bytes:
+    """GET /readyz from the real app, with a broker and DB that answer.
+
+    `real_db` serves it from the box's own sqlite file, so the device table the
+    push sender reads is the one /readyz reports on. Built here rather than via
+    `deps.get_repo`, whose process-wide cache would pin the first test's file.
+    """
+    import os
+
     import api.main as api_main
+    from tradingagents_us.storage import TradeLogRepository, make_engine
 
     monkeypatch.delenv("DEV_API_TOKEN", raising=False)
     monkeypatch.delenv("COGNITO_USER_POOL_ID", raising=False)
     monkeypatch.setattr(api_main, "get_alpaca", MagicMock)
-    monkeypatch.setattr(api_main, "get_repo", MagicMock)
+    if real_db:
+        url = os.environ["TRADE_LOG_DB_URL"]
+        monkeypatch.setattr(
+            api_main, "get_repo", lambda: TradeLogRepository(engine=make_engine(url))
+        )
+    else:
+        monkeypatch.setattr(api_main, "get_repo", MagicMock)
     r = TestClient(api_main.app).get("/readyz")
     assert r.status_code == 200
     assert r.json()["status"] == "ok"  # alerting never changes what status means
@@ -119,16 +134,48 @@ def test_a_refused_key_on_a_box_with_no_alert_accounts_pages_off_box(
     assert "key rejected" not in body  # names only leave the box, never messages
 
 
-def test_missing_alert_accounts_alone_page_once_off_box(
+def _register_phone(monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+
+    from tradingagents_us.storage import TradeLogRepository, make_engine
+    from tradingagents_us.storage.device_tokens import upsert_token
+
+    repo = TradeLogRepository(engine=make_engine(os.environ["TRADE_LOG_DB_URL"]))
+    with repo.session() as s:
+        upsert_token(s, token="ExponentPushToken[not-real]", user_id="dev-user",
+                     platform="ios", ts=NOW)
+
+
+def test_missing_alert_accounts_and_no_phone_page_as_reaching_no_one(
     box: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The live box today. Preflight stays green, and the gap is still news.
+    # The live box on 2026-10-10: no off-phone account and no registered phone.
+    # Preflight stays green, and nobody would hear the next failure.
+    monkeypatch.delenv("PUSH_DISABLED")
     assert preflight.main() == 0
-    state, gh = _watchdog_cycle(monkeypatch, _readyz(monkeypatch))
+    readyz = _readyz(monkeypatch, real_db=True)
+    state, gh = _watchdog_cycle(monkeypatch, readyz)
+
+    assert state == STATE_UNHEARD
+    (issue,) = _opened(gh)
+    assert "its own alerts reach no one" in str(issue["title"])
+    assert "only the phone" not in str(issue["body"])
+    assert b"ExponentPushToken" not in readyz
+
+
+def test_missing_alert_accounts_with_a_phone_page_once_as_only_the_phone(
+    box: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("PUSH_DISABLED")
+    _register_phone(monkeypatch)
+    assert preflight.main() == 0
+    readyz = _readyz(monkeypatch, real_db=True)
+    state, gh = _watchdog_cycle(monkeypatch, readyz)
 
     assert state == STATE_UNALERTED
     (issue,) = _opened(gh)
     assert "its own alerts reach only the phone" in str(issue["title"])
+    assert b"ExponentPushToken" not in readyz  # a boolean leaves the box, never a token
 
 
 def test_a_malformed_healthcheck_url_is_reported_and_never_published(
@@ -140,7 +187,7 @@ def test_a_malformed_healthcheck_url_is_reported_and_never_published(
     readyz = _readyz(monkeypatch)
     state, gh = _watchdog_cycle(monkeypatch, readyz)
 
-    assert state == STATE_UNALERTED
+    assert state == STATE_UNHEARD  # PUSH_DISABLED=1: no phone either
     assert b"uuid-without-scheme" not in readyz
     assert "uuid-without-scheme" not in str(gh.calls)
 
@@ -167,5 +214,5 @@ def test_readyz_before_any_preflight_reports_the_config_it_can_see(
     monkeypatch.setenv("HEALTHCHECK_URL", HC)
     payload = json.loads(_readyz(monkeypatch))
 
-    assert payload["alerting"] == {"healthcheck": True, "github": False}
+    assert payload["alerting"] == {"healthcheck": True, "github": False, "push": False}
     assert payload["preflight"] is None

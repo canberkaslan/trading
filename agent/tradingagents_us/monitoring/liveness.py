@@ -78,9 +78,14 @@ STATE_WEDGED = "wedged"
 STATE_BROKER_DOWN = "broker_down"
 STATE_PREFLIGHT_FAILED = "preflight_failed"
 STATE_EDGE_DOWN = "edge_down"
+STATE_UNHEARD = "unheard"
 STATE_UNALERTED = "unalerted"
 STATE_DEGRADED = "degraded"
 STATE_UP = "up"
+
+#: The alert paths that do not need the phone, by the names preflight gives
+#: their gaps (`scripts.preflight._check_alerting`).
+OFF_PHONE_PATHS = ("healthcheck", "ops_alert_channel")
 
 #: Preflight runs Mon-Fri 21:45 UTC, so the longest normal gap is Friday to
 #: Monday, 72h. Past this, the timer has stopped recording, which is news.
@@ -106,12 +111,19 @@ PREFLIGHT_STALE_AFTER_HOURS = 80.0
 # but the box reports that its own alerts reach only the phone, so the next
 # failure on it is silent. That is how the 2026-09-14 outage lasted two weeks;
 # a missed backup, by contrast, is retried the next night.
+#
+# `unheard` sits just over it: the same gaps, and no phone registered for push
+# either, so the box's alerts reach no one at all. Until 2026-10-10 that case
+# was reported as `unalerted` — "only the phone" — while every alert on the box
+# was logging `push: no registered devices`. Above `unalerted` so an open
+# incident escalates (retitle + one comment) when the phone goes too.
 _SEVERITY = {
     STATE_DARK: 40,
     STATE_WEDGED: 30,
     STATE_BROKER_DOWN: 25,
     STATE_PREFLIGHT_FAILED: 22,
     STATE_EDGE_DOWN: 20,
+    STATE_UNHEARD: 17,
     STATE_UNALERTED: 15,
     STATE_DEGRADED: 10,
     STATE_UP: 0,
@@ -246,6 +258,8 @@ class ReadinessProbe:
     detail: str | None = None
     #: Off-phone alert paths the box reports missing or refused, by name.
     alerting_gaps: tuple[str, ...] = ()
+    #: Whether the push half has a phone to reach; None = the API did not say.
+    push_devices: bool | None = None
     #: Dependency checks the last preflight failed, by name; None = no record.
     preflight_failed: tuple[str, ...] | None = None
     preflight_at: str | None = None
@@ -279,9 +293,21 @@ class ReadinessProbe:
         return f"{verdict} (last run{when}{age})"
 
     def describe_alerting(self) -> str:
-        if not self.alerting_gaps:
-            return "no gap reported"
-        return "missing or refused: " + ", ".join(self.alerting_gaps)
+        parts = []
+        if self.alerting_gaps:
+            parts.append("missing or refused: " + ", ".join(self.alerting_gaps))
+        if self.push_devices is False:
+            parts.append("no phone registered for push")
+        return "; ".join(parts) or "no gap reported"
+
+    @property
+    def reaches_no_one(self) -> bool:
+        """Every path an alert on the box could take is reported missing.
+
+        Only an explicit `push: false` counts: an API that does not report the
+        phone keeps the older, milder reading rather than inventing silence.
+        """
+        return self.push_devices is False and set(OFF_PHONE_PATHS) <= set(self.alerting_gaps)
 
 
 @dataclass(frozen=True)
@@ -383,7 +409,7 @@ def _box_lines(ready: ReadinessProbe) -> tuple[str, ...]:
     lines = []
     if ready.preflight_failed is not None:
         lines.append(f"Last preflight: {ready.describe_preflight()}")
-    if ready.alerting_gaps:
+    if ready.alerting_gaps or ready.push_devices is False:
         lines.append(f"Box alert paths: {ready.describe_alerting()}")
     return tuple(lines)
 
@@ -444,27 +470,54 @@ def _origin_answered(
                 "`systemctl status ai-trader-preflight.timer`."
             ),
         )
+    remedy = (
+        "Fill in the missing values in `/opt/ai-trader/secrets.env`: "
+        "HEALTHCHECK_URL (a healthchecks.io check, schedule `30 22 * * 1-5` UTC) "
+        "and OPS_ALERT_GITHUB_TOKEN (fine-grained PAT, Actions read/write on the "
+        "alert repo; rotate it if it was refused or is expiring). Then "
+        "`sudo systemctl restart ai-trader-api.service` and "
+        "`sudo systemctl start ai-trader-preflight`; this closes once both "
+        "report no gap."
+    )
+    if ready.reaches_no_one:
+        return Verdict(
+            state=STATE_UNHEARD,
+            headline="Box reachable, but its own alerts reach no one",
+            reasons=(
+                health_line,
+                backup_line,
+                *box_lines,
+                "Nothing is broken yet. But no phone is registered for push either, so a "
+                "failed run, a refused key or a naked book on this box would be logged "
+                "on the box and reported to no one — every alert it raises ends in "
+                "`push: no registered devices`.",
+            ),
+            remedy=(
+                f"{remedy} Until then, sign in to the app on a phone and allow "
+                "notifications in its Settings tab: the push goes to every registered "
+                "device, so that alone moves this to `unalerted`."
+            ),
+        )
     if ready.alerting_gaps:
+        if ready.push_devices is False:
+            left = [p for p in OFF_PHONE_PATHS if p not in ready.alerting_gaps]
+            headline = "Box reachable, but no phone is registered and an alert path is missing"
+            reach = f"reported only through {', '.join(left) or 'nothing'}"
+        else:
+            headline = "Box reachable, but its own alerts reach only the phone"
+            reach = "reported only to the mobile app"
         return Verdict(
             state=STATE_UNALERTED,
-            headline="Box reachable, but its own alerts reach only the phone",
+            headline=headline,
             reasons=(
                 health_line,
                 backup_line,
                 *box_lines,
                 "Nothing is broken yet. But a failed run, a refused key or a naked book "
-                "on this box would be reported only to the mobile app, which is how the "
+                f"on this box would be {reach}, which is how the "
                 "2026-09-14 broker outage went unnoticed for nearly two weeks.",
             ),
-            remedy=(
-                "Fill in the missing values in `/opt/ai-trader/secrets.env`: "
-                "HEALTHCHECK_URL (a healthchecks.io check, schedule `30 22 * * 1-5` UTC) "
-                "and OPS_ALERT_GITHUB_TOKEN (fine-grained PAT, Actions read/write on the "
-                "alert repo; rotate it if it was refused or is expiring). Then "
-                "`sudo systemctl restart ai-trader-api.service` and "
-                "`sudo systemctl start ai-trader-preflight`; this closes once both "
-                "report no gap."
-            ),
+            remedy=remedy,
         )
     if backup.stale:
         # The API answering proves the host is up and networked, so a missed

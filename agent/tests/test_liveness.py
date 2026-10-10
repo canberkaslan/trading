@@ -18,6 +18,7 @@ from tradingagents_us.monitoring.liveness import (
     STATE_EDGE_DOWN,
     STATE_PREFLIGHT_FAILED,
     STATE_UNALERTED,
+    STATE_UNHEARD,
     STATE_UP,
     STATE_WEDGED,
     BackupSignal,
@@ -382,11 +383,77 @@ class TestTheBoxReportOnItsOwnAlerting:
         assert (
             severity(STATE_DEGRADED)
             < severity(STATE_UNALERTED)
+            < severity(STATE_UNHEARD)
             < severity(STATE_EDGE_DOWN)
             < severity(STATE_PREFLIGHT_FAILED)
             < severity(STATE_BROKER_DOWN)
         )
 
+
+class TestWhoTheBoxAlertsActuallyReach:
+    """`unalerted` said "only the phone"; on 2026-10-10 there was no phone.
+
+    Issue #91 sat open for five days reading "its own alerts reach only the
+    phone" while every alert on the box logged `push: no registered devices`.
+    /readyz now says whether a phone is registered, and the watchdog only
+    claims the phone when the box says there is one.
+    """
+
+    _ok = HealthProbe(reached_origin=True, status=200)
+    _both = ("healthcheck", "ops_alert_channel")
+
+    def test_no_off_phone_path_and_no_phone_reaches_no_one(self) -> None:
+        verdict = classify(
+            self._ok, _fresh(), None,
+            ReadinessProbe(broker_ok=True, alerting_gaps=self._both, push_devices=False),
+        )
+        assert verdict.state == STATE_UNHEARD
+        assert verdict.is_incident
+        assert verdict.headline == "Box reachable, but its own alerts reach no one"
+        text = "\n".join(verdict.reasons)
+        assert "only the phone" not in text and "only to the mobile app" not in text
+        assert "no phone registered for push" in text
+        assert "HEALTHCHECK_URL" in verdict.remedy and "notifications" in verdict.remedy
+
+    def test_a_registered_phone_keeps_the_old_reading(self) -> None:
+        verdict = classify(
+            self._ok, _fresh(), None,
+            ReadinessProbe(broker_ok=True, alerting_gaps=self._both, push_devices=True),
+        )
+        assert verdict.state == STATE_UNALERTED
+        assert "reach only the phone" in verdict.headline
+
+    def test_an_api_that_does_not_say_is_not_read_as_silence(self) -> None:
+        # Older API without the field: no evidence either way, so no escalation.
+        verdict = classify(
+            self._ok, _fresh(), None, ReadinessProbe(broker_ok=True, alerting_gaps=self._both)
+        )
+        assert verdict.state == STATE_UNALERTED
+
+    def test_one_off_phone_path_left_is_named_and_the_phone_is_not_claimed(self) -> None:
+        verdict = classify(
+            self._ok, _fresh(), None,
+            ReadinessProbe(broker_ok=True, alerting_gaps=("healthcheck",), push_devices=False),
+        )
+        assert verdict.state == STATE_UNALERTED
+        assert "phone" not in verdict.headline.replace("no phone is registered", "")
+        assert any("reported only through ops_alert_channel" in r for r in verdict.reasons)
+
+    def test_no_phone_is_not_an_incident_when_the_off_phone_paths_exist(self) -> None:
+        # The phone is what the other two back up; with both set the box is heard.
+        verdict = classify(
+            self._ok, _fresh(), None, ReadinessProbe(broker_ok=True, push_devices=False)
+        )
+        assert verdict.state == STATE_UP
+        assert any("no phone registered for push" in r for r in verdict.reasons)
+
+    def test_a_worse_state_still_outranks_it_and_carries_the_line(self) -> None:
+        ready = ReadinessProbe(
+            broker_ok=False, alerting_gaps=self._both, push_devices=False
+        )
+        verdict = classify(self._ok, _fresh(), None, ready)
+        assert verdict.state == STATE_BROKER_DOWN
+        assert any("no phone registered for push" in r for r in verdict.reasons)
 
 class TestRemediesNameTheLiveBox:
     """A remedy is an instruction, so it must point at a host that exists.

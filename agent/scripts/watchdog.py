@@ -128,9 +128,14 @@ def _box_report(payload: dict, now: datetime | None) -> dict[str, object]:
     """The alerting and preflight facts from /readyz, cleaned for a public issue."""
     gaps: set[str] = set()
     alerting = payload.get("alerting")
+    out: dict[str, object] = {}
     if isinstance(alerting, dict):
         gaps |= {name for key, name in _ALERTING_NAMES.items() if alerting.get(key) is False}
-    out: dict[str, object] = {}
+        # Not a gap of its own: the phone is the path the others back up, and
+        # a box with both of those set is fine without one. It only decides
+        # whether "only the phone" is true.
+        if isinstance(alerting.get("push"), bool):
+            out["push_devices"] = alerting["push"]
     pre = payload.get("preflight")
     if isinstance(pre, dict) and isinstance(pre.get("ok"), bool):
         failed = _check_names(pre.get("failed"))

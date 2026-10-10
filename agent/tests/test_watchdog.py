@@ -559,3 +559,23 @@ class TestTheBoxReportInReadyz:
     def test_an_older_api_reports_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         probe = self._probe(monkeypatch, b'{"status":"ok","alpaca":true,"db":true}')
         assert (probe.alerting_gaps, probe.preflight_failed) == ((), None)
+        assert probe.push_devices is None
+
+    def test_reads_whether_a_phone_is_registered_without_calling_it_a_gap(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        probe = self._probe(
+            monkeypatch,
+            b'{"alpaca":true,"alerting":{"healthcheck":true,"github":true,"push":false}}',
+        )
+        assert probe.push_devices is False
+        assert probe.alerting_gaps == ()
+
+    def test_a_push_field_that_is_not_a_boolean_is_unknown(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        for raw in (b'null', b'"false"', b'0', b'["tok"]'):
+            probe = self._probe(
+                monkeypatch, b'{"alpaca":true,"alerting":{"push":' + raw + b'}}'
+            )
+            assert probe.push_devices is None, raw

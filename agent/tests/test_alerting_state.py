@@ -7,6 +7,7 @@ from pathlib import Path
 from tradingagents_us.monitoring.alerting_state import (
     PreflightRecord,
     alerting_config,
+    push_reachable,
     read_preflight,
     write_preflight,
 )
@@ -49,3 +50,39 @@ def test_alerting_config_is_presence_and_shape_only() -> None:
     assert alerting_config(
         {"HEALTHCHECK_URL": "https://hc-ping.com/x", "OPS_ALERT_GITHUB_TOKEN": "t"}
     ) == {"healthcheck": True, "github": True}
+
+
+def _repo(tmp_path: Path, *tokens: str):
+    from datetime import UTC, datetime
+
+    from tradingagents_us.storage import TradeLogRepository, make_engine
+    from tradingagents_us.storage.device_tokens import upsert_token
+
+    repo = TradeLogRepository(engine=make_engine(f"sqlite:///{tmp_path / 'box.db'}"))
+    with repo.session() as s:
+        for t in tokens:
+            upsert_token(s, token=t, user_id="dev-user", platform="ios", ts=datetime.now(UTC))
+    return repo
+
+
+def test_push_is_reachable_only_with_a_registered_phone(tmp_path: Path) -> None:
+    # The live box on 2026-10-10: an empty device table, so every alert it raised
+    # ended in "push: no registered devices" — while the watchdog said "only the phone".
+    assert push_reachable(_repo(tmp_path), env={}) is False
+
+
+def test_one_registered_phone_is_enough(tmp_path: Path) -> None:
+    assert push_reachable(_repo(tmp_path, "ExponentPushToken[not-real]"), env={}) is True
+
+
+def test_push_disabled_reaches_no_phone_whatever_is_registered(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "ExponentPushToken[not-real]")
+    assert push_reachable(repo, env={"PUSH_DISABLED": "1"}) is False
+
+
+def test_an_unreadable_table_is_unknown_not_no_phone() -> None:
+    class Broken:
+        def session(self) -> object:
+            raise RuntimeError("database is locked")
+
+    assert push_reachable(Broken(), env={}) is None
